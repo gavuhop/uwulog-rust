@@ -54,8 +54,11 @@ impl LogSource for ProcessSource {
         let child_pid = child.id();
         let source_id_out = self.source_id.clone();
         let source_id_err = format!("{}:stderr", self.source_id);
-        let tx_out = tx.clone();
-        let tx_err = tx.clone();
+
+        // Sử dụng WeakSender cho task đọc stdout/stderr để không làm tăng strong reference count của tx.
+        // Nhờ đó, khi tx chính ở ngoài bị drop, tx.closed() ở task giám sát bên dưới sẽ trigger TỨC THÌ.
+        let weak_tx_out = tx.downgrade();
+        let weak_tx_err = tx.downgrade();
 
         // Task đọc stdout
         if let Some(stdout) = child.stdout.take() {
@@ -66,7 +69,11 @@ impl LogSource for ProcessSource {
                         source_id: source_id_out.clone(),
                         payload: RawPayload::Text(line),
                     };
-                    if tx_out.send(entry).await.is_err() {
+                    if let Some(tx_out) = weak_tx_out.upgrade() {
+                        if tx_out.send(entry).await.is_err() {
+                            break;
+                        }
+                    } else {
                         break;
                     }
                 }
@@ -87,21 +94,25 @@ impl LogSource for ProcessSource {
                         source_id: source_id_err.clone(),
                         payload: RawPayload::Text(formatted_err),
                     };
-                    if tx_err.send(entry).await.is_err() {
+                    if let Some(tx_err) = weak_tx_err.upgrade() {
+                        if tx_err.send(entry).await.is_err() {
+                            break;
+                        }
+                    } else {
                         break;
                     }
                 }
             });
         }
 
-        // Task giám sát lifecycle: khi channel đóng (ứng dụng thoát), kill cả Cây Tiến Trình (Process Tree)
+        // Task giám sát lifecycle: khi channel đóng (Stop/Restart hoăc thoát app), diệt TỨC THÌ Cây Tiến Trình (Process Tree)
         tokio::spawn(async move {
             tokio::select! {
                 _ = child.wait() => {},
                 _ = tx.closed() => {
                     #[cfg(target_os = "windows")]
                     if let Some(pid) = child_pid {
-                        // Taskkill cưỡng chế diệt cả cây tiến trình con/cháu (Process Tree) trên Windows
+                        // Taskkill cưỡng chế diệt cả cây tiến trình con/cháu (Process Tree) trên Windows ngay lập tức
                         let _ = std::process::Command::new("taskkill")
                             .args(["/F", "/T", "/PID", &pid.to_string()])
                             .output();

@@ -175,6 +175,16 @@ impl SystemEngine {
     pub fn max_capacity(&self) -> usize {
         self.max_capacity
     }
+
+    pub fn clear(&self) {
+        if let Ok(mut evts) = self.events.write() {
+            evts.clear();
+        }
+        if let Ok(mut fe) = self.filter_engine.write() {
+            *fe = CoreFilterEngine::new(self.max_capacity);
+        }
+        self.total_processed.store(0, Ordering::Relaxed);
+    }
 }
 
 #[cfg(test)]
