@@ -50,7 +50,9 @@ pub struct UwuGuiApp {
 }
 
 impl UwuGuiApp {
-    pub fn new(_cc: &eframe::CreationContext<'_>, rt: Handle) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>, rt: Handle) -> Self {
+        crate::ui::theme::apply_theme(&cc.egui_ctx);
+
         let args: Vec<String> = std::env::args().collect();
         let mut display_limit: usize = 5_000;
         let mut capacity: usize = 50_000;
