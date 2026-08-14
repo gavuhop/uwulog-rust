@@ -5,14 +5,30 @@ use uwu_schema::LogLevel;
 
 pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     let text_height = egui::TextStyle::Body.resolve(ui.style()).size;
+    let row_count = app.cached_logs.len();
 
-    TableBuilder::new(ui)
+    // Nhận diện hướng cuộn chuột: cuộn LÊN (y > 0) -> Tắt Auto-Scroll
+    let scroll_delta_y = ui.input(|i| i.raw_scroll_delta.y);
+    if scroll_delta_y > 0.0 {
+        app.is_auto_scroll = false;
+    }
+
+    let mut builder = TableBuilder::new(ui)
         .striped(true)
         .resizable(true)
         .column(Column::initial(180.0).at_least(140.0)) // Timestamp
         .column(Column::initial(70.0).at_least(60.0)) // Level
         .column(Column::initial(120.0).at_least(80.0)) // Source
-        .column(Column::remainder()) // Message
+        .column(Column::remainder()); // Message
+
+    // Nếu is_auto_scroll = true -> Tự động cuộn đến hàng cuối cùng (Align::Max)
+    if app.is_auto_scroll && row_count > 0 {
+        builder = builder.scroll_to_row(row_count - 1, Some(egui::Align::Max));
+    }
+
+    let mut last_row_visible = false;
+
+    builder
         .header(22.0, |mut header| {
             header.col(|ui| {
                 ui.strong("TIMESTAMP");
@@ -28,9 +44,12 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
             });
         })
         .body(|body| {
-            let row_count = app.cached_logs.len();
             body.rows(text_height + 6.0, row_count, |mut row| {
                 let row_index = row.index();
+                if row_index == row_count.saturating_sub(1) {
+                    last_row_visible = true;
+                }
+
                 if let Some(event) = app.cached_logs.get(row_index) {
                     let is_selected = app.selected_log.as_ref().is_some_and(|s| s.id == event.id);
 
@@ -83,4 +102,9 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 }
             });
         });
+
+    // Khi hàng cuối cùng hiển thị trên màn hình và người dùng không cuộn ngược lên -> Tự động BẬT lại Auto-Scroll
+    if last_row_visible && scroll_delta_y <= 0.0 {
+        app.is_auto_scroll = true;
+    }
 }
