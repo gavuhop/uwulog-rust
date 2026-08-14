@@ -35,6 +35,7 @@ pub struct UwuGuiApp {
     pub total_matched: usize,
     pub cached_logs: Vec<LogEvent>,
     pub selected_log: Option<LogEvent>,
+    pub is_auto_scroll: bool,
     pub is_source_running: bool,
     pub show_launch_modal: bool,
     pub source_config: SourceConfig,
@@ -116,6 +117,7 @@ impl UwuGuiApp {
             total_matched: 0,
             cached_logs: Vec::new(),
             selected_log: None,
+            is_auto_scroll: true,
             is_source_running: false,
             show_launch_modal: false,
             source_config,
@@ -276,6 +278,7 @@ impl UwuGuiApp {
         self.selected_log = None;
         self.total_matched = 0;
         self.last_processed_count = 0;
+        self.is_auto_scroll = true;
 
         // 3. Khởi tạo lại Nguồn Log mới sạch hoàn toàn
         self.start_configured_source();
