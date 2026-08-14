@@ -7,7 +7,7 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     let text_height = egui::TextStyle::Body.resolve(ui.style()).size;
     let row_count = app.cached_logs.len();
 
-    // Nhận diện hướng cuộn chuột: cuộn LÊN (y > 0) -> Tắt Auto-Scroll
+    // Phát hiện cuộn chuột LÊN → tắt auto-scroll
     let scroll_delta_y = ui.input(|i| i.raw_scroll_delta.y);
     if scroll_delta_y > 0.0 {
         app.is_auto_scroll = false;
@@ -21,10 +21,14 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
         .column(Column::initial(120.0).at_least(80.0)) // Source
         .column(Column::remainder()); // Message
 
-    // Nếu is_auto_scroll = true -> Tự động cuộn đến hàng cuối cùng (Align::Max)
-    if app.is_auto_scroll && row_count > 0 {
+    // CHỈ gọi scroll_to_row khi CÓ DATA MỚI (row_count tăng), KHÔNG gọi mỗi frame.
+    // Đây là khác biệt quan trọng: trước đây gọi mỗi frame → egui reset scroll offset
+    // liên tục → giật. Bây giờ chỉ gọi 1 lần khi data mới đến → mượt mà.
+    let has_new_data = row_count > app.prev_table_row_count;
+    if app.is_auto_scroll && has_new_data && row_count > 0 {
         builder = builder.scroll_to_row(row_count - 1, Some(egui::Align::Max));
     }
+    app.prev_table_row_count = row_count;
 
     let mut last_row_visible = false;
 
@@ -46,7 +50,10 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
         .body(|body| {
             body.rows(text_height + 6.0, row_count, |mut row| {
                 let row_index = row.index();
-                if row_index == row_count.saturating_sub(1) {
+
+                // Virtualized table chỉ gọi closure cho các row ĐANG HIỂN THỊ trên viewport.
+                // Nếu row cuối cùng được render → nó đang visible trên màn hình.
+                if row_count > 0 && row_index == row_count - 1 {
                     last_row_visible = true;
                 }
 
@@ -103,8 +110,8 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
             });
         });
 
-    // Khi hàng cuối cùng hiển thị trên màn hình và người dùng không cuộn ngược lên -> Tự động BẬT lại Auto-Scroll
-    if last_row_visible && scroll_delta_y <= 0.0 {
+    // Bật lại auto-scroll CHỈ KHI: user chủ động cuộn XUỐNG (scroll_delta_y < 0) VÀ đã chạm đáy
+    if last_row_visible && scroll_delta_y < 0.0 {
         app.is_auto_scroll = true;
     }
 }
