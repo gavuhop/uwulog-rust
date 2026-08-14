@@ -1,0 +1,15 @@
+[package]
+name = "uwu-engine"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+uwu-schema.workspace = true
+uwu-core.workspace = true
+uwu-sources.workspace = true
+uwu-normalizer.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+log.workspace = true

@@ -1,0 +1,11 @@
+# Rust build output
+/target
+**/*.rs.bk
+*.pdb
+*.exe
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+*.log

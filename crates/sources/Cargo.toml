@@ -1,0 +1,15 @@
+[package]
+name = "uwu-sources"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+uwu-schema.workspace = true
+tokio.workspace = true
+async-trait.workspace = true
+anyhow.workspace = true
+notify.workspace = true
+log.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
