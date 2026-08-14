@@ -12,4 +12,10 @@ notify.workspace = true
 log.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-windows-sys.workspace = true
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_EventLog",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }

@@ -50,7 +50,11 @@ impl LogNormalizer {
                 }
 
                 // Nhận diện Timestamp
-                if k_lower == "timestamp" || k_lower == "time" || k_lower == "ts" || k_lower == "@timestamp" {
+                if k_lower == "timestamp"
+                    || k_lower == "time"
+                    || k_lower == "ts"
+                    || k_lower == "@timestamp"
+                {
                     if let Some(s) = val.as_str() {
                         if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
                             timestamp = dt.with_timezone(&Utc);
@@ -123,9 +127,16 @@ impl LogNormalizer {
             }
         }
 
-        let message = format!("Windows Event {}", fields.get("event_id").unwrap_or(&serde_json::json!("Unknown")));
+        let message = format!(
+            "Windows Event {}",
+            fields
+                .get("event_id")
+                .unwrap_or(&serde_json::json!("Unknown"))
+        );
 
-        Some(LogEvent::new(timestamp, level, source_id, message, fields, xml))
+        Some(LogEvent::new(
+            timestamp, level, source_id, message, fields, xml,
+        ))
     }
 
     fn normalize_unstructured_text(source_id: &str, raw: &str) -> LogEvent {
@@ -146,7 +157,14 @@ impl LogNormalizer {
             level = LogLevel::Trace;
         }
 
-        LogEvent::new(Utc::now(), level, source_id, clean.clone(), HashMap::new(), clean)
+        LogEvent::new(
+            Utc::now(),
+            level,
+            source_id,
+            clean.clone(),
+            HashMap::new(),
+            clean,
+        )
     }
 }
 
@@ -162,7 +180,7 @@ pub fn strip_ansi(s: &str) -> String {
                 let _ = chars.next();
                 while let Some(&next_c) = chars.peek() {
                     let _ = chars.next();
-                    if next_c >= '@' && next_c <= '~' {
+                    if ('@'..='~').contains(&next_c) {
                         break;
                     }
                 }
@@ -217,4 +235,3 @@ mod tests {
         assert_eq!(strip_ansi(ansi_text), "[ERROR] Connection failed");
     }
 }
-

@@ -43,10 +43,15 @@ impl LogSource for ProcessSource {
         cmd.stderr(Stdio::piped());
         cmd.kill_on_drop(true);
 
-        let mut child = cmd
-            .spawn()
-            .with_context(|| format!("Failed to spawn process: {} {:?}", self.command, self.args))?;
+        let mut child = cmd.spawn().with_context(|| {
+            format!("Failed to spawn process: {} {:?}", self.command, self.args)
+        })?;
 
+        // Trên Windows: Gán Child Process vào Windows JobObject để OS tự động Kill cả Cây Tiến Trình (Process Tree) khi uwu-log thoát
+        #[cfg(target_os = "windows")]
+        setup_windows_job_object(&child);
+
+        let child_pid = child.id();
         let source_id_out = self.source_id.clone();
         let source_id_err = format!("{}:stderr", self.source_id);
         let tx_out = tx.clone();
@@ -89,17 +94,51 @@ impl LogSource for ProcessSource {
             });
         }
 
-        // Task giám sát lifecycle: khi channel đóng (ứng dụng thoát), kill ngay lập tức child process
+        // Task giám sát lifecycle: khi channel đóng (ứng dụng thoát), kill cả Cây Tiến Trình (Process Tree)
         tokio::spawn(async move {
             tokio::select! {
                 _ = child.wait() => {},
                 _ = tx.closed() => {
+                    #[cfg(target_os = "windows")]
+                    if let Some(pid) = child_pid {
+                        // Taskkill cưỡng chế diệt cả cây tiến trình con/cháu (Process Tree) trên Windows
+                        let _ = std::process::Command::new("taskkill")
+                            .args(["/F", "/T", "/PID", &pid.to_string()])
+                            .output();
+                    }
+                    #[cfg(not(target_os = "windows"))]
+                    let _ = child_pid;
                     let _ = child.kill().await;
                 }
             }
         });
 
         Ok(())
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn setup_windows_job_object(child: &tokio::process::Child) {
+    use windows_sys::Win32::Foundation::HANDLE;
+    use windows_sys::Win32::System::JobObjects::*;
+
+    unsafe {
+        let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+        if !job.is_null() {
+            let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                &info as *const _ as *const _,
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            );
+
+            if let Some(raw_handle) = child.raw_handle() {
+                AssignProcessToJobObject(job, raw_handle as HANDLE);
+                let _ = job;
+            }
+        }
     }
 }
 
@@ -112,7 +151,10 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(100);
 
         #[cfg(target_os = "windows")]
-        let proc = ProcessSource::new("cmd", vec!["/c".to_string(), "echo Hello ProcessSource".to_string()]);
+        let proc = ProcessSource::new(
+            "cmd",
+            vec!["/c".to_string(), "echo Hello ProcessSource".to_string()],
+        );
 
         #[cfg(not(target_os = "windows"))]
         let proc = ProcessSource::new("echo", vec!["Hello ProcessSource".to_string()]);
@@ -120,7 +162,9 @@ mod tests {
         proc.start_stream(tx).await.unwrap();
 
         let mut received = Vec::new();
-        while let Ok(Some(entry)) = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv()).await {
+        while let Ok(Some(entry)) =
+            tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv()).await
+        {
             if let RawPayload::Text(text) = entry.payload {
                 received.push(text);
                 break;

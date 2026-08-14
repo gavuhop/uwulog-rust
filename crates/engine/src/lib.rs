@@ -1,11 +1,11 @@
 use anyhow::Result;
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use tokio::sync::mpsc;
 use uwu_core::LogEngine as CoreFilterEngine;
 use uwu_normalizer::LogNormalizer;
 use uwu_schema::{LogEvent, RawLogEntry};
-use std::sync::atomic::{AtomicU64, Ordering};
 use uwu_sources::LogSource;
 
 pub struct SystemEngine {
@@ -151,4 +151,3 @@ mod tests {
         assert_eq!(results[0].source_id, "test:stream");
     }
 }
-

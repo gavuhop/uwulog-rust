@@ -16,7 +16,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use uwu_engine::SystemEngine;
 use uwu_schema::LogLevel;
-use uwu_sources::{FileSource, ProcessSource, WinEventSource};
+#[cfg(target_os = "windows")]
+use uwu_sources::WinEventSource;
+use uwu_sources::{FileSource, ProcessSource};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -53,23 +55,36 @@ async fn main() -> Result<()> {
 
                 let (prog, proc_args) = if cmd_args.is_empty() && cmd_str.contains(' ') {
                     let parts: Vec<&str> = cmd_str.split_whitespace().collect();
-                    (parts[0].to_string(), parts[1..].iter().map(|s| s.to_string()).collect())
+                    (
+                        parts[0].to_string(),
+                        parts[1..].iter().map(|s| s.to_string()).collect(),
+                    )
                 } else {
                     (cmd_str.clone(), cmd_args)
                 };
 
-                let _ = engine.add_source(Box::new(ProcessSource::new(prog, proc_args))).await;
+                let _ = engine
+                    .add_source(Box::new(ProcessSource::new(prog, proc_args)))
+                    .await;
                 added_custom_source = true;
                 break;
             }
         } else if arg == "-f" || arg == "--file" {
             if i + 1 < args.len() {
                 let file_path = &args[i + 1];
-                let _ = engine.add_source(Box::new(FileSource::new(file_path))).await;
+                let _ = engine
+                    .add_source(Box::new(FileSource::new(file_path)))
+                    .await;
                 added_custom_source = true;
                 i += 1;
             }
-        } else if !arg.starts_with('-') && i > 0 && args[i - 1] != "-n" && args[i - 1] != "--limit" && args[i - 1] != "-cap" && args[i - 1] != "--capacity" {
+        } else if !arg.starts_with('-')
+            && i > 0
+            && args[i - 1] != "-n"
+            && args[i - 1] != "--limit"
+            && args[i - 1] != "-cap"
+            && args[i - 1] != "--capacity"
+        {
             let _ = engine.add_source(Box::new(FileSource::new(arg))).await;
             added_custom_source = true;
         }
@@ -79,8 +94,12 @@ async fn main() -> Result<()> {
     if !added_custom_source {
         #[cfg(target_os = "windows")]
         {
-            let _ = engine.add_source(Box::new(WinEventSource::new("System"))).await;
-            let _ = engine.add_source(Box::new(WinEventSource::new("Application"))).await;
+            let _ = engine
+                .add_source(Box::new(WinEventSource::new("System")))
+                .await;
+            let _ = engine
+                .add_source(Box::new(WinEventSource::new("Application")))
+                .await;
         }
     }
 
@@ -270,7 +289,8 @@ async fn run_tui<B: ratatui::backend::Backend>(
                             // Phím Space hoặc p để Bật/Tắt Auto-scroll
                             is_auto_scroll = !is_auto_scroll;
                             if is_auto_scroll && !cached_logs.is_empty() {
-                                let (matched, logs) = engine.search_with_count(&query, display_limit);
+                                let (matched, logs) =
+                                    engine.search_with_count(&query, display_limit);
                                 total_matched = matched;
                                 cached_logs = logs;
                                 last_processed_count = total_processed;
@@ -297,22 +317,18 @@ async fn run_tui<B: ratatui::backend::Backend>(
                                 }
                             }
                         }
-                        KeyCode::Home | KeyCode::Char('g') => {
-                            if displayed_count > 0 {
-                                list_state.select(Some(0));
-                                is_auto_scroll = false; // Nhảy lên đầu (log cũ nhất) -> Đóng băng view
-                            }
+                        KeyCode::Home | KeyCode::Char('g') if displayed_count > 0 => {
+                            list_state.select(Some(0));
+                            is_auto_scroll = false; // Nhảy lên đầu (log cũ nhất) -> Đóng băng view
                         }
-                        KeyCode::End | KeyCode::Char('G') => {
-                            if displayed_count > 0 {
-                                is_auto_scroll = true; // Nhảy xuống cuối (log mới nhất) -> Bật lại Live Tail
-                                let (matched, logs) = engine.search_with_count(&query, display_limit);
-                                total_matched = matched;
-                                cached_logs = logs;
-                                last_processed_count = total_processed;
-                                last_search_time = Instant::now();
-                                list_state.select(Some(cached_logs.len() - 1));
-                            }
+                        KeyCode::End | KeyCode::Char('G') if displayed_count > 0 => {
+                            is_auto_scroll = true; // Nhảy xuống cuối (log mới nhất) -> Bật lại Live Tail
+                            let (matched, logs) = engine.search_with_count(&query, display_limit);
+                            total_matched = matched;
+                            cached_logs = logs;
+                            last_processed_count = total_processed;
+                            last_search_time = Instant::now();
+                            list_state.select(Some(cached_logs.len() - 1));
                         }
                         KeyCode::PageUp => {
                             let current_idx = list_state.selected().unwrap_or(0);
@@ -325,11 +341,7 @@ async fn run_tui<B: ratatui::backend::Backend>(
                             let max_idx = displayed_count.saturating_sub(1);
                             let new_idx = (current_idx + 20).min(max_idx);
                             list_state.select(Some(new_idx));
-                            if new_idx == max_idx {
-                                is_auto_scroll = true;
-                            } else {
-                                is_auto_scroll = false;
-                            }
+                            is_auto_scroll = new_idx == max_idx;
                         }
                         _ => {}
                     },

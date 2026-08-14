@@ -2,7 +2,9 @@ use crate::traits::LogSource;
 use anyhow::Result;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
-use uwu_schema::{RawLogEntry, RawPayload};
+use uwu_schema::RawLogEntry;
+#[cfg(target_os = "windows")]
+use uwu_schema::RawPayload;
 
 pub struct WinEventSource {
     channel: String,
@@ -27,16 +29,20 @@ impl LogSource for WinEventSource {
     }
 
     async fn start_stream(&self, tx: mpsc::Sender<RawLogEntry>) -> Result<()> {
-        let channel = self.channel.clone();
-        let source_id = self.source_id.clone();
-
         #[cfg(target_os = "windows")]
         {
+            let channel = self.channel.clone();
+            let source_id = self.source_id.clone();
             tokio::spawn(async move {
                 if let Err(e) = run_win_event_stream(channel, source_id, tx).await {
                     log::error!("WinEventSource error: {:?}", e);
                 }
             });
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = (&tx, &self.channel, &self.source_id);
         }
 
         #[cfg(not(target_os = "windows"))]
@@ -93,8 +99,7 @@ async fn run_win_event_stream(
         };
 
         if status != 0 && returned > 0 {
-            for i in 0..returned as usize {
-                let evt_handle = events[i];
+            for &evt_handle in events.iter().take(returned as usize) {
                 if let Some(xml_str) = render_event_xml(evt_handle) {
                     let entry = RawLogEntry {
                         source_id: source_id.clone(),

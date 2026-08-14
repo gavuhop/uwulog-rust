@@ -12,7 +12,7 @@ pub fn strip_ansi(s: &str) -> String {
                 let _ = chars.next(); // consume '['
                 while let Some(&next_c) = chars.peek() {
                     let _ = chars.next();
-                    if next_c >= '@' && next_c <= '~' {
+                    if ('@'..='~').contains(&next_c) {
                         break;
                     }
                 }
