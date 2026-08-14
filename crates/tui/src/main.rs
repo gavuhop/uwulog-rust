@@ -125,7 +125,7 @@ async fn run_tui<B: ratatui::backend::Backend>(
     let mut input_mode = InputMode::Normal;
     let mut list_state = ListState::default();
 
-    // Chế độ Auto Scroll Tail mode (mặc định true: tự động cuộn theo log mới xuất hiện ở dưới cùng)
+    // Chế độ Auto Scroll Tail mode (mặc định true: tự động cuộn theo log mới ở dưới cùng)
     let mut is_auto_scroll = true;
 
     let (mut total_matched, mut cached_logs) = engine.search_with_count(&query, display_limit);
@@ -146,7 +146,9 @@ async fn run_tui<B: ratatui::backend::Backend>(
         let new_logs_arrived = total_processed != last_processed_count
             && now.duration_since(last_search_time) > Duration::from_millis(200);
 
-        let need_search = query_changed || new_logs_arrived;
+        // ĐỐI VỚI CHẾ ĐỘ QUAN SÁT (is_auto_scroll == false): KHÔNG BAO GIỜ RE-SEARCH HAY THAY ĐỔI CACHED_LOGS!
+        // Giúp đóng băng 100% giao diện, không bị trôi kể cả khi RAM tràn 50,000 log.
+        let need_search = query_changed || (is_auto_scroll && new_logs_arrived);
 
         if need_search {
             let (matched, logs) = engine.search_with_count(&query, display_limit);
@@ -220,7 +222,7 @@ async fn run_tui<B: ratatui::backend::Backend>(
             let mode_tag = if is_auto_scroll {
                 " [LIVE AUTO-SCROLL (TAIL -F)] "
             } else {
-                " [QUAN SÁT CỐ ĐỊNH - PAUSED] "
+                " [ĐÃ ĐÓNG BĂNG MÀN HÌNH QUAN SÁT - FROZEN] "
             };
 
             let title_text = if total_matched > displayed_count {
@@ -242,7 +244,7 @@ async fn run_tui<B: ratatui::backend::Backend>(
                     if is_auto_scroll {
                         " [LIVE TAIL] Tự động cuộn theo log mới ở dưới cùng | [Up/Dn]: Cuộn quan sát log cũ | [/]: Tìm kiếm | [Q]: Thoát "
                     } else {
-                        " [PAUSED] Đang cố định dòng log đang đọc | [End/G]: Quay lại Live Tail | [Up/Dn]: Di chuyển | [Q]: Thoát "
+                        " [FROZEN] ĐÃ ĐÓNG BĂNG MÀN HÌNH ĐỂ QUAN SÁT | Nhấn [End/G/Space] để bật lại Live Tail | [Up/Dn]: Di chuyển "
                     }
                 }
                 InputMode::Editing => " [Enter/Esc]: Đóng ô nhập từ khóa ",
@@ -268,6 +270,11 @@ async fn run_tui<B: ratatui::backend::Backend>(
                             // Phím Space hoặc p để Bật/Tắt Auto-scroll
                             is_auto_scroll = !is_auto_scroll;
                             if is_auto_scroll && !cached_logs.is_empty() {
+                                let (matched, logs) = engine.search_with_count(&query, display_limit);
+                                total_matched = matched;
+                                cached_logs = logs;
+                                last_processed_count = total_processed;
+                                last_search_time = Instant::now();
                                 list_state.select(Some(cached_logs.len() - 1));
                             }
                         }
@@ -275,7 +282,7 @@ async fn run_tui<B: ratatui::backend::Backend>(
                             let current_idx = list_state.selected().unwrap_or(0);
                             if current_idx > 0 {
                                 list_state.select(Some(current_idx - 1));
-                                is_auto_scroll = false; // Tự động tạm dừng cuộn khi cuộn lên xem log cũ
+                                is_auto_scroll = false; // Đóng băng view ngay khi cuộn lên xem log cũ
                             }
                         }
                         KeyCode::Down => {
@@ -293,13 +300,18 @@ async fn run_tui<B: ratatui::backend::Backend>(
                         KeyCode::Home | KeyCode::Char('g') => {
                             if displayed_count > 0 {
                                 list_state.select(Some(0));
-                                is_auto_scroll = false; // Nhảy lên đầu (log cũ nhất) -> Tạm dừng cuộn
+                                is_auto_scroll = false; // Nhảy lên đầu (log cũ nhất) -> Đóng băng view
                             }
                         }
                         KeyCode::End | KeyCode::Char('G') => {
                             if displayed_count > 0 {
-                                list_state.select(Some(displayed_count - 1));
                                 is_auto_scroll = true; // Nhảy xuống cuối (log mới nhất) -> Bật lại Live Tail
+                                let (matched, logs) = engine.search_with_count(&query, display_limit);
+                                total_matched = matched;
+                                cached_logs = logs;
+                                last_processed_count = total_processed;
+                                last_search_time = Instant::now();
+                                list_state.select(Some(cached_logs.len() - 1));
                             }
                         }
                         KeyCode::PageUp => {
