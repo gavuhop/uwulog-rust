@@ -75,6 +75,28 @@ impl LogEvent {
             raw: raw.into(),
         }
     }
+
+    pub fn to_json_value(&self) -> serde_json::Value {
+        let mut map = serde_json::Map::new();
+        map.insert("id".to_string(), serde_json::json!(self.id.to_string()));
+        map.insert(
+            "timestamp".to_string(),
+            serde_json::json!(self.timestamp.to_rfc3339()),
+        );
+        map.insert(
+            "level".to_string(),
+            serde_json::json!(self.level.to_string()),
+        );
+        map.insert("source_id".to_string(), serde_json::json!(&self.source_id));
+        map.insert("message".to_string(), serde_json::json!(&self.message));
+        map.insert("raw".to_string(), serde_json::json!(&self.raw));
+
+        for (k, v) in &self.fields {
+            map.insert(k.clone(), v.clone());
+        }
+
+        serde_json::Value::Object(map)
+    }
 }
 
 /// RawPayload chứa dữ liệu chưa chuẩn hóa nhận từ Nguồn (Sources)

@@ -22,6 +22,7 @@ pub struct App {
     pub last_query: String,
     pub last_processed_count: u64,
     pub last_search_time: Instant,
+    pub should_redraw: bool,
 }
 
 impl App {
@@ -44,6 +45,7 @@ impl App {
             last_query: String::new(),
             last_processed_count: 0,
             last_search_time: Instant::now(),
+            should_redraw: true,
         }
     }
 
@@ -55,9 +57,8 @@ impl App {
         let new_logs_arrived = total_processed != self.last_processed_count
             && now.duration_since(self.last_search_time) > Duration::from_millis(200);
 
-        let need_search = query_changed || (self.is_auto_scroll && new_logs_arrived);
-
-        if need_search {
+        if query_changed {
+            // 1. Khi từ khóa thay đổi (đang gõ): Chạy Full Search 1 lần trên dữ liệu RingBuffer
             let (matched, logs) = self
                 .engine
                 .search_with_count(&self.query, self.display_limit);
@@ -70,10 +71,35 @@ impl App {
             if self.is_auto_scroll && !self.cached_logs.is_empty() {
                 self.list_state.select(Some(self.cached_logs.len() - 1));
             }
+            self.should_redraw = true;
+        } else if self.is_auto_scroll && new_logs_arrived {
+            // 2. Khi log mới streaming về (từ khóa không đổi): Lọc TĂNG TIẾN (Incremental) CHỈ trên log mới về!
+            let (new_matched_count, new_matching_logs) = self
+                .engine
+                .filter_incremental(&self.query, self.last_processed_count);
+
+            if new_matched_count > 0 {
+                self.total_matched += new_matched_count;
+                self.cached_logs.extend(new_matching_logs);
+
+                if self.cached_logs.len() > self.display_limit {
+                    let overflow = self.cached_logs.len() - self.display_limit;
+                    self.cached_logs.drain(0..overflow);
+                }
+
+                if !self.cached_logs.is_empty() {
+                    self.list_state.select(Some(self.cached_logs.len() - 1));
+                }
+                self.should_redraw = true;
+            }
+
+            self.last_processed_count = total_processed;
+            self.last_search_time = now;
         }
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> bool {
+        self.should_redraw = true;
         let displayed_count = self.cached_logs.len();
 
         match self.input_mode {

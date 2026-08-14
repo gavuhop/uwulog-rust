@@ -91,8 +91,22 @@ impl SystemEngine {
     }
 
     pub fn search_with_count(&self, query: &str, limit: usize) -> (usize, Vec<LogEvent>) {
+        let trimmed = query.trim();
+
+        // Fast path: Khi từ khóa rỗng, lấy trực tiếp từ In-memory RingBuffer mà không tốn CPU lọc biểu thức
+        if trimmed.is_empty() {
+            if let Ok(evts) = self.events.read() {
+                let total_matched = evts.len();
+                let skip_count = total_matched.saturating_sub(limit);
+                let events = evts.iter().skip(skip_count).cloned().collect();
+                return (total_matched, events);
+            } else {
+                return (0, Vec::new());
+            }
+        }
+
         let matched_indices = if let Ok(fe) = self.filter_engine.read() {
-            fe.filter(query.to_string())
+            fe.filter(trimmed.to_string())
         } else {
             Vec::new()
         };
@@ -111,6 +125,43 @@ impl SystemEngine {
         };
 
         (total_matched, events)
+    }
+
+    pub fn filter_incremental(&self, query: &str, last_processed: u64) -> (usize, Vec<LogEvent>) {
+        let trimmed = query.trim();
+        let current_total = self.total_processed.load(Ordering::Relaxed);
+        if current_total <= last_processed {
+            return (0, Vec::new());
+        }
+
+        let new_count = (current_total - last_processed) as usize;
+
+        if let Ok(evts) = self.events.read() {
+            let total_in_buffer = evts.len();
+            let take_count = new_count.min(total_in_buffer);
+            let start_idx = total_in_buffer.saturating_sub(take_count);
+
+            let new_slice: Vec<LogEvent> = evts.iter().skip(start_idx).cloned().collect();
+
+            if trimmed.is_empty() {
+                let matched_len = new_slice.len();
+                return (matched_len, new_slice);
+            }
+
+            if let Ok(fe) = self.filter_engine.read() {
+                let json_slice: Vec<serde_json::Value> =
+                    new_slice.iter().map(|e| e.to_json_value()).collect();
+                let matched_indices = fe.filter_slice(&json_slice, trimmed);
+                let matched_events: Vec<LogEvent> = matched_indices
+                    .into_iter()
+                    .filter_map(|i| new_slice.get(i).cloned())
+                    .collect();
+                let matched_len = matched_events.len();
+                return (matched_len, matched_events);
+            }
+        }
+
+        (0, Vec::new())
     }
 
     pub fn total_logs(&self) -> usize {

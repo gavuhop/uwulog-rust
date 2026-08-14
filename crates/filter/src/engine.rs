@@ -96,6 +96,38 @@ impl LogEngine {
             .collect()
     }
 
+    pub fn filter_slice(&self, slice: &[Value], query: &str) -> Vec<usize> {
+        let trimmed = query.trim();
+        if trimmed.is_empty() {
+            return (0..slice.len()).collect();
+        }
+
+        let data_now = if self.max_timestamp > 0.0 {
+            self.max_timestamp
+        } else {
+            utils::now_secs()
+        };
+
+        let tokens = parser::tokenize(trimmed);
+        let mut parser = parser::Parser::new(tokens, data_now);
+        let ast = match parser.parse() {
+            Some(e) => e,
+            None => return (0..slice.len()).collect(),
+        };
+
+        slice
+            .iter()
+            .enumerate()
+            .filter_map(|(i, log)| {
+                if evaluator::eval(&ast, log, data_now) {
+                    Some(i)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
     pub fn get_logs(&self, indices: Vec<u32>) -> Vec<Value> {
         indices
             .into_iter()

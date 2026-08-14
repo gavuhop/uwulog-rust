@@ -128,11 +128,20 @@ async fn run_app<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
 ) -> io::Result<()> {
+    // Vẽ frame khởi tạo ban đầu
+    terminal.draw(|f| ui::render(f, app))?;
+    app.should_redraw = false;
+
     loop {
         app.tick();
-        terminal.draw(|f| ui::render(f, app))?;
 
-        if event::poll(Duration::from_millis(30))? {
+        // CHỈ VẼ LẠI MÀN HÌNH KHI CÓ SỰ THAY ĐỔI THỰC SỰ (Event-driven Reactive Render)
+        if app.should_redraw {
+            terminal.draw(|f| ui::render(f, app))?;
+            app.should_redraw = false;
+        }
+
+        if event::poll(Duration::from_millis(50))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press && app.handle_key(key) {
                     return Ok(());
