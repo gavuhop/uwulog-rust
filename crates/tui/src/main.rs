@@ -14,7 +14,6 @@ use ratatui::{
 use std::io::{self, Write};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use uuid::Uuid;
 use uwu_engine::SystemEngine;
 use uwu_schema::LogLevel;
 use uwu_sources::{FileSource, ProcessSource, WinEventSource};
@@ -126,21 +125,28 @@ async fn run_tui<B: ratatui::backend::Backend>(
     let mut input_mode = InputMode::Normal;
     let mut list_state = ListState::default();
 
-    // UUID của dòng log đang quan sát (nếu None -> chế độ Live Streaming tự cuộn)
-    let mut selected_log_id: Option<Uuid> = None;
+    // Chế độ Auto Scroll Tail mode (mặc định true: tự động cuộn theo log mới xuất hiện ở dưới cùng)
+    let mut is_auto_scroll = true;
 
     let (mut total_matched, mut cached_logs) = engine.search_with_count(&query, display_limit);
     let mut last_query = String::new();
     let mut last_processed_count = engine.total_processed();
     let mut last_search_time = Instant::now();
 
+    if !cached_logs.is_empty() {
+        list_state.select(Some(cached_logs.len() - 1));
+    }
+
     loop {
         let total_logs = engine.total_logs();
         let total_processed = engine.total_processed();
         let now = Instant::now();
 
-        let need_search = query != last_query
-            || (total_processed != last_processed_count && now.duration_since(last_search_time) > Duration::from_millis(200));
+        let query_changed = query != last_query;
+        let new_logs_arrived = total_processed != last_processed_count
+            && now.duration_since(last_search_time) > Duration::from_millis(200);
+
+        let need_search = query_changed || new_logs_arrived;
 
         if need_search {
             let (matched, logs) = engine.search_with_count(&query, display_limit);
@@ -150,13 +156,9 @@ async fn run_tui<B: ratatui::backend::Backend>(
             last_processed_count = total_processed;
             last_search_time = now;
 
-            // Định vị lại chính xác vị trí dòng log đang chọn nếu đang ở chế độ Quan sát (Lock Focus)
-            if let Some(target_id) = selected_log_id {
-                if let Some(new_idx) = cached_logs.iter().position(|log| log.id == target_id) {
-                    list_state.select(Some(new_idx));
-                }
-            } else if !cached_logs.is_empty() {
-                list_state.select(Some(0));
+            // Nếu đang ở Auto-scroll mode, tự động chọn dòng dưới cùng (mới nhất)
+            if is_auto_scroll && !cached_logs.is_empty() {
+                list_state.select(Some(cached_logs.len() - 1));
             }
         }
 
@@ -192,7 +194,6 @@ async fn run_tui<B: ratatui::backend::Backend>(
 
             let items: Vec<ListItem> = cached_logs
                 .iter()
-                .take(300)
                 .map(|log| {
                     let level_color = match log.level {
                         LogLevel::Error | LogLevel::Fatal => Color::Red,
@@ -216,10 +217,10 @@ async fn run_tui<B: ratatui::backend::Backend>(
                 })
                 .collect();
 
-            let mode_tag = if selected_log_id.is_some() {
-                " [QUAN SÁT - LOCK FOCUS] "
+            let mode_tag = if is_auto_scroll {
+                " [LIVE AUTO-SCROLL (TAIL -F)] "
             } else {
-                " [LIVE STREAMING] "
+                " [QUAN SÁT CỐ ĐỊNH - PAUSED] "
             };
 
             let title_text = if total_matched > displayed_count {
@@ -233,21 +234,21 @@ async fn run_tui<B: ratatui::backend::Backend>(
 
             let log_list = List::new(items)
                 .block(Block::default().borders(Borders::ALL).title(title_text))
-                .highlight_style(Style::default().add_modifier(Modifier::BOLD).bg(Color::Rgb(40, 40, 60)));
+                .highlight_style(Style::default().add_modifier(Modifier::BOLD).bg(Color::Rgb(40, 40, 70)));
             f.render_stateful_widget(log_list, chunks[1], &mut list_state);
 
             let status_text = match input_mode {
                 InputMode::Normal => {
-                    if selected_log_id.is_some() {
-                        " [LOCK MODE] Đang khóa ở log đang chọn | [Home/g]: Về Live Stream | [Up/Dn]: Di chuyển | [Q]: Thoát "
+                    if is_auto_scroll {
+                        " [LIVE TAIL] Tự động cuộn theo log mới ở dưới cùng | [Up/Dn]: Cuộn quan sát log cũ | [/]: Tìm kiếm | [Q]: Thoát "
                     } else {
-                        " [LIVE MODE] Tự động theo dõi log mới | [/]: Tìm | [Up/Dn]: Chọn log quan sát | [Q]: Thoát "
+                        " [PAUSED] Đang cố định dòng log đang đọc | [End/G]: Quay lại Live Tail | [Up/Dn]: Di chuyển | [Q]: Thoát "
                     }
                 }
                 InputMode::Editing => " [Enter/Esc]: Đóng ô nhập từ khóa ",
             };
             let status_bar = Paragraph::new(status_text)
-                .style(Style::default().bg(if selected_log_id.is_some() { Color::DarkGray } else { Color::Blue }).fg(Color::White));
+                .style(Style::default().bg(if is_auto_scroll { Color::Blue } else { Color::Rgb(180, 100, 0) }).fg(Color::White));
             f.render_widget(status_bar, chunks[2]);
         })?;
 
@@ -263,75 +264,60 @@ async fn run_tui<B: ratatui::backend::Backend>(
                         KeyCode::Char('/') | KeyCode::Char('i') => {
                             input_mode = InputMode::Editing;
                         }
-                        KeyCode::Down => {
-                            let new_idx = match list_state.selected() {
-                                Some(i) => {
-                                    if i >= displayed_count.saturating_sub(1) {
-                                        0
-                                    } else {
-                                        i + 1
-                                    }
-                                }
-                                None => 0,
-                            };
-                            list_state.select(Some(new_idx));
-                            selected_log_id = if new_idx == 0 {
-                                None
-                            } else {
-                                cached_logs.get(new_idx).map(|l| l.id)
-                            };
+                        KeyCode::Char(' ') | KeyCode::Char('p') => {
+                            // Phím Space hoặc p để Bật/Tắt Auto-scroll
+                            is_auto_scroll = !is_auto_scroll;
+                            if is_auto_scroll && !cached_logs.is_empty() {
+                                list_state.select(Some(cached_logs.len() - 1));
+                            }
                         }
                         KeyCode::Up => {
-                            let new_idx = match list_state.selected() {
-                                Some(i) => {
-                                    if i == 0 {
-                                        displayed_count.saturating_sub(1)
-                                    } else {
-                                        i - 1
-                                    }
+                            let current_idx = list_state.selected().unwrap_or(0);
+                            if current_idx > 0 {
+                                list_state.select(Some(current_idx - 1));
+                                is_auto_scroll = false; // Tự động tạm dừng cuộn khi cuộn lên xem log cũ
+                            }
+                        }
+                        KeyCode::Down => {
+                            let current_idx = list_state.selected().unwrap_or(0);
+                            if current_idx < displayed_count.saturating_sub(1) {
+                                let new_idx = current_idx + 1;
+                                list_state.select(Some(new_idx));
+                                if new_idx == displayed_count.saturating_sub(1) {
+                                    is_auto_scroll = true; // Xuống tới tận cùng -> tự động bật lại Live Auto-scroll
+                                } else {
+                                    is_auto_scroll = false;
                                 }
-                                None => 0,
-                            };
-                            list_state.select(Some(new_idx));
-                            selected_log_id = if new_idx == 0 {
-                                None
-                            } else {
-                                cached_logs.get(new_idx).map(|l| l.id)
-                            };
+                            }
                         }
                         KeyCode::Home | KeyCode::Char('g') => {
                             if displayed_count > 0 {
                                 list_state.select(Some(0));
-                                selected_log_id = None; // Reset về Live Streaming mode
+                                is_auto_scroll = false; // Nhảy lên đầu (log cũ nhất) -> Tạm dừng cuộn
                             }
                         }
                         KeyCode::End | KeyCode::Char('G') => {
                             if displayed_count > 0 {
-                                let new_idx = displayed_count - 1;
-                                list_state.select(Some(new_idx));
-                                selected_log_id = cached_logs.get(new_idx).map(|l| l.id);
+                                list_state.select(Some(displayed_count - 1));
+                                is_auto_scroll = true; // Nhảy xuống cuối (log mới nhất) -> Bật lại Live Tail
                             }
                         }
                         KeyCode::PageUp => {
-                            let i = list_state.selected().unwrap_or(0);
-                            let new_idx = i.saturating_sub(20);
+                            let current_idx = list_state.selected().unwrap_or(0);
+                            let new_idx = current_idx.saturating_sub(20);
                             list_state.select(Some(new_idx));
-                            selected_log_id = if new_idx == 0 {
-                                None
-                            } else {
-                                cached_logs.get(new_idx).map(|l| l.id)
-                            };
+                            is_auto_scroll = false;
                         }
                         KeyCode::PageDown => {
-                            let i = list_state.selected().unwrap_or(0);
+                            let current_idx = list_state.selected().unwrap_or(0);
                             let max_idx = displayed_count.saturating_sub(1);
-                            let new_idx = (i + 20).min(max_idx);
+                            let new_idx = (current_idx + 20).min(max_idx);
                             list_state.select(Some(new_idx));
-                            selected_log_id = if new_idx == 0 {
-                                None
+                            if new_idx == max_idx {
+                                is_auto_scroll = true;
                             } else {
-                                cached_logs.get(new_idx).map(|l| l.id)
-                            };
+                                is_auto_scroll = false;
+                            }
                         }
                         _ => {}
                     },
@@ -341,11 +327,11 @@ async fn run_tui<B: ratatui::backend::Backend>(
                         }
                         KeyCode::Char(c) => {
                             query.push(c);
-                            selected_log_id = None; // Reset lock khi đổi query
+                            is_auto_scroll = true;
                         }
                         KeyCode::Backspace => {
                             query.pop();
-                            selected_log_id = None;
+                            is_auto_scroll = true;
                         }
                         _ => {}
                     },

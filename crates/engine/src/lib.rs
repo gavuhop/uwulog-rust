@@ -98,12 +98,12 @@ impl SystemEngine {
         };
 
         let total_matched = matched_indices.len();
+        let skip_count = total_matched.saturating_sub(limit);
 
         let events = if let Ok(evts) = self.events.read() {
             matched_indices
                 .into_iter()
-                .rev() // Lấy từ log mới nhất trước
-                .take(limit)
+                .skip(skip_count)
                 .filter_map(|i| evts.get(i as usize).cloned())
                 .collect()
         } else {
