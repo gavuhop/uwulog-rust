@@ -32,44 +32,68 @@ impl LogNormalizer {
         Self::normalize_unstructured_text(&entry.source_id, &raw_text)
     }
 
+    fn flatten_json_value(
+        prefix: &str,
+        v: &serde_json::Value,
+        out: &mut HashMap<String, serde_json::Value>,
+    ) {
+        if let Some(obj) = v.as_object() {
+            for (k, child_val) in obj {
+                let full_key = if prefix.is_empty() {
+                    k.clone()
+                } else {
+                    format!("{}.{}", prefix, k)
+                };
+
+                if child_val.is_object() {
+                    Self::flatten_json_value(&full_key, child_val, out);
+                } else {
+                    out.insert(full_key, child_val.clone());
+                }
+            }
+        }
+    }
+
     fn normalize_json(source_id: &str, v: &serde_json::Value, raw: &str) -> LogEvent {
         let mut fields = HashMap::new();
         let mut level = LogLevel::Unknown;
         let mut timestamp = Utc::now();
         let mut message = String::new();
 
-        if let Some(obj) = v.as_object() {
-            for (k, val) in obj {
-                let k_lower = k.to_lowercase();
+        // 1. Phẳng hóa toàn bộ cây JSON object
+        Self::flatten_json_value("", v, &mut fields);
 
-                // Nhận diện Level
-                if k_lower == "level" || k_lower == "lvl" || k_lower == "severity" {
-                    if let Some(s) = val.as_str() {
-                        level = LogLevel::parse_str(s);
-                    }
+        // 2. Nhận diện các trường đặc biệt từ mảng đã phẳng hóa
+        if let Some(val) = fields
+            .get("level")
+            .or_else(|| fields.get("lvl"))
+            .or_else(|| fields.get("severity"))
+        {
+            if let Some(s) = val.as_str() {
+                level = LogLevel::parse_str(s);
+            }
+        }
+
+        if let Some(val) = fields
+            .get("timestamp")
+            .or_else(|| fields.get("time"))
+            .or_else(|| fields.get("ts"))
+            .or_else(|| fields.get("@timestamp"))
+        {
+            if let Some(s) = val.as_str() {
+                if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+                    timestamp = dt.with_timezone(&Utc);
                 }
+            }
+        }
 
-                // Nhận diện Timestamp
-                if k_lower == "timestamp"
-                    || k_lower == "time"
-                    || k_lower == "ts"
-                    || k_lower == "@timestamp"
-                {
-                    if let Some(s) = val.as_str() {
-                        if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
-                            timestamp = dt.with_timezone(&Utc);
-                        }
-                    }
-                }
-
-                // Nhận diện Message
-                if k_lower == "message" || k_lower == "msg" || k_lower == "text" {
-                    if let Some(s) = val.as_str() {
-                        message = s.to_string();
-                    }
-                }
-
-                fields.insert(k.clone(), val.clone());
+        if let Some(val) = fields
+            .get("message")
+            .or_else(|| fields.get("msg"))
+            .or_else(|| fields.get("text"))
+        {
+            if let Some(s) = val.as_str() {
+                message = s.to_string();
             }
         }
 
@@ -233,5 +257,40 @@ mod tests {
     fn test_strip_ansi() {
         let ansi_text = "\x1b[31m[ERROR]\x1b[0m Connection failed";
         assert_eq!(strip_ansi(ansi_text), "[ERROR] Connection failed");
+    }
+
+    #[test]
+    fn test_flatten_nested_json_keys() {
+        let nested_json = serde_json::json!({
+            "level": "WARN",
+            "message": "User action",
+            "metadata": {
+                "system": {
+                    "env": "production",
+                    "cluster": "k8s-us-west"
+                },
+                "latency_ms": 120
+            }
+        });
+
+        let entry = RawLogEntry {
+            source_id: "test:nested".to_string(),
+            payload: RawPayload::Json(nested_json),
+        };
+
+        let event = LogNormalizer::normalize(entry);
+        assert_eq!(event.level, LogLevel::Warn);
+        assert_eq!(
+            event.fields.get("metadata.system.env").unwrap(),
+            &serde_json::json!("production")
+        );
+        assert_eq!(
+            event.fields.get("metadata.system.cluster").unwrap(),
+            &serde_json::json!("k8s-us-west")
+        );
+        assert_eq!(
+            event.fields.get("metadata.latency_ms").unwrap(),
+            &serde_json::json!(120)
+        );
     }
 }
