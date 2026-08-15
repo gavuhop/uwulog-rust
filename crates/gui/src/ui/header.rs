@@ -1,6 +1,6 @@
 use crate::app::UwuGuiApp;
 use crate::ui::theme;
-use eframe::egui::{self, Rounding, Stroke};
+use eframe::egui::{self, Id, Rounding, Stroke};
 
 pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     ui.horizontal(|ui| {
@@ -17,17 +17,43 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
         ui.add_space(8.0);
 
         // Search Input Box
+        let search_id = Id::new("search_query_input");
         let search_response = ui.add(
             egui::TextEdit::singleline(&mut app.query)
+                .id(search_id)
                 .hint_text("🔍 Filter query (e.g. level:error, status:500, time:now..10m)...")
                 .desired_width(500.0)
                 .font(egui::TextStyle::Monospace)
                 .margin(egui::Margin::symmetric(10.0, 6.0)),
         );
 
-        if search_response.changed() {
-            app.trigger_full_search();
+        // Giữ lại con trỏ chuột và focus vào ô input sau khi chọn gợi ý
+        if app.autocomplete_state.just_applied {
+            app.autocomplete_state.just_applied = false;
+            ui.ctx().memory_mut(|m| m.request_focus(search_id));
+            if let Some(mut state) = egui::text_edit::TextEditState::load(ui.ctx(), search_id) {
+                let char_count = app.query.chars().count();
+                state
+                    .cursor
+                    .set_char_range(Some(egui::text::CCursorRange::one(
+                        egui::text::CCursor::new(char_count),
+                    )));
+                state.store(ui.ctx(), search_id);
+            }
+        } else if search_response.changed() || search_response.gained_focus() {
+            let available_fields = app.get_available_log_fields();
+            let (suggestions, token_range) =
+                crate::ui::autocomplete::generate_suggestions(&app.query, &available_fields);
+            app.autocomplete_state.suggestions = suggestions;
+            app.autocomplete_state.active_token_range = token_range;
+            app.autocomplete_state.selected_index = 0;
+            app.autocomplete_state.is_open = !app.autocomplete_state.suggestions.is_empty();
+            if search_response.changed() {
+                app.trigger_full_search();
+            }
         }
+
+        let search_rect = search_response.rect;
 
         // Quick Clear button if query is not empty
         if !app.query.is_empty()
@@ -41,8 +67,12 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 .clicked()
         {
             app.query.clear();
+            app.autocomplete_state.is_open = false;
             app.trigger_full_search();
         }
+
+        // Render autocomplete popup dropdown below search box
+        crate::ui::autocomplete::render_autocomplete_popup(ui.ctx(), app, search_rect);
 
         // Right-aligned Controls
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -69,7 +99,7 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
             // Stop / Restart Source Button
             if app.is_source_running {
                 let stop_btn = egui::Button::new(
-                    egui::RichText::new("⏹ Stop Process")
+                    egui::RichText::new("⏹ Stop")
                         .color(theme::TEXT_PRIMARY)
                         .strong(),
                 )
@@ -86,7 +116,7 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 }
             } else {
                 let restart_btn = egui::Button::new(
-                    egui::RichText::new("🔄 Restart Source")
+                    egui::RichText::new("🔄 Restart")
                         .color(theme::TEXT_PRIMARY)
                         .strong(),
                 )

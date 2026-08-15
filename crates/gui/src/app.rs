@@ -1,3 +1,4 @@
+use crate::ui::autocomplete::AutocompleteState;
 use eframe::egui;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -47,6 +48,7 @@ pub struct UwuGuiApp {
     /// Kill signal: Khi gửi tín hiệu vào đây, forwarder task sẽ thoát → drop source_rx
     /// → tx.closed() trong ProcessSource kích hoạt → taskkill diệt toàn bộ cây tiến trình.
     pub kill_signal: Option<oneshot::Sender<()>>,
+    pub autocomplete_state: AutocompleteState,
 }
 
 impl UwuGuiApp {
@@ -130,6 +132,7 @@ impl UwuGuiApp {
             last_processed_count: 0,
             last_search_time: Instant::now(),
             kill_signal: None,
+            autocomplete_state: AutocompleteState::default(),
         };
 
         app.start_configured_source();
@@ -289,6 +292,90 @@ impl UwuGuiApp {
         // 3. Khởi tạo lại Nguồn Log mới sạch hoàn toàn
         self.start_configured_source();
         self.trigger_full_search();
+    }
+
+    pub fn get_available_log_fields(&self) -> Vec<(String, crate::ui::autocomplete::FieldType)> {
+        use std::collections::BTreeMap;
+        let mut fields_map = BTreeMap::new();
+
+        // 4 trường cốt lõi của cấu trúc LogEvent
+        fields_map.insert(
+            "level".to_string(),
+            crate::ui::autocomplete::FieldType::Text,
+        );
+        fields_map.insert(
+            "timestamp".to_string(),
+            crate::ui::autocomplete::FieldType::Time,
+        );
+        fields_map.insert(
+            "source".to_string(),
+            crate::ui::autocomplete::FieldType::Text,
+        );
+        fields_map.insert(
+            "message".to_string(),
+            crate::ui::autocomplete::FieldType::Text,
+        );
+
+        // Chỉ thêm các trường thực sự xuất hiện trong dữ liệu log đã nhận
+        for log in &self.cached_logs {
+            for (key, val) in &log.fields {
+                if !fields_map.contains_key(key) {
+                    let field_type = if val.is_number() {
+                        crate::ui::autocomplete::FieldType::Number
+                    } else if key.to_lowercase().contains("time")
+                        || key.to_lowercase().contains("date")
+                        || key.to_lowercase() == "ts"
+                    {
+                        crate::ui::autocomplete::FieldType::Time
+                    } else {
+                        crate::ui::autocomplete::FieldType::Text
+                    };
+                    fields_map.insert(key.clone(), field_type);
+                }
+            }
+        }
+
+        fields_map.into_iter().collect()
+    }
+
+    pub fn apply_autocomplete_suggestion(
+        &mut self,
+        item: &crate::ui::autocomplete::SuggestionItem,
+    ) {
+        let (start, end) = self.autocomplete_state.active_token_range;
+        if start <= end && end <= self.query.len() {
+            let mut new_query = String::new();
+            new_query.push_str(&self.query[..start]);
+            new_query.push_str(&item.insert_text);
+            new_query.push_str(&self.query[end..]);
+            self.query = new_query;
+        } else {
+            self.query = item.insert_text.clone();
+        }
+
+        self.autocomplete_state.just_applied = true;
+
+        match item.kind {
+            crate::ui::autocomplete::SuggestionKind::Key => {
+                // Phase 1 (Key) -> Mở Phase 2
+                let available_fields = self.get_available_log_fields();
+                let (suggestions, token_range) =
+                    crate::ui::autocomplete::generate_suggestions(&self.query, &available_fields);
+                if !suggestions.is_empty() {
+                    self.autocomplete_state.suggestions = suggestions;
+                    self.autocomplete_state.active_token_range = token_range;
+                    self.autocomplete_state.selected_index = 0;
+                    self.autocomplete_state.is_open = true;
+                } else {
+                    self.autocomplete_state.is_open = false;
+                }
+            }
+            crate::ui::autocomplete::SuggestionKind::OperatorOrValue => {
+                // Phase 2 (Operator / Value) -> ĐÓNG MENU NGAY LẬP TỨC để user tự do gõ dữ liệu
+                self.autocomplete_state.is_open = false;
+                self.trigger_full_search();
+            }
+        }
     }
 }
 
