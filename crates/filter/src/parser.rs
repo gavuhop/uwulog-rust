@@ -213,17 +213,33 @@ fn try_build_cmp(field: &str, op: NumOp, val_str: &str, now: f64) -> Option<Expr
 }
 
 fn parse_atom(s: &str, now: f64) -> Expr {
-    let mut s_clean = s.trim();
-    if ((s_clean.starts_with('"') && s_clean.ends_with('"'))
-        || (s_clean.starts_with('\'') && s_clean.ends_with('\'')))
-        && s_clean.len() >= 2
-    {
-        s_clean = &s_clean[1..s_clean.len() - 1];
+    let s_trim = s.trim();
+
+    // Nếu toàn bộ token được bọc trong dấu ngoặc kép -> tìm kiếm chuỗi tự do (Text search), không tách field:value
+    let is_entirely_quoted = ((s_trim.starts_with('"') && s_trim.ends_with('"'))
+        || (s_trim.starts_with('\'') && s_trim.ends_with('\'')))
+        && s_trim.len() >= 2;
+
+    if is_entirely_quoted {
+        let unquoted = &s_trim[1..s_trim.len() - 1];
+        let (negate, rest) = if let Some(stripped) = unquoted.strip_prefix('-') {
+            (true, stripped)
+        } else {
+            (false, unquoted)
+        };
+        let lower = rest.to_lowercase();
+        let expr = Expr::Text(vec![lower]);
+        return if negate {
+            Expr::Not(Box::new(expr))
+        } else {
+            expr
+        };
     }
-    let (negate, rest) = if let Some(stripped) = s_clean.strip_prefix('-') {
+
+    let (negate, rest) = if let Some(stripped) = s_trim.strip_prefix('-') {
         (true, stripped)
     } else {
-        (false, s_clean)
+        (false, s_trim)
     };
     let wrap = |e: Expr| -> Expr {
         if negate {

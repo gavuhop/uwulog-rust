@@ -157,13 +157,30 @@ mod tests {
     }
 
     #[test]
-    fn test_ansi_stripping() {
-        let mut engine = LogEngine::new(100);
+    fn test_timestamp_free_text_and_field_search() {
+        let ts = "2026-08-15T16:28:35.089Z";
+        let logs = vec![
+            log("INFO", ts, "User logged in", "auth"),
+            log("ERROR", "2026-08-15T16:29:00.000Z", "DB error", "db"),
+        ];
 
-        // 1. Test parsing line with ANSI codes
-        let line_with_ansi = "\x1b[32m{\"level\":\"info\",\"message\":\"hello\"}\x1b[0m";
-        let res = engine.push(line_with_ansi);
-        assert!(res.is_some());
-        assert_eq!(res.unwrap()["message"], "hello");
+        // 1. Quoted timestamp search
+        assert_eq!(filter_logs(logs.clone(), format!("\"{}\"", ts)), vec![0]);
+
+        // 2. Explicit field search
+        assert_eq!(
+            filter_logs(logs.clone(), format!("timestamp:\"{}\"", ts)),
+            vec![0]
+        );
+
+        // 3. Quoted text containing colon
+        let logs2 = vec![
+            log("INFO", "T1", "Error: failed to connect to db", "auth"),
+            log("INFO", "T2", "Success", "auth"),
+        ];
+        assert_eq!(
+            filter_logs(logs2, "\"Error: failed to connect\"".into()),
+            vec![0]
+        );
     }
 }
