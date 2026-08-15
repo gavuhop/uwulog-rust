@@ -20,8 +20,7 @@ pub const TEXT_KEY: Color32 = Color32::from_rgb(0x78, 0xa0, 0xd4); // #78a0d4 - 
 // Màu trạng thái mềm mại (Pastel Muted)
 pub const COLOR_ERROR: Color32 = Color32::from_rgb(0xd9, 0x65, 0x70); // #d96570 - Đỏ san hô mềm (không chói)
 pub const COLOR_WARN: Color32 = Color32::from_rgb(0xd4, 0xa3, 0x59); // #d4a359 - Vàng hổ phách ấm (không chói)
-#[allow(dead_code)]
-pub const COLOR_INFO: Color32 = TEXT_MUTED; // #727a90 - Đồng bộ với màu timestamp dịu mắt
+pub const COLOR_INFO: Color32 = Color32::from_rgb(0x7e, 0xc7, 0x87); // #7ec787 - Xanh lá pastel êm mắt
 #[allow(dead_code)]
 pub const COLOR_DEBUG: Color32 = TEXT_MUTED; // #727a90 - Đồng bộ dịu mắt
 
