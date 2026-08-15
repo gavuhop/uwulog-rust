@@ -45,6 +45,9 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
         app.pause_live();
     }
 
+    ui.visuals_mut().selection.bg_fill = theme::BG_ROW_SELECTED;
+    ui.visuals_mut().selection.stroke = egui::Stroke::NONE;
+
     let mut builder = TableBuilder::new(ui)
         .striped(true)
         .resizable(true)
@@ -118,6 +121,8 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                         theme::TEXT_MUTED
                     };
 
+                    let msg_color = row_color;
+
                     // Timestamp Column (Terminal monospace)
                     row.col(|ui| {
                         let time_str = event.timestamp.format("%Y-%m-%d %H:%M:%S").to_string();
@@ -157,7 +162,7 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                             egui::Label::new(
                                 egui::RichText::new(clean_msg)
                                     .font(egui::FontId::monospace(12.0))
-                                    .color(row_color),
+                                    .color(msg_color),
                             )
                             .truncate(),
                         );

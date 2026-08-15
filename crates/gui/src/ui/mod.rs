@@ -10,6 +10,8 @@ use crate::app::UwuGuiApp;
 use eframe::egui;
 
 pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
+    ctx.set_visuals(theme::create_visuals());
+
     // Phím Escape: Đóng history popup trước, rồi đến modal Params, rồi đến Log Inspector
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         if app.history_state.is_open {
