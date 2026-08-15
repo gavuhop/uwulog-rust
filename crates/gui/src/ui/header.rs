@@ -216,12 +216,46 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
 
             ui.add_space(6.0);
 
-            // Log Count Indicator
-            ui.label(
-                egui::RichText::new(format!("{}", app.cached_logs.len()))
-                    .font(egui::FontId::monospace(11.5))
-                    .color(theme::TEXT_MUTED),
-            );
+            // Log Count / Filter Matched Indicator
+            let is_filtering = !app.query.trim().is_empty();
+            let (count_text, count_color, count_tooltip) = if is_filtering {
+                let text = if app.total_matched > app.cached_logs.len() {
+                    format!(
+                        "{}/{}",
+                        theme::format_number(app.cached_logs.len()),
+                        theme::format_number(app.total_matched)
+                    )
+                } else {
+                    theme::format_number(app.total_matched)
+                };
+                let tooltip = format!(
+                    "Filter query: \"{}\"\n• Matched: {} logs\n• Displayed: {} logs (Limit: {})",
+                    app.query.trim(),
+                    theme::format_number(app.total_matched),
+                    theme::format_number(app.cached_logs.len()),
+                    theme::format_number(app.display_limit)
+                );
+                (text, theme::TEXT_KEY, tooltip)
+            } else {
+                let total_ingested = app.engine.total_processed() as usize;
+                let text = theme::format_number(total_ingested);
+                let tooltip = format!(
+                    "Total Logs Collected: {}\n• In-Memory Buffer: {} / {}\n• Displayed: {}",
+                    theme::format_number(total_ingested),
+                    theme::format_number(app.engine.total_logs()),
+                    theme::format_number(app.engine.max_capacity()),
+                    theme::format_number(app.cached_logs.len())
+                );
+                (text, theme::TEXT_MUTED, tooltip)
+            };
+
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(count_text)
+                        .font(egui::FontId::monospace(11.5))
+                        .color(count_color),
+                )
+            ).on_hover_text(count_tooltip);
         });
     });
 }
