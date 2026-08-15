@@ -31,6 +31,45 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
 
             // Engine Performance Card
             render_modal_card(ui, "System Engine Performance", |ui| {
+                let total_in_buffer = app.engine.total_logs();
+                let capacity = app.engine.max_capacity();
+                let total_processed = app.engine.total_processed();
+                let ratio = (total_in_buffer as f32 / capacity.max(1) as f32).clamp(0.0, 1.0);
+                let is_overflow = total_processed > capacity as u64;
+                let health_color = theme::buffer_health_color(ratio);
+
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("Live Buffer Status:").color(theme::TEXT_MUTED));
+                    let progress_bar = egui::ProgressBar::new(ratio)
+                        .desired_width(160.0)
+                        .desired_height(16.0)
+                        .fill(health_color)
+                        .rounding(Rounding::same(3.0))
+                        .text(
+                            egui::RichText::new(format!(
+                                "{}/{} ({:.1}%)",
+                                theme::format_number(total_in_buffer),
+                                theme::format_number(capacity),
+                                ratio * 100.0
+                            ))
+                            .font(egui::FontId::monospace(10.0))
+                            .strong()
+                            .color(theme::TEXT_PRIMARY),
+                        );
+                    ui.add(progress_bar);
+
+                    if is_overflow {
+                        ui.label(
+                            egui::RichText::new("🔴 Overflowing")
+                                .font(egui::FontId::monospace(11.0))
+                                .color(theme::COLOR_ERROR)
+                                .strong(),
+                        );
+                    }
+                });
+
+                ui.add_space(6.0);
+
                 egui::Grid::new("engine_params_grid")
                     .num_columns(2)
                     .spacing([16.0, 8.0])
