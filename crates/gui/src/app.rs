@@ -49,6 +49,10 @@ pub struct UwuGuiApp {
     /// → tx.closed() trong ProcessSource kích hoạt → taskkill diệt toàn bộ cây tiến trình.
     pub kill_signal: Option<oneshot::Sender<()>>,
     pub autocomplete_state: AutocompleteState,
+    pub search_history: Vec<String>,
+    pub show_history_popup: bool,
+    pub last_query_change_time: Instant,
+    pub history_recorded_for_current_query: bool,
 }
 
 impl UwuGuiApp {
@@ -133,6 +137,10 @@ impl UwuGuiApp {
             last_search_time: Instant::now(),
             kill_signal: None,
             autocomplete_state: AutocompleteState::default(),
+            search_history: Vec::new(),
+            show_history_popup: false,
+            last_query_change_time: Instant::now(),
+            history_recorded_for_current_query: true,
         };
 
         app.start_configured_source();
@@ -219,6 +227,66 @@ impl UwuGuiApp {
         }
     }
 
+    pub fn record_search_history(&mut self, query: &str) {
+        let trimmed = query.trim();
+        // Không lưu câu query rỗng
+        if trimmed.is_empty() {
+            return;
+        }
+
+        // Không lưu câu query kết thúc bằng toán tử dở dang chưa hoàn tất
+        if trimmed.ends_with(':')
+            || trimmed.ends_with(":-")
+            || trimmed.ends_with(":-~")
+            || trimmed.ends_with(":~")
+            || trimmed.ends_with(":<=")
+            || trimmed.ends_with(":>=")
+            || trimmed.ends_with(":<")
+            || trimmed.ends_with(":>")
+            || trimmed.ends_with('=')
+        {
+            return;
+        }
+
+        let new_keys = Self::extract_query_keys(trimmed);
+
+        // Loại bỏ:
+        // 1. Trùng lặp hoàn toàn (cùng chuỗi)
+        // 2. Prefix đang gõ dở (ví dụ "level:" bị thay bởi "level:error")
+        // 3. Cùng bộ key (ví dụ "level:-222" bị thay bởi "level:-aaa")
+        self.search_history.retain(|q| {
+            if q == trimmed || trimmed.starts_with(q) {
+                return false;
+            }
+            let existing_keys = Self::extract_query_keys(q);
+            if !existing_keys.is_empty() && existing_keys == new_keys {
+                return false;
+            }
+            true
+        });
+
+        // Đưa câu query mới nhất lên đầu danh sách (LRU)
+        self.search_history.insert(0, trimmed.to_string());
+
+        // Giới hạn tối đa 10 mục lịch sử tìm kiếm
+        if self.search_history.len() > 10 {
+            self.search_history.truncate(10);
+        }
+    }
+
+    /// Trích xuất bộ key từ câu query (ví dụ "level:-aaa msg:auth" → ["level", "msg"])
+    fn extract_query_keys(query: &str) -> Vec<String> {
+        let mut keys: Vec<String> = query
+            .split_whitespace()
+            .filter_map(|token| {
+                let sep = token.find(':').or_else(|| token.find('='));
+                sep.map(|pos| token[..pos].to_lowercase())
+            })
+            .collect();
+        keys.sort();
+        keys
+    }
+
     pub fn trigger_full_search(&mut self) {
         let (matched, logs) = self
             .engine
@@ -235,12 +303,22 @@ impl UwuGuiApp {
         let now = Instant::now();
 
         let query_changed = self.query != self.last_query;
+        if query_changed {
+            self.last_query_change_time = now;
+            self.history_recorded_for_current_query = false;
+            self.trigger_full_search();
+        } else if !self.history_recorded_for_current_query
+            && now.duration_since(self.last_query_change_time) > Duration::from_millis(500)
+        {
+            // Khi dừng gõ 500ms -> Tự động lưu vào lịch sử
+            self.record_search_history(&self.query.clone());
+            self.history_recorded_for_current_query = true;
+        }
+
         let new_logs_arrived = total_processed != self.last_processed_count
             && now.duration_since(self.last_search_time) > Duration::from_millis(150);
 
-        if query_changed {
-            self.trigger_full_search();
-        } else if new_logs_arrived {
+        if new_logs_arrived && !query_changed {
             let (new_matched_count, new_matching_logs) = self
                 .engine
                 .filter_incremental(&self.query, self.last_processed_count);
