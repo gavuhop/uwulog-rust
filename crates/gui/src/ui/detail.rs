@@ -35,7 +35,7 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
         let (log_color, is_highlighted) = match event.level {
             LogLevel::Error | LogLevel::Fatal => (theme::COLOR_ERROR, true),
             LogLevel::Warn => (theme::COLOR_WARN, true),
-            _ => (theme::TEXT_PRIMARY, false),
+            _ => (theme::TEXT_MUTED, false),
         };
 
         egui::ScrollArea::vertical().show(ui, |ui| {
