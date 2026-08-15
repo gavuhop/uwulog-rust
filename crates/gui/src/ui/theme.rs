@@ -36,6 +36,40 @@ pub const BTN_LATCHED_BORDER: Color32 = Color32::from_rgb(0x3a, 0x74, 0x52);
 pub const BTN_UNLATCHED_BG: Color32 = Color32::from_rgb(0x38, 0x2b, 0x16); // Hổ phách tối dịu
 pub const BTN_UNLATCHED_BORDER: Color32 = Color32::from_rgb(0x7a, 0x56, 0x25);
 
+/// Chuyển đổi mượt mà màu sắc từ Xanh lá (0% - Khỏe) -> Vàng hổ phách (50%) -> Đỏ san hô (100% - Đầy/Tràn buffer)
+pub fn buffer_health_color(ratio: f32) -> Color32 {
+    let r_clamped = ratio.clamp(0.0, 1.0);
+    if r_clamped < 0.5 {
+        let t = r_clamped / 0.5;
+        // COLOR_INFO (126, 199, 135) -> COLOR_WARN (212, 163, 89)
+        let r = (126.0 + (212.0 - 126.0) * t) as u8;
+        let g = (199.0 + (163.0 - 199.0) * t) as u8;
+        let b = (135.0 + (89.0 - 135.0) * t) as u8;
+        Color32::from_rgb(r, g, b)
+    } else {
+        let t = (r_clamped - 0.5) / 0.5;
+        // COLOR_WARN (212, 163, 89) -> COLOR_ERROR (217, 101, 112)
+        let r = (212.0 + (217.0 - 212.0) * t) as u8;
+        let g = (163.0 + (101.0 - 163.0) * t) as u8;
+        let b = (89.0 + (112.0 - 89.0) * t) as u8;
+        Color32::from_rgb(r, g, b)
+    }
+}
+
+/// Định dạng số với dấu phẩy phân cách hàng nghìn (ví dụ: 50,000)
+pub fn format_number(n: usize) -> String {
+    let s = n.to_string();
+    let mut result = String::new();
+    let len = s.len();
+    for (i, c) in s.chars().enumerate() {
+        if i > 0 && (len - i).is_multiple_of(3) {
+            result.push(',');
+        }
+        result.push(c);
+    }
+    result
+}
+
 pub fn create_visuals() -> Visuals {
     let mut visuals = Visuals::dark();
 
@@ -136,4 +170,37 @@ pub fn apply_theme(ctx: &egui::Context) {
     style.spacing.button_padding = egui::vec2(10.0, 5.0);
     style.spacing.window_margin = egui::Margin::same(12.0);
     ctx.set_style(style);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_buffer_health_color_gradient() {
+        let green = buffer_health_color(0.0);
+        assert_eq!(green, COLOR_INFO);
+
+        let amber = buffer_health_color(0.5);
+        assert_eq!(amber, COLOR_WARN);
+
+        let red = buffer_health_color(1.0);
+        assert_eq!(red, COLOR_ERROR);
+
+        // Test clamped out-of-bounds
+        let over = buffer_health_color(1.5);
+        assert_eq!(over, COLOR_ERROR);
+
+        let under = buffer_health_color(-0.5);
+        assert_eq!(under, COLOR_INFO);
+    }
+
+    #[test]
+    fn test_format_number() {
+        assert_eq!(format_number(0), "0");
+        assert_eq!(format_number(999), "999");
+        assert_eq!(format_number(1000), "1,000");
+        assert_eq!(format_number(50000), "50,000");
+        assert_eq!(format_number(1234567), "1,234,567");
+    }
 }
