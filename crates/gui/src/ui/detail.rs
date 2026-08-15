@@ -46,13 +46,7 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 render_card(ui, "Metadata", |ui| {
                     render_meta_field(ui, "ID", &event.id.to_string(), theme::TEXT_PRIMARY, true);
                     ui.add_space(5.0);
-                    render_meta_field(
-                        ui,
-                        "Timestamp",
-                        &event.timestamp.to_rfc3339(),
-                        theme::TEXT_PRIMARY,
-                        true,
-                    );
+                    render_meta_field(ui, "Timestamp", &event.timestamp, theme::TEXT_PRIMARY, true);
                     ui.add_space(5.0);
                     render_meta_field(ui, "Level", &event.level.to_string(), log_color, false);
                 });

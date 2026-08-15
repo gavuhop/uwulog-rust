@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use uwu_schema::{LogEvent, LogLevel, RawLogEntry, RawPayload};
 
@@ -57,7 +56,7 @@ impl LogNormalizer {
     fn normalize_json(source_id: &str, v: &serde_json::Value, raw: &str) -> LogEvent {
         let mut fields = HashMap::new();
         let mut level = LogLevel::Unknown;
-        let mut timestamp = Utc::now();
+        let mut timestamp = String::new();
         let mut message = String::new();
 
         // 1. Phẳng hóa toàn bộ cây JSON object
@@ -81,9 +80,9 @@ impl LogNormalizer {
             .or_else(|| fields.get("@timestamp"))
         {
             if let Some(s) = val.as_str() {
-                if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
-                    timestamp = dt.with_timezone(&Utc);
-                }
+                timestamp = s.to_string();
+            } else {
+                timestamp = val.to_string();
             }
         }
 
@@ -106,7 +105,7 @@ impl LogNormalizer {
 
     fn normalize_win_event_xml(source_id: &str, xml: &str) -> Option<LogEvent> {
         let mut level = LogLevel::Info;
-        let mut timestamp = Utc::now();
+        let mut timestamp = String::new();
         let mut fields = HashMap::new();
 
         // Trích xuất Provider Name
@@ -145,9 +144,7 @@ impl LogNormalizer {
         if let Some(idx) = xml.find("SystemTime='") {
             let rest = &xml[idx + 12..];
             if let Some(end) = rest.find('\'') {
-                if let Ok(dt) = DateTime::parse_from_rfc3339(&rest[..end]) {
-                    timestamp = dt.with_timezone(&Utc);
-                }
+                timestamp = rest[..end].to_string();
             }
         }
 
@@ -181,14 +178,7 @@ impl LogNormalizer {
             level = LogLevel::Trace;
         }
 
-        LogEvent::new(
-            Utc::now(),
-            level,
-            source_id,
-            clean.clone(),
-            HashMap::new(),
-            clean,
-        )
+        LogEvent::new("", level, source_id, clean.clone(), HashMap::new(), clean)
     }
 }
 
@@ -238,6 +228,7 @@ mod tests {
         assert_eq!(event.level, LogLevel::Error);
         assert_eq!(event.message, "Database connection lost");
         assert_eq!(event.fields.get("db_id").unwrap(), &serde_json::json!(42));
+        assert_eq!(event.timestamp, "2026-08-14T10:00:00Z");
     }
 
     #[test]
@@ -251,6 +242,23 @@ mod tests {
         let event = LogNormalizer::normalize(entry);
         assert_eq!(event.level, LogLevel::Warn);
         assert_eq!(event.message, text);
+        assert_eq!(event.timestamp, "");
+    }
+
+    #[test]
+    fn test_timestamp_preservation() {
+        let custom_ts = "2026-08-15T21:45:00.123456+07:00";
+        let json_payload = serde_json::json!({
+            "time": custom_ts,
+            "level": "INFO",
+            "message": "User logged in"
+        });
+        let entry = RawLogEntry {
+            source_id: "api".to_string(),
+            payload: RawPayload::Json(json_payload),
+        };
+        let event = LogNormalizer::normalize(entry);
+        assert_eq!(event.timestamp, custom_ts);
     }
 
     #[test]

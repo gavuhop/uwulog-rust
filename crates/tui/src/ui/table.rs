@@ -24,10 +24,9 @@ pub fn render_table(f: &mut Frame, app: &mut App, area: Rect) {
                 LogLevel::Unknown => Color::Gray,
             };
 
-            let time_str = log.timestamp.format("%H:%M:%S%.3f").to_string();
             let line_content = format!(
                 "[{}] [{:<5}] [{}] {}",
-                time_str,
+                log.timestamp,
                 log.level.to_string(),
                 log.source_id,
                 log.message
