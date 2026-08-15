@@ -122,6 +122,52 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
 
         // Right-aligned Controls
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            // Live / Freeze Auto-Scroll Toggle Button
+            let unseen_count = app.get_unseen_logs_count();
+            let (live_text, live_color, live_bg, live_stroke) = if app.is_auto_scroll {
+                (
+                    "🟢 Live".to_string(),
+                    theme::COLOR_INFO,
+                    theme::BG_SURFACE0,
+                    Stroke::new(1.0, theme::BG_SURFACE1),
+                )
+            } else if unseen_count > 0 {
+                (
+                    format!("⏸ Paused (+{})", unseen_count),
+                    theme::COLOR_WARN,
+                    theme::BG_SURFACE1,
+                    Stroke::new(1.0, theme::COLOR_WARN),
+                )
+            } else {
+                (
+                    "⏸ Paused".to_string(),
+                    theme::COLOR_WARN,
+                    theme::BG_SURFACE0,
+                    Stroke::new(1.0, theme::BG_SURFACE1),
+                )
+            };
+
+            let live_btn = egui::Button::new(
+                egui::RichText::new(live_text)
+                    .strong()
+                    .color(live_color),
+            )
+            .fill(live_bg)
+            .stroke(live_stroke)
+            .rounding(Rounding::same(4.0));
+
+            let live_tooltip = if app.is_auto_scroll {
+                "Streaming LIVE (Auto-scroll active). Click or press [Space / P] to pause & freeze view."
+            } else {
+                "View is FROZEN. Click or press [End / Space] to resume live streaming."
+            };
+
+            if ui.add(live_btn).on_hover_text(live_tooltip).clicked() {
+                app.toggle_live();
+            }
+
+            ui.add_space(6.0);
+
             // Source Parameters Modal Button
             let params_btn = egui::Button::new(
                 egui::RichText::new("⚙ Params")
