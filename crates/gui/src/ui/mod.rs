@@ -1,3 +1,4 @@
+pub mod autocomplete;
 pub mod detail;
 pub mod header;
 pub mod launch_modal;
