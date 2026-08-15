@@ -30,6 +30,12 @@ pub const BTN_RESTART_BORDER: Color32 = Color32::from_rgb(0x3a, 0x74, 0x52);
 pub const BTN_STOP_BG: Color32 = Color32::from_rgb(0x4a, 0x1e, 0x24); // Đỏ tối dịu
 pub const BTN_STOP_BORDER: Color32 = Color32::from_rgb(0x94, 0x38, 0x42);
 
+// Nút bấm Latch / Auto-scroll
+pub const BTN_LATCHED_BG: Color32 = Color32::from_rgb(0x1a, 0x33, 0x24); // Xanh lục tối dịu
+pub const BTN_LATCHED_BORDER: Color32 = Color32::from_rgb(0x3a, 0x74, 0x52);
+pub const BTN_UNLATCHED_BG: Color32 = Color32::from_rgb(0x38, 0x2b, 0x16); // Hổ phách tối dịu
+pub const BTN_UNLATCHED_BORDER: Color32 = Color32::from_rgb(0x7a, 0x56, 0x25);
+
 pub fn create_visuals() -> Visuals {
     let mut visuals = Visuals::dark();
 

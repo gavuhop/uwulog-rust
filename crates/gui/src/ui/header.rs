@@ -104,7 +104,7 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
 
         if ui
             .add(history_btn)
-            .on_hover_text("Search History (Lịch sử tìm kiếm)")
+            .on_hover_text("Search history")
             .clicked()
         {
             let opened = app.history_state.toggle_popup();
@@ -178,6 +178,50 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                     app.restart_current_source();
                 }
             }
+
+            ui.add_space(6.0);
+
+            // Latch / Auto-scroll State Toggle Button
+            let (latch_text, latch_text_color, latch_bg, latch_border, latch_tooltip) =
+                if app.is_auto_scroll {
+                    (
+                        "⚓ Live",
+                        theme::COLOR_INFO,
+                        theme::BTN_LATCHED_BG,
+                        theme::BTN_LATCHED_BORDER,
+                        "Auto-scroll: ON (Following tail)\n• Click to pause (Unlatch)\n• Scroll up or select a log to unlatch",
+                    )
+                } else {
+                    (
+                        "⏸ Paused",
+                        theme::COLOR_WARN,
+                        theme::BTN_UNLATCHED_BG,
+                        theme::BTN_UNLATCHED_BORDER,
+                        "Auto-scroll: PAUSED (View frozen)\n• Click to latch & scroll to bottom\n• Or press [End] / scroll to bottom",
+                    )
+                };
+
+            let latch_btn = egui::Button::new(
+                egui::RichText::new(latch_text)
+                    .color(latch_text_color)
+                    .strong(),
+            )
+            .fill(latch_bg)
+            .stroke(Stroke::new(1.0, latch_border))
+            .rounding(Rounding::same(4.0));
+
+            if ui.add(latch_btn).on_hover_text(latch_tooltip).clicked() {
+                app.toggle_latch();
+            }
+
+            ui.add_space(6.0);
+
+            // Log Count Indicator
+            ui.label(
+                egui::RichText::new(format!("{}", app.cached_logs.len()))
+                    .font(egui::FontId::monospace(11.5))
+                    .color(theme::TEXT_MUTED),
+            );
         });
     });
 }
