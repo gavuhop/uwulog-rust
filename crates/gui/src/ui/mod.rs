@@ -1,6 +1,7 @@
 pub mod autocomplete;
 pub mod detail;
 pub mod header;
+pub mod history;
 pub mod launch_modal;
 pub mod table;
 pub mod theme;
@@ -9,9 +10,11 @@ use crate::app::UwuGuiApp;
 use eframe::egui;
 
 pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
-    // Phím Escape: Đóng modal Params trước, nếu không mở modal thì đóng Log Inspector
+    // Phím Escape: Đóng history popup trước, rồi đến modal Params, rồi đến Log Inspector
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-        if app.show_launch_modal {
+        if app.show_history_popup {
+            app.show_history_popup = false;
+        } else if app.show_launch_modal {
             app.show_launch_modal = false;
         } else if app.selected_log.is_some() {
             app.selected_log = None;
