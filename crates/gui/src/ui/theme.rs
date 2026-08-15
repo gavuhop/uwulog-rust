@@ -9,8 +9,8 @@ pub const BG_MANTLE: Color32 = Color32::from_rgb(0x1a, 0x1d, 0x28); // #1a1d28 -
 pub const BG_CRUST: Color32 = Color32::from_rgb(0x0e, 0x0f, 0x16); // #0e0f16 - Inputs, Code
 pub const BG_SURFACE0: Color32 = Color32::from_rgb(0x28, 0x2c, 0x3c); // #282c3c - Viền phân cách
 pub const BG_SURFACE1: Color32 = Color32::from_rgb(0x34, 0x3a, 0x4e); // #343a4e - Nút bấm / Hover
-pub const BG_ROW_HOVER: Color32 = Color32::from_rgb(0x1e, 0x23, 0x33); // #1e2333 - Hover hàng log nhẹ nhàng
-pub const BG_ROW_SELECTED: Color32 = Color32::from_rgb(0x28, 0x32, 0x48); // #283248 - Chọn hàng log (Tông xanh đen đá phiến dịu mắt, dễ nhận biết)
+pub const BG_ROW_HOVER: Color32 = Color32::from_rgb(0x1e, 0x23, 0x33); // #1e2333 - Hover hàng log
+pub const BG_ROW_SELECTED: Color32 = Color32::from_rgb(0x28, 0x32, 0x48); // #283248 - Chọn hàng log
 
 // Màu chữ êm dịu, không chói lóa (Soft pastel & warm slate)
 pub const TEXT_PRIMARY: Color32 = Color32::from_rgb(0xc5, 0xcd, 0xd9); // #c5cdd9 - Chữ xám ấm dịu mắt
@@ -66,8 +66,8 @@ pub fn create_visuals() -> Visuals {
     visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, TEXT_PRIMARY);
 
     // Active / Pressed
-    visuals.widgets.active.bg_fill = BG_SURFACE1;
-    visuals.widgets.active.weak_bg_fill = BG_ROW_HOVER;
+    visuals.widgets.active.bg_fill = BG_ROW_SELECTED;
+    visuals.widgets.active.weak_bg_fill = BG_ROW_SELECTED;
     visuals.widgets.active.rounding = Rounding::same(4.0);
     visuals.widgets.active.bg_stroke = Stroke::new(1.5, TEXT_KEY);
     visuals.widgets.active.fg_stroke = Stroke::new(1.0, TEXT_PRIMARY);
