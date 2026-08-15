@@ -81,14 +81,18 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                         row.set_selected(true);
                     }
 
-                    // Độ tương phản mềm mại: Error -> Đỏ san hô, Warn -> Vàng hổ phách, Info/Default -> Giống màu Timestamp dịu mắt
-                    let (row_color, is_highlighted) = match event.level {
-                        LogLevel::Error | LogLevel::Fatal => (theme::COLOR_ERROR, true),
-                        LogLevel::Warn => (theme::COLOR_WARN, true),
-                        _ => (theme::TEXT_MUTED, false),
+                    // Độ tương phản mềm mại: Error -> Đỏ san hô, Warn -> Vàng hổ phách, Info -> Xanh lá pastel, Debug/Trace -> Xám dịu
+                    let row_color = match event.level {
+                        LogLevel::Error | LogLevel::Fatal => theme::COLOR_ERROR,
+                        LogLevel::Warn => theme::COLOR_WARN,
+                        LogLevel::Info => theme::COLOR_INFO,
+                        _ => theme::TEXT_MUTED,
                     };
 
-                    let timestamp_color = if is_highlighted {
+                    let timestamp_color = if matches!(
+                        event.level,
+                        LogLevel::Error | LogLevel::Fatal | LogLevel::Warn
+                    ) {
                         row_color
                     } else {
                         theme::TEXT_MUTED
