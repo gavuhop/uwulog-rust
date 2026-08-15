@@ -8,17 +8,30 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     let text_height = egui::TextStyle::Body.resolve(ui.style()).size;
     let row_count = app.cached_logs.len();
 
+    let not_focusing_text = !ui.memory(|m| m.focused().is_some());
+
     // Phím End: Latch auto-scroll và cuộn ngay xuống dòng mới nhất (khi không focus vào ô nhập text)
-    let end_key_pressed =
-        ui.input(|i| i.key_pressed(egui::Key::End)) && !ui.memory(|m| m.focused().is_some());
+    let end_key_pressed = ui.input(|i| i.key_pressed(egui::Key::End)) && not_focusing_text;
     if end_key_pressed {
-        app.is_auto_scroll = true;
+        app.latch();
     }
 
-    // Phát hiện cuộn chuột LÊN → tắt auto-scroll
+    // Các phím điều hướng cuộn lên (PageUp, Home, ArrowUp) khi không gõ text -> tự động Unlatch
+    if not_focusing_text {
+        let scroll_up_keys = ui.input(|i| {
+            i.key_pressed(egui::Key::PageUp)
+                || i.key_pressed(egui::Key::Home)
+                || i.key_pressed(egui::Key::ArrowUp)
+        });
+        if scroll_up_keys {
+            app.unlatch();
+        }
+    }
+
+    // Phát hiện cuộn chuột LÊN → tắt auto-scroll (Unlatch)
     let scroll_delta_y = ui.input(|i| i.raw_scroll_delta.y);
     if scroll_delta_y > 0.0 {
-        app.is_auto_scroll = false;
+        app.unlatch();
     }
 
     ui.visuals_mut().selection.bg_fill = theme::BG_ROW_SELECTED;
@@ -32,11 +45,13 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
         .column(Column::remainder()); // Message
 
     // Cuộn xuống dòng cuối khi:
-    // 1. Vừa bấm phím End HOẶC
+    // 1. Có request cuộn ngay (bấm nút Latch hoặc phím End) HOẶC
     // 2. Auto-scroll đang bật VÀ có log mới đến (row_count tăng)
     let has_new_data = row_count > app.prev_table_row_count;
-    if (end_key_pressed || (app.is_auto_scroll && has_new_data)) && row_count > 0 {
+    let force_scroll = app.request_scroll_to_bottom;
+    if (force_scroll || (app.is_auto_scroll && has_new_data)) && row_count > 0 {
         builder = builder.scroll_to_row(row_count - 1, Some(egui::Align::Max));
+        app.request_scroll_to_bottom = false;
     }
     app.prev_table_row_count = row_count;
 
@@ -159,6 +174,8 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
 
     if let Some(event) = newly_selected_event {
         app.selected_log = Some(event);
+        // Khi user chọn xem một dòng log, unlatch để màn hình đứng yên giúp đọc chi tiết
+        app.unlatch();
     }
 
     // Bật lại auto-scroll CHỈ KHI: user chủ động cuộn XUỐNG (scroll_delta_y < 0) VÀ đã chạm đáy

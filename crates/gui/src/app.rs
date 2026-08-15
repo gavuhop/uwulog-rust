@@ -38,6 +38,8 @@ pub struct UwuGuiApp {
     pub cached_logs: Vec<LogEvent>,
     pub selected_log: Option<LogEvent>,
     pub is_auto_scroll: bool,
+    /// Cờ yêu cầu cuộn ngay xuống dòng mới nhất (khi bấm nút Latch hoặc phím End)
+    pub request_scroll_to_bottom: bool,
     /// Số dòng bảng ở frame trước. Dùng để biết khi nào có data mới → chỉ scroll_to_row lúc đó.
     pub prev_table_row_count: usize,
     pub is_source_running: bool,
@@ -126,6 +128,7 @@ impl UwuGuiApp {
             cached_logs: Vec::new(),
             selected_log: None,
             is_auto_scroll: true,
+            request_scroll_to_bottom: false,
             prev_table_row_count: 0,
             is_source_running: false,
             show_launch_modal: false,
@@ -296,11 +299,29 @@ impl UwuGuiApp {
         self.total_matched = 0;
         self.last_processed_count = 0;
         self.is_auto_scroll = true;
+        self.request_scroll_to_bottom = true;
         self.prev_table_row_count = 0;
 
         // 3. Khởi tạo lại Nguồn Log mới sạch hoàn toàn
         self.start_configured_source();
         self.trigger_full_search();
+    }
+
+    pub fn latch(&mut self) {
+        self.is_auto_scroll = true;
+        self.request_scroll_to_bottom = true;
+    }
+
+    pub fn unlatch(&mut self) {
+        self.is_auto_scroll = false;
+    }
+
+    pub fn toggle_latch(&mut self) {
+        if self.is_auto_scroll {
+            self.unlatch();
+        } else {
+            self.latch();
+        }
     }
 
     pub fn get_available_log_fields(&self) -> Vec<(String, crate::ui::autocomplete::FieldType)> {
