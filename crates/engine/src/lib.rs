@@ -35,7 +35,7 @@ impl SystemEngine {
                 // Chuyển LogEvent thành serde_json::Value để nạp vào uwu-core filter engine
                 let mut json_val = serde_json::json!({
                     "id": event.id,
-                    "timestamp": event.timestamp.to_rfc3339(),
+                    "timestamp": event.timestamp,
                     "level": event.level.to_string(),
                     "source": event.source_id,
                     "message": event.message,

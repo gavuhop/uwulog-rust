@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -48,7 +47,7 @@ impl LogLevel {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogEvent {
     pub id: Uuid,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: String,
     pub level: LogLevel,
     pub source_id: String,
     pub message: String,
@@ -58,7 +57,7 @@ pub struct LogEvent {
 
 impl LogEvent {
     pub fn new(
-        timestamp: DateTime<Utc>,
+        timestamp: impl Into<String>,
         level: LogLevel,
         source_id: impl Into<String>,
         message: impl Into<String>,
@@ -67,7 +66,7 @@ impl LogEvent {
     ) -> Self {
         Self {
             id: Uuid::new_v4(),
-            timestamp,
+            timestamp: timestamp.into(),
             level,
             source_id: source_id.into(),
             message: message.into(),
@@ -79,10 +78,7 @@ impl LogEvent {
     pub fn to_json_value(&self) -> serde_json::Value {
         let mut map = serde_json::Map::new();
         map.insert("id".to_string(), serde_json::json!(self.id.to_string()));
-        map.insert(
-            "timestamp".to_string(),
-            serde_json::json!(self.timestamp.to_rfc3339()),
-        );
+        map.insert("timestamp".to_string(), serde_json::json!(&self.timestamp));
         map.insert(
             "level".to_string(),
             serde_json::json!(self.level.to_string()),

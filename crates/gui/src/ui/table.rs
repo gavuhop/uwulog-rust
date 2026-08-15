@@ -118,10 +118,9 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
 
                     // Timestamp Column (Terminal monospace)
                     row.col(|ui| {
-                        let time_str = event.timestamp.format("%Y-%m-%d %H:%M:%S").to_string();
                         let resp = ui.add(
                             egui::Label::new(
-                                egui::RichText::new(time_str)
+                                egui::RichText::new(&event.timestamp)
                                     .font(egui::FontId::monospace(11.5))
                                     .color(timestamp_color),
                             )
