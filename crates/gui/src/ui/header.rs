@@ -43,7 +43,7 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
             }
         } else if search_response.changed() || search_response.gained_focus() {
             // Khi gõ chữ hoặc focus vào ô tìm kiếm: luôn ẩn menu lịch sử
-            app.show_history_popup = false;
+            app.history_state.close_popup();
 
             let available_fields = app.get_available_log_fields();
             let (suggestions, token_range) =
@@ -54,8 +54,7 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
             app.autocomplete_state.is_open = !app.autocomplete_state.suggestions.is_empty();
             if search_response.changed() {
                 // Reset debounce timer để tick() sẽ lưu lịch sử sau 500ms dừng gõ
-                app.last_query_change_time = Instant::now();
-                app.history_recorded_for_current_query = false;
+                app.history_state.mark_query_changed(Instant::now());
                 app.trigger_full_search();
             }
         }
@@ -66,8 +65,8 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
         if (search_response.lost_focus() || search_response.has_focus())
             && ui.ctx().input(|i| i.key_pressed(egui::Key::Enter))
         {
-            app.record_search_history(&app.query.clone());
-            app.history_recorded_for_current_query = true;
+            app.history_state.record(&app.query.clone());
+            app.history_state.mark_recorded();
         }
 
         // Quick Clear button if query is not empty
@@ -83,19 +82,19 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
         {
             app.query.clear();
             app.autocomplete_state.is_open = false;
-            app.show_history_popup = false;
+            app.history_state.close_popup();
             app.trigger_full_search();
         }
 
         // Search History Toggle Button (⏱)
         let history_btn = egui::Button::new(egui::RichText::new("⏱").size(12.0).color(
-            if app.show_history_popup {
+            if app.history_state.is_open {
                 theme::TEXT_KEY
             } else {
                 theme::TEXT_MUTED
             },
         ))
-        .fill(if app.show_history_popup {
+        .fill(if app.history_state.is_open {
             theme::BG_SURFACE1
         } else {
             theme::BG_SURFACE0
@@ -108,8 +107,8 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
             .on_hover_text("Search History (Lịch sử tìm kiếm)")
             .clicked()
         {
-            app.show_history_popup = !app.show_history_popup;
-            if app.show_history_popup {
+            let opened = app.history_state.toggle_popup();
+            if opened {
                 app.autocomplete_state.is_open = false;
                 app.autocomplete_state.suggestions.clear();
             }
