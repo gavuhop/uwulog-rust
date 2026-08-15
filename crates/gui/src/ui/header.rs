@@ -216,76 +216,12 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
 
             ui.add_space(6.0);
 
-            // RingBuffer Capacity & Overflow Progress Bar
-            render_buffer_progress(ui, app);
-
-            ui.add_space(6.0);
-
             // Log Count Indicator
             ui.label(
-                egui::RichText::new(format!("{} logs", theme::format_number(app.cached_logs.len())))
+                egui::RichText::new(format!("{}", app.cached_logs.len()))
                     .font(egui::FontId::monospace(11.5))
                     .color(theme::TEXT_MUTED),
             );
         });
     });
-}
-
-fn render_buffer_progress(ui: &mut egui::Ui, app: &UwuGuiApp) {
-    let total_in_buffer = app.engine.total_logs();
-    let capacity = app.engine.max_capacity();
-    let total_processed = app.engine.total_processed();
-    let ratio = (total_in_buffer as f32 / capacity.max(1) as f32).clamp(0.0, 1.0);
-    let is_overflow = total_processed > capacity as u64;
-    let health_color = theme::buffer_health_color(ratio);
-
-    let percent = ratio * 100.0;
-    let bar_text = if is_overflow {
-        "BUF: 100% (OVF)".to_string()
-    } else {
-        format!("BUF: {:.0}%", percent)
-    };
-
-    let (status_icon, status_desc) = if is_overflow {
-        (
-            "🔴",
-            "OVERFLOW - Buffer is full, oldest logs are rotating & being evicted",
-        )
-    } else if ratio >= 0.8 {
-        ("🟡", "WARNING - Buffer is nearing capacity limit")
-    } else {
-        ("🟢", "HEALTHY - Operating normally within buffer limits")
-    };
-
-    let evicted = total_processed.saturating_sub(total_in_buffer as u64);
-
-    let tooltip = format!(
-        "RingBuffer Memory & Capacity Monitor:\n\
-         • Stored in Memory: {} / {} logs ({:.1}%)\n\
-         • Total Ingested: {} logs\n\
-         • Evicted (Overwritten): {} logs\n\
-         • Health Status: {} {}\n\n\
-         Tip: To change capacity, click '⚙ Params'.",
-        theme::format_number(total_in_buffer),
-        theme::format_number(capacity),
-        percent,
-        theme::format_number(total_processed as usize),
-        theme::format_number(evicted as usize),
-        status_icon,
-        status_desc
-    );
-
-    let progress_bar = egui::ProgressBar::new(ratio)
-        .desired_width(100.0)
-        .desired_height(18.0)
-        .fill(health_color)
-        .rounding(Rounding::same(3.0))
-        .text(
-            egui::RichText::new(bar_text)
-                .font(egui::FontId::monospace(10.5))
-                .strong()
-                .color(theme::TEXT_PRIMARY),
-        );
-
-    ui.add(progress_bar).on_hover_text(tooltip);
 }
