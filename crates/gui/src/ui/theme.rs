@@ -21,9 +21,9 @@ pub const TEXT_KEY: Color32 = Color32::from_rgb(0x78, 0xa0, 0xd4); // #78a0d4 - 
 pub const COLOR_ERROR: Color32 = Color32::from_rgb(0xd9, 0x65, 0x70); // #d96570 - Đỏ san hô mềm (không chói)
 pub const COLOR_WARN: Color32 = Color32::from_rgb(0xd4, 0xa3, 0x59); // #d4a359 - Vàng hổ phách ấm (không chói)
 #[allow(dead_code)]
-pub const COLOR_INFO: Color32 = Color32::from_rgb(0x76, 0xb8, 0x86); // #76b886 - Xanh lá pastel
+pub const COLOR_INFO: Color32 = TEXT_MUTED; // #727a90 - Đồng bộ với màu timestamp dịu mắt
 #[allow(dead_code)]
-pub const COLOR_DEBUG: Color32 = Color32::from_rgb(0x68, 0xa0, 0xb0); // #68a0b0 - Xanh dương pastel
+pub const COLOR_DEBUG: Color32 = TEXT_MUTED; // #727a90 - Đồng bộ dịu mắt
 
 // Nút bấm mềm mại
 pub const BTN_RESTART_BG: Color32 = Color32::from_rgb(0x1f, 0x42, 0x2e); // Xanh lục tối dịu

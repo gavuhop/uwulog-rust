@@ -24,9 +24,8 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     let mut builder = TableBuilder::new(ui)
         .striped(true)
         .resizable(true)
-        .column(Column::initial(160.0).at_least(140.0)) // Timestamp
-        .column(Column::initial(70.0).at_least(60.0)) // Level
-        .column(Column::initial(120.0).at_least(80.0)) // Source
+        .column(Column::initial(160.0).at_least(0.0).clip(true)) // Timestamp
+        .column(Column::initial(70.0).at_least(0.0).clip(true)) // Level
         .column(Column::remainder()); // Message
 
     // Cuộn xuống dòng cuối khi:
@@ -61,14 +60,6 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
             });
             header.col(|ui| {
                 ui.label(
-                    egui::RichText::new("SOURCE")
-                        .font(egui::FontId::monospace(11.0))
-                        .strong()
-                        .color(theme::TEXT_MUTED),
-                );
-            });
-            header.col(|ui| {
-                ui.label(
                     egui::RichText::new("MESSAGE")
                         .font(egui::FontId::monospace(11.0))
                         .strong()
@@ -90,11 +81,11 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                         row.set_selected(true);
                     }
 
-                    // Độ tương phản mềm mại: Error -> Đỏ san hô, Warn -> Vàng hổ phách, Info -> Xám ấm
+                    // Độ tương phản mềm mại: Error -> Đỏ san hô, Warn -> Vàng hổ phách, Info/Default -> Giống màu Timestamp dịu mắt
                     let (row_color, is_highlighted) = match event.level {
                         LogLevel::Error | LogLevel::Fatal => (theme::COLOR_ERROR, true),
                         LogLevel::Warn => (theme::COLOR_WARN, true),
-                        _ => (theme::TEXT_PRIMARY, false),
+                        _ => (theme::TEXT_MUTED, false),
                     };
 
                     let timestamp_color = if is_highlighted {
@@ -127,21 +118,6 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                                     .font(egui::FontId::monospace(11.5))
                                     .color(row_color)
                                     .strong(),
-                            )
-                            .truncate(),
-                        );
-                        if resp.clicked() {
-                            newly_selected_event = Some(event.clone());
-                        }
-                    });
-
-                    // Source Column (Terminal monospace)
-                    row.col(|ui| {
-                        let resp = ui.add(
-                            egui::Label::new(
-                                egui::RichText::new(&event.source_id)
-                                    .font(egui::FontId::monospace(11.5))
-                                    .color(row_color),
                             )
                             .truncate(),
                         );
