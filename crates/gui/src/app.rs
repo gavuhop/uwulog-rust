@@ -61,7 +61,7 @@ impl UwuGuiApp {
 
         let args: Vec<String> = std::env::args().collect();
         let mut display_limit: usize = 5_000;
-        let mut capacity: usize = 50_000;
+        let mut capacity: usize = 200_000;
 
         let mut cmd_to_run = String::new();
         let mut file_to_read = String::new();
@@ -252,7 +252,7 @@ impl UwuGuiApp {
         let new_logs_arrived = total_processed != self.last_processed_count
             && now.duration_since(self.last_search_time) > Duration::from_millis(150);
 
-        if new_logs_arrived && !query_changed {
+        if self.is_auto_scroll && new_logs_arrived && !query_changed {
             let (new_matched_count, new_matching_logs) = self
                 .engine
                 .filter_incremental(&self.query, self.last_processed_count);
@@ -308,8 +308,12 @@ impl UwuGuiApp {
     }
 
     pub fn latch(&mut self) {
+        let was_unlatched = !self.is_auto_scroll;
         self.is_auto_scroll = true;
         self.request_scroll_to_bottom = true;
+        if was_unlatched {
+            self.trigger_full_search();
+        }
     }
 
     pub fn unlatch(&mut self) {

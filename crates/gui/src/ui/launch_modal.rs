@@ -80,8 +80,8 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
                         );
                         ui.add(
                             egui::DragValue::new(&mut app.source_config.capacity)
-                                .range(1_000..=500_000)
-                                .speed(1000),
+                                .range(1_000..=1_000_000)
+                                .speed(5000),
                         );
                         ui.end_row();
 
