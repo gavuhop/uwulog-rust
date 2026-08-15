@@ -121,8 +121,6 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                         theme::TEXT_MUTED
                     };
 
-                    let msg_color = row_color;
-
                     // Timestamp Column (Terminal monospace)
                     row.col(|ui| {
                         let time_str = event.timestamp.format("%Y-%m-%d %H:%M:%S").to_string();
@@ -162,7 +160,7 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                             egui::Label::new(
                                 egui::RichText::new(clean_msg)
                                     .font(egui::FontId::monospace(12.0))
-                                    .color(msg_color),
+                                    .color(row_color),
                             )
                             .truncate(),
                         );
