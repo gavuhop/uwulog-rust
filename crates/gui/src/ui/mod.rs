@@ -43,6 +43,10 @@ pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
         )
         .show(ctx, |ui| {
             if app.selected_log.is_some() {
+                let screen_width = ctx.screen_rect().width();
+                let one_third_width = (screen_width / 3.0).max(220.0);
+                let min_sidebar_width = one_third_width.min(180.0);
+
                 egui::SidePanel::right("detail_inspector_panel")
                     .frame(
                         egui::Frame::default()
@@ -51,8 +55,9 @@ pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
                             .stroke(egui::Stroke::new(1.0, theme::BG_SURFACE0)),
                     )
                     .resizable(true)
-                    .default_width(380.0)
-                    .min_width(300.0)
+                    .default_width(one_third_width)
+                    .max_width(one_third_width)
+                    .min_width(min_sidebar_width)
                     .show_inside(ui, |ui| {
                         detail::render_detail(ui, app);
                     });
