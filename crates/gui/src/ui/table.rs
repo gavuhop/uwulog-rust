@@ -8,41 +8,17 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     let text_height = egui::TextStyle::Body.resolve(ui.style()).size;
     let row_count = app.cached_logs.len();
 
-    let not_in_input = !ui.memory(|m| m.focused().is_some());
-
-    // Phím Space hoặc 'p': Bật/Tắt Live Auto-scroll & Đóng băng quan sát
-    if not_in_input
-        && (ui.input(|i| i.key_pressed(egui::Key::Space))
-            || ui.input(|i| i.key_pressed(egui::Key::P)))
-    {
-        app.toggle_live();
-    }
-
-    // Phím End: Latch auto-scroll và cuộn ngay xuống dòng mới nhất
-    let end_key_pressed = ui.input(|i| i.key_pressed(egui::Key::End)) && not_in_input;
+    // Phím End: Latch auto-scroll và cuộn ngay xuống dòng mới nhất (khi không focus vào ô nhập text)
+    let end_key_pressed =
+        ui.input(|i| i.key_pressed(egui::Key::End)) && !ui.memory(|m| m.focused().is_some());
     if end_key_pressed {
-        app.resume_live();
+        app.is_auto_scroll = true;
     }
 
-    // Phím Home: Đóng băng và cuộn lên đầu
-    let home_key_pressed = ui.input(|i| i.key_pressed(egui::Key::Home)) && not_in_input;
-    if home_key_pressed {
-        app.pause_live();
-    }
-
-    // Phím Mũi tên Lên / Xuống khi đang xem Log Inspector
-    if not_in_input && app.selected_log.is_some() {
-        if ui.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
-            app.select_prev_log();
-        } else if ui.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
-            app.select_next_log();
-        }
-    }
-
-    // Phát hiện cuộn chuột LÊN → đóng băng auto-scroll
+    // Phát hiện cuộn chuột LÊN → tắt auto-scroll
     let scroll_delta_y = ui.input(|i| i.raw_scroll_delta.y);
     if scroll_delta_y > 0.0 {
-        app.pause_live();
+        app.is_auto_scroll = false;
     }
 
     ui.visuals_mut().selection.bg_fill = theme::BG_ROW_SELECTED;
@@ -55,7 +31,11 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
         .column(Column::initial(70.0).at_least(0.0).clip(true)) // Level
         .column(Column::remainder()); // Message
 
-    if (end_key_pressed || app.is_auto_scroll) && row_count > 0 {
+    // Cuộn xuống dòng cuối khi:
+    // 1. Vừa bấm phím End HOẶC
+    // 2. Auto-scroll đang bật VÀ có log mới đến (row_count tăng)
+    let has_new_data = row_count > app.prev_table_row_count;
+    if (end_key_pressed || (app.is_auto_scroll && has_new_data)) && row_count > 0 {
         builder = builder.scroll_to_row(row_count - 1, Some(egui::Align::Max));
     }
     app.prev_table_row_count = row_count;
@@ -179,12 +159,10 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
 
     if let Some(event) = newly_selected_event {
         app.selected_log = Some(event);
-        app.pause_live(); // Đóng băng live streaming khi chọn 1 log để đọc chi tiết
     }
 
-    // Bật lại live auto-scroll khi user cuộn XUỐNG chạm đáy và không đang mở inspector
-    if last_row_visible && scroll_delta_y < 0.0 && !app.is_auto_scroll && app.selected_log.is_none()
-    {
-        app.resume_live();
+    // Bật lại auto-scroll CHỈ KHI: user chủ động cuộn XUỐNG (scroll_delta_y < 0) VÀ đã chạm đáy
+    if last_row_visible && scroll_delta_y < 0.0 {
+        app.is_auto_scroll = true;
     }
 }

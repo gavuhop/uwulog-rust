@@ -6,18 +6,11 @@ use uwu_schema::LogLevel;
 pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     ui.horizontal(|ui| {
         ui.label(
-            egui::RichText::new("🔍 Inspector")
+            egui::RichText::new("🔍 Log Inspector")
                 .strong()
-                .size(13.5)
+                .size(14.0)
                 .color(theme::TEXT_KEY),
         );
-
-        ui.label(
-            egui::RichText::new("⏸ Frozen")
-                .size(11.0)
-                .color(theme::COLOR_WARN),
-        );
-
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let close_btn = egui::Button::new(
                 egui::RichText::new("✖ Close")
@@ -28,44 +21,8 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
             .stroke(Stroke::new(1.0, theme::BG_SURFACE1))
             .rounding(Rounding::same(4.0));
 
-            if ui
-                .add(close_btn)
-                .on_hover_text("Close Inspector [Esc]")
-                .clicked()
-            {
+            if ui.add(close_btn).clicked() {
                 app.selected_log = None;
-            }
-
-            ui.add_space(4.0);
-
-            let next_btn = egui::Button::new(
-                egui::RichText::new("⏭")
-                    .size(11.0)
-                    .color(theme::TEXT_PRIMARY),
-            )
-            .fill(theme::BG_SURFACE0)
-            .stroke(Stroke::new(1.0, theme::BG_SURFACE1))
-            .rounding(Rounding::same(4.0));
-
-            if ui.add(next_btn).on_hover_text("Next Log [Down]").clicked() {
-                app.select_next_log();
-            }
-
-            let prev_btn = egui::Button::new(
-                egui::RichText::new("⏮")
-                    .size(11.0)
-                    .color(theme::TEXT_PRIMARY),
-            )
-            .fill(theme::BG_SURFACE0)
-            .stroke(Stroke::new(1.0, theme::BG_SURFACE1))
-            .rounding(Rounding::same(4.0));
-
-            if ui
-                .add(prev_btn)
-                .on_hover_text("Previous Log [Up]")
-                .clicked()
-            {
-                app.select_prev_log();
             }
         });
     });
