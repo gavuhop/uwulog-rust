@@ -12,8 +12,8 @@ use eframe::egui;
 pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
     // Phím Escape: Đóng history popup trước, rồi đến modal Params, rồi đến Log Inspector
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-        if app.show_history_popup {
-            app.show_history_popup = false;
+        if app.history_state.is_open {
+            app.history_state.close_popup();
         } else if app.show_launch_modal {
             app.show_launch_modal = false;
         } else if app.selected_log.is_some() {
