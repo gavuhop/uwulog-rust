@@ -222,6 +222,63 @@ impl UwuGuiApp {
         }
     }
 
+    pub fn resume_live(&mut self) {
+        self.is_auto_scroll = true;
+        self.trigger_full_search();
+    }
+
+    pub fn pause_live(&mut self) {
+        self.is_auto_scroll = false;
+    }
+
+    pub fn toggle_live(&mut self) {
+        if self.is_auto_scroll {
+            self.pause_live();
+        } else {
+            self.resume_live();
+        }
+    }
+
+    pub fn get_unseen_logs_count(&self) -> u64 {
+        if self.is_auto_scroll {
+            0
+        } else {
+            self.engine
+                .total_processed()
+                .saturating_sub(self.last_processed_count)
+        }
+    }
+
+    pub fn select_prev_log(&mut self) {
+        if self.cached_logs.is_empty() {
+            return;
+        }
+        let current_idx = self
+            .selected_log
+            .as_ref()
+            .and_then(|sel| self.cached_logs.iter().position(|l| l.id == sel.id))
+            .unwrap_or(self.cached_logs.len() - 1);
+
+        if current_idx > 0 {
+            self.selected_log = self.cached_logs.get(current_idx - 1).cloned();
+        }
+    }
+
+    pub fn select_next_log(&mut self) {
+        if self.cached_logs.is_empty() {
+            return;
+        }
+        let current_idx = self
+            .selected_log
+            .as_ref()
+            .and_then(|sel| self.cached_logs.iter().position(|l| l.id == sel.id))
+            .unwrap_or(0);
+
+        if current_idx + 1 < self.cached_logs.len() {
+            self.selected_log = self.cached_logs.get(current_idx + 1).cloned();
+        }
+    }
+
     pub fn trigger_full_search(&mut self) {
         let (matched, logs) = self
             .engine
@@ -249,7 +306,10 @@ impl UwuGuiApp {
         let new_logs_arrived = total_processed != self.last_processed_count
             && now.duration_since(self.last_search_time) > Duration::from_millis(150);
 
-        if new_logs_arrived && !query_changed {
+        // QUAN TRỌNG: Chỉ cập nhật cached_logs khi đang bật Auto-Scroll (Live).
+        // Khi user đang tạm dừng hoặc chọn xem 1 dòng log, đóng băng toàn bộ cached_logs
+        // để màn hình đứng yên tuyệt đối, không bị trôi hoặc dịch chuyển vị trí dòng!
+        if self.is_auto_scroll && new_logs_arrived && !query_changed {
             let (new_matched_count, new_matching_logs) = self
                 .engine
                 .filter_incremental(&self.query, self.last_processed_count);
