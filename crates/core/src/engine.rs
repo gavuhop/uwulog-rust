@@ -211,4 +211,96 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].source_id, "test:stream");
     }
+
+    #[tokio::test]
+    async fn test_system_engine_search_limits() {
+        let engine = SystemEngine::new(10);
+        let tx = engine.get_channel();
+
+        for i in 0..6 {
+            tx.send(RawLogEntry {
+                source_id: format!("src_{}", i),
+                payload: RawPayload::Text(format!("[INFO] Message {}", i)),
+            })
+            .await
+            .unwrap();
+        }
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        // Search with limit 3
+        let limited = engine.search_limited("level:info", 3);
+        assert_eq!(limited.len(), 3);
+
+        // Search with count
+        let (total_matched, logs) = engine.search_with_count("level:info", 2);
+        assert_eq!(total_matched, 6);
+        assert_eq!(logs.len(), 2);
+
+        // Empty query fast path
+        let (all_count, all_logs) = engine.search_with_count("", 10);
+        assert_eq!(all_count, 6);
+        assert_eq!(all_logs.len(), 6);
+    }
+
+    #[tokio::test]
+    async fn test_system_engine_incremental_filtering() {
+        let engine = SystemEngine::new(50);
+        let tx = engine.get_channel();
+
+        // 1. Send first batch
+        tx.send(RawLogEntry {
+            source_id: "s1".to_string(),
+            payload: RawPayload::Text("[ERROR] Error 1".to_string()),
+        })
+        .await
+        .unwrap();
+        tx.send(RawLogEntry {
+            source_id: "s2".to_string(),
+            payload: RawPayload::Text("[INFO] Info 1".to_string()),
+        })
+        .await
+        .unwrap();
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        let last_processed = engine.total_processed();
+        assert_eq!(last_processed, 2);
+
+        // 2. Send second batch
+        tx.send(RawLogEntry {
+            source_id: "s3".to_string(),
+            payload: RawPayload::Text("[ERROR] Error 2".to_string()),
+        })
+        .await
+        .unwrap();
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        // Filter incremental for level:error since last_processed
+        let (new_matched, new_logs) = engine.filter_incremental("level:error", last_processed);
+        assert_eq!(new_matched, 1);
+        assert_eq!(new_logs.len(), 1);
+        assert!(new_logs[0].message.contains("Error 2"));
+    }
+
+    #[tokio::test]
+    async fn test_system_engine_clear() {
+        let engine = SystemEngine::new(10);
+        let tx = engine.get_channel();
+
+        tx.send(RawLogEntry {
+            source_id: "s1".to_string(),
+            payload: RawPayload::Text("[INFO] Test log".to_string()),
+        })
+        .await
+        .unwrap();
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        assert_eq!(engine.total_logs(), 1);
+
+        engine.clear();
+        assert_eq!(engine.total_logs(), 0);
+        assert_eq!(engine.total_processed(), 0);
+        assert_eq!(engine.max_capacity(), 10);
+    }
 }

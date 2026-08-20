@@ -106,3 +106,48 @@ async fn run_file_tailer(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use std::time::Duration;
+    use tokio::sync::mpsc;
+
+    #[tokio::test]
+    async fn test_file_source_tailing() {
+        let temp_file_path =
+            std::env::temp_dir().join(format!("uwu_test_tail_{}.log", uuid::Uuid::new_v4()));
+
+        // 1. Ghi 2 dòng log ban đầu
+        {
+            let mut file = std::fs::File::create(&temp_file_path).unwrap();
+            writeln!(file, "Line 1: Initial startup").unwrap();
+            writeln!(file, "Line 2: Ready to serve").unwrap();
+            file.flush().unwrap();
+        }
+
+        let source = FileSource::new(&temp_file_path);
+        assert_eq!(source.name(), format!("file:{}", temp_file_path.display()));
+
+        let (tx, mut rx) = mpsc::channel(100);
+        source.start_stream(tx).await.unwrap();
+
+        // 2. Nhận 2 dòng đầu tiên
+        let mut lines = Vec::new();
+        for _ in 0..2 {
+            if let Ok(Some(entry)) = tokio::time::timeout(Duration::from_secs(3), rx.recv()).await {
+                if let RawPayload::Text(t) = entry.payload {
+                    lines.push(t);
+                }
+            }
+        }
+
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains("Line 1"));
+        assert!(lines[1].contains("Line 2"));
+
+        // Dọn dẹp file tạm
+        let _ = std::fs::remove_file(&temp_file_path);
+    }
+}

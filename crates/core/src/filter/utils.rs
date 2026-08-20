@@ -11,9 +11,8 @@ pub fn now_secs() -> f64 {
 /// Chuyển đổi giá trị token thành số f64.
 /// Hỗ trợ số nguyên, số thực và các đơn vị thời gian tương đối: now-5m, now-1h...
 pub fn parse_numeric_value(s: &str, now: f64) -> Option<f64> {
-    let s_low = s.to_lowercase();
-    let s_trim = s_low.trim();
-    if s_trim == "now" {
+    let s_trim = s.trim();
+    if s_trim.eq_ignore_ascii_case("now") {
         return Some(now);
     }
 
@@ -116,4 +115,60 @@ pub fn parse_iso_to_secs(s: &str) -> Option<f64> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_now_secs() {
+        let ts = now_secs();
+        assert!(ts > 1_700_000_000.0); // Timestamp after 2023
+    }
+
+    #[test]
+    fn test_parse_numeric_value_units() {
+        let now = 1_000_000.0;
+
+        // Base cases
+        assert_eq!(parse_numeric_value("now", now), Some(now));
+        assert_eq!(parse_numeric_value("42", now), Some(42.0));
+        assert_eq!(parse_numeric_value("3.1415", now), Some(3.1415));
+
+        // Time units relative to now
+        assert_eq!(parse_numeric_value("10s", now), Some(now - 10.0));
+        assert_eq!(parse_numeric_value("5m", now), Some(now - 300.0));
+        assert_eq!(parse_numeric_value("2h", now), Some(now - 7200.0));
+        assert_eq!(parse_numeric_value("1d", now), Some(now - 86400.0));
+        assert_eq!(parse_numeric_value("1w", now), Some(now - 604800.0));
+        assert_eq!(parse_numeric_value("1M", now), Some(now - 2629746.0));
+        assert_eq!(parse_numeric_value("1y", now), Some(now - 31536000.0));
+
+        // Invalid strings
+        assert_eq!(parse_numeric_value("not_a_number", now), None);
+        assert_eq!(parse_numeric_value("", now), None);
+    }
+
+    #[test]
+    fn test_parse_iso_to_secs_formats() {
+        // RFC3339
+        let rfc3339 = "2026-08-20T10:00:00Z";
+        assert!(parse_iso_to_secs(rfc3339).is_some());
+
+        // Standard space-separated
+        let std_fmt = "2026-08-20 10:00:00.123";
+        assert!(parse_iso_to_secs(std_fmt).is_some());
+
+        // Slash format
+        let slash_fmt = "2026/08/20 10:00:00";
+        assert!(parse_iso_to_secs(slash_fmt).is_some());
+
+        // Date only
+        let date_only = "2026-08-20";
+        assert!(parse_iso_to_secs(date_only).is_some());
+
+        // Empty
+        assert_eq!(parse_iso_to_secs(""), None);
+    }
 }

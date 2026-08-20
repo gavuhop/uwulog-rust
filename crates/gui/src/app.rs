@@ -427,3 +427,123 @@ impl eframe::App for UwuGuiApp {
         self.stop_current_source();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::autocomplete::{FieldType, SuggestionItem, SuggestionKind};
+    use std::collections::HashMap;
+    use uwu_core::LogLevel;
+
+    fn create_test_app() -> UwuGuiApp {
+        let engine = Arc::new(SystemEngine::new(100));
+        let rt = tokio::runtime::Handle::current();
+
+        let source_config = SourceConfig {
+            source_type: SourceType::Process,
+            command_str: String::new(),
+            file_path: String::new(),
+            win_channel: "System".to_string(),
+            capacity: 100,
+            display_limit: 50,
+        };
+
+        UwuGuiApp {
+            engine,
+            query: String::new(),
+            last_query: String::new(),
+            display_limit: 50,
+            capacity: 100,
+            total_matched: 0,
+            cached_logs: Vec::new(),
+            selected_log: None,
+            is_auto_scroll: true,
+            request_scroll_to_bottom: false,
+            prev_table_row_count: 0,
+            is_source_running: false,
+            show_launch_modal: false,
+            source_config,
+            rt,
+            last_processed_count: 0,
+            last_search_time: Instant::now(),
+            kill_signal: None,
+            autocomplete_state: AutocompleteState::default(),
+            history_state: SearchHistoryState::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_latch_toggle() {
+        let mut app = create_test_app();
+        assert!(app.is_auto_scroll);
+
+        app.unlatch();
+        assert!(!app.is_auto_scroll);
+
+        app.latch();
+        assert!(app.is_auto_scroll);
+        assert!(app.request_scroll_to_bottom);
+
+        app.toggle_latch();
+        assert!(!app.is_auto_scroll);
+
+        app.toggle_latch();
+        assert!(app.is_auto_scroll);
+    }
+
+    #[tokio::test]
+    async fn test_get_available_log_fields_inference() {
+        let mut app = create_test_app();
+
+        let mut fields = HashMap::new();
+        fields.insert("latency_ms".to_string(), serde_json::json!(250));
+        fields.insert(
+            "created_time".to_string(),
+            serde_json::json!("2026-08-20T10:00:00Z"),
+        );
+        fields.insert("environment".to_string(), serde_json::json!("production"));
+
+        let log = LogEvent::new(
+            "2026-08-20T10:00:00Z",
+            LogLevel::Info,
+            "test",
+            "msg",
+            fields,
+            "raw",
+        );
+        app.cached_logs.push(log);
+
+        let available = app.get_available_log_fields();
+        let field_types: HashMap<String, FieldType> = available.into_iter().collect();
+
+        // Core fields
+        assert_eq!(field_types.get("level"), Some(&FieldType::Text));
+        assert_eq!(field_types.get("message"), Some(&FieldType::Text));
+        assert_eq!(field_types.get("source"), Some(&FieldType::Text));
+        assert_eq!(field_types.get("timestamp"), Some(&FieldType::Time));
+
+        // Inferred fields
+        assert_eq!(field_types.get("latency_ms"), Some(&FieldType::Number));
+        assert_eq!(field_types.get("created_time"), Some(&FieldType::Time));
+        assert_eq!(field_types.get("environment"), Some(&FieldType::Text));
+    }
+
+    #[tokio::test]
+    async fn test_apply_autocomplete_suggestion() {
+        let mut app = create_test_app();
+        app.query = "lev".to_string();
+        app.autocomplete_state.active_token_range = (0, 3);
+
+        let suggestion = SuggestionItem {
+            kind: SuggestionKind::Key,
+            op_symbol: "🔑",
+            action_name: "level:".to_string(),
+            example_syntax: "level:error".to_string(),
+            insert_text: "level:".to_string(),
+        };
+
+        app.apply_autocomplete_suggestion(&suggestion);
+        assert_eq!(app.query, "level:");
+        assert!(app.autocomplete_state.just_applied);
+    }
+}

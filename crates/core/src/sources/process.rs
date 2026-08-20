@@ -185,4 +185,43 @@ mod tests {
         assert!(!received.is_empty());
         assert!(received[0].contains("Hello ProcessSource"));
     }
+
+    #[tokio::test]
+    async fn test_process_source_stderr_formatting() {
+        let (tx, mut rx) = mpsc::channel(100);
+
+        #[cfg(target_os = "windows")]
+        let proc = ProcessSource::new(
+            "cmd",
+            vec![
+                "/c".to_string(),
+                "echo Critical stderr failure 1>&2".to_string(),
+            ],
+        );
+
+        #[cfg(not(target_os = "windows"))]
+        let proc = ProcessSource::new(
+            "sh",
+            vec![
+                "-c".to_string(),
+                "echo 'Critical stderr failure' >&2".to_string(),
+            ],
+        );
+
+        proc.start_stream(tx).await.unwrap();
+
+        let mut received = Vec::new();
+        while let Ok(Some(entry)) =
+            tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv()).await
+        {
+            if let RawPayload::Text(text) = entry.payload {
+                received.push(text);
+                break;
+            }
+        }
+
+        assert!(!received.is_empty());
+        assert!(received[0].contains("[ERROR]"));
+        assert!(received[0].contains("Critical stderr failure"));
+    }
 }

@@ -165,3 +165,17 @@ fn render_event_xml(event_handle: isize) -> Option<String> {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_win_event_source_naming() {
+        let src = WinEventSource::new("Application");
+        assert_eq!(src.name(), "winevent:Application");
+
+        let src_sec = WinEventSource::new("Security");
+        assert_eq!(src_sec.name(), "winevent:Security");
+    }
+}

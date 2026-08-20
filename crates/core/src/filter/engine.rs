@@ -148,3 +148,56 @@ impl LogEngine {
         self.max_timestamp = 0.0;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_log_engine_fifo_eviction() {
+        let mut engine = LogEngine::new(5);
+
+        for i in 0..10 {
+            let val = json!({
+                "message": format!("Log {}", i),
+                "seq": i
+            });
+            engine.push_value(val);
+        }
+
+        assert_eq!(engine.stats(), 5);
+        let history = engine.get_history();
+        assert_eq!(history.len(), 5);
+        assert_eq!(history[0].get("seq").unwrap(), 5);
+        assert_eq!(history[4].get("seq").unwrap(), 9);
+    }
+
+    #[test]
+    fn test_log_engine_filter_slice() {
+        let engine = LogEngine::new(10);
+        let slice = vec![
+            json!({"level": "error", "msg": "failed"}),
+            json!({"level": "info", "msg": "ok"}),
+            json!({"level": "error", "msg": "crashed"}),
+        ];
+
+        let matched = engine.filter_slice(&slice, "level:error");
+        assert_eq!(matched, vec![0, 2]);
+
+        let all = engine.filter_slice(&slice, "");
+        assert_eq!(all, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn test_log_engine_clear_and_stats() {
+        let mut engine = LogEngine::new(10);
+        engine.push_value(json!({"msg": "hello"}));
+        engine.push_value(json!({"msg": "world"}));
+        assert_eq!(engine.stats(), 2);
+
+        engine.clear();
+        assert_eq!(engine.stats(), 0);
+        assert!(engine.get_history().is_empty());
+    }
+}
