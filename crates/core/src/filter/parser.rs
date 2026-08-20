@@ -272,12 +272,8 @@ fn parse_atom(s: &str, now: f64) -> Expr {
                 return Expr::Text(vec![]);
             }
 
-            let is_neg_num = v_str.starts_with('-')
-                && v_str.len() > 1
-                && (v_str.as_bytes()[1].is_ascii_digit() || v_str.as_bytes()[1] == b'.');
-
             let mut inner_negate = false;
-            if v_str.starts_with('-') && !is_neg_num {
+            if v_str.starts_with('-') {
                 inner_negate = true;
                 v_str = &v_str[1..];
             }

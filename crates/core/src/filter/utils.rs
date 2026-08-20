@@ -134,7 +134,7 @@ mod tests {
         // Base cases
         assert_eq!(parse_numeric_value("now", now), Some(now));
         assert_eq!(parse_numeric_value("42", now), Some(42.0));
-        assert_eq!(parse_numeric_value("3.1415", now), Some(3.1415));
+        assert_eq!(parse_numeric_value("3.5", now), Some(3.5));
 
         // Time units relative to now
         assert_eq!(parse_numeric_value("10s", now), Some(now - 10.0));
