@@ -231,4 +231,162 @@ mod tests {
             vec![0, 2]
         );
     }
+
+    #[test]
+    fn test_malformed_queries_safety() {
+        let logs = vec![
+            log("ERROR", "T1", "failed connection to db", "auth"),
+            log("INFO", "T2", "user logged in", "web"),
+        ];
+
+        // Unclosed quotes should not panic
+        let res1 = filter_logs(logs.clone(), "message:\"failed connection".into());
+        assert!(!res1.is_empty() || res1.is_empty()); // No panic
+
+        // Unmatched parenthesis
+        let res2 = filter_logs(logs.clone(), "(level:error OR".into());
+        assert_eq!(res2, vec![0]);
+
+        // Dangling colon / empty operator
+        let res3 = filter_logs(logs.clone(), "level:".into());
+        assert_eq!(res3, vec![0, 1]);
+
+        // Invalid regex syntax falls back to literal substring search -> matches nothing if pattern not found
+        let res4 = filter_logs(logs.clone(), "message:~[invalid(".into());
+        assert_eq!(res4, Vec::<u32>::new());
+
+        // Just boolean operators
+        let res5 = filter_logs(logs.clone(), "AND OR NOT".into());
+        assert_eq!(res5, vec![0, 1]);
+    }
+
+    #[test]
+    fn test_dotted_nested_field_filtering() {
+        let logs = vec![
+            json!({
+                "level": "ERROR",
+                "http.status": 500,
+                "http.method": "POST",
+                "user.id": "usr_99",
+                "message": "Internal Server Error"
+            }),
+            json!({
+                "level": "INFO",
+                "http.status": 200,
+                "http.method": "GET",
+                "user.id": "usr_100",
+                "message": "OK"
+            }),
+        ];
+
+        assert_eq!(filter_logs(logs.clone(), "http.status:500".into()), vec![0]);
+        assert_eq!(filter_logs(logs.clone(), "http.method:GET".into()), vec![1]);
+        assert_eq!(filter_logs(logs.clone(), "user.id:usr_99".into()), vec![0]);
+        assert_eq!(
+            filter_logs(
+                logs.clone(),
+                "http.status:>=200 AND http.status:<400".into()
+            ),
+            vec![1]
+        );
+    }
+
+    #[test]
+    fn test_floating_point_and_negative_number_comparisons() {
+        let logs = vec![
+            json!({ "latency": 0.05, "temp": -5.5, "level": "INFO" }),
+            json!({ "latency": 1.25, "temp": 15.0, "level": "WARN" }),
+            json!({ "latency": 150.0, "temp": 40.2, "level": "ERROR" }),
+        ];
+
+        // Floating point comparison
+        assert_eq!(filter_logs(logs.clone(), "latency:<1.0".into()), vec![0]);
+        assert_eq!(
+            filter_logs(logs.clone(), "latency:>=1.25".into()),
+            vec![1, 2]
+        );
+
+        // Negative numbers and ranges
+        assert_eq!(filter_logs(logs.clone(), "temp:-10..0".into()), vec![0]);
+        assert_eq!(filter_logs(logs.clone(), "temp:>0".into()), vec![1, 2]);
+    }
+
+    #[test]
+    fn test_case_insensitivity_in_keys_and_values() {
+        let logs = vec![
+            log("ERROR", "T1", "DATABASE TIMEOUT", "PostgresDB"),
+            log("INFO", "T2", "Redis Connected", "RedisCache"),
+        ];
+
+        assert_eq!(filter_logs(logs.clone(), "LEVEL:ERROR".into()), vec![0]);
+        assert_eq!(filter_logs(logs.clone(), "level:error".into()), vec![0]);
+        assert_eq!(
+            filter_logs(logs.clone(), "source:postgresdb".into()),
+            vec![0]
+        );
+        assert_eq!(
+            filter_logs(logs.clone(), "SOURCE:REDISCACHE".into()),
+            vec![1]
+        );
+        assert_eq!(
+            filter_logs(logs.clone(), "message:database".into()),
+            vec![0]
+        );
+    }
+
+    #[test]
+    fn test_complex_not_negation_trees() {
+        let logs = vec![
+            log("ERROR", "T1", "msg1", "auth"),
+            log("WARN", "T2", "msg2", "api"),
+            log("INFO", "T3", "msg3", "cron"),
+            log("DEBUG", "T4", "msg4", "auth"),
+        ];
+
+        // NOT (level:info OR level:debug) -> should match 0 (ERROR) and 1 (WARN)
+        assert_eq!(
+            filter_logs(logs.clone(), "NOT (level:info OR level:debug)".into()),
+            vec![0, 1]
+        );
+
+        // -source:auth AND NOT level:info -> should match 1 (WARN on api)
+        assert_eq!(
+            filter_logs(logs.clone(), "-source:auth AND NOT level:info".into()),
+            vec![1]
+        );
+    }
+
+    #[test]
+    fn test_quotes_with_special_characters() {
+        let logs = vec![
+            log(
+                "INFO",
+                "T1",
+                "Connected to https://api.service.io:8443/v1/auth",
+                "client",
+            ),
+            log(
+                "ERROR",
+                "T2",
+                "Host 192.168.1.50:9092 unreachable (err: ETIMEDOUT)",
+                "kafka",
+            ),
+        ];
+
+        assert_eq!(
+            filter_logs(
+                logs.clone(),
+                "\"https://api.service.io:8443/v1/auth\"".into()
+            ),
+            vec![0]
+        );
+        assert_eq!(
+            filter_logs(logs.clone(), "\"192.168.1.50:9092\"".into()),
+            vec![1]
+        );
+        assert_eq!(
+            filter_logs(logs.clone(), "message:\"ETIMEDOUT\"".into()),
+            vec![1]
+        );
+    }
 }
