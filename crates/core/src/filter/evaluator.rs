@@ -71,18 +71,7 @@ pub fn eval(expr: &Expr, log: &Value, now: f64) -> bool {
 }
 
 pub fn get_field_str(log: &Value, field: &str) -> Option<String> {
-    if let Some(v) = log.get(field) {
-        return Some(value_to_string(v));
-    }
-    // Case-insensitive fallback
-    if let Some(obj) = log.as_object() {
-        for (k, v) in obj {
-            if k.eq_ignore_ascii_case(field) {
-                return Some(value_to_string(v));
-            }
-        }
-    }
-    None
+    log.get(field).map(value_to_string)
 }
 
 fn value_to_string(v: &Value) -> String {
