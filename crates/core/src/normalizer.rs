@@ -301,4 +301,110 @@ mod tests {
             &serde_json::json!(120)
         );
     }
+
+    #[test]
+    fn test_normalize_win_event_xml() {
+        let xml = "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'>\
+            <System>\
+                <Provider Name='Microsoft-Windows-Security-Auditing' />\
+                <EventID>4624</EventID>\
+                <Level>2</Level>\
+                <TimeCreated SystemTime='2026-08-20T08:30:00.0000000Z' />\
+            </System>\
+        </Event>";
+
+        let entry = RawLogEntry {
+            source_id: "winevent:Security".to_string(),
+            payload: RawPayload::Text(xml.to_string()),
+        };
+
+        let event = LogNormalizer::normalize(entry);
+        assert_eq!(event.level, LogLevel::Error); // Level 2 is Error in WinEvent
+        assert_eq!(event.timestamp, "2026-08-20T08:30:00.0000000Z");
+        assert_eq!(
+            event.fields.get("event_id").unwrap(),
+            &serde_json::json!(4624)
+        );
+        assert_eq!(
+            event.fields.get("provider").unwrap(),
+            &serde_json::json!("Microsoft-Windows-Security-Auditing")
+        );
+        assert_eq!(event.message, "Windows Event 4624");
+    }
+
+    #[test]
+    fn test_normalize_key_value_payload() {
+        let mut map = HashMap::new();
+        map.insert("level".to_string(), "INFO".to_string());
+        map.insert("msg".to_string(), "Service started".to_string());
+
+        let entry = RawLogEntry {
+            source_id: "kv:source".to_string(),
+            payload: RawPayload::KeyValue(map),
+        };
+
+        let event = LogNormalizer::normalize(entry);
+        assert_eq!(event.source_id, "kv:source");
+        assert!(event.raw.contains("Service started"));
+    }
+
+    #[test]
+    fn test_normalize_json_field_aliases() {
+        // Test alias lvl + msg + ts
+        let json_payload = serde_json::json!({
+            "lvl": "CRIT",
+            "msg": "Fatal storage error",
+            "ts": "1724140800"
+        });
+
+        let entry = RawLogEntry {
+            source_id: "test:aliases".to_string(),
+            payload: RawPayload::Json(json_payload),
+        };
+
+        let event = LogNormalizer::normalize(entry);
+        assert_eq!(event.level, LogLevel::Error);
+        assert_eq!(event.message, "Fatal storage error");
+        assert_eq!(event.timestamp, "1724140800");
+
+        // Test alias severity + text + @timestamp
+        let json_payload2 = serde_json::json!({
+            "severity": "WARNING",
+            "text": "High CPU",
+            "@timestamp": "2026-08-20T10:00:00Z"
+        });
+
+        let event2 = LogNormalizer::normalize(RawLogEntry {
+            source_id: "test:elastic".to_string(),
+            payload: RawPayload::Json(json_payload2),
+        });
+        assert_eq!(event2.level, LogLevel::Warn);
+        assert_eq!(event2.message, "High CPU");
+        assert_eq!(event2.timestamp, "2026-08-20T10:00:00Z");
+
+        // Test fallback to raw when no message field
+        let json_payload3 = serde_json::json!({
+            "code": 404
+        });
+        let event3 = LogNormalizer::normalize(RawLogEntry {
+            source_id: "test:empty_msg".to_string(),
+            payload: RawPayload::Json(json_payload3),
+        });
+        assert!(event3.message.contains("404"));
+    }
+
+    #[test]
+    fn test_strip_ansi_complex() {
+        // Truecolor 24-bit ANSI
+        let truecolor = "\x1b[38;2;255;100;50mHello TrueColor\x1b[0m";
+        assert_eq!(strip_ansi(truecolor), "Hello TrueColor");
+
+        // Bold + multiple style codes + \r
+        let multi_style = "\x1b[1;32;40m[INFO]\x1b[0m Line with return\r\n";
+        assert_eq!(strip_ansi(multi_style), "[INFO] Line with return\n");
+
+        // Plain string without ANSI
+        let plain = "Simple plain text";
+        assert_eq!(strip_ansi(plain), "Simple plain text");
+    }
 }

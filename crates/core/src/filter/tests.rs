@@ -183,4 +183,52 @@ mod tests {
             vec![0]
         );
     }
+
+    #[test]
+    fn test_deeply_nested_boolean_logic() {
+        let logs = vec![
+            log("ERROR", "T1", "connection refused", "auth"),
+            log("WARN", "T2", "slow query", "db"),
+            log("INFO", "T3", "health check ok", "api"),
+        ];
+
+        // (level:error OR level:warn) AND (source:auth OR source:db)
+        assert_eq!(
+            filter_logs(
+                logs.clone(),
+                "(level:error OR level:warn) AND (source:auth OR source:db)".into()
+            ),
+            vec![0, 1]
+        );
+
+        // level:info OR (level:error AND source:db)
+        assert_eq!(
+            filter_logs(
+                logs.clone(),
+                "level:info OR (level:error AND source:db)".into()
+            ),
+            vec![2]
+        );
+    }
+
+    #[test]
+    fn test_pipe_separated_multi_values() {
+        let logs = vec![
+            log("ERROR", "T1", "msg1", "auth"),
+            log("WARN", "T2", "msg2", "db"),
+            log("INFO", "T3", "msg3", "api"),
+        ];
+
+        // level:error|warn
+        assert_eq!(
+            filter_logs(logs.clone(), "level:error|warn".into()),
+            vec![0, 1]
+        );
+
+        // source:auth|api
+        assert_eq!(
+            filter_logs(logs.clone(), "source:auth|api".into()),
+            vec![0, 2]
+        );
+    }
 }

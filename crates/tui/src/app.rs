@@ -184,3 +184,123 @@ impl App {
         false
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyEventState, KeyModifiers};
+    use uwu_core::{RawLogEntry, RawPayload};
+
+    fn make_key(code: KeyCode) -> KeyEvent {
+        KeyEvent {
+            code,
+            modifiers: KeyModifiers::NONE,
+            kind: crossterm::event::KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }
+    }
+
+    async fn create_test_tui_app(item_count: usize) -> App {
+        let engine = Arc::new(SystemEngine::new(100));
+        let tx = engine.get_channel();
+
+        for i in 0..item_count {
+            tx.send(RawLogEntry {
+                source_id: format!("src_{}", i),
+                payload: RawPayload::Text(format!("[INFO] Log row {}", i)),
+            })
+            .await
+            .unwrap();
+        }
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        App::new(engine, 50)
+    }
+
+    #[tokio::test]
+    async fn test_tui_app_init() {
+        let app = create_test_tui_app(5).await;
+        assert_eq!(app.total_matched, 5);
+        assert_eq!(app.cached_logs.len(), 5);
+        assert!(app.is_auto_scroll);
+        assert_eq!(app.list_state.selected(), Some(4));
+    }
+
+    #[tokio::test]
+    async fn test_tui_app_navigation_keys() {
+        let mut app = create_test_tui_app(10).await;
+        assert_eq!(app.list_state.selected(), Some(9));
+
+        // Up: moves to 8, turns off auto_scroll
+        app.handle_key(make_key(KeyCode::Up));
+        assert_eq!(app.list_state.selected(), Some(8));
+        assert!(!app.is_auto_scroll);
+
+        // Home: moves to 0
+        app.handle_key(make_key(KeyCode::Home));
+        assert_eq!(app.list_state.selected(), Some(0));
+
+        // Down: moves to 1
+        app.handle_key(make_key(KeyCode::Down));
+        assert_eq!(app.list_state.selected(), Some(1));
+
+        // End: moves to bottom (9), re-enables auto_scroll
+        app.handle_key(make_key(KeyCode::End));
+        assert_eq!(app.list_state.selected(), Some(9));
+        assert!(app.is_auto_scroll);
+    }
+
+    #[tokio::test]
+    async fn test_tui_app_editing_mode_keys() {
+        let mut app = create_test_tui_app(5).await;
+
+        // Press '/' -> enter editing mode
+        app.handle_key(make_key(KeyCode::Char('/')));
+        assert!(matches!(app.input_mode, InputMode::Editing));
+
+        // Type query 'e', 'r', 'r'
+        app.handle_key(make_key(KeyCode::Char('e')));
+        app.handle_key(make_key(KeyCode::Char('r')));
+        app.handle_key(make_key(KeyCode::Char('r')));
+        assert_eq!(app.query, "err");
+
+        // Backspace -> 'er'
+        app.handle_key(make_key(KeyCode::Backspace));
+        assert_eq!(app.query, "er");
+
+        // Enter -> return to normal mode
+        app.handle_key(make_key(KeyCode::Enter));
+        assert!(matches!(app.input_mode, InputMode::Normal));
+    }
+
+    #[tokio::test]
+    async fn test_tui_app_latch_toggle_keys() {
+        let mut app = create_test_tui_app(5).await;
+        assert!(app.is_auto_scroll);
+
+        // Press Space -> pause
+        app.handle_key(make_key(KeyCode::Char(' ')));
+        assert!(!app.is_auto_scroll);
+
+        // Press 'p' -> resume
+        app.handle_key(make_key(KeyCode::Char('p')));
+        assert!(app.is_auto_scroll);
+    }
+
+    #[tokio::test]
+    async fn test_tui_app_tick_query_changed() {
+        let mut app = create_test_tui_app(5).await;
+        app.query = "level:warn".to_string();
+
+        app.tick();
+        assert_eq!(app.last_query, "level:warn");
+        assert_eq!(app.total_matched, 0);
+    }
+
+    #[tokio::test]
+    async fn test_tui_app_exit_key() {
+        let mut app = create_test_tui_app(5).await;
+        let should_exit = app.handle_key(make_key(KeyCode::Char('q')));
+        assert!(should_exit);
+    }
+}
