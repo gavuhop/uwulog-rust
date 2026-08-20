@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::engine::LogEngine;
+    use crate::filter::LogEngine;
     use serde_json::{json, Value};
 
     fn filter_logs(logs_val: Vec<Value>, query: String) -> Vec<u32> {

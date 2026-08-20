@@ -1,12 +1,12 @@
+use crate::filter::LogEngine as CoreFilterEngine;
+use crate::normalizer::LogNormalizer;
+use crate::schema::{LogEvent, RawLogEntry};
+use crate::sources::LogSource;
 use anyhow::Result;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use tokio::sync::mpsc;
-use uwu_core::LogEngine as CoreFilterEngine;
-use uwu_normalizer::LogNormalizer;
-use uwu_schema::{LogEvent, RawLogEntry};
-use uwu_sources::LogSource;
 
 pub struct SystemEngine {
     raw_tx: mpsc::Sender<RawLogEntry>,
@@ -32,7 +32,7 @@ impl SystemEngine {
             while let Some(raw_entry) = raw_rx.recv().await {
                 let event = LogNormalizer::normalize(raw_entry);
 
-                // Chuyển LogEvent thành serde_json::Value để nạp vào uwu-core filter engine
+                // Chuyển LogEvent thành serde_json::Value để nạp vào filter engine
                 let mut json_val = serde_json::json!({
                     "id": event.id,
                     "timestamp": event.timestamp,
@@ -190,7 +190,7 @@ impl SystemEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use uwu_schema::RawPayload;
+    use crate::schema::RawPayload;
 
     #[tokio::test]
     async fn test_engine_streaming_and_search() {

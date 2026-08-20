@@ -5,12 +5,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot};
-use uwu_engine::SystemEngine;
-use uwu_schema::{LogEvent, RawLogEntry};
-use uwu_sources::{FileSource, LogSource, ProcessSource};
+use uwu_core::{FileSource, LogEvent, LogSource, ProcessSource, RawLogEntry, SystemEngine};
 
 #[cfg(target_os = "windows")]
-use uwu_sources::WinEventSource;
+use uwu_core::WinEventSource;
 
 #[derive(PartialEq, Clone)]
 pub enum SourceType {

@@ -2,7 +2,7 @@ use crate::app::UwuGuiApp;
 use crate::ui::theme;
 use eframe::egui;
 use egui_extras::{Column, TableBuilder};
-use uwu_schema::LogLevel;
+use uwu_core::LogLevel;
 
 pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     let text_height = egui::TextStyle::Body.resolve(ui.style()).size;

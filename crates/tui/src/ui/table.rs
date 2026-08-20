@@ -5,7 +5,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem},
     Frame,
 };
-use uwu_schema::LogLevel;
+use uwu_core::LogLevel;
 
 pub fn render_table(f: &mut Frame, app: &mut App, area: Rect) {
     let total_logs = app.engine.total_logs();

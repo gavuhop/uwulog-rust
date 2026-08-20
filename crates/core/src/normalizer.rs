@@ -1,5 +1,5 @@
+use crate::schema::{LogEvent, LogLevel, RawLogEntry, RawPayload};
 use std::collections::HashMap;
-use uwu_schema::{LogEvent, LogLevel, RawLogEntry, RawPayload};
 
 pub struct LogNormalizer;
 

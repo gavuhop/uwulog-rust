@@ -1,7 +1,7 @@
 use crate::app::UwuGuiApp;
 use crate::ui::theme;
 use eframe::egui::{self, Rounding, Stroke};
-use uwu_schema::LogLevel;
+use uwu_core::LogLevel;
 
 pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     ui.horizontal(|ui| {

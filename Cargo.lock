@@ -3870,31 +3870,20 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arc-swap",
+ "async-trait",
  "chrono",
  "dashmap",
  "log",
+ "notify",
  "rayon",
  "regex",
  "roaring",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
- "uuid",
-]
-
-[[package]]
-name = "uwu-engine"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "log",
- "serde",
- "serde_json",
  "tokio",
- "uwu-core",
- "uwu-normalizer",
- "uwu-schema",
- "uwu-sources",
+ "uuid",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3910,45 +3899,7 @@ dependencies = [
  "rfd",
  "serde_json",
  "tokio",
- "uwu-engine",
- "uwu-schema",
- "uwu-sources",
- "windows-sys 0.59.0",
-]
-
-[[package]]
-name = "uwu-normalizer"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "log",
- "regex",
- "serde",
- "serde_json",
- "uwu-schema",
-]
-
-[[package]]
-name = "uwu-schema"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "serde",
- "serde_json",
- "uuid",
-]
-
-[[package]]
-name = "uwu-sources"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "log",
- "notify",
- "tokio",
- "uwu-schema",
+ "uwu-core",
  "windows-sys 0.59.0",
 ]
 
@@ -3962,9 +3913,7 @@ dependencies = [
  "ratatui",
  "tokio",
  "uuid",
- "uwu-engine",
- "uwu-schema",
- "uwu-sources",
+ "uwu-core",
 ]
 
 [[package]]

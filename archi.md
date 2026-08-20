@@ -137,16 +137,13 @@ stateDiagram-v2
 
 ## 2. Chi Tiết Phân Tầng Các Module Hiện Tại (Current Component Architecture)
 
-Hệ thống được tổ chức dạng **Cargo Workspace** gồm 6 crates phân tầng rõ ràng:
+Hệ thống được tổ chức dạng **Cargo Workspace** tinh gọn gồm 3 crates chuẩn Idiomatic Rust:
 
 | Crate | Đường Dẫn | Vai Trò & Tầng Kiến Trúc |
 | :--- | :--- | :--- |
-| **`uwu-schema`** | [`crates/schema`](file:///D:/Learn/Go/uwulog-rust/crates/schema) | **Tầng Schema Chuẩn Hóa**: Định nghĩa cấu trúc `LogEvent`, `LogLevel`, `RawLogEntry`, `RawPayload`. |
-| **`uwu-sources`** | [`crates/sources`](file:///D:/Learn/Go/uwulog-rust/crates/sources) | **Tầng Driver Đa Nền Tảng**: Định nghĩa `LogSource` Trait và các Driver (`WinEventSource`, `ProcessSource` với Windows JobObject, `FileSource`). |
-| **`uwu-normalizer`** | [`crates/normalizer`](file:///D:/Learn/Go/uwulog-rust/crates/normalizer) | **Tầng Chuẩn Hóa**: Chuyển đổi log thô (JSON, Windows Event XML, Plaintext ANSI strip) về `LogEvent`. |
-| **`uwu-core`** | [`crates/filter`](file:///D:/Learn/Go/uwulog-rust/crates/filter) | **Tầng Động Cơ Lọc Song Song**: Động cơ Rayon Parallel ThreadPool + Parser biểu thức logic boolean/regex. |
-| **`uwu-engine`** | [`crates/engine`](file:///D:/Learn/Go/uwulog-rust/crates/engine) | **Tầng Pipeline Bất Đồng Bộ**: Tokio MPSC Channels, In-memory `VecDeque` RingBuffer, bộ đếm `AtomicU64 total_processed`. |
-| **`uwu-tui`** | [`crates/tui`](file:///D:/Learn/Go/uwulog-rust/crates/tui) | **Tầng Giao Diện Người Dùng**: Ứng dụng Terminal UI (`ratatui`) hỗ trợ Live Tail, Frozen View, ô tìm kiếm và phím tắt điều hướng. |
+| **`uwu-core`** | [`crates/core`](file:///D:/Learn/Go/uwulog-rust/crates/core) | **Thư Viện Logic Cốt Lõi**: Hợp nhất các module `schema` (LogEvent), `sources` (File/WinEvent/Process/Journald Drivers), `normalizer` (JSON/Text/ANSI), `filter` (Động cơ Rayon Filter) và `engine` (Tokio Pipeline & RingBuffer). |
+| **`uwu-gui`** | [`crates/gui`](file:///D:/Learn/Go/uwulog-rust/crates/gui) | **Tầng Giao Diện Desktop Native**: Ứng dụng Desktop UI (`eframe` / `egui`) hỗ trợ Auto-scroll, Live Filtering, Autocomplete, History, DWM Dark Title Bar. |
+| **`uwu-tui`** | [`crates/tui`](file:///D:/Learn/Go/uwulog-rust/crates/tui) | **Tầng Giao Diện Terminal UI**: Ứng dụng Terminal UI (`ratatui`) hỗ trợ Live Tail, Frozen View, ô tìm kiếm và phím tắt điều hướng. |
 
 ---
 

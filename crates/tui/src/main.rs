@@ -12,11 +12,10 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io::{self, Write};
 use std::sync::Arc;
 use std::time::Duration;
-use uwu_engine::SystemEngine;
-use uwu_sources::{FileSource, ProcessSource};
+use uwu_core::{FileSource, ProcessSource, SystemEngine};
 
 #[cfg(target_os = "windows")]
-use uwu_sources::WinEventSource;
+use uwu_core::WinEventSource;
 
 #[tokio::main]
 async fn main() -> Result<()> {
