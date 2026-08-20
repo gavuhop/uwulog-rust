@@ -59,7 +59,11 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
         if col.name == remainder_col_name {
             builder = builder.column(Column::remainder());
         } else {
-            builder = builder.column(Column::initial(col.width.max(40.0)).at_least(0.0).clip(true));
+            builder = builder.column(
+                Column::initial(col.width.max(40.0))
+                    .at_least(0.0)
+                    .clip(true),
+            );
         }
     }
 
@@ -138,9 +142,7 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                                 rich = rich.strong();
                             }
 
-                            let resp = ui.add(
-                                egui::Label::new(rich).truncate(),
-                            );
+                            let resp = ui.add(egui::Label::new(rich).truncate());
                             if resp.clicked() {
                                 newly_selected_event = Some(event.clone());
                             }
