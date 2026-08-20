@@ -58,6 +58,8 @@ pub struct UwuGuiApp {
 impl UwuGuiApp {
     pub fn new(cc: &eframe::CreationContext<'_>, rt: Handle) -> Self {
         crate::ui::theme::apply_theme(&cc.egui_ctx);
+        #[cfg(target_os = "windows")]
+        crate::ui::theme::apply_windows_titlebar_theme(cc);
 
         let args: Vec<String> = std::env::args().collect();
         let mut display_limit: usize = 5_000;
