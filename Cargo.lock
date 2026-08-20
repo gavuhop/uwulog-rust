@@ -3906,12 +3906,14 @@ dependencies = [
  "eframe",
  "egui",
  "egui_extras",
+ "raw-window-handle",
  "rfd",
  "serde_json",
  "tokio",
  "uwu-engine",
  "uwu-schema",
  "uwu-sources",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

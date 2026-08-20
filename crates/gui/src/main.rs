@@ -9,11 +9,19 @@ fn main() -> eframe::Result<()> {
     let handle = rt.handle().clone();
     let _guard = rt.enter();
 
+    let icon_data = eframe::icon_data::from_png_bytes(include_bytes!("../../../avatar.png"))
+        .unwrap_or_else(|_| egui::IconData {
+            rgba: vec![0; 4],
+            width: 1,
+            height: 1,
+        });
+
     let native_options = NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1280.0, 800.0])
             .with_min_inner_size([800.0, 500.0])
-            .with_title("🐱 Uwu Log Viewer GUI"),
+            .with_title("Uwu Log")
+            .with_icon(std::sync::Arc::new(icon_data)),
         ..Default::default()
     };
 

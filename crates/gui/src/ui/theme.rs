@@ -152,6 +152,54 @@ pub fn apply_theme(ctx: &egui::Context) {
     ctx.set_style(style);
 }
 
+/// Áp dụng theme (màu nền, màu chữ, Dark Mode) cho thanh tiêu đề gốc của Windows (DWM)
+/// Giữ nguyên 3 nút điều khiển chuẩn (Minimize, Maximize, Close, Snap Layouts)
+#[cfg(target_os = "windows")]
+pub fn apply_windows_titlebar_theme(cc: &eframe::CreationContext<'_>) {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    if let Ok(window_handle) = cc.window_handle() {
+        if let RawWindowHandle::Win32(win32_handle) = window_handle.as_raw() {
+            let hwnd = win32_handle.hwnd.get() as windows_sys::Win32::Foundation::HWND;
+            unsafe {
+                use windows_sys::Win32::Graphics::Dwm::{
+                    DwmSetWindowAttribute, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR,
+                    DWMWA_USE_IMMERSIVE_DARK_MODE,
+                };
+
+                // 1. Kích hoạt Dark Mode cho Title Bar (Windows 10 1809+ & Windows 11)
+                let dark_mode: i32 = 1;
+                let _ = DwmSetWindowAttribute(
+                    hwnd,
+                    DWMWA_USE_IMMERSIVE_DARK_MODE as u32,
+                    &dark_mode as *const _ as *const _,
+                    std::mem::size_of::<i32>() as u32,
+                );
+
+                // 2. Set màu nền thanh tiêu đề trùng khớp chính xác với BG_MANTLE (#1a1d28)
+                // Windows DWM dùng định dạng COLORREF 0x00BBGGRR
+                // RGB(0x1a, 0x1d, 0x28) -> BGR: 0x00281d1a
+                let caption_color: u32 = 0x00281d1a;
+                let _ = DwmSetWindowAttribute(
+                    hwnd,
+                    DWMWA_CAPTION_COLOR as u32,
+                    &caption_color as *const _ as *const _,
+                    std::mem::size_of::<u32>() as u32,
+                );
+
+                // 3. Set màu chữ tiêu đề trùng với TEXT_PRIMARY (#c5cdd9) -> BGR: 0x00d9cdc5
+                let text_color: u32 = 0x00d9cdc5;
+                let _ = DwmSetWindowAttribute(
+                    hwnd,
+                    DWMWA_TEXT_COLOR as u32,
+                    &text_color as *const _ as *const _,
+                    std::mem::size_of::<u32>() as u32,
+                );
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
