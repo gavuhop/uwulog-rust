@@ -19,6 +19,7 @@ pub struct ColumnState {
     pub filter_query: String,
     pub columns: Vec<ColumnItem>,
     pub dragged_index: Option<usize>,
+    pub header_dragged_name: Option<String>,
 }
 
 impl Default for ColumnState {
@@ -28,6 +29,7 @@ impl Default for ColumnState {
             filter_query: String::new(),
             columns: Self::default_columns(),
             dragged_index: None,
+            header_dragged_name: None,
         }
     }
 }
@@ -48,7 +50,7 @@ impl ColumnState {
             ColumnItem {
                 name: "message".to_string(),
                 visible: true,
-                width: 0.0, // remainder column
+                width: 350.0,
             },
         ]
     }
