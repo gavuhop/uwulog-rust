@@ -122,6 +122,32 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
 
         // Right-aligned Controls
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            // Table Columns & Ordering Modal Button
+            let visible_count = app.column_state.columns.iter().filter(|c| c.visible).count();
+            let columns_btn_text = format!("📊 Columns ({visible_count})");
+            let columns_btn = egui::Button::new(
+                egui::RichText::new(columns_btn_text)
+                    .strong()
+                    .color(theme::TEXT_PRIMARY),
+            )
+            .fill(if app.column_state.is_modal_open {
+                theme::BG_SURFACE1
+            } else {
+                theme::BG_SURFACE0
+            })
+            .stroke(Stroke::new(1.0, theme::BG_SURFACE1))
+            .rounding(Rounding::same(4.0));
+
+            if ui
+                .add(columns_btn)
+                .on_hover_text("Configure visible columns and adjust their display order")
+                .clicked()
+            {
+                app.column_state.is_modal_open = true;
+            }
+
+            ui.add_space(6.0);
+
             // Source Parameters Modal Button
             let params_btn = egui::Button::new(
                 egui::RichText::new("⚙ Params")

@@ -37,12 +37,31 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     ui.visuals_mut().selection.bg_fill = theme::BG_ROW_SELECTED;
     ui.visuals_mut().selection.stroke = egui::Stroke::NONE;
 
-    let mut builder = TableBuilder::new(ui)
-        .striped(true)
-        .resizable(true)
-        .column(Column::initial(160.0).at_least(0.0).clip(true)) // Timestamp
-        .column(Column::initial(70.0).at_least(0.0).clip(true)) // Level
-        .column(Column::remainder()); // Message
+    let visible_cols: Vec<crate::ui::columns_modal::ColumnItem> = app
+        .column_state
+        .columns
+        .iter()
+        .filter(|c| c.visible)
+        .cloned()
+        .collect();
+
+    let mut builder = TableBuilder::new(ui).striped(true).resizable(true);
+
+    let remainder_col_name = if visible_cols.iter().any(|c| c.name == "message") {
+        "message".to_string()
+    } else if let Some(last) = visible_cols.last() {
+        last.name.clone()
+    } else {
+        String::new()
+    };
+
+    for col in &visible_cols {
+        if col.name == remainder_col_name {
+            builder = builder.column(Column::remainder());
+        } else {
+            builder = builder.column(Column::initial(col.width.max(40.0)).at_least(0.0).clip(true));
+        }
+    }
 
     // Cuộn xuống dòng cuối khi:
     // 1. Có request cuộn ngay (bấm nút Latch hoặc phím End) HOẶC
@@ -60,30 +79,16 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
 
     builder
         .header(26.0, |mut header| {
-            header.col(|ui| {
-                ui.label(
-                    egui::RichText::new("TIMESTAMP")
-                        .font(egui::FontId::monospace(11.0))
-                        .strong()
-                        .color(theme::TEXT_MUTED),
-                );
-            });
-            header.col(|ui| {
-                ui.label(
-                    egui::RichText::new("LEVEL")
-                        .font(egui::FontId::monospace(11.0))
-                        .strong()
-                        .color(theme::TEXT_MUTED),
-                );
-            });
-            header.col(|ui| {
-                ui.label(
-                    egui::RichText::new("MESSAGE")
-                        .font(egui::FontId::monospace(11.0))
-                        .strong()
-                        .color(theme::TEXT_MUTED),
-                );
-            });
+            for col in &visible_cols {
+                header.col(|ui| {
+                    ui.label(
+                        egui::RichText::new(&col.name)
+                            .font(egui::FontId::monospace(11.0))
+                            .strong()
+                            .color(theme::TEXT_MUTED),
+                    );
+                });
+            }
         })
         .body(|body| {
             body.rows(text_height + 8.0, row_count, |mut row| {
@@ -107,61 +112,40 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                         _ => theme::TEXT_MUTED,
                     };
 
-                    let timestamp_color = if matches!(
-                        event.level,
-                        LogLevel::Error | LogLevel::Fatal | LogLevel::Warn
-                    ) {
-                        row_color
-                    } else {
-                        theme::TEXT_MUTED
-                    };
+                    for col in &visible_cols {
+                        row.col(|ui| {
+                            let (cell_text, is_bold) = match col.name.as_str() {
+                                "timestamp" => (event.timestamp.clone(), false),
+                                "level" => (event.level.to_string(), true),
+                                "message" => (event.message.replace('\n', " ↵ "), false),
+                                custom_key => {
+                                    let val_str = if let Some(val) = event.fields.get(custom_key) {
+                                        match val {
+                                            serde_json::Value::String(s) => s.clone(),
+                                            _ => val.to_string(),
+                                        }
+                                    } else {
+                                        "-".to_string()
+                                    };
+                                    (val_str, false)
+                                }
+                            };
 
-                    // Timestamp Column (Terminal monospace)
-                    row.col(|ui| {
-                        let resp = ui.add(
-                            egui::Label::new(
-                                egui::RichText::new(&event.timestamp)
-                                    .font(egui::FontId::monospace(11.5))
-                                    .color(timestamp_color),
-                            )
-                            .truncate(),
-                        );
-                        if resp.clicked() {
-                            newly_selected_event = Some(event.clone());
-                        }
-                    });
+                            let mut rich = egui::RichText::new(cell_text)
+                                .font(egui::FontId::monospace(11.5))
+                                .color(row_color);
+                            if is_bold {
+                                rich = rich.strong();
+                            }
 
-                    // Level Column (Terminal monospace)
-                    row.col(|ui| {
-                        let resp = ui.add(
-                            egui::Label::new(
-                                egui::RichText::new(event.level.to_string())
-                                    .font(egui::FontId::monospace(11.5))
-                                    .color(row_color)
-                                    .strong(),
-                            )
-                            .truncate(),
-                        );
-                        if resp.clicked() {
-                            newly_selected_event = Some(event.clone());
-                        }
-                    });
-
-                    // Message Column (Terminal monospace, single line truncate)
-                    row.col(|ui| {
-                        let clean_msg = event.message.replace('\n', " ↵ ");
-                        let resp = ui.add(
-                            egui::Label::new(
-                                egui::RichText::new(clean_msg)
-                                    .font(egui::FontId::monospace(12.0))
-                                    .color(row_color),
-                            )
-                            .truncate(),
-                        );
-                        if resp.clicked() {
-                            newly_selected_event = Some(event.clone());
-                        }
-                    });
+                            let resp = ui.add(
+                                egui::Label::new(rich).truncate(),
+                            );
+                            if resp.clicked() {
+                                newly_selected_event = Some(event.clone());
+                            }
+                        });
+                    }
 
                     // Nhận click bất kỳ vị trí nào trên hàng
                     if row.response().clicked() {

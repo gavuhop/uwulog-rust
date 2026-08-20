@@ -1,4 +1,5 @@
 pub mod autocomplete;
+pub mod columns_modal;
 pub mod detail;
 pub mod header;
 pub mod history;
@@ -12,10 +13,12 @@ use eframe::egui;
 pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
     ctx.set_visuals(theme::create_visuals());
 
-    // Phím Escape: Đóng history popup trước, rồi đến modal Params, rồi đến Log Inspector
+    // Phím Escape: Đóng history popup trước, rồi đến modal Params/Columns, rồi đến Log Inspector
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         if app.history_state.is_open {
             app.history_state.close_popup();
+        } else if app.column_state.is_modal_open {
+            app.column_state.is_modal_open = false;
         } else if app.show_launch_modal {
             app.show_launch_modal = false;
         } else if app.selected_log.is_some() {
@@ -78,4 +81,7 @@ pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
 
     // Modal Dialog: Launch & Source Parameters
     launch_modal::render_launch_modal(ctx, app);
+
+    // Modal Dialog: Table Columns & Ordering
+    columns_modal::render_columns_modal(ctx, app);
 }
