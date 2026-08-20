@@ -52,6 +52,9 @@ pub struct UwuGuiApp {
     pub autocomplete_state: AutocompleteState,
     pub history_state: SearchHistoryState,
     pub column_state: crate::ui::columns_modal::ColumnState,
+    /// Tỷ lệ chiều rộng của Log Inspector so với màn hình (mặc định 0.35 = 35%)
+    pub inspector_width_ratio: f32,
+    pub prev_screen_width: f32,
 }
 
 impl UwuGuiApp {
@@ -141,6 +144,8 @@ impl UwuGuiApp {
             autocomplete_state: AutocompleteState::default(),
             history_state: SearchHistoryState::default(),
             column_state: crate::ui::columns_modal::ColumnState::default(),
+            inspector_width_ratio: 0.35,
+            prev_screen_width: 0.0,
         };
 
         app.start_configured_source();
@@ -474,6 +479,8 @@ mod tests {
             autocomplete_state: AutocompleteState::default(),
             history_state: SearchHistoryState::default(),
             column_state: crate::ui::columns_modal::ColumnState::default(),
+            inspector_width_ratio: 0.35,
+            prev_screen_width: 0.0,
         }
     }
 
