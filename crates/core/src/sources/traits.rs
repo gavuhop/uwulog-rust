@@ -1,7 +1,7 @@
+use crate::schema::RawLogEntry;
 use anyhow::Result;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
-pub use uwu_schema::RawLogEntry;
 
 /// Trait định nghĩa giao diện chung cho mọi nguồn log (File, WinEvent, Journald...)
 #[async_trait]

@@ -1,11 +1,11 @@
-use crate::traits::LogSource;
+use crate::schema::{RawLogEntry, RawPayload};
+use crate::sources::traits::LogSource;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::mpsc;
-use uwu_schema::{RawLogEntry, RawPayload};
 
 pub struct JournaldSource {
     unit: Option<String>,

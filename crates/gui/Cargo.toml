@@ -8,9 +8,7 @@ name = "uwu-gui"
 path = "src/main.rs"
 
 [dependencies]
-uwu-schema.workspace = true
-uwu-sources.workspace = true
-uwu-engine.workspace = true
+uwu-core.workspace = true
 tokio.workspace = true
 anyhow.workspace = true
 eframe.workspace = true

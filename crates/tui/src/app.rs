@@ -2,8 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::widgets::ListState;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use uwu_engine::SystemEngine;
-use uwu_schema::LogEvent;
+use uwu_core::{LogEvent, SystemEngine};
 
 pub enum InputMode {
     Normal,

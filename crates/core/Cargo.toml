@@ -1,18 +1,27 @@
 [package]
-name = "uwu-sources"
+name = "uwu-core"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-uwu-schema.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+roaring.workspace = true
+dashmap.workspace = true
+regex.workspace = true
+arc-swap = "1"
+rayon = "1.10"
 tokio.workspace = true
 async-trait.workspace = true
 anyhow.workspace = true
+thiserror.workspace = true
 notify.workspace = true
 log.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { workspace = true, features = [
+windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_Security",
     "Win32_System_EventLog",
