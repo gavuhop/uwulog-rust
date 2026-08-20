@@ -107,8 +107,9 @@ pub fn render_columns_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
                 .rounding(Rounding::same(6.0)),
         )
         .collapsible(false)
-        .resizable(true)
-        .default_width(520.0)
+        .resizable(false)
+        .min_width(520.0)
+        .max_width(520.0)
         .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
         .show(ctx, |ui| {
             ui.label(
@@ -130,11 +131,15 @@ pub fn render_columns_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
             // Filter search box
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new("🔍").size(12.0).color(theme::TEXT_MUTED));
-                ui.add(
+                let avail_w = ui.available_width();
+                let clear_btn_w = if app.column_state.filter_query.is_empty() { 0.0 } else { 28.0 };
+                let text_w = (avail_w - clear_btn_w - 6.0).max(100.0);
+
+                ui.add_sized(
+                    [text_w, 22.0],
                     egui::TextEdit::singleline(&mut app.column_state.filter_query)
                         .hint_text("Filter column keys...")
                         .font(egui::TextStyle::Monospace)
-                        .desired_width(ui.available_width() - 40.0)
                         .margin(egui::Margin::symmetric(8.0, 4.0)),
                 );
                 if !app.column_state.filter_query.is_empty() && ui.button("✖").clicked() {
