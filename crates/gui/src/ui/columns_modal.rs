@@ -1,0 +1,495 @@
+use crate::app::UwuGuiApp;
+use crate::ui::theme;
+use eframe::egui::{self, Color32, FontId, Pos2, Rect, Rounding, Stroke};
+use uwu_core::LogEvent;
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ColumnItem {
+    /// Tên key gốc của trường log (ví dụ: "timestamp", "level", "message", "source", "latency_ms", "user_id")
+    pub name: String,
+    /// Trạng thái bật/tắt hiển thị
+    pub visible: bool,
+    /// Độ rộng ban đầu
+    pub width: f32,
+}
+
+#[derive(Clone, Debug)]
+pub struct ColumnState {
+    pub is_modal_open: bool,
+    pub filter_query: String,
+    pub columns: Vec<ColumnItem>,
+    pub dragged_index: Option<usize>,
+}
+
+impl Default for ColumnState {
+    fn default() -> Self {
+        Self {
+            is_modal_open: false,
+            filter_query: String::new(),
+            columns: Self::default_columns(),
+            dragged_index: None,
+        }
+    }
+}
+
+impl ColumnState {
+    pub fn default_columns() -> Vec<ColumnItem> {
+        vec![
+            ColumnItem {
+                name: "timestamp".to_string(),
+                visible: true,
+                width: 160.0,
+            },
+            ColumnItem {
+                name: "level".to_string(),
+                visible: true,
+                width: 70.0,
+            },
+            ColumnItem {
+                name: "message".to_string(),
+                visible: true,
+                width: 0.0, // remainder column
+            },
+        ]
+    }
+
+    pub fn reset_to_defaults(&mut self) {
+        let defaults = Self::default_columns();
+        let mut new_cols = defaults;
+        for existing in &self.columns {
+            if !new_cols.iter().any(|c| c.name == existing.name) {
+                new_cols.push(ColumnItem {
+                    name: existing.name.clone(),
+                    visible: false,
+                    width: 120.0,
+                });
+            }
+        }
+        self.columns = new_cols;
+        self.dragged_index = None;
+    }
+
+    pub fn reorder(&mut self, from_idx: usize, to_idx: usize) {
+        if from_idx < self.columns.len() && to_idx < self.columns.len() && from_idx != to_idx {
+            let item = self.columns.remove(from_idx);
+            self.columns.insert(to_idx, item);
+        }
+    }
+
+    pub fn sync_discovered_keys(&mut self, logs: &[LogEvent]) {
+        for log in logs {
+            for key in log.fields.keys() {
+                if !self.columns.iter().any(|c| c.name == *key) {
+                    self.columns.push(ColumnItem {
+                        name: key.clone(),
+                        visible: false,
+                        width: 120.0,
+                    });
+                }
+            }
+        }
+    }
+}
+
+pub fn render_columns_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
+    if !app.column_state.is_modal_open {
+        return;
+    }
+
+    egui::Window::new("📊 Table Columns & Ordering")
+        .frame(
+            egui::Frame::window(&ctx.style())
+                .fill(theme::BG_MANTLE)
+                .stroke(Stroke::new(1.0, theme::BG_SURFACE0))
+                .inner_margin(egui::Margin::same(14.0))
+                .rounding(Rounding::same(6.0)),
+        )
+        .collapsible(false)
+        .resizable(true)
+        .default_width(520.0)
+        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+        .show(ctx, |ui| {
+            ui.label(
+                egui::RichText::new("Columns Configuration & Drag-to-Reorder")
+                    .size(14.0)
+                    .strong()
+                    .color(theme::TEXT_KEY),
+            );
+            ui.label(
+                egui::RichText::new(
+                    "Click & drag ⠿ items up or down to reorder columns. Toggle checkboxes to show/hide.",
+                )
+                .size(11.5)
+                .color(theme::TEXT_MUTED),
+            );
+            ui.separator();
+            ui.add_space(6.0);
+
+            // Filter search box
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("🔍").size(12.0).color(theme::TEXT_MUTED));
+                ui.add(
+                    egui::TextEdit::singleline(&mut app.column_state.filter_query)
+                        .hint_text("Filter column keys...")
+                        .font(egui::TextStyle::Monospace)
+                        .desired_width(ui.available_width() - 40.0)
+                        .margin(egui::Margin::symmetric(8.0, 4.0)),
+                );
+                if !app.column_state.filter_query.is_empty() && ui.button("✖").clicked() {
+                    app.column_state.filter_query.clear();
+                }
+            });
+
+            ui.add_space(8.0);
+
+            // Columns Drag & Drop List Card
+            render_columns_card(ui, "Columns List (Drag to Reorder)", |ui| {
+                let filter_lower = app.column_state.filter_query.trim().to_lowercase();
+                let total_cols = app.column_state.columns.len();
+
+                let pointer_pos = ui.ctx().pointer_latest_pos();
+                let pointer_released = ui.input(|i| i.pointer.any_released());
+
+                if pointer_released {
+                    app.column_state.dragged_index = None;
+                }
+
+                egui::ScrollArea::vertical()
+                    .max_height(340.0)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        let mut new_drag_source = None;
+                        let mut target_drop = None;
+                        let mut toggle_vis = None;
+
+                        for idx in 0..total_cols {
+                            let col_name = app.column_state.columns[idx].name.clone();
+                            let col_visible = app.column_state.columns[idx].visible;
+
+                            if !filter_lower.is_empty()
+                                && !col_name.to_lowercase().contains(&filter_lower)
+                            {
+                                continue;
+                            }
+
+                            let is_dragging_this = app.column_state.dragged_index == Some(idx);
+                            let desired_size = egui::vec2(ui.available_width(), 30.0);
+                            let (rect, resp) = ui.allocate_exact_size(
+                                desired_size,
+                                egui::Sense::click_and_drag(),
+                            );
+
+                            // Detect drag started
+                            if resp.drag_started() {
+                                new_drag_source = Some(idx);
+                            }
+
+                            // Detect drop target while dragging
+                            if let Some(dragged_idx) = app.column_state.dragged_index {
+                                if dragged_idx != idx {
+                                    if let Some(pos) = pointer_pos {
+                                        if rect.contains(pos) {
+                                            target_drop = Some((dragged_idx, idx));
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Cursor icon
+                            if resp.hovered() || is_dragging_this {
+                                if is_dragging_this {
+                                    ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                                } else {
+                                    ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+                                }
+                            }
+
+                            // Background and border styling
+                            let bg_color = if is_dragging_this {
+                                theme::BG_ROW_SELECTED
+                            } else if resp.hovered() {
+                                theme::BG_ROW_HOVER
+                            } else {
+                                theme::BG_BASE
+                            };
+
+                            let border_stroke = if is_dragging_this {
+                                Stroke::new(1.5, theme::TEXT_KEY)
+                            } else if resp.hovered() {
+                                Stroke::new(1.0, theme::BG_SURFACE1)
+                            } else {
+                                Stroke::new(1.0, theme::BG_SURFACE0)
+                            };
+
+                            ui.painter().rect(
+                                rect,
+                                Rounding::same(4.0),
+                                bg_color,
+                                border_stroke,
+                            );
+
+                            let center_y = rect.center().y;
+
+                            // 1. Drag Grip Icon (⠿)
+                            let grip_x = rect.min.x + 10.0;
+                            ui.painter().text(
+                                Pos2::new(grip_x, center_y),
+                                egui::Align2::LEFT_CENTER,
+                                "⠿",
+                                FontId::monospace(14.0),
+                                if is_dragging_this || resp.hovered() {
+                                    theme::TEXT_KEY
+                                } else {
+                                    theme::TEXT_MUTED
+                                },
+                            );
+
+                            // 2. Custom Checkbox
+                            let checkbox_x = grip_x + 22.0;
+                            let check_rect = Rect::from_center_size(
+                                Pos2::new(checkbox_x + 8.0, center_y),
+                                egui::vec2(16.0, 16.0),
+                            );
+
+                            let check_resp = ui.interact(
+                                check_rect,
+                                ui.make_persistent_id(format!("chk_{idx}_{col_name}")),
+                                egui::Sense::click(),
+                            );
+
+                            if check_resp.clicked() {
+                                toggle_vis = Some((idx, !col_visible));
+                            }
+
+                            let check_bg = if col_visible {
+                                theme::TEXT_KEY
+                            } else {
+                                Color32::TRANSPARENT
+                            };
+                            let check_stroke = Stroke::new(
+                                1.0,
+                                if col_visible {
+                                    theme::TEXT_KEY
+                                } else {
+                                    theme::TEXT_MUTED
+                                },
+                            );
+
+                            ui.painter().rect(
+                                check_rect,
+                                Rounding::same(3.0),
+                                check_bg,
+                                check_stroke,
+                            );
+
+                            if col_visible {
+                                ui.painter().text(
+                                    check_rect.center(),
+                                    egui::Align2::CENTER_CENTER,
+                                    "✓",
+                                    FontId::monospace(11.0),
+                                    theme::BG_BASE,
+                                );
+                            }
+
+                            // 3. Raw Key Name
+                            let text_x = checkbox_x + 24.0;
+                            let text_color = if col_visible {
+                                theme::TEXT_PRIMARY
+                            } else {
+                                theme::TEXT_MUTED
+                            };
+                            ui.painter().text(
+                                Pos2::new(text_x, center_y),
+                                egui::Align2::LEFT_CENTER,
+                                &col_name,
+                                FontId::monospace(12.0),
+                                text_color,
+                            );
+
+                            // Also toggle visibility on clicking name area if not dragging
+                            if resp.clicked() && !check_resp.clicked() {
+                                toggle_vis = Some((idx, !col_visible));
+                            }
+
+                            // 4. Position / Status badge on the right
+                            let right_x = rect.max.x - 10.0;
+                            if col_visible {
+                                let pos_text = format!("Pos #{}", idx + 1);
+                                ui.painter().text(
+                                    Pos2::new(right_x, center_y),
+                                    egui::Align2::RIGHT_CENTER,
+                                    pos_text,
+                                    FontId::monospace(11.0),
+                                    theme::COLOR_INFO,
+                                );
+                            } else {
+                                ui.painter().text(
+                                    Pos2::new(right_x, center_y),
+                                    egui::Align2::RIGHT_CENTER,
+                                    "Hidden",
+                                    FontId::monospace(11.0),
+                                    theme::TEXT_MUTED,
+                                );
+                            }
+
+                            ui.add_space(4.0);
+                        }
+
+                        if let Some(idx) = new_drag_source {
+                            app.column_state.dragged_index = Some(idx);
+                        }
+
+                        if let Some((from, to)) = target_drop {
+                            app.column_state.reorder(from, to);
+                            app.column_state.dragged_index = Some(to);
+                            ui.ctx().request_repaint();
+                        }
+
+                        if let Some((idx, new_vis)) = toggle_vis {
+                            app.column_state.columns[idx].visible = new_vis;
+                        }
+                    });
+            });
+
+            ui.add_space(10.0);
+            ui.separator();
+            ui.add_space(6.0);
+
+            // Action buttons
+            ui.horizontal(|ui| {
+                let reset_btn = egui::Button::new(
+                    egui::RichText::new("🔄 Reset Defaults").color(theme::TEXT_PRIMARY),
+                )
+                .fill(theme::BG_SURFACE0)
+                .stroke(Stroke::new(1.0, theme::BG_SURFACE1))
+                .rounding(Rounding::same(4.0));
+
+                if ui
+                    .add(reset_btn)
+                    .on_hover_text("Reset column order and visibility to default")
+                    .clicked()
+                {
+                    app.column_state.reset_to_defaults();
+                }
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let done_btn = egui::Button::new(
+                        egui::RichText::new("✔ Done")
+                            .strong()
+                            .color(theme::TEXT_PRIMARY),
+                    )
+                    .fill(theme::BTN_RESTART_BG)
+                    .stroke(Stroke::new(1.0, theme::BTN_RESTART_BORDER))
+                    .rounding(Rounding::same(4.0));
+
+                    if ui.add(done_btn).clicked() {
+                        app.column_state.is_modal_open = false;
+                    }
+                });
+            });
+        });
+}
+
+fn render_columns_card<R>(
+    ui: &mut egui::Ui,
+    title: &str,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::Response {
+    let frame = egui::Frame::default()
+        .fill(theme::BG_BASE)
+        .rounding(Rounding::same(4.0))
+        .inner_margin(egui::Margin::same(10.0))
+        .stroke(Stroke::new(1.0, theme::BG_SURFACE0));
+
+    frame
+        .show(ui, |ui| {
+            ui.label(
+                egui::RichText::new(title)
+                    .size(12.0)
+                    .strong()
+                    .color(theme::TEXT_KEY),
+            );
+            ui.add_space(4.0);
+            add_contents(ui);
+        })
+        .response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use uwu_core::LogLevel;
+
+    #[test]
+    fn test_default_columns() {
+        let state = ColumnState::default();
+        assert_eq!(state.columns.len(), 3);
+        assert_eq!(state.columns[0].name, "timestamp");
+        assert!(state.columns[0].visible);
+        assert_eq!(state.columns[1].name, "level");
+        assert!(state.columns[1].visible);
+        assert_eq!(state.columns[2].name, "message");
+        assert!(state.columns[2].visible);
+    }
+
+    #[test]
+    fn test_reorder_columns() {
+        let mut state = ColumnState::default();
+        // Reorder "level" (idx 1) to front (idx 0)
+        state.reorder(1, 0);
+        assert_eq!(state.columns[0].name, "level");
+        assert_eq!(state.columns[1].name, "timestamp");
+        assert_eq!(state.columns[2].name, "message");
+
+        // Reorder "level" (idx 0) to idx 2
+        state.reorder(0, 2);
+        assert_eq!(state.columns[0].name, "timestamp");
+        assert_eq!(state.columns[1].name, "message");
+        assert_eq!(state.columns[2].name, "level");
+    }
+
+    #[test]
+    fn test_sync_discovered_keys() {
+        let mut state = ColumnState::default();
+        let mut fields = HashMap::new();
+        fields.insert("latency_ms".to_string(), serde_json::json!(150));
+        fields.insert("user_id".to_string(), serde_json::json!("u42"));
+
+        let log = LogEvent::new(
+            "2026-08-20T10:00:00Z",
+            LogLevel::Info,
+            "test",
+            "msg",
+            fields,
+            "raw",
+        );
+
+        state.sync_discovered_keys(&[log]);
+        assert_eq!(state.columns.len(), 5);
+        assert!(state
+            .columns
+            .iter()
+            .any(|c| c.name == "latency_ms" && !c.visible));
+        assert!(state
+            .columns
+            .iter()
+            .any(|c| c.name == "user_id" && !c.visible));
+    }
+
+    #[test]
+    fn test_reset_to_defaults() {
+        let mut state = ColumnState::default();
+        state.reorder(1, 0); // Swap level & timestamp
+        state.columns[2].visible = false; // Turn off message
+
+        state.reset_to_defaults();
+        assert_eq!(state.columns[0].name, "timestamp");
+        assert!(state.columns[0].visible);
+        assert_eq!(state.columns[1].name, "level");
+        assert!(state.columns[1].visible);
+        assert_eq!(state.columns[2].name, "message");
+        assert!(state.columns[2].visible);
+    }
+}

@@ -51,6 +51,7 @@ pub struct UwuGuiApp {
     pub kill_signal: Option<oneshot::Sender<()>>,
     pub autocomplete_state: AutocompleteState,
     pub history_state: SearchHistoryState,
+    pub column_state: crate::ui::columns_modal::ColumnState,
 }
 
 impl UwuGuiApp {
@@ -139,6 +140,7 @@ impl UwuGuiApp {
             kill_signal: None,
             autocomplete_state: AutocompleteState::default(),
             history_state: SearchHistoryState::default(),
+            column_state: crate::ui::columns_modal::ColumnState::default(),
         };
 
         app.start_configured_source();
@@ -270,6 +272,9 @@ impl UwuGuiApp {
             self.last_processed_count = total_processed;
             self.last_search_time = now;
         }
+
+        // Tự động đồng bộ các trường key mới phát hiện từ logs
+        self.column_state.sync_discovered_keys(&self.cached_logs);
     }
 
     pub fn stop_current_source(&mut self) {
@@ -332,7 +337,7 @@ impl UwuGuiApp {
         use std::collections::BTreeMap;
         let mut fields_map = BTreeMap::new();
 
-        // 4 trường cốt lõi của cấu trúc LogEvent
+        // Các trường cốt lõi của cấu trúc LogEvent
         fields_map.insert(
             "level".to_string(),
             crate::ui::autocomplete::FieldType::Text,
@@ -342,17 +347,16 @@ impl UwuGuiApp {
             crate::ui::autocomplete::FieldType::Time,
         );
         fields_map.insert(
-            "source".to_string(),
-            crate::ui::autocomplete::FieldType::Text,
-        );
-        fields_map.insert(
             "message".to_string(),
             crate::ui::autocomplete::FieldType::Text,
         );
 
-        // Chỉ thêm các trường thực sự xuất hiện trong dữ liệu log đã nhận
+        // Chỉ thêm các trường thực sự xuất hiện trong dữ liệu log đã nhận (bỏ qua source)
         for log in &self.cached_logs {
             for (key, val) in &log.fields {
+                if key == "source" || key == "source_id" {
+                    continue;
+                }
                 if !fields_map.contains_key(key) {
                     let field_type = if val.is_number() {
                         crate::ui::autocomplete::FieldType::Number
@@ -469,6 +473,7 @@ mod tests {
             kill_signal: None,
             autocomplete_state: AutocompleteState::default(),
             history_state: SearchHistoryState::default(),
+            column_state: crate::ui::columns_modal::ColumnState::default(),
         }
     }
 
@@ -519,8 +524,8 @@ mod tests {
         // Core fields
         assert_eq!(field_types.get("level"), Some(&FieldType::Text));
         assert_eq!(field_types.get("message"), Some(&FieldType::Text));
-        assert_eq!(field_types.get("source"), Some(&FieldType::Text));
         assert_eq!(field_types.get("timestamp"), Some(&FieldType::Time));
+        assert_eq!(field_types.get("source"), None);
 
         // Inferred fields
         assert_eq!(field_types.get("latency_ms"), Some(&FieldType::Number));
