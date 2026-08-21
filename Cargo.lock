@@ -4000,6 +4000,7 @@ dependencies = [
  "rfd",
  "serde_json",
  "tokio",
+ "uuid",
  "uwu-core",
  "windows-sys 0.59.0",
 ]

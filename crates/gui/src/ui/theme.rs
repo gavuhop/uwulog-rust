@@ -11,6 +11,11 @@ pub const BG_SURFACE0: Color32 = Color32::from_rgb(0x28, 0x2c, 0x3c); // #282c3c
 pub const BG_SURFACE1: Color32 = Color32::from_rgb(0x34, 0x3a, 0x4e); // #343a4e - Nút bấm / Hover
 pub const BG_ROW_HOVER: Color32 = Color32::from_rgb(0x1e, 0x23, 0x33); // #1e2333 - Hover hàng log
 pub const BG_ROW_SELECTED: Color32 = Color32::from_rgb(0x28, 0x32, 0x48); // #283248 - Chọn hàng log
+pub const BG_ROW_HIGHLIGHT: Color32 = Color32::from_rgb(0x35, 0x2e, 0x1a); // #352e1a - Highlight hàng log (hổ phách tối dịu)
+#[allow(dead_code)]
+pub const BG_ROW_HIGHLIGHT_HOVER: Color32 = Color32::from_rgb(0x42, 0x3a, 0x22); // #423a22 - Hover hàng highlight
+pub const BG_TERM_HIGHLIGHT: Color32 = Color32::from_rgb(0x6e, 0x4f, 0x15); // #6e4f15 - Nền hổ phách sáng làm nổi bật từ khóa
+pub const TEXT_TERM_HIGHLIGHT: Color32 = Color32::from_rgb(0xff, 0xf2, 0xcc); // #fff2cc - Chữ vàng kem sáng nổi bật
 
 // Màu chữ êm dịu, không chói lóa (Soft pastel & warm slate)
 pub const TEXT_PRIMARY: Color32 = Color32::from_rgb(0xc5, 0xcd, 0xd9); // #c5cdd9 - Chữ xám ấm dịu mắt
@@ -200,6 +205,115 @@ pub fn apply_windows_titlebar_theme(cc: &eframe::CreationContext<'_>) {
     }
 }
 
+pub fn create_highlighted_layout_job(
+    text: &str,
+    default_color: Color32,
+    font_id: FontId,
+    highlighted_terms: &std::collections::HashSet<String>,
+) -> egui::text::LayoutJob {
+    let mut job = egui::text::LayoutJob::default();
+    if highlighted_terms.is_empty() || text.is_empty() {
+        job.append(
+            text,
+            0.0,
+            egui::TextFormat {
+                font_id,
+                color: default_color,
+                ..Default::default()
+            },
+        );
+        return job;
+    }
+
+    let lower_text = text.to_lowercase();
+    let mut intervals: Vec<(usize, usize)> = Vec::new();
+
+    for term in highlighted_terms {
+        let term_clean = term.trim().to_lowercase();
+        if term_clean.is_empty() {
+            continue;
+        }
+        for (pos, _) in lower_text.match_indices(&term_clean) {
+            let actual_end = pos + term_clean.len();
+            intervals.push((pos, actual_end));
+        }
+    }
+
+    if intervals.is_empty() {
+        job.append(
+            text,
+            0.0,
+            egui::TextFormat {
+                font_id,
+                color: default_color,
+                ..Default::default()
+            },
+        );
+        return job;
+    }
+
+    // Gộp các khoảng trùng nhau
+    intervals.sort_by_key(|(s, _)| *s);
+    let mut merged: Vec<(usize, usize)> = Vec::new();
+    for (s, e) in intervals {
+        if let Some(last) = merged.last_mut() {
+            if s <= last.1 {
+                last.1 = last.1.max(e);
+            } else {
+                merged.push((s, e));
+            }
+        } else {
+            merged.push((s, e));
+        }
+    }
+
+    let mut cur = 0;
+    for (s, e) in merged {
+        if s > cur {
+            if let Some(slice) = text.get(cur..s) {
+                job.append(
+                    slice,
+                    0.0,
+                    egui::TextFormat {
+                        font_id: font_id.clone(),
+                        color: default_color,
+                        ..Default::default()
+                    },
+                );
+            }
+        }
+        if let Some(slice) = text.get(s..e) {
+            job.append(
+                slice,
+                0.0,
+                egui::TextFormat {
+                    font_id: font_id.clone(),
+                    color: TEXT_TERM_HIGHLIGHT,
+                    background: BG_TERM_HIGHLIGHT,
+                    ..Default::default()
+                },
+            );
+        }
+        cur = e;
+    }
+
+    if cur < text.len() {
+        if let Some(slice) = text.get(cur..) {
+            job.append(
+                slice,
+                0.0,
+                egui::TextFormat {
+                    font_id,
+                    color: default_color,
+                    ..Default::default()
+                },
+            );
+        }
+    }
+
+    job
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,5 +325,22 @@ mod tests {
         assert_eq!(format_number(1000), "1,000");
         assert_eq!(format_number(50000), "50,000");
         assert_eq!(format_number(1234567), "1,234,567");
+    }
+
+    #[test]
+    fn test_highlighted_layout_job() {
+        let mut terms = std::collections::HashSet::new();
+        terms.insert("warn".to_string());
+        terms.insert("error".to_string());
+
+        let job = create_highlighted_layout_job(
+            "this is a warning and ERROR message",
+            TEXT_PRIMARY,
+            FontId::monospace(11.5),
+            &terms,
+        );
+
+        assert_eq!(job.text, "this is a warning and ERROR message");
+        assert!(job.sections.len() > 1);
     }
 }
