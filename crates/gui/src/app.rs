@@ -52,6 +52,8 @@ pub struct UwuGuiApp {
     pub autocomplete_state: AutocompleteState,
     pub history_state: SearchHistoryState,
     pub column_state: crate::ui::columns_modal::ColumnState,
+    pub highlighted_row_ids: std::collections::HashSet<uuid::Uuid>,
+    pub highlighted_terms: std::collections::HashSet<String>,
     /// Tỷ lệ chiều rộng của Log Inspector so với màn hình (mặc định 0.35 = 35%)
     pub inspector_width_ratio: f32,
     pub prev_screen_width: f32,
@@ -144,6 +146,8 @@ impl UwuGuiApp {
             autocomplete_state: AutocompleteState::default(),
             history_state: SearchHistoryState::default(),
             column_state: crate::ui::columns_modal::ColumnState::default(),
+            highlighted_row_ids: std::collections::HashSet::new(),
+            highlighted_terms: std::collections::HashSet::new(),
             inspector_width_ratio: 0.35,
             prev_screen_width: 0.0,
         };
@@ -420,6 +424,104 @@ impl UwuGuiApp {
             }
         }
     }
+
+    pub fn toggle_row_highlight(&mut self, id: uuid::Uuid) {
+        if self.highlighted_row_ids.contains(&id) {
+            self.highlighted_row_ids.remove(&id);
+        } else {
+            self.highlighted_row_ids.insert(id);
+        }
+    }
+
+    pub fn is_row_highlighted(&self, id: &uuid::Uuid) -> bool {
+        self.highlighted_row_ids.contains(id)
+    }
+
+    pub fn toggle_term_highlight(&mut self, term: &str) {
+        let clean = term.trim().to_lowercase();
+        if clean.is_empty() {
+            return;
+        }
+        if self.highlighted_terms.contains(&clean) {
+            self.highlighted_terms.remove(&clean);
+        } else {
+            self.highlighted_terms.insert(clean);
+        }
+    }
+
+    pub fn is_term_highlighted(&self, term: &str) -> bool {
+        let clean = term.trim().to_lowercase();
+        if clean.is_empty() {
+            false
+        } else {
+            self.highlighted_terms.contains(&clean)
+        }
+    }
+
+    pub fn has_any_highlights(&self) -> bool {
+        !self.highlighted_row_ids.is_empty() || !self.highlighted_terms.is_empty()
+    }
+
+    pub fn clear_all_highlights(&mut self) {
+        self.highlighted_row_ids.clear();
+        self.highlighted_terms.clear();
+    }
+
+    pub fn format_field_term(field: &str, val: &str) -> String {
+        let clean_val = val.trim();
+        if field.eq_ignore_ascii_case("level") {
+            format!("level:{}", clean_val.to_lowercase())
+        } else if clean_val.contains(' ') || clean_val.contains('"') || clean_val.contains(':') {
+            format!("{}:\"{}\"", field, clean_val.replace('"', "\\\""))
+        } else {
+            format!("{}:{}", field, clean_val)
+        }
+    }
+
+    pub fn format_selection_term(text: &str) -> String {
+        let clean = text
+            .replace(" ↵ ", " ")
+            .replace('\n', " ")
+            .replace('\r', "");
+        let clean = clean.trim();
+        if clean.contains(' ') || clean.contains('"') || clean.contains(':') {
+            format!("\"{}\"", clean.replace('"', "\\\""))
+        } else {
+            clean.to_string()
+        }
+    }
+
+    pub fn apply_filter_term(&mut self, term: &str) {
+        let current = self.query.trim();
+        if current.is_empty() {
+            self.query = term.to_string();
+        } else {
+            let tokens: Vec<&str> = current.split_whitespace().collect();
+            if !tokens.contains(&term) {
+                self.query = format!("{current} {term}");
+            }
+        }
+        self.trigger_full_search();
+    }
+
+    pub fn exclude_filter_term(&mut self, term: &str) {
+        let exclude_term = if let Some(stripped) = term.strip_prefix('-') {
+            stripped.to_string()
+        } else {
+            format!("-{term}")
+        };
+
+        let current = self.query.trim();
+        if current.is_empty() {
+            self.query = exclude_term;
+        } else {
+            let tokens: Vec<&str> = current.split_whitespace().collect();
+            if !tokens.contains(&exclude_term.as_str()) {
+                self.query = format!("{current} {exclude_term}");
+            }
+        }
+        self.trigger_full_search();
+    }
 }
 
 impl eframe::App for UwuGuiApp {
@@ -479,6 +581,8 @@ mod tests {
             autocomplete_state: AutocompleteState::default(),
             history_state: SearchHistoryState::default(),
             column_state: crate::ui::columns_modal::ColumnState::default(),
+            highlighted_row_ids: std::collections::HashSet::new(),
+            highlighted_terms: std::collections::HashSet::new(),
             inspector_width_ratio: 0.35,
             prev_screen_width: 0.0,
         }
@@ -501,6 +605,94 @@ mod tests {
 
         app.toggle_latch();
         assert!(app.is_auto_scroll);
+    }
+
+    #[tokio::test]
+    async fn test_highlight_toggle_and_clear() {
+        let mut app = create_test_app();
+        let id1 = uuid::Uuid::new_v4();
+        let id2 = uuid::Uuid::new_v4();
+
+        assert!(!app.is_row_highlighted(&id1));
+        assert!(!app.has_any_highlights());
+
+        app.toggle_row_highlight(id1);
+        assert!(app.is_row_highlighted(&id1));
+        assert!(app.has_any_highlights());
+
+        app.toggle_row_highlight(id2);
+        assert!(app.is_row_highlighted(&id2));
+
+        // Term highlight
+        assert!(!app.is_term_highlighted("timeout"));
+        app.toggle_term_highlight("timeout");
+        assert!(app.is_term_highlighted("timeout"));
+        assert!(app.is_term_highlighted("TIMEOUT")); // Case-insensitive
+        assert!(app.has_any_highlights());
+
+        app.toggle_term_highlight("timeout");
+        assert!(!app.is_term_highlighted("timeout"));
+
+        app.toggle_term_highlight("error");
+        assert!(app.has_any_highlights());
+
+        app.clear_all_highlights();
+        assert!(!app.is_row_highlighted(&id1));
+        assert!(!app.is_term_highlighted("error"));
+        assert!(!app.has_any_highlights());
+        assert!(app.highlighted_row_ids.is_empty());
+        assert!(app.highlighted_terms.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_format_field_and_selection_term() {
+        // Level lowercase
+        assert_eq!(UwuGuiApp::format_field_term("level", "WARN"), "level:warn");
+        assert_eq!(
+            UwuGuiApp::format_field_term("level", "ERROR"),
+            "level:error"
+        );
+
+        // Simple values
+        assert_eq!(UwuGuiApp::format_field_term("status", "500"), "status:500");
+
+        // Values with spaces or colons
+        assert_eq!(
+            UwuGuiApp::format_field_term("message", "Database connection lost"),
+            "message:\"Database connection lost\""
+        );
+
+        // Free text selection formatting
+        assert_eq!(UwuGuiApp::format_selection_term("timeout"), "timeout");
+        assert_eq!(
+            UwuGuiApp::format_selection_term("connection refused"),
+            "\"connection refused\""
+        );
+        assert_eq!(
+            UwuGuiApp::format_selection_term("line1\nline2"),
+            "\"line1 line2\""
+        );
+    }
+
+    #[tokio::test]
+    async fn test_filter_and_exclude_term() {
+        let mut app = create_test_app();
+
+        // Apply first term
+        app.apply_filter_term("level:warn");
+        assert_eq!(app.query, "level:warn");
+
+        // Apply second term (appended with space)
+        app.apply_filter_term("status:500");
+        assert_eq!(app.query, "level:warn status:500");
+
+        // Duplicate term ignored
+        app.apply_filter_term("level:warn");
+        assert_eq!(app.query, "level:warn status:500");
+
+        // Exclude term appended
+        app.exclude_filter_term("level:debug");
+        assert_eq!(app.query, "level:warn status:500 -level:debug");
     }
 
     #[tokio::test]

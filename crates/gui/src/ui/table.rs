@@ -68,6 +68,21 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
             .join(",")
     );
 
+    enum FilterAction {
+        Apply(String),
+        Exclude(String),
+    }
+
+    enum HighlightAction {
+        ToggleRow(uuid::Uuid),
+        ToggleTerm(String),
+        ClearAll,
+    }
+
+    let mut filter_action: Option<FilterAction> = None;
+    let mut highlight_action: Option<HighlightAction> = None;
+    let has_any_highlights = app.has_any_highlights();
+
     // Cho phép cuộn ngang (Horizontal Scrolling) khi có nhiều cột hoặc tổng độ rộng các cột lớn hơn màn hình
     egui::ScrollArea::horizontal()
         .auto_shrink([false, false])
@@ -235,7 +250,7 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                                 row.set_selected(true);
                             }
 
-                            // Độ tương phản mềm mại: Error -> Đỏ san hô, Warn -> Vàng hổ phách, Info -> Xanh lá pastel, Debug/Trace -> Xám dịu
+                            let is_highlighted = app.is_row_highlighted(&event.id);
                             let row_color = match event.level {
                                 LogLevel::Error | LogLevel::Fatal => theme::COLOR_ERROR,
                                 LogLevel::Warn => theme::COLOR_WARN,
@@ -245,7 +260,15 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
 
                             for col in &visible_cols {
                                 row.col(|ui| {
-                                    let (cell_text, is_bold) = match col.name.as_str() {
+                                    if is_highlighted {
+                                        ui.painter().rect_filled(
+                                            ui.max_rect(),
+                                            egui::Rounding::ZERO,
+                                            theme::BG_ROW_HIGHLIGHT,
+                                        );
+                                    }
+
+                                    let (cell_text, _is_bold) = match col.name.as_str() {
                                         "timestamp" => (event.timestamp.clone(), false),
                                         "level" => (event.level.to_string(), true),
                                         "message" => (event.message.replace('\n', " ↵ "), false),
@@ -263,28 +286,243 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                                         }
                                     };
 
-                                    let mut rich = egui::RichText::new(cell_text)
+                                    let cell_id = ui.make_persistent_id((event.id, &col.name));
+                                    let mut text_val = cell_text.clone();
+                                    let highlighted_terms_ref = &app.highlighted_terms;
+                                    let mut layouter =
+                                        |ui: &egui::Ui, _text: &str, _wrap_width: f32| {
+                                            let mut job = theme::create_highlighted_layout_job(
+                                                &cell_text,
+                                                row_color,
+                                                egui::FontId::monospace(11.5),
+                                                highlighted_terms_ref,
+                                            );
+                                            job.wrap.max_width = f32::INFINITY;
+                                            ui.fonts(|f| f.layout_job(job))
+                                        };
+                                    let edit = egui::TextEdit::singleline(&mut text_val)
+                                        .id(cell_id)
                                         .font(egui::FontId::monospace(11.5))
-                                        .color(row_color);
-                                    if is_bold {
-                                        rich = rich.strong();
-                                    }
+                                        .text_color(row_color)
+                                        .frame(false)
+                                        .clip_text(true)
+                                        .desired_width(f32::INFINITY)
+                                        .layouter(&mut layouter);
 
-                                    let resp = ui.add(egui::Label::new(rich).truncate());
-                                    if resp.clicked() {
+                                    let resp = ui.add(edit);
+                                    if resp.clicked()
+                                        && !ui.input(|i| {
+                                            i.pointer.button_down(egui::PointerButton::Secondary)
+                                        })
+                                    {
                                         newly_selected_event = Some(event.clone());
                                     }
-                                });
-                            }
 
-                            // Nhận click bất kỳ vị trí nào trên hàng
-                            if row.response().clicked() {
-                                newly_selected_event = Some(event.clone());
+                                    // Kiểm tra từ bôi đen trong ô nếu có
+                                    let mut selected_text = None;
+                                    if let Some(state) =
+                                        egui::text_edit::TextEditState::load(ui.ctx(), cell_id)
+                                    {
+                                        if let Some(range) = state.cursor.char_range() {
+                                            let [min_c, max_c] = range.sorted();
+                                            if min_c.index < max_c.index {
+                                                let s = min_c.index;
+                                                let e = max_c.index;
+                                                let txt: String = cell_text
+                                                    .chars()
+                                                    .skip(s)
+                                                    .take(e.saturating_sub(s))
+                                                    .collect();
+                                                let clean_txt = txt.replace(" ↵ ", " ");
+                                                let trimmed = clean_txt.trim().to_string();
+                                                if !trimmed.is_empty() {
+                                                    selected_text = Some(trimmed.clone());
+                                                    ui.ctx().data_mut(|d| {
+                                                        d.insert_temp(cell_id, trimmed)
+                                                    });
+                                                }
+                                            } else if resp.clicked()
+                                                && !ui.input(|i| {
+                                                    i.pointer
+                                                        .button_down(egui::PointerButton::Secondary)
+                                                })
+                                            {
+                                                ui.ctx()
+                                                    .data_mut(|d| d.remove_temp::<String>(cell_id));
+                                            }
+                                        }
+                                    }
+
+                                    // Nếu right-click làm reset selection của TextEdit, khôi phục từ temp storage
+                                    if selected_text.is_none() {
+                                        selected_text =
+                                            ui.ctx().data(|d| d.get_temp::<String>(cell_id));
+                                    }
+
+                                    let col_name = col.name.clone();
+                                    let raw_cell_val = match col.name.as_str() {
+                                        "level" => event.level.to_string(),
+                                        "message" => event.message.clone(),
+                                        "timestamp" => event.timestamp.clone(),
+                                        custom_key => {
+                                            if let Some(val) = event.fields.get(custom_key) {
+                                                match val {
+                                                    serde_json::Value::String(s) => s.clone(),
+                                                    _ => val.to_string(),
+                                                }
+                                            } else {
+                                                cell_text.clone()
+                                            }
+                                        }
+                                    };
+
+                                    resp.context_menu(|ui| {
+                                        ui.set_min_width(180.0);
+
+                                        // 1. Lọc và Highlight theo từ đã bôi đen trong ô này (nếu có)
+                                        if let Some(ref sel) = selected_text {
+                                            let display_sel = if sel.chars().count() > 25 {
+                                                format!(
+                                                    "{}...",
+                                                    sel.chars().take(25).collect::<String>()
+                                                )
+                                            } else {
+                                                sel.clone()
+                                            };
+
+                                            if ui
+                                                .button(format!("Filter \"{}\"", display_sel))
+                                                .clicked()
+                                            {
+                                                let term = UwuGuiApp::format_selection_term(sel);
+                                                filter_action = Some(FilterAction::Apply(term));
+                                                ui.close_menu();
+                                            }
+
+                                            if ui
+                                                .button(format!("Exclude \"{}\"", display_sel))
+                                                .clicked()
+                                            {
+                                                let term = UwuGuiApp::format_selection_term(sel);
+                                                filter_action = Some(FilterAction::Exclude(term));
+                                                ui.close_menu();
+                                            }
+
+                                            let is_term_hl = app.is_term_highlighted(sel);
+                                            let hl_term_text = if is_term_hl {
+                                                format!("Unhighlight \"{}\"", display_sel)
+                                            } else {
+                                                format!("Highlight \"{}\"", display_sel)
+                                            };
+                                            if ui.button(hl_term_text).clicked() {
+                                                highlight_action =
+                                                    Some(HighlightAction::ToggleTerm(sel.clone()));
+                                                ui.close_menu();
+                                            }
+
+                                            ui.separator();
+                                        }
+
+                                        // 2. Lọc và Highlight theo giá trị ô
+                                        let display_val = if raw_cell_val.chars().count() > 25 {
+                                            format!(
+                                                "{}...",
+                                                raw_cell_val.chars().take(25).collect::<String>()
+                                            )
+                                        } else {
+                                            raw_cell_val.clone()
+                                        };
+
+                                        if ui
+                                            .button(format!("Filter \"{}\"", display_val))
+                                            .clicked()
+                                        {
+                                            let term = UwuGuiApp::format_field_term(
+                                                &col_name,
+                                                &raw_cell_val,
+                                            );
+                                            filter_action = Some(FilterAction::Apply(term));
+                                            ui.close_menu();
+                                        }
+
+                                        if ui
+                                            .button(format!("Exclude \"{}\"", display_val))
+                                            .clicked()
+                                        {
+                                            let term = UwuGuiApp::format_field_term(
+                                                &col_name,
+                                                &raw_cell_val,
+                                            );
+                                            filter_action = Some(FilterAction::Exclude(term));
+                                            ui.close_menu();
+                                        }
+
+                                        let is_cell_val_hl = app.is_term_highlighted(&raw_cell_val);
+                                        let hl_cell_text = if is_cell_val_hl {
+                                            format!("Unhighlight \"{}\"", display_val)
+                                        } else {
+                                            format!("Highlight \"{}\"", display_val)
+                                        };
+                                        if ui.button(hl_cell_text).clicked() {
+                                            highlight_action = Some(HighlightAction::ToggleTerm(
+                                                raw_cell_val.clone(),
+                                            ));
+                                            ui.close_menu();
+                                        }
+
+                                        ui.separator();
+
+                                        // 3. Highlight / Bỏ highlight dòng
+                                        if is_highlighted {
+                                            if ui.button("Unhighlight row").clicked() {
+                                                highlight_action =
+                                                    Some(HighlightAction::ToggleRow(event.id));
+                                                ui.close_menu();
+                                            }
+                                        } else if ui.button("Highlight row").clicked() {
+                                            highlight_action =
+                                                Some(HighlightAction::ToggleRow(event.id));
+                                            ui.close_menu();
+                                        }
+
+                                        if has_any_highlights
+                                            && ui.button("Unhighlight all").clicked()
+                                        {
+                                            highlight_action = Some(HighlightAction::ClearAll);
+                                            ui.close_menu();
+                                        }
+
+                                        ui.separator();
+
+                                        // 4. Copy giá trị
+                                        if ui.button("Copy value").clicked() {
+                                            ui.ctx().output_mut(|o| {
+                                                o.copied_text = raw_cell_val.clone()
+                                            });
+                                            ui.close_menu();
+                                        }
+                                    });
+                                });
                             }
                         }
                     });
                 });
         });
+
+    if let Some(action) = filter_action {
+        match action {
+            FilterAction::Apply(term) => app.apply_filter_term(&term),
+            FilterAction::Exclude(term) => app.exclude_filter_term(&term),
+        }
+    }
+
+    if let Some(action) = highlight_action {
+        match action {
+            HighlightAction::ToggleRow(id) => app.toggle_row_highlight(id),
+            HighlightAction::ToggleTerm(term) => app.toggle_term_highlight(&term),
+            HighlightAction::ClearAll => app.clear_all_highlights(),
+        }
+    }
 
     if let Some(name) = new_header_drag {
         app.column_state.header_dragged_name = Some(name);
