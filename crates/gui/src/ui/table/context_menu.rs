@@ -26,13 +26,13 @@ pub fn render_cell_context_menu(
         };
 
         if ui.button(format!("Filter \"{}\"", display_sel)).clicked() {
-            let term = UwuGuiApp::format_selection_term(sel);
+            let term = UwuGuiApp::format_field_term(menu_ctx.col_name, sel);
             *render_ctx.filter_action = Some(FilterAction::Apply(term));
             ui.close_menu();
         }
 
         if ui.button(format!("Exclude \"{}\"", display_sel)).clicked() {
-            let term = UwuGuiApp::format_selection_term(sel);
+            let term = UwuGuiApp::format_field_term(menu_ctx.col_name, sel);
             *render_ctx.filter_action = Some(FilterAction::Exclude(term));
             ui.close_menu();
         }
