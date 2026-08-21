@@ -40,12 +40,12 @@ impl ColumnState {
             ColumnItem {
                 name: "timestamp".to_string(),
                 visible: true,
-                width: 160.0,
+                width: 150.0,
             },
             ColumnItem {
                 name: "level".to_string(),
                 visible: true,
-                width: 70.0,
+                width: 56.0,
             },
             ColumnItem {
                 name: "message".to_string(),
