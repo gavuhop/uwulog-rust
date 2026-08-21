@@ -449,6 +449,7 @@ impl UwuGuiApp {
         }
     }
 
+    #[allow(dead_code)]
     pub fn is_term_highlighted(&self, term: &str) -> bool {
         let clean = term.trim().to_lowercase();
         if clean.is_empty() {
