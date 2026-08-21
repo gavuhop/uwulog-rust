@@ -72,13 +72,21 @@ pub fn render_text_box(
             };
 
             if ui.button(format!("Filter \"{}\"", display_sel)).clicked() {
-                let term = UwuGuiApp::format_selection_term(sel);
+                let term = if let Some(f_name) = field_name {
+                    UwuGuiApp::format_field_term(f_name, sel)
+                } else {
+                    UwuGuiApp::format_selection_term(sel)
+                };
                 *ctx.filter_action = Some(FilterAction::Apply(term));
                 ui.close_menu();
             }
 
             if ui.button(format!("Exclude \"{}\"", display_sel)).clicked() {
-                let term = UwuGuiApp::format_selection_term(sel);
+                let term = if let Some(f_name) = field_name {
+                    UwuGuiApp::format_field_term(f_name, sel)
+                } else {
+                    UwuGuiApp::format_selection_term(sel)
+                };
                 *ctx.filter_action = Some(FilterAction::Exclude(term));
                 ui.close_menu();
             }
