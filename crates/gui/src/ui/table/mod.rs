@@ -51,6 +51,24 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     let mut highlight_action: Option<HighlightAction> = None;
     let has_any_highlights = app.has_any_highlights();
 
+    let sample_ts = app
+        .cached_logs
+        .iter()
+        .take(50)
+        .map(|e| e.timestamp.as_str())
+        .max_by_key(|s| s.chars().count())
+        .unwrap_or("2026-08-21 23:29:07");
+    let ts_text_width = ui.fonts(|f| {
+        let job = egui::text::LayoutJob::simple_singleline(
+            sample_ts.to_string(),
+            egui::FontId::monospace(11.5),
+            egui::Color32::WHITE,
+        );
+        f.layout_job(job).size().x
+    });
+    let ts_needed_width = (ts_text_width + 8.0).max(80.0);
+    let level_needed_width = 56.0;
+
     egui::ScrollArea::horizontal()
         .auto_shrink([false, false])
         .show(ui, |ui| {
@@ -61,14 +79,19 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 .auto_shrink([false, false]);
 
             for col in &visible_cols {
-                let initial_w = if col.width >= 40.0 {
-                    col.width
+                let (initial_w, min_w) = if col.name == "timestamp" {
+                    (ts_needed_width, ts_needed_width)
+                } else if col.name == "level" {
+                    (level_needed_width, level_needed_width)
                 } else if col.name == "message" {
-                    350.0
+                    (col.width.max(350.0), 100.0)
+                } else if col.width >= 40.0 {
+                    (col.width, 40.0)
                 } else {
-                    120.0
+                    (120.0, 40.0)
                 };
-                builder = builder.column(Column::initial(initial_w).at_least(40.0).clip(true));
+
+                builder = builder.column(Column::initial(initial_w).at_least(min_w).clip(true));
             }
 
             let has_new_data = row_count > app.prev_table_row_count;
