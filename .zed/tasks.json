@@ -1,0 +1,26 @@
+[
+  {
+    "label": "Check",
+    "command": "cargo check --workspace"
+  },
+  {
+    "label": "Test",
+    "command": "cargo nextest run --workspace"
+  },
+  {
+    "label": "Clippy",
+    "command": "cargo clippy --workspace --all-targets --all-features"
+  },
+  {
+    "label": "Format",
+    "command": "cargo fmt --all -- --check"
+  },
+  {
+    "label": "Build",
+    "command": "cargo build --workspace"
+  },
+  {
+    "label": "Run app test",
+    "command": "cargo run -p uwu-gui -- -r \"go run gen_logs.go -rate 50\""
+  },
+]
