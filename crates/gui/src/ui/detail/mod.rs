@@ -214,20 +214,43 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 // Raw Payload Card with Copy button
                 render_card(ui, "Raw Payload", |ui| {
                     ui.horizontal(|ui| {
-                        let copy_btn = egui::Button::new(
-                            egui::RichText::new("Copy Raw")
-                                .size(11.0)
-                                .color(theme::TEXT_PRIMARY),
-                        )
-                        .fill(theme::BG_SURFACE0)
-                        .stroke(Stroke::new(1.0, theme::BG_SURFACE1))
-                        .rounding(Rounding::same(4.0));
+                        let copy_id = Id::new("copy_raw_flash");
+                        let is_flashing = ui
+                            .data(|d| d.get_temp::<f64>(copy_id))
+                            .map(|t| ui.input(|i| i.time) - t < 0.25)
+                            .unwrap_or(false);
+
+                        let copy_btn =
+                            egui::Button::new(egui::RichText::new("Copy Raw").size(11.0).color(
+                                if is_flashing {
+                                    theme::TEXT_KEY
+                                } else {
+                                    theme::TEXT_PRIMARY
+                                },
+                            ))
+                            .fill(if is_flashing {
+                                theme::BG_SURFACE1
+                            } else {
+                                theme::BG_SURFACE0
+                            })
+                            .stroke(Stroke::new(
+                                1.0,
+                                if is_flashing {
+                                    theme::TEXT_KEY
+                                } else {
+                                    theme::BG_SURFACE1
+                                },
+                            ))
+                            .rounding(Rounding::same(4.0));
 
                         if ui
                             .add(copy_btn)
                             .on_hover_text("Copy raw payload to clipboard")
                             .clicked()
                         {
+                            ui.data_mut(|d| d.insert_temp(copy_id, ui.input(|i| i.time)));
+                            ui.ctx()
+                                .request_repaint_after(std::time::Duration::from_millis(40));
                             ui.ctx().output_mut(|o| o.copied_text = event.raw.clone());
                         }
                     });
