@@ -134,4 +134,115 @@ pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
 
     // Modal Dialog: Table Columns & Ordering
     columns_modal::render_columns_modal(ctx, app);
+
+    // Window Resize Border Handles (Hỗ trợ kéo dãn / thu nhỏ 4 góc và 4 cạnh cửa sổ)
+    render_window_resize_borders(ctx);
+}
+
+/// Hỗ trợ kéo dãn / thu nhỏ cửa sổ tùy ý từ 4 góc và 4 cạnh viền màn hình (Edge & Corner Resizing)
+fn render_window_resize_borders(ctx: &egui::Context) {
+    let is_maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+    if is_maximized {
+        return;
+    }
+
+    let screen_rect = ctx.screen_rect();
+    let border_thickness = 6.0;
+    let corner_size = 14.0;
+
+    let corners_and_edges = [
+        // 4 Góc (Ưu tiên kiểm tra góc trước vì diện tích góc bao gồm cả phần giao nhau)
+        (
+            egui::Rect::from_min_max(
+                screen_rect.min,
+                screen_rect.min + egui::vec2(corner_size, corner_size),
+            ),
+            egui::ResizeDirection::NorthWest,
+            egui::CursorIcon::ResizeNorthWest,
+        ),
+        (
+            egui::Rect::from_min_max(
+                egui::pos2(screen_rect.max.x - corner_size, screen_rect.min.y),
+                egui::pos2(screen_rect.max.x, screen_rect.min.y + corner_size),
+            ),
+            egui::ResizeDirection::NorthEast,
+            egui::CursorIcon::ResizeNorthEast,
+        ),
+        (
+            egui::Rect::from_min_max(
+                egui::pos2(screen_rect.min.x, screen_rect.max.y - corner_size),
+                egui::pos2(screen_rect.min.x + corner_size, screen_rect.max.y),
+            ),
+            egui::ResizeDirection::SouthWest,
+            egui::CursorIcon::ResizeSouthWest,
+        ),
+        (
+            egui::Rect::from_min_max(
+                screen_rect.max - egui::vec2(corner_size, corner_size),
+                screen_rect.max,
+            ),
+            egui::ResizeDirection::SouthEast,
+            egui::CursorIcon::ResizeSouthEast,
+        ),
+        // 4 Cạnh viền
+        (
+            egui::Rect::from_min_max(
+                screen_rect.min + egui::vec2(corner_size, 0.0),
+                egui::pos2(
+                    screen_rect.max.x - corner_size,
+                    screen_rect.min.y + border_thickness,
+                ),
+            ),
+            egui::ResizeDirection::North,
+            egui::CursorIcon::ResizeNorth,
+        ),
+        (
+            egui::Rect::from_min_max(
+                egui::pos2(
+                    screen_rect.min.x + corner_size,
+                    screen_rect.max.y - border_thickness,
+                ),
+                egui::pos2(screen_rect.max.x - corner_size, screen_rect.max.y),
+            ),
+            egui::ResizeDirection::South,
+            egui::CursorIcon::ResizeSouth,
+        ),
+        (
+            egui::Rect::from_min_max(
+                screen_rect.min + egui::vec2(0.0, corner_size),
+                egui::pos2(
+                    screen_rect.min.x + border_thickness,
+                    screen_rect.max.y - corner_size,
+                ),
+            ),
+            egui::ResizeDirection::West,
+            egui::CursorIcon::ResizeWest,
+        ),
+        (
+            egui::Rect::from_min_max(
+                egui::pos2(
+                    screen_rect.max.x - border_thickness,
+                    screen_rect.min.y + corner_size,
+                ),
+                egui::pos2(screen_rect.max.x, screen_rect.max.y - corner_size),
+            ),
+            egui::ResizeDirection::East,
+            egui::CursorIcon::ResizeEast,
+        ),
+    ];
+
+    let pointer_pos = ctx.input(|i| i.pointer.hover_pos());
+    let pointer_pressed = ctx.input(|i| i.pointer.primary_pressed());
+
+    if let Some(pos) = pointer_pos {
+        for (rect, direction, cursor) in corners_and_edges {
+            if rect.contains(pos) {
+                ctx.set_cursor_icon(cursor);
+                if pointer_pressed {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::BeginResize(direction));
+                }
+                break;
+            }
+        }
+    }
 }
