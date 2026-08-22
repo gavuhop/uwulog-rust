@@ -1,8 +1,8 @@
-use crate::filter::LogEngine as CoreFilterEngine;
 use crate::normalizer::LogNormalizer;
 use crate::schema::{LogEvent, RawLogEntry};
 use crate::sources::LogSource;
 use anyhow::Result;
+use rayon::prelude::*;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
@@ -11,8 +11,8 @@ use tokio::sync::mpsc;
 pub struct SystemEngine {
     raw_tx: mpsc::Sender<RawLogEntry>,
     events: Arc<RwLock<VecDeque<LogEvent>>>,
-    filter_engine: Arc<RwLock<CoreFilterEngine>>,
     total_processed: Arc<AtomicU64>,
+    max_timestamp: Arc<RwLock<f64>>,
     max_capacity: usize,
 }
 
@@ -20,37 +20,24 @@ impl SystemEngine {
     pub fn new(max_capacity: usize) -> Self {
         let (raw_tx, mut raw_rx) = mpsc::channel::<RawLogEntry>(10_000);
         let events = Arc::new(RwLock::new(VecDeque::with_capacity(max_capacity)));
-        let filter_engine = Arc::new(RwLock::new(CoreFilterEngine::new(max_capacity)));
         let total_processed = Arc::new(AtomicU64::new(0));
+        let max_timestamp = Arc::new(RwLock::new(0.0));
 
         let events_clone = Arc::clone(&events);
-        let filter_clone = Arc::clone(&filter_engine);
         let processed_clone = Arc::clone(&total_processed);
+        let max_ts_clone = Arc::clone(&max_timestamp);
 
-        // Async task liên tục đọc RawLogEntry -> Normalizer -> LogEvent -> Storage & Filter Engine
+        // Async task liên tục đọc RawLogEntry -> Normalizer -> LogEvent -> Storage
         tokio::spawn(async move {
             while let Some(raw_entry) = raw_rx.recv().await {
                 let event = LogNormalizer::normalize(raw_entry);
 
-                // Chuyển LogEvent thành serde_json::Value để nạp vào filter engine
-                let mut json_val = serde_json::json!({
-                    "id": event.id,
-                    "timestamp": event.timestamp,
-                    "level": event.level.to_string(),
-                    "source": event.source_id,
-                    "message": event.message,
-                    "raw": event.raw,
-                });
-
-                if let Some(obj) = json_val.as_object_mut() {
-                    for (k, v) in &event.fields {
-                        obj.insert(k.clone(), v.clone());
+                if let Some(ts) = crate::filter::utils::parse_iso_to_secs(&event.timestamp) {
+                    if let Ok(mut max_ts) = max_ts_clone.write() {
+                        if ts > *max_ts {
+                            *max_ts = ts;
+                        }
                     }
-                }
-
-                // Cập nhật Filter Engine & In-memory RingBuffer
-                if let Ok(mut fe) = filter_clone.write() {
-                    fe.push_value(json_val);
                 }
 
                 if let Ok(mut evts) = events_clone.write() {
@@ -67,8 +54,8 @@ impl SystemEngine {
         Self {
             raw_tx,
             events,
-            filter_engine,
             total_processed,
+            max_timestamp,
             max_capacity,
         }
     }
@@ -93,38 +80,55 @@ impl SystemEngine {
     pub fn search_with_count(&self, query: &str, limit: usize) -> (usize, Vec<LogEvent>) {
         let trimmed = query.trim();
 
-        // Fast path: Khi từ khóa rỗng, lấy trực tiếp từ In-memory RingBuffer mà không tốn CPU lọc biểu thức
-        if trimmed.is_empty() {
-            if let Ok(evts) = self.events.read() {
-                let total_matched = evts.len();
-                let skip_count = total_matched.saturating_sub(limit);
-                let events = evts.iter().skip(skip_count).cloned().collect();
-                return (total_matched, events);
-            } else {
+        if let Ok(evts) = self.events.read() {
+            let total_logs = evts.len();
+            if total_logs == 0 {
                 return (0, Vec::new());
             }
+
+            // Fast path: Khi từ khóa rỗng, lấy trực tiếp từ In-memory RingBuffer mà không tốn CPU lọc biểu thức
+            if trimmed.is_empty() {
+                let skip_count = total_logs.saturating_sub(limit);
+                let events = evts.iter().skip(skip_count).cloned().collect();
+                return (total_logs, events);
+            }
+
+            let data_now = if let Ok(max_ts) = self.max_timestamp.read() {
+                if *max_ts > 0.0 {
+                    *max_ts
+                } else {
+                    crate::filter::utils::now_secs()
+                }
+            } else {
+                crate::filter::utils::now_secs()
+            };
+
+            let tokens = crate::filter::parser::tokenize(trimmed);
+            let mut parser = crate::filter::parser::Parser::new(tokens, data_now);
+            let ast = match parser.parse() {
+                Some(e) => e,
+                None => {
+                    let skip_count = total_logs.saturating_sub(limit);
+                    let events = evts.iter().skip(skip_count).cloned().collect();
+                    return (total_logs, events);
+                }
+            };
+
+            // Lọc trực tiếp trên evts - Bảo đảm thứ tự 100% trùng khớp và không bao giờ lệch index
+            let matching: Vec<LogEvent> = evts
+                .par_iter()
+                .filter(|e| crate::filter::evaluator::eval_event(&ast, e, data_now))
+                .cloned()
+                .collect();
+
+            let matched_len = matching.len();
+            let skip_count = matched_len.saturating_sub(limit);
+            let events = matching.into_iter().skip(skip_count).collect();
+
+            (matched_len, events)
+        } else {
+            (0, Vec::new())
         }
-
-        let matched_indices = if let Ok(fe) = self.filter_engine.read() {
-            fe.filter(trimmed.to_string())
-        } else {
-            Vec::new()
-        };
-
-        let total_matched = matched_indices.len();
-        let skip_count = total_matched.saturating_sub(limit);
-
-        let events = if let Ok(evts) = self.events.read() {
-            matched_indices
-                .into_iter()
-                .skip(skip_count)
-                .filter_map(|i| evts.get(i as usize).cloned())
-                .collect()
-        } else {
-            Vec::new()
-        };
-
-        (total_matched, events)
     }
 
     pub fn filter_incremental(&self, query: &str, last_processed: u64) -> (usize, Vec<LogEvent>) {
@@ -148,17 +152,29 @@ impl SystemEngine {
                 return (matched_len, new_slice);
             }
 
-            if let Ok(fe) = self.filter_engine.read() {
-                let json_slice: Vec<serde_json::Value> =
-                    new_slice.iter().map(|e| e.to_json_value()).collect();
-                let matched_indices = fe.filter_slice(&json_slice, trimmed);
-                let matched_events: Vec<LogEvent> = matched_indices
-                    .into_iter()
-                    .filter_map(|i| new_slice.get(i).cloned())
-                    .collect();
-                let matched_len = matched_events.len();
-                return (matched_len, matched_events);
-            }
+            let data_now = if let Ok(max_ts) = self.max_timestamp.read() {
+                if *max_ts > 0.0 {
+                    *max_ts
+                } else {
+                    crate::filter::utils::now_secs()
+                }
+            } else {
+                crate::filter::utils::now_secs()
+            };
+
+            let tokens = crate::filter::parser::tokenize(trimmed);
+            let mut parser = crate::filter::parser::Parser::new(tokens, data_now);
+            let ast = match parser.parse() {
+                Some(e) => e,
+                None => return (new_slice.len(), new_slice),
+            };
+
+            let matched_events: Vec<LogEvent> = new_slice
+                .into_iter()
+                .filter(|e| crate::filter::evaluator::eval_event(&ast, e, data_now))
+                .collect();
+            let matched_len = matched_events.len();
+            return (matched_len, matched_events);
         }
 
         (0, Vec::new())
@@ -176,12 +192,52 @@ impl SystemEngine {
         self.max_capacity
     }
 
+    /// Trả về toàn bộ log chưa lọc trong RingBuffer (có giới hạn limit) và index của target_id nếu có.
+    /// Nếu target_id được chỉ định, trả về cửa sổ ngữ cảnh đối xứng xung quanh target_id.
+    pub fn get_unfiltered_events(
+        &self,
+        target_id: Option<uuid::Uuid>,
+        limit: usize,
+    ) -> (Option<usize>, Vec<LogEvent>) {
+        if let Ok(evts) = self.events.read() {
+            let total = evts.len();
+            if total == 0 {
+                return (None, Vec::new());
+            }
+
+            if let Some(target_uuid) = target_id {
+                if let Some(pos) = evts.iter().position(|e| e.id == target_uuid) {
+                    let half = limit / 2;
+                    let start_idx = pos.saturating_sub(half);
+                    let end_idx = (start_idx + limit).min(total);
+                    let actual_start = end_idx.saturating_sub(limit);
+
+                    let events: Vec<LogEvent> = evts
+                        .iter()
+                        .skip(actual_start)
+                        .take(end_idx - actual_start)
+                        .cloned()
+                        .collect();
+                    let target_idx = events.iter().position(|e| e.id == target_uuid);
+                    return (target_idx, events);
+                }
+            }
+
+            let skip_count = total.saturating_sub(limit);
+            let events: Vec<LogEvent> = evts.iter().skip(skip_count).cloned().collect();
+            let target_idx = target_id.and_then(|id| events.iter().position(|e| e.id == id));
+            (target_idx, events)
+        } else {
+            (None, Vec::new())
+        }
+    }
+
     pub fn clear(&self) {
         if let Ok(mut evts) = self.events.write() {
             evts.clear();
         }
-        if let Ok(mut fe) = self.filter_engine.write() {
-            *fe = CoreFilterEngine::new(self.max_capacity);
+        if let Ok(mut max_ts) = self.max_timestamp.write() {
+            *max_ts = 0.0;
         }
         self.total_processed.store(0, Ordering::Relaxed);
     }
@@ -302,5 +358,116 @@ mod tests {
         assert_eq!(engine.total_logs(), 0);
         assert_eq!(engine.total_processed(), 0);
         assert_eq!(engine.max_capacity(), 10);
+    }
+
+    #[tokio::test]
+    async fn test_system_engine_unfiltered_events() {
+        let engine = SystemEngine::new(10);
+        let tx = engine.get_channel();
+
+        for i in 0..5 {
+            tx.send(RawLogEntry {
+                source_id: format!("s{}", i),
+                payload: RawPayload::Text(format!("[INFO] Message {}", i)),
+            })
+            .await
+            .unwrap();
+        }
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let all_logs = engine.search("");
+        assert_eq!(all_logs.len(), 5);
+        let target_id = all_logs[2].id;
+
+        // Query unfiltered events with target_id
+        let (target_idx, unfiltered) = engine.get_unfiltered_events(Some(target_id), 10);
+        assert_eq!(unfiltered.len(), 5);
+        assert_eq!(target_idx, Some(2));
+        assert_eq!(unfiltered[2].id, target_id);
+
+        // Query unfiltered events without target_id
+        let (no_idx, unfiltered_all) = engine.get_unfiltered_events(None, 10);
+        assert_eq!(unfiltered_all.len(), 5);
+        assert_eq!(no_idx, None);
+    }
+
+    #[tokio::test]
+    async fn test_system_engine_unfiltered_centered_window() {
+        let engine = SystemEngine::new(30);
+        let tx = engine.get_channel();
+
+        for i in 0..20 {
+            tx.send(RawLogEntry {
+                source_id: "test".to_string(),
+                payload: RawPayload::Text(format!("[INFO] Log number {}", i)),
+            })
+            .await
+            .unwrap();
+        }
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(60)).await;
+
+        let all_logs = engine.search("");
+        assert_eq!(all_logs.len(), 20);
+
+        // Target log is at index 10 (out of 0..20)
+        let target_id = all_logs[10].id;
+
+        // Request limit 6 -> should return 6 logs centered around index 10 (e.g. indices 7..13)
+        let (target_idx, slice) = engine.get_unfiltered_events(Some(target_id), 6);
+        assert_eq!(slice.len(), 6);
+        assert!(target_idx.is_some());
+        let idx = target_idx.unwrap();
+        assert_eq!(slice[idx].id, target_id);
+        assert_eq!(idx, 3); // 3rd position in the 6-item window
+    }
+
+    #[tokio::test]
+    async fn test_filtered_order_matches_raw_stream_order() {
+        let engine = SystemEngine::new(50);
+        let tx = engine.get_channel();
+
+        // Ingest a sequence of mixed logs
+        let sequence = [
+            ("INFO", "msg 0"),
+            ("WARN", "msg 1"),
+            ("ERROR", "msg 2"),
+            ("INFO", "msg 3"),
+            ("DEBUG", "msg 4"),
+            ("INFO", "msg 5"),
+            ("INFO", "msg 6"),
+            ("WARN", "msg 7"),
+            ("INFO", "msg 8"),
+        ];
+
+        for (lvl, msg) in &sequence {
+            tx.send(RawLogEntry {
+                source_id: "test".to_string(),
+                payload: RawPayload::Text(format!("[{}] {}", lvl, msg)),
+            })
+            .await
+            .unwrap();
+        }
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(60)).await;
+
+        let (_, raw_logs) = engine.get_unfiltered_events(None, 50);
+        let (_, filtered_info_logs) = engine.search_with_count("level:info", 50);
+
+        // Filtered INFO logs must match the exact sequence of INFO logs appearing in raw_logs
+        let raw_info_ids: Vec<_> = raw_logs
+            .iter()
+            .filter(|e| e.level == crate::schema::LogLevel::Info)
+            .map(|e| (e.id, e.message.clone()))
+            .collect();
+
+        let filtered_info_ids: Vec<_> = filtered_info_logs
+            .iter()
+            .map(|e| (e.id, e.message.clone()))
+            .collect();
+
+        assert_eq!(raw_info_ids.len(), 5);
+        assert_eq!(raw_info_ids, filtered_info_ids);
     }
 }

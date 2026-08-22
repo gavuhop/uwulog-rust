@@ -15,6 +15,7 @@ use uwu_core::LogLevel;
 pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     let mut filter_action: Option<FilterAction> = None;
     let mut highlight_action: Option<HighlightAction> = None;
+    let mut unfiltered_action: Option<crate::ui::actions::UnfilteredAction> = None;
     let mut close_requested = false;
 
     if let Some(event) = &app.selected_log {
@@ -42,6 +43,25 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
 
                 if ui.add(close_btn).clicked() {
                     close_requested = true;
+                }
+
+                ui.add_space(4.0);
+
+                let unfil_btn = egui::Button::new(
+                    egui::RichText::new("🔍 Unfiltered")
+                        .size(11.5)
+                        .color(theme::TEXT_PRIMARY),
+                )
+                .fill(theme::BG_SURFACE0)
+                .stroke(Stroke::new(1.0, theme::BG_SURFACE1))
+                .rounding(Rounding::same(4.0));
+
+                if ui
+                    .add(unfil_btn)
+                    .on_hover_text("View surrounding logs in full unfiltered stream")
+                    .clicked()
+                {
+                    unfiltered_action = Some(crate::ui::actions::UnfilteredAction::Open(event_id));
                 }
 
                 ui.add_space(4.0);
@@ -100,6 +120,7 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
         };
 
         egui::ScrollArea::vertical()
+            .id_salt("detail_inspector_scroll_area")
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 // Metadata Card
@@ -231,7 +252,7 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
             });
     }
 
-    dispatch_actions(app, filter_action, highlight_action);
+    dispatch_actions(app, filter_action, highlight_action, unfiltered_action);
 
     if close_requested {
         app.selected_log = None;

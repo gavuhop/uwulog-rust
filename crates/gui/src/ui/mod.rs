@@ -7,6 +7,7 @@ pub mod history;
 pub mod launch_modal;
 pub mod table;
 pub mod theme;
+pub mod unfiltered_table;
 
 use crate::app::UwuGuiApp;
 use eframe::egui;
@@ -14,7 +15,7 @@ use eframe::egui;
 pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
     ctx.set_visuals(theme::create_visuals());
 
-    // Phím Escape: Đóng history popup trước, rồi đến modal Params/Columns, rồi đến Log Inspector
+    // Phím Escape: Đóng history popup trước, rồi đến modal Params/Columns, rồi đến Tab Unfiltered (trở về Filtered), rồi đến Log Inspector
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         if app.history_state.is_open {
             app.history_state.close_popup();
@@ -22,6 +23,8 @@ pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
             app.column_state.is_modal_open = false;
         } else if app.show_launch_modal {
             app.show_launch_modal = false;
+        } else if app.active_tab == crate::app::ActiveTab::Unfiltered {
+            app.active_tab = crate::app::ActiveTab::Filtered;
         } else if app.selected_log.is_some() {
             app.selected_log = None;
         }
@@ -107,8 +110,17 @@ pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
                         .fill(theme::BG_BASE)
                         .inner_margin(egui::Margin::symmetric(8.0, 4.0)),
                 )
-                .show_inside(ui, |ui| {
-                    table::render_table(ui, app);
+                .show_inside(ui, |ui| match app.active_tab {
+                    crate::app::ActiveTab::Filtered => {
+                        ui.push_id("main_filtered_table_scope", |ui| {
+                            table::render_table(ui, app);
+                        });
+                    }
+                    crate::app::ActiveTab::Unfiltered => {
+                        ui.push_id("unfiltered_table_scope", |ui| {
+                            unfiltered_table::render_unfiltered_table(ui, app);
+                        });
+                    }
                 });
         });
 

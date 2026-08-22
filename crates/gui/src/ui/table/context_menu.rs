@@ -1,6 +1,6 @@
 use crate::app::UwuGuiApp;
 use crate::ui::table::actions::{
-    truncate_label, FilterAction, HighlightAction, TableRenderContext,
+    truncate_label, FilterAction, HighlightAction, TableRenderContext, UnfilteredAction,
 };
 use eframe::egui;
 
@@ -83,6 +83,11 @@ pub fn render_cell_context_menu(
     ui.separator();
 
     // 3. Nhóm thao tác Dòng & Toàn cục
+    if ui.button("🔍 View in unfiltered stream").clicked() {
+        *render_ctx.unfiltered_action = Some(UnfilteredAction::Open(menu_ctx.event_id));
+        ui.close_menu();
+    }
+
     if menu_ctx.is_row_highlighted {
         if ui.button("Unhighlight row").clicked() {
             *render_ctx.highlight_action = Some(HighlightAction::ToggleRow(menu_ctx.event_id));
