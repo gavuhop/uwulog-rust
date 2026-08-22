@@ -10,7 +10,9 @@ pub const BG_CRUST: Color32 = Color32::from_rgb(0x0e, 0x0f, 0x16); // #0e0f16 - 
 pub const BG_SURFACE0: Color32 = Color32::from_rgb(0x28, 0x2c, 0x3c); // #282c3c - Viền phân cách
 pub const BG_SURFACE1: Color32 = Color32::from_rgb(0x34, 0x3a, 0x4e); // #343a4e - Nút bấm / Hover
 pub const BG_ROW_HOVER: Color32 = Color32::from_rgb(0x1e, 0x23, 0x33); // #1e2333 - Hover hàng log
-pub const BG_ROW_SELECTED: Color32 = Color32::from_rgb(0x28, 0x32, 0x48); // #283248 - Chọn hàng log
+pub const BG_ROW_SELECTED: Color32 = Color32::from_rgb(0x20, 0x29, 0x3d); // #20293d - Nền chọn hàng (Dark Slate Navy dịu mắt)
+pub const BG_TEXT_SELECTION: Color32 = Color32::from_rgb(0x38, 0x66, 0x9e); // #38669e - Nền tô bôi đen chữ bằng chuột (Vibrant Electric Blue)
+pub const STROKE_TEXT_SELECTION: Color32 = Color32::from_rgb(0x78, 0xa0, 0xd4); // #78a0d4
 pub const BG_ROW_HIGHLIGHT: Color32 = Color32::from_rgb(0x35, 0x2e, 0x1a); // #352e1a - Highlight hàng log (hổ phách tối dịu)
 #[allow(dead_code)]
 pub const BG_ROW_HIGHLIGHT_HOVER: Color32 = Color32::from_rgb(0x42, 0x3a, 0x22); // #423a22 - Hover hàng highlight
@@ -97,9 +99,9 @@ pub fn create_visuals() -> Visuals {
     visuals.widgets.active.bg_stroke = Stroke::new(1.5, TEXT_KEY);
     visuals.widgets.active.fg_stroke = Stroke::new(1.0, TEXT_PRIMARY);
 
-    // Selection
-    visuals.selection.bg_fill = BG_ROW_SELECTED;
-    visuals.selection.stroke = Stroke::NONE;
+    // Selection (Bôi đen chọn chữ)
+    visuals.selection.bg_fill = BG_TEXT_SELECTION;
+    visuals.selection.stroke = Stroke::new(1.0, STROKE_TEXT_SELECTION);
 
     visuals
 }

@@ -1,8 +1,9 @@
 use crate::app::UwuGuiApp;
-use crate::ui::detail::actions::{DetailContext, FilterAction, HighlightAction};
+use crate::ui::detail::actions::{truncate_label, DetailContext, FilterAction, HighlightAction};
 use crate::ui::theme;
 use eframe::egui;
 
+/// Renders a single metadata entry (e.g. ID, Timestamp, Level) with keyword highlighting and right-click quick filters.
 pub fn render_meta_field(
     ui: &mut egui::Ui,
     key: &str,
@@ -50,11 +51,7 @@ pub fn render_meta_field(
     resp.context_menu(|ui| {
         ui.set_min_width(160.0);
 
-        let display_val = if val_str.chars().count() > 25 {
-            format!("{}...", val_str.chars().take(25).collect::<String>())
-        } else {
-            val_str.clone()
-        };
+        let display_val = truncate_label(&val_str, 25);
 
         if ui.button(format!("Filter \"{}\"", display_val)).clicked() {
             let term = UwuGuiApp::format_field_term(&field_name, &val_str);
@@ -88,6 +85,7 @@ pub fn render_meta_field(
     });
 }
 
+/// Renders a parsed JSON key-value field with syntax coloring, keyword highlighting, and right-click quick filters.
 pub fn render_kv_field(ui: &mut egui::Ui, key: &str, val: &str, ctx: &mut DetailContext<'_>) {
     let mut job = egui::text::LayoutJob::default();
     job.append(
@@ -127,11 +125,7 @@ pub fn render_kv_field(ui: &mut egui::Ui, key: &str, val: &str, ctx: &mut Detail
     resp.context_menu(|ui| {
         ui.set_min_width(160.0);
 
-        let display_val = if val_str.chars().count() > 25 {
-            format!("{}...", val_str.chars().take(25).collect::<String>())
-        } else {
-            val_str.clone()
-        };
+        let display_val = truncate_label(&val_str, 25);
 
         if ui.button(format!("Filter \"{}\"", display_val)).clicked() {
             let term = UwuGuiApp::format_field_term(&field_name, &val_str);

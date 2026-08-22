@@ -4,37 +4,87 @@ use crate::ui::theme;
 use eframe::egui;
 use uwu_core::LogEvent;
 
+/// Extracts formatted display text (with newlines replaced) and raw string value for a column.
+fn extract_cell_content(event: &LogEvent, col_name: &str) -> (String, String) {
+    match col_name {
+        "timestamp" => (event.timestamp.clone(), event.timestamp.clone()),
+        "level" => (event.level.to_string(), event.level.to_string()),
+        "message" => (event.message.replace('\n', " ↵ "), event.message.clone()),
+        custom_key => {
+            if let Some(val) = event.fields.get(custom_key) {
+                let raw = match val {
+                    serde_json::Value::String(s) => s.clone(),
+                    _ => val.to_string(),
+                };
+                (raw.clone(), raw)
+            } else {
+                ("-".to_string(), "-".to_string())
+            }
+        }
+    }
+}
+
+/// Reads the currently selected text range in the cell's TextEdit, or recovers it from temp storage on right click.
+fn extract_selected_text(
+    ui: &mut egui::Ui,
+    cell_id: egui::Id,
+    cell_text: &str,
+    is_left_clicked: bool,
+) -> Option<String> {
+    let mut selected_text = None;
+
+    if let Some(state) = egui::text_edit::TextEditState::load(ui.ctx(), cell_id) {
+        if let Some(range) = state.cursor.char_range() {
+            let [min_c, max_c] = range.sorted();
+            if min_c.index < max_c.index {
+                let s = min_c.index;
+                let e = max_c.index;
+                let txt: String = cell_text
+                    .chars()
+                    .skip(s)
+                    .take(e.saturating_sub(s))
+                    .collect();
+                let clean_txt = txt.replace(" ↵ ", " ");
+                let trimmed = clean_txt.trim().to_string();
+                if !trimmed.is_empty() {
+                    selected_text = Some(trimmed.clone());
+                    ui.ctx().data_mut(|d| d.insert_temp(cell_id, trimmed));
+                }
+            } else if is_left_clicked {
+                ui.ctx().data_mut(|d| d.remove_temp::<String>(cell_id));
+            }
+        }
+    }
+
+    if selected_text.is_none() {
+        selected_text = ui.ctx().data(|d| d.get_temp::<String>(cell_id));
+    }
+
+    selected_text
+}
+
 pub fn render_cell(
     ui: &mut egui::Ui,
     event: &LogEvent,
     col_name: &str,
     row_color: egui::Color32,
+    is_selected: bool,
     is_row_highlighted: bool,
     ctx: &mut TableRenderContext<'_>,
 ) -> bool {
+    let cell_rect = ui.max_rect();
     if is_row_highlighted {
         ui.painter()
-            .rect_filled(ui.max_rect(), egui::Rounding::ZERO, theme::BG_ROW_HIGHLIGHT);
+            .rect_filled(cell_rect, egui::Rounding::ZERO, theme::BG_ROW_HIGHLIGHT);
+    } else if is_selected {
+        ui.painter()
+            .rect_filled(cell_rect, egui::Rounding::ZERO, theme::BG_ROW_SELECTED);
     }
 
-    let cell_text = match col_name {
-        "timestamp" => event.timestamp.clone(),
-        "level" => event.level.to_string(),
-        "message" => event.message.replace('\n', " ↵ "),
-        custom_key => {
-            if let Some(val) = event.fields.get(custom_key) {
-                match val {
-                    serde_json::Value::String(s) => s.clone(),
-                    _ => val.to_string(),
-                }
-            } else {
-                "-".to_string()
-            }
-        }
-    };
-
+    let (cell_text, raw_cell_val) = extract_cell_content(event, col_name);
     let cell_id = ui.make_persistent_id((event.id, col_name));
     let mut text_val = cell_text.clone();
+
     let highlighted_terms_ref = ctx.highlighted_terms;
     let mut layouter = |ui: &egui::Ui, _text: &str, _wrap_width: f32| {
         let mut job = theme::create_highlighted_layout_job(
@@ -57,58 +107,15 @@ pub fn render_cell(
         .layouter(&mut layouter);
 
     let resp = ui.add(edit);
-    let mut clicked = false;
-    if resp.clicked() && !ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary)) {
-        clicked = true;
-    }
+    let is_secondary_down = ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary));
+    let clicked = resp.clicked() && !is_secondary_down;
 
-    // Kiểm tra từ bôi đen trong ô nếu có
-    let mut selected_text = None;
-    if let Some(state) = egui::text_edit::TextEditState::load(ui.ctx(), cell_id) {
-        if let Some(range) = state.cursor.char_range() {
-            let [min_c, max_c] = range.sorted();
-            if min_c.index < max_c.index {
-                let s = min_c.index;
-                let e = max_c.index;
-                let txt: String = cell_text
-                    .chars()
-                    .skip(s)
-                    .take(e.saturating_sub(s))
-                    .collect();
-                let clean_txt = txt.replace(" ↵ ", " ");
-                let trimmed = clean_txt.trim().to_string();
-                if !trimmed.is_empty() {
-                    selected_text = Some(trimmed.clone());
-                    ui.ctx().data_mut(|d| d.insert_temp(cell_id, trimmed));
-                }
-            } else if resp.clicked()
-                && !ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary))
-            {
-                ui.ctx().data_mut(|d| d.remove_temp::<String>(cell_id));
-            }
-        }
-    }
-
-    // Khôi phục text bôi đen từ temp storage nếu vừa bấm chuột phải
-    if selected_text.is_none() {
-        selected_text = ui.ctx().data(|d| d.get_temp::<String>(cell_id));
-    }
-
-    let raw_cell_val = match col_name {
-        "level" => event.level.to_string(),
-        "message" => event.message.clone(),
-        "timestamp" => event.timestamp.clone(),
-        custom_key => {
-            if let Some(val) = event.fields.get(custom_key) {
-                match val {
-                    serde_json::Value::String(s) => s.clone(),
-                    _ => val.to_string(),
-                }
-            } else {
-                cell_text.clone()
-            }
-        }
-    };
+    let selected_text = extract_selected_text(
+        ui,
+        cell_id,
+        &cell_text,
+        resp.clicked() && !is_secondary_down,
+    );
 
     resp.context_menu(|ui| {
         let menu_ctx = CellMenuContext {

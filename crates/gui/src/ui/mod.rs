@@ -1,3 +1,4 @@
+pub mod actions;
 pub mod autocomplete;
 pub mod columns_modal;
 pub mod detail;

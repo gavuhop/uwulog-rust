@@ -130,9 +130,6 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                         if let Some(event) = app.cached_logs.get(row_index) {
                             let is_selected =
                                 app.selected_log.as_ref().is_some_and(|s| s.id == event.id);
-                            if is_selected {
-                                row.set_selected(true);
-                            }
 
                             let is_highlighted = app.is_row_highlighted(&event.id);
                             let row_color = match event.level {
@@ -149,6 +146,7 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                                         event,
                                         &col.name,
                                         row_color,
+                                        is_selected,
                                         is_highlighted,
                                         &mut render_ctx,
                                     );

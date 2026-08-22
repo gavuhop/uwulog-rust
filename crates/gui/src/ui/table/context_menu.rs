@@ -1,7 +1,10 @@
 use crate::app::UwuGuiApp;
-use crate::ui::table::actions::{FilterAction, HighlightAction, TableRenderContext};
+use crate::ui::table::actions::{
+    truncate_label, FilterAction, HighlightAction, TableRenderContext,
+};
 use eframe::egui;
 
+/// Parameters for rendering the right-click context menu of a table cell
 pub struct CellMenuContext<'a> {
     pub col_name: &'a str,
     pub raw_cell_val: &'a str,
@@ -17,13 +20,9 @@ pub fn render_cell_context_menu(
 ) {
     ui.set_min_width(180.0);
 
-    // 1. Nhóm từ bôi đen trong ô (nếu có)
+    // 1. Nhóm từ bôi đen trong ô (nếu có lựa chọn bôi đen)
     if let Some(sel) = menu_ctx.selected_text {
-        let display_sel = if sel.chars().count() > 25 {
-            format!("{}...", sel.chars().take(25).collect::<String>())
-        } else {
-            sel.to_string()
-        };
+        let display_sel = truncate_label(sel, 25);
 
         if ui.button(format!("Filter \"{}\"", display_sel)).clicked() {
             let term = UwuGuiApp::format_field_term(menu_ctx.col_name, sel);
@@ -52,15 +51,8 @@ pub fn render_cell_context_menu(
         ui.separator();
     }
 
-    // 2. Nhóm giá trị toàn ô
-    let display_val = if menu_ctx.raw_cell_val.chars().count() > 25 {
-        format!(
-            "{}...",
-            menu_ctx.raw_cell_val.chars().take(25).collect::<String>()
-        )
-    } else {
-        menu_ctx.raw_cell_val.to_string()
-    };
+    // 2. Nhóm thao tác với toàn bộ giá trị ô
+    let display_val = truncate_label(menu_ctx.raw_cell_val, 25);
 
     if ui.button(format!("Filter \"{}\"", display_val)).clicked() {
         let term = UwuGuiApp::format_field_term(menu_ctx.col_name, menu_ctx.raw_cell_val);
@@ -108,7 +100,7 @@ pub fn render_cell_context_menu(
 
     ui.separator();
 
-    // 4. Copy giá trị
+    // 4. Copy giá trị vào Clipboard
     if ui.button("Copy value").clicked() {
         ui.ctx().output_mut(|o| {
             o.copied_text = menu_ctx.raw_cell_val.to_string();
