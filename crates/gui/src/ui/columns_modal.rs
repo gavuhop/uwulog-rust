@@ -162,6 +162,7 @@ pub fn render_columns_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
                 }
 
                 egui::ScrollArea::vertical()
+                    .id_salt("columns_modal_scroll_area")
                     .max_height(340.0)
                     .auto_shrink([false, false])
                     .show(ui, |ui| {

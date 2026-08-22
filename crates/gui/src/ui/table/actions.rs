@@ -1,4 +1,6 @@
-pub use crate::ui::actions::{dispatch_actions, truncate_label, FilterAction, HighlightAction};
+pub use crate::ui::actions::{
+    dispatch_actions, truncate_label, FilterAction, HighlightAction, UnfilteredAction,
+};
 use std::collections::HashSet;
 
 /// Context passed down to table cells during row rendering
@@ -7,4 +9,5 @@ pub struct TableRenderContext<'a> {
     pub has_any_highlights: bool,
     pub filter_action: &'a mut Option<FilterAction>,
     pub highlight_action: &'a mut Option<HighlightAction>,
+    pub unfiltered_action: &'a mut Option<UnfilteredAction>,
 }

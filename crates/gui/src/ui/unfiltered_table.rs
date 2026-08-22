@@ -1,35 +1,29 @@
-pub mod actions;
-pub mod cell;
-pub mod context_menu;
-pub mod header;
-
 use crate::app::UwuGuiApp;
+use crate::ui::actions::{dispatch_actions, FilterAction, HighlightAction, UnfilteredAction};
 use crate::ui::columns_modal::ColumnItem;
+use crate::ui::table::actions::TableRenderContext;
+use crate::ui::table::cell::render_cell;
+use crate::ui::table::header::{render_drag_ghost, render_table_headers};
 use crate::ui::theme;
-use actions::{dispatch_actions, FilterAction, HighlightAction, TableRenderContext};
-use cell::render_cell;
 use eframe::egui::{self, Pos2};
 use egui_extras::{Column, TableBuilder};
-use header::{render_drag_ghost, render_table_headers};
 use uwu_core::LogLevel;
 
-pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
-    let row_count = app.cached_logs.len();
+pub fn render_unfiltered_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
+    let row_count = app.unfiltered_state.cached_unfiltered.len();
     let text_height = egui::TextStyle::Monospace.resolve(ui.style()).size;
 
     let mut newly_selected_event = None;
-    let mut last_row_visible = false;
-
-    // Đọc thao tác cuộn chuột trước khi vẽ TableBuilder
-    let scroll_delta_y = ui.input(|i| i.raw_scroll_delta.y);
-    if scroll_delta_y > 0.0 {
-        app.unlatch();
-    }
+    let mut filter_action: Option<FilterAction> = None;
+    let mut highlight_action: Option<HighlightAction> = None;
+    let mut unfiltered_action: Option<UnfilteredAction> = None;
+    let has_any_highlights = app.has_any_highlights();
 
     let mut new_header_drag = None;
     let mut target_header_swap = None;
     let pointer_pos: Option<Pos2> = ui.input(|i| i.pointer.hover_pos());
 
+    // Table Render Directly (Header controls unified into top navigation bar)
     let visible_cols: Vec<ColumnItem> = app
         .column_state
         .columns
@@ -39,7 +33,7 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
         .collect();
 
     let table_salt = format!(
-        "log_tbl_{}",
+        "unfiltered_tbl_{}",
         visible_cols
             .iter()
             .map(|c| c.name.as_str())
@@ -47,13 +41,9 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
             .join(",")
     );
 
-    let mut filter_action: Option<FilterAction> = None;
-    let mut highlight_action: Option<HighlightAction> = None;
-    let mut unfiltered_action: Option<actions::UnfilteredAction> = None;
-    let has_any_highlights = app.has_any_highlights();
-
     let sample_ts = app
-        .cached_logs
+        .unfiltered_state
+        .cached_unfiltered
         .iter()
         .take(50)
         .map(|e| e.timestamp.as_str())
@@ -71,11 +61,11 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     let level_needed_width = 56.0;
 
     egui::ScrollArea::horizontal()
-        .id_salt("main_table_hscroll")
+        .id_salt("unfiltered_table_hscroll")
         .auto_shrink([false, false])
         .show(ui, |ui| {
             let mut builder = TableBuilder::new(ui)
-                .id_salt(format!("main_{}", table_salt))
+                .id_salt(format!("unfiltered_{}", table_salt))
                 .striped(true)
                 .resizable(true)
                 .auto_shrink([false, false]);
@@ -96,13 +86,20 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 builder = builder.column(Column::initial(initial_w).at_least(min_w).clip(true));
             }
 
-            let has_new_data = app.has_new_data;
-            let force_scroll = app.request_scroll_to_bottom;
-            if (force_scroll || (app.is_auto_scroll && has_new_data)) && row_count > 0 {
+            // Tự động cuộn đến vị trí dòng mục tiêu khi vừa mở bảng hoặc bấm Jump
+            if app.unfiltered_state.request_scroll_to_target && row_count > 0 {
+                if let Some(target_idx) = app.unfiltered_state.target_index {
+                    builder = builder.scroll_to_row(target_idx, Some(egui::Align::Center));
+                }
+                app.unfiltered_state.request_scroll_to_target = false;
+            } else if app.unfiltered_state.is_live
+                && (app.unfiltered_state.request_scroll_to_bottom
+                    || app.unfiltered_state.has_new_data)
+                && row_count > 0
+            {
                 builder = builder.scroll_to_row(row_count - 1, Some(egui::Align::Max));
-                app.request_scroll_to_bottom = false;
+                app.unfiltered_state.request_scroll_to_bottom = false;
             }
-            app.prev_table_row_count = row_count;
 
             builder
                 .header(26.0, |mut tbl_header| {
@@ -123,16 +120,15 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                         unfiltered_action: &mut unfiltered_action,
                     };
 
+                    let target_id = app.unfiltered_state.target_id;
+
                     body.rows(text_height + 8.0, row_count, |mut row| {
                         let row_index = row.index();
 
-                        if row_count > 0 && row_index == row_count - 1 {
-                            last_row_visible = true;
-                        }
-
-                        if let Some(event) = app.cached_logs.get(row_index) {
-                            let is_selected =
-                                app.selected_log.as_ref().is_some_and(|s| s.id == event.id);
+                        if let Some(event) = app.unfiltered_state.cached_unfiltered.get(row_index) {
+                            let is_target = target_id.is_some_and(|id| id == event.id);
+                            let is_selected = is_target
+                                || app.selected_log.as_ref().is_some_and(|s| s.id == event.id);
 
                             let is_highlighted = app.is_row_highlighted(&event.id);
                             let row_color = match event.level {
@@ -195,9 +191,5 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     if let Some(event) = newly_selected_event {
         app.selected_log = Some(event);
         app.unlatch();
-    }
-
-    if last_row_visible && scroll_delta_y < 0.0 {
-        app.is_auto_scroll = true;
     }
 }

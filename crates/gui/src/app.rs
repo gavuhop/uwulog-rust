@@ -10,6 +10,14 @@ use uwu_core::{FileSource, LogEvent, LogSource, ProcessSource, RawLogEntry, Syst
 #[cfg(target_os = "windows")]
 use uwu_core::WinEventSource;
 
+pub const RAW_STREAM_LIMIT: usize = 500;
+
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub enum ActiveTab {
+    Filtered,
+    Unfiltered,
+}
+
 #[derive(PartialEq, Clone)]
 pub enum SourceType {
     Process,
@@ -28,6 +36,7 @@ pub struct SourceConfig {
 
 pub struct UwuGuiApp {
     pub engine: Arc<SystemEngine>,
+    pub active_tab: ActiveTab,
     pub query: String,
     pub last_query: String,
     pub display_limit: usize,
@@ -38,6 +47,8 @@ pub struct UwuGuiApp {
     pub is_auto_scroll: bool,
     /// Cờ yêu cầu cuộn ngay xuống dòng mới nhất (khi bấm nút Latch hoặc phím End)
     pub request_scroll_to_bottom: bool,
+    /// Cờ báo có log mới được nạp vào cached_logs trong frame hiện tại
+    pub has_new_data: bool,
     /// Số dòng bảng ở frame trước. Dùng để biết khi nào có data mới → chỉ scroll_to_row lúc đó.
     pub prev_table_row_count: usize,
     pub is_source_running: bool,
@@ -57,6 +68,23 @@ pub struct UwuGuiApp {
     /// Tỷ lệ chiều rộng của Log Inspector so với màn hình (mặc định 0.35 = 35%)
     pub inspector_width_ratio: f32,
     pub prev_screen_width: f32,
+    pub unfiltered_state: UnfilteredViewState,
+    pub global_seen_at_pause: u64,
+    pub filtered_seen_at_pause: usize,
+    pub filtered_processed_at_pause: u64,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct UnfilteredViewState {
+    pub is_open: bool,
+    pub target_id: Option<uuid::Uuid>,
+    pub cached_unfiltered: Vec<LogEvent>,
+    pub target_index: Option<usize>,
+    pub request_scroll_to_target: bool,
+    pub is_live: bool,
+    pub request_scroll_to_bottom: bool,
+    pub has_new_data: bool,
+    pub snapshot_processed_count: u64,
 }
 
 impl UwuGuiApp {
@@ -126,6 +154,7 @@ impl UwuGuiApp {
 
         let mut app = Self {
             engine,
+            active_tab: ActiveTab::Filtered,
             query: String::new(),
             last_query: String::new(),
             display_limit,
@@ -135,6 +164,7 @@ impl UwuGuiApp {
             selected_log: None,
             is_auto_scroll: true,
             request_scroll_to_bottom: false,
+            has_new_data: false,
             prev_table_row_count: 0,
             is_source_running: false,
             show_launch_modal: false,
@@ -150,6 +180,10 @@ impl UwuGuiApp {
             highlighted_terms: std::collections::HashSet::new(),
             inspector_width_ratio: 0.35,
             prev_screen_width: 0.0,
+            unfiltered_state: UnfilteredViewState::default(),
+            global_seen_at_pause: 0,
+            filtered_seen_at_pause: 0,
+            filtered_processed_at_pause: 0,
         };
 
         app.start_configured_source();
@@ -235,18 +269,6 @@ impl UwuGuiApp {
             }
         }
     }
-
-    pub fn trigger_full_search(&mut self) {
-        let (matched, logs) = self
-            .engine
-            .search_with_count(&self.query, self.display_limit);
-        self.total_matched = matched;
-        self.cached_logs = logs;
-        self.last_query = self.query.clone();
-        self.last_processed_count = self.engine.total_processed();
-        self.last_search_time = Instant::now();
-    }
-
     pub fn tick(&mut self) {
         let total_processed = self.engine.total_processed();
         let now = Instant::now();
@@ -254,6 +276,9 @@ impl UwuGuiApp {
         let query_changed = self.query != self.last_query;
         if query_changed {
             self.trigger_full_search();
+            if self.query.trim().is_empty() && self.active_tab == ActiveTab::Unfiltered {
+                self.close_unfiltered_stream();
+            }
         }
 
         // Debounced: tự động lưu lịch sử sau 500ms dừng gõ
@@ -262,6 +287,8 @@ impl UwuGuiApp {
 
         let new_logs_arrived = total_processed != self.last_processed_count
             && now.duration_since(self.last_search_time) > Duration::from_millis(150);
+
+        self.has_new_data = false;
 
         if self.is_auto_scroll && new_logs_arrived && !query_changed {
             let (new_matched_count, new_matching_logs) = self
@@ -276,10 +303,33 @@ impl UwuGuiApp {
                     let overflow = self.cached_logs.len() - self.display_limit;
                     self.cached_logs.drain(0..overflow);
                 }
+                self.has_new_data = true;
             }
 
             self.last_processed_count = total_processed;
             self.last_search_time = now;
+        }
+
+        if self.is_auto_scroll {
+            self.global_seen_at_pause = total_processed;
+            self.filtered_seen_at_pause = self.total_matched;
+            self.filtered_processed_at_pause = total_processed;
+        }
+
+        // Bảng Unfiltered: Giới hạn buffer 500 logs cho việc soi context log gốc
+        self.unfiltered_state.has_new_data = false;
+        if self.unfiltered_state.is_open && self.unfiltered_state.is_live && new_logs_arrived {
+            let (new_count, new_logs) = self
+                .engine
+                .filter_incremental("", self.last_processed_count);
+            if new_count > 0 {
+                self.unfiltered_state.cached_unfiltered.extend(new_logs);
+                if self.unfiltered_state.cached_unfiltered.len() > RAW_STREAM_LIMIT {
+                    let overflow = self.unfiltered_state.cached_unfiltered.len() - RAW_STREAM_LIMIT;
+                    self.unfiltered_state.cached_unfiltered.drain(0..overflow);
+                }
+                self.unfiltered_state.has_new_data = true;
+            }
         }
 
         // Tự động đồng bộ các trường key mới phát hiện từ logs
@@ -287,8 +337,6 @@ impl UwuGuiApp {
     }
 
     pub fn stop_current_source(&mut self) {
-        // Gửi kill signal → forwarder task thoát → drop source_rx
-        // → tx.closed() kích hoạt trong ProcessSource → taskkill diệt cây tiến trình
         if let Some(kill_tx) = self.kill_signal.take() {
             let _ = kill_tx.send(());
         }
@@ -296,10 +344,7 @@ impl UwuGuiApp {
     }
 
     pub fn restart_current_source(&mut self) {
-        // 1. Dừng tiến trình đang chạy
         self.stop_current_source();
-
-        // 2. Clear toàn bộ log cũ trong Engine & UI state
         if self.source_config.capacity != self.capacity {
             self.capacity = self.source_config.capacity;
             self.engine = Arc::new(SystemEngine::new(self.capacity));
@@ -309,16 +354,26 @@ impl UwuGuiApp {
 
         self.display_limit = self.source_config.display_limit;
         self.cached_logs.clear();
-        self.selected_log = None;
         self.total_matched = 0;
+        self.selected_log = None;
         self.last_processed_count = 0;
-        self.is_auto_scroll = true;
-        self.request_scroll_to_bottom = true;
-        self.prev_table_row_count = 0;
-
-        // 3. Khởi tạo lại Nguồn Log mới sạch hoàn toàn
+        self.unfiltered_state.cached_unfiltered.clear();
         self.start_configured_source();
         self.trigger_full_search();
+    }
+
+    pub fn trigger_full_search(&mut self) {
+        let (matched, logs) = self
+            .engine
+            .search_with_count(&self.query, self.display_limit);
+        self.total_matched = matched;
+        self.cached_logs = logs;
+        self.last_query = self.query.clone();
+        self.last_processed_count = self.engine.total_processed();
+        self.last_search_time = Instant::now();
+        self.global_seen_at_pause = self.last_processed_count;
+        self.filtered_seen_at_pause = self.total_matched;
+        self.filtered_processed_at_pause = self.last_processed_count;
     }
 
     pub fn latch(&mut self) {
@@ -332,6 +387,10 @@ impl UwuGuiApp {
 
     pub fn unlatch(&mut self) {
         self.is_auto_scroll = false;
+        let total = self.engine.total_processed();
+        self.global_seen_at_pause = total;
+        self.filtered_seen_at_pause = self.total_matched;
+        self.filtered_processed_at_pause = total;
     }
 
     pub fn toggle_latch(&mut self) {
@@ -523,6 +582,68 @@ impl UwuGuiApp {
         }
         self.trigger_full_search();
     }
+
+    pub fn open_unfiltered_stream(&mut self, target_id: Option<uuid::Uuid>) {
+        self.unfiltered_state.is_open = true;
+        self.unfiltered_state.target_id = target_id;
+        // Mặc định: Nếu mở theo 1 log mục tiêu -> Đóng băng (Freeze/Snapshot) để điều tra không bị trôi
+        // Nếu mở xem luồng chung -> Chế độ Live
+        self.unfiltered_state.is_live = target_id.is_none();
+        self.unfiltered_state.snapshot_processed_count = self.engine.total_processed();
+        let (target_idx, unfiltered) = self
+            .engine
+            .get_unfiltered_events(target_id, RAW_STREAM_LIMIT);
+        self.unfiltered_state.cached_unfiltered = unfiltered;
+        self.unfiltered_state.target_index = target_idx;
+        self.unfiltered_state.request_scroll_to_target = true;
+        self.unfiltered_state.has_new_data = false;
+        self.active_tab = ActiveTab::Unfiltered;
+    }
+
+    pub fn refresh_unfiltered_snapshot(&mut self) {
+        self.unfiltered_state.snapshot_processed_count = self.engine.total_processed();
+        let (target_idx, unfiltered) = self
+            .engine
+            .get_unfiltered_events(self.unfiltered_state.target_id, RAW_STREAM_LIMIT);
+        self.unfiltered_state.cached_unfiltered = unfiltered;
+        self.unfiltered_state.target_index = target_idx;
+        self.unfiltered_state.request_scroll_to_target = true;
+    }
+
+    pub fn toggle_unfiltered_live(&mut self) {
+        self.unfiltered_state.is_live = !self.unfiltered_state.is_live;
+        if self.unfiltered_state.is_live {
+            self.refresh_unfiltered_snapshot();
+            self.unfiltered_state.request_scroll_to_bottom = true;
+        } else {
+            self.unfiltered_state.snapshot_processed_count = self.engine.total_processed();
+        }
+    }
+
+    pub fn close_unfiltered_stream(&mut self) {
+        self.unfiltered_state.is_open = false;
+        self.unfiltered_state.target_id = None;
+        self.unfiltered_state.target_index = None;
+        self.unfiltered_state.cached_unfiltered.clear();
+        self.active_tab = ActiveTab::Filtered;
+    }
+
+    pub fn focus_in_main_and_clear_filter(&mut self) {
+        if let Some(target_id) = self.unfiltered_state.target_id {
+            if let Some(target_event) = self
+                .unfiltered_state
+                .cached_unfiltered
+                .iter()
+                .find(|e| e.id == target_id)
+                .cloned()
+            {
+                self.selected_log = Some(target_event);
+            }
+        }
+        self.query.clear();
+        self.trigger_full_search();
+        self.close_unfiltered_stream();
+    }
 }
 
 impl eframe::App for UwuGuiApp {
@@ -545,7 +666,7 @@ mod tests {
     use super::*;
     use crate::ui::autocomplete::{FieldType, SuggestionItem, SuggestionKind};
     use std::collections::HashMap;
-    use uwu_core::LogLevel;
+    use uwu_core::{LogLevel, RawPayload};
 
     fn create_test_app() -> UwuGuiApp {
         let engine = Arc::new(SystemEngine::new(100));
@@ -562,6 +683,7 @@ mod tests {
 
         UwuGuiApp {
             engine,
+            active_tab: ActiveTab::Filtered,
             query: String::new(),
             last_query: String::new(),
             display_limit: 50,
@@ -571,6 +693,7 @@ mod tests {
             selected_log: None,
             is_auto_scroll: true,
             request_scroll_to_bottom: false,
+            has_new_data: false,
             prev_table_row_count: 0,
             is_source_running: false,
             show_launch_modal: false,
@@ -586,6 +709,10 @@ mod tests {
             highlighted_terms: std::collections::HashSet::new(),
             inspector_width_ratio: 0.35,
             prev_screen_width: 0.0,
+            unfiltered_state: UnfilteredViewState::default(),
+            global_seen_at_pause: 0,
+            filtered_seen_at_pause: 0,
+            filtered_processed_at_pause: 0,
         }
     }
 
@@ -750,5 +877,95 @@ mod tests {
         app.apply_autocomplete_suggestion(&suggestion);
         assert_eq!(app.query, "level:");
         assert!(app.autocomplete_state.just_applied);
+    }
+
+    #[tokio::test]
+    async fn test_unfiltered_stream_open_close_and_focus() {
+        let mut app = create_test_app();
+        let tx = app.engine.get_channel();
+
+        for i in 0..5 {
+            let log = RawLogEntry {
+                source_id: "test".to_string(),
+                payload: RawPayload::Text(format!("[INFO] Message {}", i)),
+            };
+            tx.send(log).await.unwrap();
+        }
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        app.trigger_full_search();
+
+        assert_eq!(app.cached_logs.len(), 5);
+        let target_id = app.cached_logs[2].id;
+
+        // Open unfiltered stream on target
+        app.open_unfiltered_stream(Some(target_id));
+        assert!(app.unfiltered_state.is_open);
+        assert_eq!(app.unfiltered_state.target_id, Some(target_id));
+        assert_eq!(app.unfiltered_state.target_index, Some(2));
+        assert_eq!(app.unfiltered_state.cached_unfiltered.len(), 5);
+        assert!(app.unfiltered_state.request_scroll_to_target);
+
+        // Close unfiltered stream
+        app.close_unfiltered_stream();
+        assert!(!app.unfiltered_state.is_open);
+        assert_eq!(app.unfiltered_state.target_id, None);
+        assert!(app.unfiltered_state.cached_unfiltered.is_empty());
+
+        // Re-open and focus in main
+        app.query = "level:error".to_string(); // simulate active filter
+        app.open_unfiltered_stream(Some(target_id));
+        app.focus_in_main_and_clear_filter();
+
+        assert!(!app.unfiltered_state.is_open);
+        assert_eq!(app.query, "");
+        assert_eq!(app.selected_log.as_ref().map(|l| l.id), Some(target_id));
+    }
+
+    #[tokio::test]
+    async fn test_unfiltered_frozen_snapshot_no_drift() {
+        let mut app = create_test_app();
+        let tx = app.engine.get_channel();
+
+        for i in 0..5 {
+            let log = RawLogEntry {
+                source_id: "test".to_string(),
+                payload: RawPayload::Text(format!("[INFO] Message {}", i)),
+            };
+            tx.send(log).await.unwrap();
+        }
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        app.trigger_full_search();
+
+        let target_id = app.cached_logs[2].id;
+        app.open_unfiltered_stream(Some(target_id));
+
+        // When opened for a target log, it defaults to FROZEN snapshot
+        assert!(!app.unfiltered_state.is_live);
+        assert_eq!(app.unfiltered_state.cached_unfiltered.len(), 5);
+
+        // Ingest 10 new logs into the engine
+        for i in 5..15 {
+            let log = RawLogEntry {
+                source_id: "test".to_string(),
+                payload: RawPayload::Text(format!("[INFO] Message {}", i)),
+            };
+            tx.send(log).await.unwrap();
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        // Run tick
+        app.tick();
+
+        // Cached unfiltered MUST remain frozen at 5 logs with target log unchanged
+        assert_eq!(app.unfiltered_state.cached_unfiltered.len(), 5);
+        assert_eq!(app.unfiltered_state.cached_unfiltered[2].id, target_id);
+        assert!(!app.unfiltered_state.has_new_data);
+
+        // Now toggle to LIVE stream
+        app.toggle_unfiltered_live();
+        assert!(app.unfiltered_state.is_live);
+        assert_eq!(app.unfiltered_state.cached_unfiltered.len(), 15);
     }
 }

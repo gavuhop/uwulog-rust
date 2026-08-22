@@ -15,11 +15,21 @@ pub enum HighlightAction {
     ClearAll,
 }
 
-/// Dispatches requested filter and highlight actions to the main application state.
+/// Actions for controlling the unfiltered stream split view
+#[allow(dead_code)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UnfilteredAction {
+    Open(uuid::Uuid),
+    Close,
+    FocusInMain,
+}
+
+/// Dispatches requested filter, highlight, and unfiltered stream actions to the main application state.
 pub fn dispatch_actions(
     app: &mut UwuGuiApp,
     filter_action: Option<FilterAction>,
     highlight_action: Option<HighlightAction>,
+    unfiltered_action: Option<UnfilteredAction>,
 ) {
     if let Some(action) = filter_action {
         match action {
@@ -33,6 +43,14 @@ pub fn dispatch_actions(
             HighlightAction::ToggleRow(id) => app.toggle_row_highlight(id),
             HighlightAction::ToggleTerm(term) => app.toggle_term_highlight(&term),
             HighlightAction::ClearAll => app.clear_all_highlights(),
+        }
+    }
+
+    if let Some(action) = unfiltered_action {
+        match action {
+            UnfilteredAction::Open(id) => app.open_unfiltered_stream(Some(id)),
+            UnfilteredAction::Close => app.close_unfiltered_stream(),
+            UnfilteredAction::FocusInMain => app.focus_in_main_and_clear_filter(),
         }
     }
 }
