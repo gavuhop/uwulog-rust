@@ -22,6 +22,7 @@ pub const TEXT_TERM_HIGHLIGHT: Color32 = Color32::from_rgb(0xff, 0xf2, 0xcc); //
 // Màu chữ êm dịu, không chói lóa (Soft pastel & warm slate)
 pub const TEXT_PRIMARY: Color32 = Color32::from_rgb(0xc5, 0xcd, 0xd9); // #c5cdd9 - Chữ xám ấm dịu mắt
 pub const TEXT_MUTED: Color32 = Color32::from_rgb(0x72, 0x7a, 0x90); // #727a90 - Timestamp & nhãn phụ
+pub const TEXT_PLACEHOLDER: Color32 = Color32::from_rgb(0x55, 0x5d, 0x73); // #555d73 - Placeholder tìm kiếm tối chìm dịu mắt
 pub const TEXT_KEY: Color32 = Color32::from_rgb(0x78, 0xa0, 0xd4); // #78a0d4 - Pastel Blue dịu
 
 // Màu trạng thái mềm mại (Pastel Muted)

@@ -111,7 +111,10 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
         let search_response = ui.add(
             egui::TextEdit::singleline(&mut app.query)
                 .id(search_id)
-                .hint_text("🔍 Filter query (e.g. level:error, status:500, time:now..10m)...")
+                .hint_text(
+                    egui::RichText::new("🔍 Filter query (e.g. level:error, status:500, time:now..10m)...")
+                        .color(theme::TEXT_PLACEHOLDER),
+                )
                 .desired_width(500.0)
                 .font(egui::TextStyle::Monospace)
                 .margin(egui::Margin::symmetric(10.0, 6.0)),
