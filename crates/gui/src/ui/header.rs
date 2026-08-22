@@ -380,125 +380,127 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
             ui.add_space(6.0);
 
             // Log Count / Filter Matched Indicator
-            let is_filtering = !app.query.trim().is_empty();
-            let (count_text, count_color, count_tooltip) = match app.active_tab {
-                crate::app::ActiveTab::Unfiltered => {
-                    let total = app.engine.total_processed() as usize;
-
-                    if app.unfiltered_state.is_live {
-                        // Khi Live: Hiển thị tổng số log đã xem/thu thập
-                        let text = theme::format_number(total);
-                        let tooltip = format!(
-                            "Raw Stream (Live)\n• Total Ingested / Seen: {}\n• In-Memory Buffer: {} / {}\n• Context Limit: 500",
-                            theme::format_number(total),
-                            theme::format_number(app.engine.total_logs()),
-                            theme::format_number(app.engine.max_capacity())
-                        );
-                        (text, theme::TEXT_MUTED, tooltip)
-                    } else {
-                        // Khi Pause / Frozen Snapshot: hiển thị <số log chưa hiển thị>/<tổng log đã xem tại thời điểm pause>
-                        let seen_count = app.unfiltered_state.snapshot_processed_count as usize;
-                        let unviewed = (app.engine.total_processed())
-                            .saturating_sub(app.unfiltered_state.snapshot_processed_count)
-                            as usize;
-                        let text = format!(
-                            "{}/{}",
-                            theme::format_number(unviewed),
-                            theme::format_number(seen_count)
-                        );
-                        let tooltip = format!(
-                            "Raw Stream (Paused / Frozen Snapshot)\n• Unviewed Pending Logs: {}\n• Total Logs Seen at Pause: {}\n• Total Ingested: {}",
-                            theme::format_number(unviewed),
-                            theme::format_number(seen_count),
-                            theme::format_number(total)
-                        );
-                        (text, theme::TEXT_MUTED, tooltip)
-                    }
-                }
-                crate::app::ActiveTab::Filtered => {
-                    let total_ingested = app.engine.total_processed() as usize;
-                    let displayed = app.cached_logs.len();
-
-                    if is_filtering {
-                        if !app.is_auto_scroll {
-                            // Khi Pause ở chế độ Lọc: hiển thị <số log mới nạp chưa hiển thị>/<số log khớp tại thời điểm pause>
-                            let seen_matched = app.filtered_seen_at_pause;
-                            let unviewed_incoming = (app.engine.total_processed())
-                                .saturating_sub(app.filtered_processed_at_pause) as usize;
-                            let text = format!(
-                                "{}/{}",
-                                theme::format_number(unviewed_incoming),
-                                theme::format_number(seen_matched)
-                            );
-                            let tooltip = format!(
-                                "Filter Query: \"{}\" (Paused)\n• Unviewed Incoming Logs: {}\n• Matched at Pause: {}\n• Displayed: {}",
-                                app.query.trim(),
-                                theme::format_number(unviewed_incoming),
-                                theme::format_number(seen_matched),
-                                theme::format_number(displayed)
-                            );
-                            (text, theme::TEXT_KEY, tooltip)
-                        } else {
-                            // Khi Live và đang lọc
-                            let text = if app.total_matched > displayed {
-                                format!(
-                                    "{}/{}",
-                                    theme::format_number(displayed),
-                                    theme::format_number(app.total_matched)
-                                )
-                            } else {
-                                theme::format_number(app.total_matched)
-                            };
-                            let tooltip = format!(
-                                "Filter query: \"{}\"\n• Matched: {} logs\n• Displayed: {} logs (Limit: {})",
-                                app.query.trim(),
-                                theme::format_number(app.total_matched),
-                                theme::format_number(displayed),
-                                theme::format_number(app.display_limit)
-                            );
-                            (text, theme::TEXT_KEY, tooltip)
-                        }
-                    } else {
-                        // Chế độ không lọc (Main Stream thông thường)
-                        if !app.is_auto_scroll {
-                            // Khi Pause ở chế độ Không lọc: hiển thị <số log chưa hiển thị>/<tổng log đã xem tại thời điểm pause>
-                            let seen_count = app.global_seen_at_pause as usize;
-                            let unviewed = total_ingested.saturating_sub(seen_count);
-                            let text = format!(
-                                "{}/{}",
-                                theme::format_number(unviewed),
-                                theme::format_number(seen_count)
-                            );
-                            let tooltip = format!(
-                                "Main Stream (Paused)\n• Unviewed Pending Logs: {}\n• Total Logs Seen at Pause: {}\n• Total Ingested: {}",
-                                theme::format_number(unviewed),
-                                theme::format_number(seen_count),
-                                theme::format_number(total_ingested)
-                            );
-                            (text, theme::TEXT_MUTED, tooltip)
-                        } else {
-                            // Khi Live và chưa lọc
-                            let text = theme::format_number(total_ingested);
-                            let tooltip = format!(
-                                "Total Logs Collected / Seen: {}\n• In-Memory Buffer: {} / {}\n• Displayed: {}",
-                                theme::format_number(total_ingested),
-                                theme::format_number(app.engine.total_logs()),
-                                theme::format_number(app.engine.max_capacity()),
-                                theme::format_number(displayed)
-                            );
-                            (text, theme::TEXT_MUTED, tooltip)
-                        }
-                    }
-                }
-            };
-
-            ui.add(
-                egui::Label::new(
-                    egui::RichText::new(count_text)
-                        .font(egui::FontId::monospace(11.5))
-                        .color(count_color),
-                )
-            ).on_hover_text(count_tooltip);
+            render_log_counter(ui, app);
         });
     });
+}
+
+/// Hiển thị bộ đếm số lượng log theo từng trạng thái chuẩn hóa trong detail task.md:
+/// - main (chưa lọc): Live -> số log hiện tại     | Pause -> số log mới đến / số log tại pause
+/// - main (đã lọc):   Live -> số log khớp         | Pause -> số log khớp mới đến / số log khớp tại pause
+/// - Raw:             Live -> số log hiện tại     | Pause -> số log mới đến / số log tại pause
+pub fn render_log_counter(ui: &mut egui::Ui, app: &UwuGuiApp) {
+    let is_filtering = !app.query.trim().is_empty();
+
+    let (count_text, count_color, count_tooltip) = match app.active_tab {
+        crate::app::ActiveTab::Unfiltered => {
+            let total_now = app.engine.total_processed() as usize;
+
+            if app.unfiltered_state.is_live {
+                // Live: số log hiện tại
+                let text = theme::format_number(total_now);
+                let tooltip = format!(
+                    "Raw Stream (Live)\n• Total Ingested / Seen: {}\n• In-Memory Buffer: {} / {}\n• Buffer Limit: 500",
+                    theme::format_number(total_now),
+                    theme::format_number(app.engine.total_logs()),
+                    theme::format_number(app.engine.max_capacity()),
+                );
+                (text, theme::TEXT_MUTED, tooltip)
+            } else {
+                // Pause: số log mới đến / số log tại pause
+                let seen_at_pause = app.unfiltered_state.snapshot_processed_count as usize;
+                let new_incoming = total_now.saturating_sub(seen_at_pause);
+                let text = format_fraction(new_incoming, seen_at_pause);
+                let tooltip = format!(
+                    "Raw Stream (Paused / Frozen Snapshot)\n• New Logs Since Pause: {}\n• Total Logs at Pause: {}\n• Total Ingested: {}",
+                    theme::format_number(new_incoming),
+                    theme::format_number(seen_at_pause),
+                    theme::format_number(total_now),
+                );
+                (text, theme::TEXT_MUTED, tooltip)
+            }
+        }
+        crate::app::ActiveTab::Filtered => {
+            if is_filtering {
+                if app.is_auto_scroll {
+                    // Live: số log khớp
+                    let text = if app.total_matched > app.cached_logs.len() {
+                        format!(
+                            "{}/{}",
+                            theme::format_number(app.cached_logs.len()),
+                            theme::format_number(app.total_matched)
+                        )
+                    } else {
+                        theme::format_number(app.total_matched)
+                    };
+                    let tooltip = format!(
+                        "Filter Query: \"{}\" (Live)\n• Total Matched: {}\n• Displayed: {} (Limit: {})",
+                        app.query.trim(),
+                        theme::format_number(app.total_matched),
+                        theme::format_number(app.cached_logs.len()),
+                        theme::format_number(app.display_limit),
+                    );
+                    (text, theme::TEXT_KEY, tooltip)
+                } else {
+                    // Pause: số log khớp mới đến / số log khớp tại pause
+                    let seen_matched_at_pause = app.filtered_seen_at_pause;
+                    let (new_matched, _) = app
+                        .engine
+                        .filter_incremental(&app.query, app.filtered_processed_at_pause);
+                    let text = format_fraction(new_matched, seen_matched_at_pause);
+                    let tooltip = format!(
+                        "Filter Query: \"{}\" (Paused)\n• New Matched Logs Since Pause: {}\n• Matched at Pause: {}\n• Displayed: {}",
+                        app.query.trim(),
+                        theme::format_number(new_matched),
+                        theme::format_number(seen_matched_at_pause),
+                        theme::format_number(app.cached_logs.len()),
+                    );
+                    (text, theme::TEXT_KEY, tooltip)
+                }
+            } else {
+                let total_now = app.engine.total_processed() as usize;
+
+                if app.is_auto_scroll {
+                    // Live: số log hiện tại
+                    let text = theme::format_number(total_now);
+                    let tooltip = format!(
+                        "Main Stream (Live)\n• Total Ingested: {}\n• In-Memory Buffer: {} / {}\n• Displayed: {}",
+                        theme::format_number(total_now),
+                        theme::format_number(app.engine.total_logs()),
+                        theme::format_number(app.engine.max_capacity()),
+                        theme::format_number(app.cached_logs.len()),
+                    );
+                    (text, theme::TEXT_MUTED, tooltip)
+                } else {
+                    // Pause: số log mới đến / số log tại pause
+                    let seen_at_pause = app.global_seen_at_pause as usize;
+                    let new_incoming = total_now.saturating_sub(seen_at_pause);
+                    let text = format_fraction(new_incoming, seen_at_pause);
+                    let tooltip = format!(
+                        "Main Stream (Paused)\n• New Logs Since Pause: {}\n• Total Logs at Pause: {}\n• Total Ingested: {}",
+                        theme::format_number(new_incoming),
+                        theme::format_number(seen_at_pause),
+                        theme::format_number(total_now),
+                    );
+                    (text, theme::TEXT_MUTED, tooltip)
+                }
+            }
+        }
+    };
+
+    ui.add(egui::Label::new(
+        egui::RichText::new(count_text)
+            .font(egui::FontId::monospace(11.5))
+            .color(count_color),
+    ))
+    .on_hover_text(count_tooltip);
+}
+
+#[inline]
+fn format_fraction(numerator: usize, denominator: usize) -> String {
+    format!(
+        "{}/{}",
+        theme::format_number(numerator),
+        theme::format_number(denominator)
+    )
 }

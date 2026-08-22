@@ -386,6 +386,9 @@ impl UwuGuiApp {
     }
 
     pub fn unlatch(&mut self) {
+        if !self.is_auto_scroll {
+            return;
+        }
         self.is_auto_scroll = false;
         let total = self.engine.total_processed();
         self.global_seen_at_pause = total;
@@ -618,6 +621,14 @@ impl UwuGuiApp {
         } else {
             self.unfiltered_state.snapshot_processed_count = self.engine.total_processed();
         }
+    }
+
+    pub fn unlatch_unfiltered(&mut self) {
+        if !self.unfiltered_state.is_live {
+            return;
+        }
+        self.unfiltered_state.is_live = false;
+        self.unfiltered_state.snapshot_processed_count = self.engine.total_processed();
     }
 
     pub fn close_unfiltered_stream(&mut self) {
@@ -967,5 +978,66 @@ mod tests {
         app.toggle_unfiltered_live();
         assert!(app.unfiltered_state.is_live);
         assert_eq!(app.unfiltered_state.cached_unfiltered.len(), 15);
+    }
+
+    #[tokio::test]
+    async fn test_repeated_unlatch_idempotency_preserves_pause_state() {
+        let mut app = create_test_app();
+        let tx = app.engine.get_channel();
+
+        // 1. Ingest initial 10 logs (5 ERROR, 5 INFO)
+        for i in 0..10 {
+            let level = if i % 2 == 0 { "ERROR" } else { "INFO" };
+            let log = RawLogEntry {
+                source_id: "test".to_string(),
+                payload: RawPayload::Text(format!("[{}] Message {}", level, i)),
+            };
+            tx.send(log).await.unwrap();
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        // Filter query = "level:error" -> 5 matches out of 10 total
+        app.query = "level:error".to_string();
+        app.trigger_full_search();
+        assert_eq!(app.total_matched, 5);
+        assert_eq!(app.engine.total_processed(), 10);
+
+        // First unlatch: locks in pause state
+        app.unlatch();
+        assert!(!app.is_auto_scroll);
+        let locked_global_seen = app.global_seen_at_pause;
+        let locked_filtered_seen = app.filtered_seen_at_pause;
+        let locked_filtered_proc = app.filtered_processed_at_pause;
+        assert_eq!(locked_global_seen, 10);
+        assert_eq!(locked_filtered_seen, 5);
+        assert_eq!(locked_filtered_proc, 10);
+
+        // 2. Ingest 10 more logs (5 ERROR, 5 INFO) while PAUSED
+        for i in 10..20 {
+            let level = if i % 2 == 0 { "ERROR" } else { "INFO" };
+            let log = RawLogEntry {
+                source_id: "test".to_string(),
+                payload: RawPayload::Text(format!("[{}] Message {}", level, i)),
+            };
+            tx.send(log).await.unwrap();
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        assert_eq!(app.engine.total_processed(), 20);
+
+        // Simulate user scrolling up repeatedly (which calls unlatch() multiple times)
+        app.unlatch();
+        app.unlatch();
+        app.unlatch();
+
+        // The pause snapshot values MUST REMAIN EXACTLY UNCHANGED!
+        assert_eq!(app.global_seen_at_pause, locked_global_seen);
+        assert_eq!(app.filtered_seen_at_pause, locked_filtered_seen);
+        assert_eq!(app.filtered_processed_at_pause, locked_filtered_proc);
+
+        // And incremental filter since pause correctly returns the 5 new matching logs
+        let (new_matched, _) = app
+            .engine
+            .filter_incremental(&app.query, app.filtered_processed_at_pause);
+        assert_eq!(new_matched, 5);
     }
 }

@@ -23,6 +23,12 @@ pub fn render_unfiltered_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     let mut target_header_swap = None;
     let pointer_pos: Option<Pos2> = ui.input(|i| i.pointer.hover_pos());
 
+    // Đọc thao tác cuộn chuột lên để chuyển sang Freeze Snapshot mode nếu đang Live
+    let scroll_delta_y = ui.input(|i| i.raw_scroll_delta.y);
+    if scroll_delta_y > 0.0 {
+        app.unlatch_unfiltered();
+    }
+
     // Table Render Directly (Header controls unified into top navigation bar)
     let visible_cols: Vec<ColumnItem> = app
         .column_state
