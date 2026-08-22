@@ -215,10 +215,13 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 render_card(ui, "Raw Payload", |ui| {
                     ui.horizontal(|ui| {
                         let copy_id = Id::new("copy_raw_flash");
-                        let is_flashing = ui
-                            .data(|d| d.get_temp::<f64>(copy_id))
-                            .map(|t| ui.input(|i| i.time) - t < 0.25)
-                            .unwrap_or(false);
+                        let now = ui.input(|i| i.time);
+                        let last_copy = ui.data(|d| d.get_temp::<f64>(copy_id)).unwrap_or(0.0);
+                        let is_flashing = (now - last_copy) < 0.12;
+
+                        if is_flashing {
+                            ui.ctx().request_repaint();
+                        }
 
                         let copy_btn =
                             egui::Button::new(egui::RichText::new("Copy Raw").size(11.0).color(
@@ -243,15 +246,13 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                             ))
                             .rounding(Rounding::same(4.0));
 
-                        if ui
+                        let copy_resp = ui
                             .add(copy_btn)
-                            .on_hover_text("Copy raw payload to clipboard")
-                            .clicked()
-                        {
-                            ui.data_mut(|d| d.insert_temp(copy_id, ui.input(|i| i.time)));
-                            ui.ctx()
-                                .request_repaint_after(std::time::Duration::from_millis(40));
-                            ui.ctx().output_mut(|o| o.copied_text = event.raw.clone());
+                            .on_hover_text("Copy raw payload to clipboard");
+                        if copy_resp.clicked() {
+                            ui.data_mut(|d| d.insert_temp(copy_id, now));
+                            ui.ctx().copy_text(event.raw.clone());
+                            ui.ctx().request_repaint();
                         }
                     });
                     ui.add_space(4.0);
