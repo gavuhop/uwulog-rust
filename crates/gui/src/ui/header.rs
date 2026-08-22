@@ -5,19 +5,29 @@ use std::time::Instant;
 
 pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     ui.horizontal(|ui| {
-        // App Title / Brand
-        ui.label(
-            egui::RichText::new("🐱 uwulog")
-                .strong()
-                .size(14.5)
-                .color(theme::TEXT_KEY),
+        // 1. App Title / Brand (hỗ trợ kéo di chuyển cửa sổ & double click maximize)
+        let brand_response = ui.add(
+            egui::Label::new(
+                egui::RichText::new("🐱 uwulog")
+                    .strong()
+                    .size(13.5)
+                    .color(theme::TEXT_KEY),
+            )
+            .sense(egui::Sense::click_and_drag()),
         );
+        if brand_response.dragged_by(egui::PointerButton::Primary) {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        }
+        if brand_response.double_clicked() {
+            let is_maximized = ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!is_maximized));
+        }
 
-        ui.add_space(6.0);
+        ui.add_space(4.0);
         ui.separator();
-        ui.add_space(6.0);
+        ui.add_space(4.0);
 
-        // Tab 1: Filtered Logs Stream (hoặc Main Stream khi không lọc)
+        // 2. Stream Tabs: Main / Filtered and Raw Stream
         let is_filtered_tab = app.active_tab == crate::app::ActiveTab::Filtered;
         let is_unfiltered_tab = app.active_tab == crate::app::ActiveTab::Unfiltered;
         let is_filtering = !app.query.trim().is_empty();
@@ -25,12 +35,12 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
         let filtered_tab_text = if is_filtering {
             "🔍 Filtered".to_string()
         } else {
-            "🔍 Main Stream".to_string()
+            "🔍 Main".to_string()
         };
 
         let tab_filtered_btn = egui::Button::new(
             egui::RichText::new(filtered_tab_text)
-                .size(12.0)
+                .size(11.5)
                 .strong()
                 .color(if is_filtered_tab {
                     theme::TEXT_PRIMARY
@@ -41,7 +51,7 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
         .fill(if is_filtered_tab {
             theme::BG_SURFACE1
         } else {
-            theme::BG_BASE
+            egui::Color32::TRANSPARENT
         })
         .stroke(Stroke::new(
             1.0,
@@ -61,13 +71,13 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
             app.active_tab = crate::app::ActiveTab::Filtered;
         }
 
-        // Tab 2: Raw Stream (Chỉ xuất hiện khi người dùng đang có bộ lọc tìm kiếm!)
+        // Tab 2: Raw Stream (Chỉ xuất hiện khi người dùng đang có bộ lọc tìm kiếm hoặc đang mở tab Raw!)
         if is_filtering || is_unfiltered_tab {
-            ui.add_space(4.0);
+            ui.add_space(2.0);
 
             let tab_unfil_btn = egui::Button::new(
-                egui::RichText::new("📄 Raw Stream")
-                    .size(12.0)
+                egui::RichText::new("📄 Raw")
+                    .size(11.5)
                     .strong()
                     .color(if is_unfiltered_tab {
                         theme::TEXT_PRIMARY
@@ -78,7 +88,7 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
             .fill(if is_unfiltered_tab {
                 theme::BG_SURFACE1
             } else {
-                theme::BG_BASE
+                egui::Color32::TRANSPARENT
             })
             .stroke(Stroke::new(
                 1.0,
@@ -92,7 +102,7 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
 
             if ui
                 .add(tab_unfil_btn)
-                .on_hover_text("Switch to Unfiltered Raw Log stream view (500 logs buffer)")
+                .on_hover_text("Switch to Raw Stream view (500 logs buffer)")
                 .clicked()
             {
                 if !app.unfiltered_state.is_open {
@@ -102,123 +112,20 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
             }
         }
 
-        ui.add_space(6.0);
-        ui.separator();
-        ui.add_space(6.0);
-
-        // Search Input Box
-        let search_id = Id::new("search_query_input");
-        let search_response = ui.add(
-            egui::TextEdit::singleline(&mut app.query)
-                .id(search_id)
-                .hint_text(
-                    egui::RichText::new("🔍 Filter query (e.g. level:error, status:500, time:now..10m)...")
-                        .color(theme::TEXT_PLACEHOLDER),
-                )
-                .desired_width(500.0)
-                .font(egui::TextStyle::Monospace)
-                .margin(egui::Margin::symmetric(10.0, 6.0)),
-        );
-
-        // Giữ lại con trỏ chuột và focus vào ô input sau khi chọn gợi ý
-        if app.autocomplete_state.just_applied {
-            app.autocomplete_state.just_applied = false;
-            ui.ctx().memory_mut(|m| m.request_focus(search_id));
-            if let Some(mut state) = egui::text_edit::TextEditState::load(ui.ctx(), search_id) {
-                let char_count = app.query.chars().count();
-                state
-                    .cursor
-                    .set_char_range(Some(egui::text::CCursorRange::one(
-                        egui::text::CCursor::new(char_count),
-                    )));
-                state.store(ui.ctx(), search_id);
-            }
-        } else if search_response.changed() || search_response.gained_focus() {
-            // Khi gõ chữ hoặc focus vào ô tìm kiếm: luôn ẩn menu lịch sử
-            app.history_state.close_popup();
-
-            let available_fields = app.get_available_log_fields();
-            let (suggestions, token_range) =
-                crate::ui::autocomplete::generate_suggestions(&app.query, &available_fields);
-            app.autocomplete_state.suggestions = suggestions;
-            app.autocomplete_state.active_token_range = token_range;
-            app.autocomplete_state.selected_index = 0;
-            app.autocomplete_state.is_open = !app.autocomplete_state.suggestions.is_empty();
-            if search_response.changed() {
-                // Reset debounce timer để tick() sẽ lưu lịch sử sau 500ms dừng gõ
-                app.history_state.mark_query_changed(Instant::now());
-                app.trigger_full_search();
-            }
-        }
-
-        let search_rect = search_response.rect;
-
-        // Lưu lịch sử khi người dùng nhấn Enter để hoàn tất tìm kiếm
-        if (search_response.lost_focus() || search_response.has_focus())
-            && ui.ctx().input(|i| i.key_pressed(egui::Key::Enter))
-        {
-            app.history_state.record(&app.query.clone());
-            app.history_state.mark_recorded();
-        }
-
-        // Quick Clear button if query is not empty
-        if !app.query.is_empty()
-            && ui
-                .button(
-                    egui::RichText::new("✖")
-                        .size(11.0)
-                        .color(theme::TEXT_PRIMARY),
-                )
-                .on_hover_text("Clear filter")
-                .clicked()
-        {
-            app.query.clear();
-            app.autocomplete_state.is_open = false;
-            app.history_state.close_popup();
-            app.trigger_full_search();
-        }
-
-        // Search History Toggle Button (⏱)
-        let history_btn = egui::Button::new(egui::RichText::new("⏱").size(12.0).color(
-            if app.history_state.is_open {
-                theme::TEXT_KEY
-            } else {
-                theme::TEXT_MUTED
-            },
-        ))
-        .fill(if app.history_state.is_open {
-            theme::BG_SURFACE1
-        } else {
-            theme::BG_SURFACE0
-        })
-        .stroke(Stroke::new(1.0, theme::BG_SURFACE0))
-        .rounding(Rounding::same(4.0));
-
-        if ui
-            .add(history_btn)
-            .on_hover_text("Search history")
-            .clicked()
-        {
-            let opened = app.history_state.toggle_popup();
-            if opened {
-                app.autocomplete_state.is_open = false;
-                app.autocomplete_state.suggestions.clear();
-            }
-        }
-
-        // Render autocomplete popup dropdown below search box
-        crate::ui::autocomplete::render_autocomplete_popup(ui.ctx(), app, search_rect);
-
-        // Render search history popup dropdown below search box
-        crate::ui::history::render_history_popup(ui.ctx(), app, search_rect);
-
-        // Right-aligned Controls
+        // 3. Phía bên phải: Window Controls & Navigation Toolbar
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            // Bộ 3 nút điều khiển cửa sổ chuẩn (—, 🗖/🗗, ✕)
+            render_window_controls(ui);
+
+            ui.add_space(4.0);
+            ui.separator();
+            ui.add_space(4.0);
+
             // Table Columns & Ordering Modal Button
             let visible_count = app.column_state.columns.iter().filter(|c| c.visible).count();
-            let columns_btn_text = format!("📊 Columns ({visible_count})");
             let columns_btn = egui::Button::new(
-                egui::RichText::new(columns_btn_text)
+                egui::RichText::new(format!("📊 ({visible_count})"))
+                    .size(11.5)
                     .strong()
                     .color(theme::TEXT_PRIMARY),
             )
@@ -238,11 +145,12 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 app.column_state.is_modal_open = true;
             }
 
-            ui.add_space(6.0);
+            ui.add_space(2.0);
 
             // Source Parameters Modal Button
             let params_btn = egui::Button::new(
-                egui::RichText::new("⚙ Params")
+                egui::RichText::new("⚙")
+                    .size(11.5)
                     .strong()
                     .color(theme::TEXT_PRIMARY),
             )
@@ -258,12 +166,13 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 app.show_launch_modal = true;
             }
 
-            ui.add_space(6.0);
+            ui.add_space(2.0);
 
             // Stop / Restart Source Button
             if app.is_source_running {
                 let stop_btn = egui::Button::new(
-                    egui::RichText::new("⏹ Stop")
+                    egui::RichText::new("⏹")
+                        .size(11.5)
                         .color(theme::TEXT_PRIMARY)
                         .strong(),
                 )
@@ -280,7 +189,8 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 }
             } else {
                 let restart_btn = egui::Button::new(
-                    egui::RichText::new("🔄 Restart")
+                    egui::RichText::new("🔄")
+                        .size(11.5)
                         .color(theme::TEXT_PRIMARY)
                         .strong(),
                 )
@@ -297,7 +207,7 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 }
             }
 
-            ui.add_space(6.0);
+            ui.add_space(4.0);
 
             // Snapshot Button (Chỉ hiển thị khi đang xem Tab Raw Stream)
             if app.active_tab == crate::app::ActiveTab::Unfiltered {
@@ -308,7 +218,7 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 };
 
                 let snapshot_btn = egui::Button::new(
-                    egui::RichText::new("📸 Snapshot")
+                    egui::RichText::new("📸")
                         .size(11.0)
                         .color(theme::TEXT_PRIMARY)
                         .strong(),
@@ -325,10 +235,10 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                     }
                 }
 
-                ui.add_space(6.0);
+                ui.add_space(4.0);
             }
 
-            // Latch / Live / Paused State Toggle Button (Tự động thích ứng theo Tab đang chọn!)
+            // Latch / Live / Paused State Toggle Button
             let (is_live, toggle_tooltip) = match app.active_tab {
                 crate::app::ActiveTab::Filtered => (
                     app.is_auto_scroll,
@@ -366,6 +276,7 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
 
             let latch_btn = egui::Button::new(
                 egui::RichText::new(latch_text)
+                    .size(11.5)
                     .color(latch_text_color)
                     .strong(),
             )
@@ -380,12 +291,239 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 }
             }
 
-            ui.add_space(6.0);
+            ui.add_space(4.0);
 
             // Log Count / Filter Matched Indicator
             render_log_counter(ui, app);
+
+            ui.add_space(6.0);
+
+            // 4. Ở giữa: Search Box Command Palette Style tự động co dãn theo khoảng trống còn lại
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                let button_extras = if !app.query.is_empty() { 52.0 } else { 28.0 };
+                let available_w = ui.available_width();
+                let search_box_width = (available_w - button_extras - 6.0).max(40.0);
+
+                let search_id = Id::new("search_query_input");
+                let search_response = ui.add(
+                    egui::TextEdit::singleline(&mut app.query)
+                        .id(search_id)
+                        .hint_text(
+                            egui::RichText::new("🔍 Filter query (e.g. level:error, status:500, time:now..10m)...")
+                                .color(theme::TEXT_PLACEHOLDER),
+                        )
+                        .desired_width(search_box_width)
+                        .font(egui::TextStyle::Monospace)
+                        .margin(egui::Margin::symmetric(8.0, 4.0)),
+                );
+
+                // Giữ lại con trỏ chuột và focus vào ô input sau khi chọn gợi ý
+                if app.autocomplete_state.just_applied {
+                    app.autocomplete_state.just_applied = false;
+                    ui.ctx().memory_mut(|m| m.request_focus(search_id));
+                    if let Some(mut state) = egui::text_edit::TextEditState::load(ui.ctx(), search_id) {
+                        let char_count = app.query.chars().count();
+                        state
+                            .cursor
+                            .set_char_range(Some(egui::text::CCursorRange::one(
+                                egui::text::CCursor::new(char_count),
+                            )));
+                        state.store(ui.ctx(), search_id);
+                    }
+                } else if search_response.changed() || search_response.gained_focus() {
+                    // Khi gõ chữ hoặc focus vào ô tìm kiếm: luôn ẩn menu lịch sử
+                    app.history_state.close_popup();
+
+                    let available_fields = app.get_available_log_fields();
+                    let (suggestions, token_range) =
+                        crate::ui::autocomplete::generate_suggestions(&app.query, &available_fields);
+                    app.autocomplete_state.suggestions = suggestions;
+                    app.autocomplete_state.active_token_range = token_range;
+                    app.autocomplete_state.selected_index = 0;
+                    app.autocomplete_state.is_open = !app.autocomplete_state.suggestions.is_empty();
+                    if search_response.changed() {
+                        // Reset debounce timer để tick() sẽ lưu lịch sử sau 500ms dừng gõ
+                        app.history_state.mark_query_changed(Instant::now());
+                        app.trigger_full_search();
+                    }
+                }
+
+                let search_rect = search_response.rect;
+
+                // Lưu lịch sử khi người dùng nhấn Enter để hoàn tất tìm kiếm
+                if (search_response.lost_focus() || search_response.has_focus())
+                    && ui.ctx().input(|i| i.key_pressed(egui::Key::Enter))
+                {
+                    app.history_state.record(&app.query.clone());
+                    app.history_state.mark_recorded();
+                }
+
+                // Quick Clear button if query is not empty
+                if !app.query.is_empty()
+                    && ui
+                        .button(
+                            egui::RichText::new("✖")
+                                .size(10.5)
+                                .color(theme::TEXT_PRIMARY),
+                        )
+                        .on_hover_text("Clear filter")
+                        .clicked()
+                {
+                    app.query.clear();
+                    app.autocomplete_state.is_open = false;
+                    app.history_state.close_popup();
+                    app.trigger_full_search();
+                }
+
+                // Search History Toggle Button (⏱)
+                let history_btn = egui::Button::new(egui::RichText::new("⏱").size(11.0).color(
+                    if app.history_state.is_open {
+                        theme::TEXT_KEY
+                    } else {
+                        theme::TEXT_MUTED
+                    },
+                ))
+                .fill(if app.history_state.is_open {
+                    theme::BG_SURFACE1
+                } else {
+                    theme::BG_SURFACE0
+                })
+                .stroke(Stroke::new(1.0, theme::BG_SURFACE0))
+                .rounding(Rounding::same(4.0));
+
+                if ui
+                    .add(history_btn)
+                    .on_hover_text("Search history")
+                    .clicked()
+                {
+                    let opened = app.history_state.toggle_popup();
+                    if opened {
+                        app.autocomplete_state.is_open = false;
+                        app.autocomplete_state.suggestions.clear();
+                    }
+                }
+
+                // Render autocomplete popup dropdown below search box
+                crate::ui::autocomplete::render_autocomplete_popup(ui.ctx(), app, search_rect);
+
+                // Render search history popup dropdown below search box
+                crate::ui::history::render_history_popup(ui.ctx(), app, search_rect);
+            });
         });
     });
+}
+
+/// Nút điều khiển cửa sổ vector chuẩn Windows (Ẩn / Thu nhỏ, Phóng to / Khôi phục, Đóng)
+fn render_window_controls(ui: &mut egui::Ui) {
+    let is_maximized = ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
+    let btn_size = egui::vec2(32.0, 22.0);
+
+    // 1. Nút Đóng (✕)
+    let (close_rect, close_resp) = ui.allocate_exact_size(btn_size, egui::Sense::click());
+    if close_resp.hovered() {
+        ui.painter().rect_filled(
+            close_rect,
+            Rounding::same(3.0),
+            egui::Color32::from_rgb(0xe8, 0x11, 0x23),
+        );
+    }
+    let close_color = if close_resp.hovered() {
+        egui::Color32::WHITE
+    } else {
+        theme::TEXT_MUTED
+    };
+    let center = close_rect.center();
+    let d = 4.5;
+    ui.painter().line_segment(
+        [
+            egui::pos2(center.x - d, center.y - d),
+            egui::pos2(center.x + d, center.y + d),
+        ],
+        Stroke::new(1.1, close_color),
+    );
+    ui.painter().line_segment(
+        [
+            egui::pos2(center.x + d, center.y - d),
+            egui::pos2(center.x - d, center.y + d),
+        ],
+        Stroke::new(1.1, close_color),
+    );
+    if close_resp.clicked() {
+        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+    }
+
+    // 2. Nút Phóng to / Khôi phục (🗖 / 🗗)
+    let (max_rect, max_resp) = ui.allocate_exact_size(btn_size, egui::Sense::click());
+    if max_resp.hovered() {
+        ui.painter()
+            .rect_filled(max_rect, Rounding::same(3.0), theme::BG_SURFACE1);
+    }
+    let max_color = if max_resp.hovered() {
+        theme::TEXT_PRIMARY
+    } else {
+        theme::TEXT_MUTED
+    };
+    let center = max_rect.center();
+
+    if is_maximized {
+        // Biểu tượng Restore (2 ô vuông lồng nhau)
+        // Ô vuông phía sau (chỉ vẽ cạnh trên và cạnh phải)
+        let s = 4.0;
+        let p_top_left = egui::pos2(center.x - 2.0, center.y - s);
+        let p_top_right = egui::pos2(center.x + s, center.y - s);
+        let p_bottom_right = egui::pos2(center.x + s, center.y + 2.0);
+        ui.painter()
+            .line_segment([p_top_left, p_top_right], Stroke::new(1.0, max_color));
+        ui.painter()
+            .line_segment([p_top_right, p_bottom_right], Stroke::new(1.0, max_color));
+
+        // Ô vuông phía trước
+        let front_rect = egui::Rect::from_min_max(
+            egui::pos2(center.x - s, center.y - 2.0),
+            egui::pos2(center.x + 2.0, center.y + s),
+        );
+        ui.painter()
+            .rect_stroke(front_rect, Rounding::ZERO, Stroke::new(1.0, max_color));
+    } else {
+        // Biểu tượng Maximize (1 ô vuông đơn)
+        let s = 4.5;
+        let square_rect = egui::Rect::from_min_max(
+            egui::pos2(center.x - s, center.y - s),
+            egui::pos2(center.x + s, center.y + s),
+        );
+        ui.painter()
+            .rect_stroke(square_rect, Rounding::ZERO, Stroke::new(1.0, max_color));
+    }
+
+    if max_resp.clicked() {
+        ui.ctx()
+            .send_viewport_cmd(egui::ViewportCommand::Maximized(!is_maximized));
+    }
+
+    // 3. Nút Thu nhỏ (—)
+    let (min_rect, min_resp) = ui.allocate_exact_size(btn_size, egui::Sense::click());
+    if min_resp.hovered() {
+        ui.painter()
+            .rect_filled(min_rect, Rounding::same(3.0), theme::BG_SURFACE1);
+    }
+    let min_color = if min_resp.hovered() {
+        theme::TEXT_PRIMARY
+    } else {
+        theme::TEXT_MUTED
+    };
+    let center = min_rect.center();
+    let d = 5.0;
+    ui.painter().line_segment(
+        [
+            egui::pos2(center.x - d, center.y + 3.5),
+            egui::pos2(center.x + d, center.y + 3.5),
+        ],
+        Stroke::new(1.1, min_color),
+    );
+    if min_resp.clicked() {
+        ui.ctx()
+            .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+    }
 }
 
 /// Hiển thị bộ đếm số lượng log theo từng trạng thái chuẩn hóa trong detail task.md:
