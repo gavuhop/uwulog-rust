@@ -18,13 +18,20 @@ pub fn render_unfiltered_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     let mut highlight_action: Option<HighlightAction> = None;
     let mut unfiltered_action: Option<UnfilteredAction> = None;
     let has_any_highlights = app.has_any_highlights();
+    let mut last_row_visible = false;
 
     let mut new_header_drag = None;
     let mut target_header_swap = None;
     let pointer_pos: Option<Pos2> = ui.input(|i| i.pointer.hover_pos());
 
     // Đọc thao tác cuộn chuột lên để chuyển sang Freeze Snapshot mode nếu đang Live
-    let scroll_delta_y = ui.input(|i| i.raw_scroll_delta.y);
+    let scroll_delta_y = ui.input(|i| {
+        if i.raw_scroll_delta.y.abs() > 0.0 {
+            i.raw_scroll_delta.y
+        } else {
+            i.smooth_scroll_delta.y
+        }
+    });
     if scroll_delta_y > 0.0 {
         app.unlatch_unfiltered();
     }
@@ -131,6 +138,10 @@ pub fn render_unfiltered_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                     body.rows(text_height + 8.0, row_count, |mut row| {
                         let row_index = row.index();
 
+                        if row_count > 0 && row_index == row_count - 1 {
+                            last_row_visible = true;
+                        }
+
                         if let Some(event) = app.unfiltered_state.cached_unfiltered.get(row_index) {
                             let is_target = target_id.is_some_and(|id| id == event.id);
                             let is_selected = is_target
@@ -196,6 +207,10 @@ pub fn render_unfiltered_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
 
     if let Some(event) = newly_selected_event {
         app.selected_log = Some(event);
-        app.unlatch();
+        app.unlatch_unfiltered();
+    }
+
+    if last_row_visible && scroll_delta_y < 0.0 {
+        app.unfiltered_state.is_live = true;
     }
 }
