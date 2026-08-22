@@ -1,8 +1,9 @@
 use crate::app::UwuGuiApp;
-use crate::ui::detail::actions::{DetailContext, FilterAction, HighlightAction};
+use crate::ui::detail::actions::{truncate_label, DetailContext, FilterAction, HighlightAction};
 use crate::ui::theme;
 use eframe::egui::{self, Id};
 
+/// Renders a multiline selectable text area (used for Message and Raw Payload cards) with selection-based quick filters.
 pub fn render_text_box(
     ui: &mut egui::Ui,
     box_id: Id,
@@ -36,6 +37,8 @@ pub fn render_text_box(
             .layouter(&mut layouter),
     );
 
+    let is_secondary_down = ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary));
+
     let mut selected_text = None;
     if let Some(state) = egui::text_edit::TextEditState::load(ui.ctx(), box_id) {
         if let Some(range) = state.cursor.char_range() {
@@ -49,9 +52,7 @@ pub fn render_text_box(
                     selected_text = Some(trimmed.clone());
                     ui.ctx().data_mut(|d| d.insert_temp(box_id, trimmed));
                 }
-            } else if resp.clicked()
-                && !ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary))
-            {
+            } else if resp.clicked() && !is_secondary_down {
                 ui.ctx().data_mut(|d| d.remove_temp::<String>(box_id));
             }
         }
@@ -64,12 +65,9 @@ pub fn render_text_box(
     resp.context_menu(|ui| {
         ui.set_min_width(160.0);
 
+        // 1. Nhóm từ được bôi đen trong hộp văn bản
         if let Some(ref sel) = selected_text {
-            let display_sel = if sel.chars().count() > 25 {
-                format!("{}...", sel.chars().take(25).collect::<String>())
-            } else {
-                sel.clone()
-            };
+            let display_sel = truncate_label(sel, 25);
 
             if ui.button(format!("Filter \"{}\"", display_sel)).clicked() {
                 let term = if let Some(f_name) = field_name {
@@ -106,12 +104,9 @@ pub fn render_text_box(
             ui.separator();
         }
 
+        // 2. Nhóm toàn bộ nội dung trường (nếu có định nghĩa key)
         if let Some(f_name) = field_name {
-            let display_msg = if val.chars().count() > 25 {
-                format!("{}...", val.chars().take(25).collect::<String>())
-            } else {
-                val.clone()
-            };
+            let display_msg = truncate_label(&val, 25);
 
             if ui.button(format!("Filter \"{}\"", display_msg)).clicked() {
                 let term = UwuGuiApp::format_field_term(f_name, &val);
@@ -140,6 +135,7 @@ pub fn render_text_box(
             ui.separator();
         }
 
+        // 3. Copy toàn bộ nội dung hộp văn bản
         if ui.button("Copy value").clicked() {
             ui.ctx().output_mut(|o| o.copied_text = val.clone());
             ui.close_menu();
