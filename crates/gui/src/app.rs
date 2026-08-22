@@ -1040,4 +1040,45 @@ mod tests {
             .filter_incremental(&app.query, app.filtered_processed_at_pause);
         assert_eq!(new_matched, 5);
     }
+
+    #[tokio::test]
+    async fn test_unlatch_unfiltered_idempotency() {
+        let mut app = create_test_app();
+        let tx = app.engine.get_channel();
+
+        for i in 0..10 {
+            let log = RawLogEntry {
+                source_id: "test".to_string(),
+                payload: RawPayload::Text(format!("[INFO] Message {}", i)),
+            };
+            tx.send(log).await.unwrap();
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        // Open raw stream in LIVE mode (no target log)
+        app.open_unfiltered_stream(None);
+        assert!(app.unfiltered_state.is_live);
+        assert_eq!(app.unfiltered_state.snapshot_processed_count, 10);
+
+        // Unlatch raw stream
+        app.unlatch_unfiltered();
+        assert!(!app.unfiltered_state.is_live);
+        assert_eq!(app.unfiltered_state.snapshot_processed_count, 10);
+
+        // Ingest 5 more logs
+        for i in 10..15 {
+            let log = RawLogEntry {
+                source_id: "test".to_string(),
+                payload: RawPayload::Text(format!("[INFO] Message {}", i)),
+            };
+            tx.send(log).await.unwrap();
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        // Repeated unlatch must not overwrite snapshot_processed_count
+        app.unlatch_unfiltered();
+        app.unlatch_unfiltered();
+        assert_eq!(app.unfiltered_state.snapshot_processed_count, 10);
+        assert_eq!(app.engine.total_processed(), 15);
+    }
 }

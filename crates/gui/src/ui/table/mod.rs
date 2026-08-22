@@ -21,7 +21,13 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     let mut last_row_visible = false;
 
     // Đọc thao tác cuộn chuột trước khi vẽ TableBuilder
-    let scroll_delta_y = ui.input(|i| i.raw_scroll_delta.y);
+    let scroll_delta_y = ui.input(|i| {
+        if i.raw_scroll_delta.y.abs() > 0.0 {
+            i.raw_scroll_delta.y
+        } else {
+            i.smooth_scroll_delta.y
+        }
+    });
     if scroll_delta_y > 0.0 {
         app.unlatch();
     }
