@@ -30,12 +30,17 @@ pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
         }
     }
 
-    // Top Panel: Search Bar, Fast Presets, Action Controls
+    // Top Panel: Unified 1-Tier Modern Custom Title & Header Bar
     egui::TopBottomPanel::top("header_panel")
         .frame(
             egui::Frame::default()
                 .fill(theme::BG_MANTLE)
-                .inner_margin(egui::Margin::symmetric(14.0, 8.0))
+                .inner_margin(egui::Margin {
+                    left: 10.0,
+                    right: 6.0,
+                    top: 6.0,
+                    bottom: 6.0,
+                })
                 .stroke(egui::Stroke::new(1.0, theme::BG_SURFACE0)),
         )
         .resizable(false)

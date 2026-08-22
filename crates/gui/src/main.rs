@@ -21,6 +21,8 @@ fn main() -> eframe::Result<()> {
             .with_inner_size([1280.0, 800.0])
             .with_min_inner_size([800.0, 500.0])
             .with_title("Uwu Log")
+            .with_decorations(false)
+            .with_resizable(true)
             .with_icon(std::sync::Arc::new(icon_data)),
         ..Default::default()
     };
