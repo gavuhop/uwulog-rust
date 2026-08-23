@@ -72,6 +72,9 @@ pub struct UwuGuiApp {
     pub global_seen_at_pause: u64,
     pub filtered_seen_at_pause: usize,
     pub filtered_processed_at_pause: u64,
+    pub paused_new_matched_count: usize,
+    pub discovered_fields_cache:
+        std::collections::BTreeMap<String, crate::ui::autocomplete::FieldType>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -184,6 +187,8 @@ impl UwuGuiApp {
             global_seen_at_pause: 0,
             filtered_seen_at_pause: 0,
             filtered_processed_at_pause: 0,
+            paused_new_matched_count: 0,
+            discovered_fields_cache: Self::default_discovered_fields(),
         };
 
         app.start_configured_source();
@@ -289,14 +294,15 @@ impl UwuGuiApp {
             && now.duration_since(self.last_search_time) > Duration::from_millis(150);
 
         self.has_new_data = false;
+        let prev_processed = self.last_processed_count;
 
         if self.is_auto_scroll && new_logs_arrived && !query_changed {
-            let (new_matched_count, new_matching_logs) = self
-                .engine
-                .filter_incremental(&self.query, self.last_processed_count);
+            let (new_matched_count, new_matching_logs) =
+                self.engine.filter_incremental(&self.query, prev_processed);
 
             if new_matched_count > 0 {
                 self.total_matched += new_matched_count;
+                self.sync_discovered_fields(&new_matching_logs);
                 self.cached_logs.extend(new_matching_logs);
 
                 if self.cached_logs.len() > self.display_limit {
@@ -305,23 +311,27 @@ impl UwuGuiApp {
                 }
                 self.has_new_data = true;
             }
+        }
 
-            self.last_processed_count = total_processed;
-            self.last_search_time = now;
+        // Khi đang Pause có bộ lọc: tính sẵn số lượng log mới khớp trong tick() để tránh tính mỗi frame render
+        if !self.is_auto_scroll && !self.query.trim().is_empty() && new_logs_arrived {
+            let (new_matched, _) = self
+                .engine
+                .filter_incremental(&self.query, self.filtered_processed_at_pause);
+            self.paused_new_matched_count = new_matched;
         }
 
         if self.is_auto_scroll {
             self.global_seen_at_pause = total_processed;
             self.filtered_seen_at_pause = self.total_matched;
             self.filtered_processed_at_pause = total_processed;
+            self.paused_new_matched_count = 0;
         }
 
         // Bảng Unfiltered: Giới hạn buffer 500 logs cho việc soi context log gốc
         self.unfiltered_state.has_new_data = false;
         if self.unfiltered_state.is_open && self.unfiltered_state.is_live && new_logs_arrived {
-            let (new_count, new_logs) = self
-                .engine
-                .filter_incremental("", self.last_processed_count);
+            let (new_count, new_logs) = self.engine.filter_incremental("", prev_processed);
             if new_count > 0 {
                 self.unfiltered_state.cached_unfiltered.extend(new_logs);
                 if self.unfiltered_state.cached_unfiltered.len() > RAW_STREAM_LIMIT {
@@ -332,8 +342,10 @@ impl UwuGuiApp {
             }
         }
 
-        // Tự động đồng bộ các trường key mới phát hiện từ logs
-        self.column_state.sync_discovered_keys(&self.cached_logs);
+        if new_logs_arrived {
+            self.last_processed_count = total_processed;
+            self.last_search_time = now;
+        }
     }
 
     pub fn stop_current_source(&mut self) {
@@ -367,6 +379,7 @@ impl UwuGuiApp {
             .engine
             .search_with_count(&self.query, self.display_limit);
         self.total_matched = matched;
+        self.sync_discovered_fields(&logs);
         self.cached_logs = logs;
         self.last_query = self.query.clone();
         self.last_processed_count = self.engine.total_processed();
@@ -374,6 +387,7 @@ impl UwuGuiApp {
         self.global_seen_at_pause = self.last_processed_count;
         self.filtered_seen_at_pause = self.total_matched;
         self.filtered_processed_at_pause = self.last_processed_count;
+        self.paused_new_matched_count = 0;
     }
 
     pub fn latch(&mut self) {
@@ -394,6 +408,7 @@ impl UwuGuiApp {
         self.global_seen_at_pause = total;
         self.filtered_seen_at_pause = self.total_matched;
         self.filtered_processed_at_pause = total;
+        self.paused_new_matched_count = 0;
     }
 
     pub fn toggle_latch(&mut self) {
@@ -404,11 +419,10 @@ impl UwuGuiApp {
         }
     }
 
-    pub fn get_available_log_fields(&self) -> Vec<(String, crate::ui::autocomplete::FieldType)> {
+    pub fn default_discovered_fields(
+    ) -> std::collections::BTreeMap<String, crate::ui::autocomplete::FieldType> {
         use std::collections::BTreeMap;
         let mut fields_map = BTreeMap::new();
-
-        // Các trường cốt lõi của cấu trúc LogEvent
         fields_map.insert(
             "level".to_string(),
             crate::ui::autocomplete::FieldType::Text,
@@ -421,14 +435,17 @@ impl UwuGuiApp {
             "message".to_string(),
             crate::ui::autocomplete::FieldType::Text,
         );
+        fields_map
+    }
 
-        // Chỉ thêm các trường thực sự xuất hiện trong dữ liệu log đã nhận (bỏ qua source)
-        for log in &self.cached_logs {
+    pub fn sync_discovered_fields(&mut self, logs: &[LogEvent]) {
+        self.column_state.sync_discovered_keys(logs);
+        for log in logs {
             for (key, val) in &log.fields {
                 if key == "source" || key == "source_id" {
                     continue;
                 }
-                if !fields_map.contains_key(key) {
+                if !self.discovered_fields_cache.contains_key(key) {
                     let field_type = if val.is_number() {
                         crate::ui::autocomplete::FieldType::Number
                     } else if key.to_lowercase().contains("time")
@@ -439,12 +456,17 @@ impl UwuGuiApp {
                     } else {
                         crate::ui::autocomplete::FieldType::Text
                     };
-                    fields_map.insert(key.clone(), field_type);
+                    self.discovered_fields_cache.insert(key.clone(), field_type);
                 }
             }
         }
+    }
 
-        fields_map.into_iter().collect()
+    pub fn get_available_log_fields(&self) -> Vec<(String, crate::ui::autocomplete::FieldType)> {
+        self.discovered_fields_cache
+            .iter()
+            .map(|(k, v)| (k.clone(), *v))
+            .collect()
     }
 
     pub fn apply_autocomplete_suggestion(
@@ -724,6 +746,8 @@ mod tests {
             global_seen_at_pause: 0,
             filtered_seen_at_pause: 0,
             filtered_processed_at_pause: 0,
+            paused_new_matched_count: 0,
+            discovered_fields_cache: UwuGuiApp::default_discovered_fields(),
         }
     }
 
@@ -854,6 +878,7 @@ mod tests {
             fields,
             "raw",
         );
+        app.sync_discovered_fields(std::slice::from_ref(&log));
         app.cached_logs.push(log);
 
         let available = app.get_available_log_fields();
@@ -1080,5 +1105,70 @@ mod tests {
         app.unlatch_unfiltered();
         assert_eq!(app.unfiltered_state.snapshot_processed_count, 10);
         assert_eq!(app.engine.total_processed(), 15);
+    }
+
+    #[tokio::test]
+    async fn test_unfiltered_live_tick_sync_both_branches() {
+        let mut app = create_test_app();
+        let tx = app.engine.get_channel();
+
+        // 1. Initial 5 logs
+        for i in 0..5 {
+            let log = RawLogEntry {
+                source_id: "test".to_string(),
+                payload: RawPayload::Text(format!("[INFO] Message {}", i)),
+            };
+            tx.send(log).await.unwrap();
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        app.trigger_full_search();
+        assert_eq!(app.cached_logs.len(), 5);
+
+        // 2. Open unfiltered stream in LIVE mode
+        app.open_unfiltered_stream(None);
+        assert!(app.unfiltered_state.is_live);
+        assert_eq!(app.unfiltered_state.cached_unfiltered.len(), 5);
+
+        // 3. Ingest 5 more logs
+        for i in 5..10 {
+            let log = RawLogEntry {
+                source_id: "test".to_string(),
+                payload: RawPayload::Text(format!("[INFO] Message {}", i)),
+            };
+            tx.send(log).await.unwrap();
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        // Force last_search_time backward to satisfy 150ms debounce in tick()
+        app.last_search_time = Instant::now() - Duration::from_millis(200);
+        app.tick();
+
+        // Both filtered and unfiltered live buffers must have received all 10 logs
+        assert_eq!(app.cached_logs.len(), 10);
+        assert_eq!(app.unfiltered_state.cached_unfiltered.len(), 10);
+    }
+
+    #[tokio::test]
+    async fn test_close_unfiltered_stream_frees_ram() {
+        let mut app = create_test_app();
+        app.unfiltered_state.is_open = true;
+        app.unfiltered_state.cached_unfiltered = vec![LogEvent::new(
+            "2026-08-20T10:00:00Z",
+            LogLevel::Info,
+            "test",
+            "msg",
+            HashMap::new(),
+            "raw",
+        )];
+        app.active_tab = ActiveTab::Unfiltered;
+
+        assert_eq!(app.unfiltered_state.cached_unfiltered.len(), 1);
+
+        app.close_unfiltered_stream();
+
+        assert!(!app.unfiltered_state.is_open);
+        assert!(app.unfiltered_state.cached_unfiltered.is_empty());
+        assert_eq!(app.active_tab, ActiveTab::Filtered);
     }
 }

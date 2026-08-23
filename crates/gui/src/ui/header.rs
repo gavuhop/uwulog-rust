@@ -585,9 +585,7 @@ pub fn render_log_counter(ui: &mut egui::Ui, app: &UwuGuiApp) {
                 } else {
                     // Pause: số log khớp mới đến / số log khớp tại pause
                     let seen_matched_at_pause = app.filtered_seen_at_pause;
-                    let (new_matched, _) = app
-                        .engine
-                        .filter_incremental(&app.query, app.filtered_processed_at_pause);
+                    let new_matched = app.paused_new_matched_count;
                     let text = format_fraction(new_matched, seen_matched_at_pause);
                     let tooltip = format!(
                         "Filter Query: \"{}\" (Paused)\n• New Matched Logs Since Pause: {}\n• Matched at Pause: {}\n• Displayed: {}",

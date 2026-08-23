@@ -44,7 +44,7 @@ fn extract_selected_text(
                     .skip(s)
                     .take(e.saturating_sub(s))
                     .collect();
-                let clean_txt = txt.replace(" ↵ ", " ");
+                let clean_txt = uwu_core::strip_ansi(&txt).replace(" ↵ ", " ");
                 let trimmed = clean_txt.trim().to_string();
                 if !trimmed.is_empty() {
                     selected_text = Some(trimmed.clone());

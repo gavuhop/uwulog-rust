@@ -10,9 +10,12 @@ pub fn render_table_headers(
     new_header_drag: &mut Option<String>,
     target_header_swap: &mut Option<(String, String)>,
 ) {
+    let current_dragged = app.column_state.header_dragged_name.clone();
+
     for col in visible_cols {
         header.col(|ui| {
-            let is_dragged = app.column_state.header_dragged_name.as_deref() == Some(&col.name);
+            let is_dragged = current_dragged.as_deref() == Some(&col.name);
+            let is_drop_target = app.column_state.header_drop_target.as_deref() == Some(&col.name);
 
             let available_size = ui.available_size();
             let (rect, resp) =
@@ -22,15 +25,10 @@ pub fn render_table_headers(
                 *new_header_drag = Some(col.name.clone());
             }
 
-            if resp.drag_stopped() {
-                app.column_state.header_dragged_name = None;
-            }
-
             if resp.hovered() && !is_dragged {
                 if let Some(ref dragged_name) = app.column_state.header_dragged_name {
                     if dragged_name != &col.name {
-                        *target_header_swap = Some((dragged_name.clone(), col.name.clone()));
-                        app.column_state.header_dragged_name = Some(col.name.clone());
+                        app.column_state.header_drop_target = Some(col.name.clone());
                     }
                 }
             }
@@ -43,6 +41,11 @@ pub fn render_table_headers(
                 theme::BG_MANTLE
             };
             ui.painter().rect_filled(rect, Rounding::ZERO, header_bg);
+
+            if is_drop_target && current_dragged.is_some() && !is_dragged {
+                ui.painter()
+                    .rect_stroke(rect, Rounding::ZERO, Stroke::new(2.0, theme::TEXT_KEY));
+            }
 
             let font_id = FontId::monospace(11.0);
             let text_color = if is_dragged {
@@ -80,6 +83,21 @@ pub fn render_table_headers(
                 line_stroke,
             );
         });
+    }
+
+    // Khi người dùng thả chuột (drag stopped / pointer released)
+    if header.response().ctx.input(|i| i.pointer.any_released()) {
+        if let (Some(from_name), Some(to_name)) = (
+            app.column_state.header_dragged_name.take(),
+            app.column_state.header_drop_target.take(),
+        ) {
+            if from_name != to_name {
+                *target_header_swap = Some((from_name, to_name));
+            }
+        } else {
+            app.column_state.header_dragged_name = None;
+            app.column_state.header_drop_target = None;
+        }
     }
 }
 

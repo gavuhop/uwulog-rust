@@ -208,6 +208,73 @@ pub fn apply_windows_titlebar_theme(cc: &eframe::CreationContext<'_>) {
     }
 }
 
+pub fn parse_ansi_segments(text: &str, default_color: Color32) -> Vec<(String, Color32)> {
+    if !text.contains('\x1b') {
+        return vec![(text.to_string(), default_color)];
+    }
+
+    let mut segments = Vec::new();
+    let mut current_color = default_color;
+    let mut i = 0;
+    let bytes = text.as_bytes();
+    let mut current_text = String::new();
+
+    while i < bytes.len() {
+        if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'[' {
+            if !current_text.is_empty() {
+                segments.push((std::mem::take(&mut current_text), current_color));
+            }
+            i += 2;
+            let start_code = i;
+            while i < bytes.len() && (bytes[i].is_ascii_digit() || bytes[i] == b';') {
+                i += 1;
+            }
+            if i < bytes.len() && bytes[i] == b'm' {
+                let code_str = &text[start_code..i];
+                i += 1;
+                for part in code_str.split(';') {
+                    if let Ok(code) = part.parse::<u32>() {
+                        match code {
+                            0 | 39 => current_color = default_color,
+                            30 => current_color = Color32::from_rgb(0x45, 0x47, 0x5a),
+                            31 => current_color = Color32::from_rgb(0xf3, 0x8b, 0xa8),
+                            32 => current_color = Color32::from_rgb(0xa6, 0xe3, 0xa1),
+                            33 => current_color = Color32::from_rgb(0xf9, 0xe2, 0xaf),
+                            34 => current_color = Color32::from_rgb(0x89, 0xb4, 0xfa),
+                            35 => current_color = Color32::from_rgb(0xcb, 0xa6, 0xf7),
+                            36 => current_color = Color32::from_rgb(0x89, 0xdc, 0xeb),
+                            37 => current_color = Color32::from_rgb(0xcd, 0xd6, 0xf4),
+                            90 => current_color = Color32::from_rgb(0x6c, 0x70, 0x86),
+                            91 => current_color = Color32::from_rgb(0xf3, 0x8b, 0xa8),
+                            92 => current_color = Color32::from_rgb(0xa6, 0xe3, 0xa1),
+                            93 => current_color = Color32::from_rgb(0xf9, 0xe2, 0xaf),
+                            94 => current_color = Color32::from_rgb(0x89, 0xb4, 0xfa),
+                            95 => current_color = Color32::from_rgb(0xcb, 0xa6, 0xf7),
+                            96 => current_color = Color32::from_rgb(0x89, 0xdc, 0xeb),
+                            97 => current_color = Color32::from_rgb(0xff, 0xff, 0xff),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        } else {
+            let ch = text[i..].chars().next().unwrap();
+            current_text.push(ch);
+            i += ch.len_utf8();
+        }
+    }
+
+    if !current_text.is_empty() {
+        segments.push((current_text, current_color));
+    }
+
+    if segments.is_empty() {
+        vec![(String::new(), default_color)]
+    } else {
+        segments
+    }
+}
+
 pub fn create_highlighted_layout_job(
     text: &str,
     default_color: Color32,
@@ -215,102 +282,110 @@ pub fn create_highlighted_layout_job(
     highlighted_terms: &std::collections::HashSet<String>,
 ) -> egui::text::LayoutJob {
     let mut job = egui::text::LayoutJob::default();
-    if highlighted_terms.is_empty() || text.is_empty() {
-        job.append(
-            text,
-            0.0,
-            egui::TextFormat {
-                font_id,
-                color: default_color,
-                ..Default::default()
-            },
-        );
+    if text.is_empty() {
         return job;
     }
 
-    let lower_text = text.to_lowercase();
-    let mut intervals: Vec<(usize, usize)> = Vec::new();
+    let segments = parse_ansi_segments(text, default_color);
 
-    for term in highlighted_terms {
-        let term_clean = term.trim().to_lowercase();
-        if term_clean.is_empty() {
+    for (seg_text, seg_color) in segments {
+        if highlighted_terms.is_empty() || seg_text.is_empty() {
+            job.append(
+                &seg_text,
+                0.0,
+                egui::TextFormat {
+                    font_id: font_id.clone(),
+                    color: seg_color,
+                    ..Default::default()
+                },
+            );
             continue;
         }
-        for (pos, _) in lower_text.match_indices(&term_clean) {
-            let actual_end = pos + term_clean.len();
-            intervals.push((pos, actual_end));
+
+        let lower_text = seg_text.to_lowercase();
+        let mut intervals: Vec<(usize, usize)> = Vec::new();
+
+        for term in highlighted_terms {
+            let term_clean = term.trim().to_lowercase();
+            if term_clean.is_empty() {
+                continue;
+            }
+            for (pos, _) in lower_text.match_indices(&term_clean) {
+                let actual_end = pos + term_clean.len();
+                intervals.push((pos, actual_end));
+            }
         }
-    }
 
-    if intervals.is_empty() {
-        job.append(
-            text,
-            0.0,
-            egui::TextFormat {
-                font_id,
-                color: default_color,
-                ..Default::default()
-            },
-        );
-        return job;
-    }
+        if intervals.is_empty() {
+            job.append(
+                &seg_text,
+                0.0,
+                egui::TextFormat {
+                    font_id: font_id.clone(),
+                    color: seg_color,
+                    ..Default::default()
+                },
+            );
+            continue;
+        }
 
-    // Gộp các khoảng trùng nhau
-    intervals.sort_by_key(|(s, _)| *s);
-    let mut merged: Vec<(usize, usize)> = Vec::new();
-    for (s, e) in intervals {
-        if let Some(last) = merged.last_mut() {
-            if s <= last.1 {
-                last.1 = last.1.max(e);
+        // Gộp các khoảng trùng nhau
+        intervals.sort_by_key(|(s, _)| *s);
+        let mut merged: Vec<(usize, usize)> = Vec::new();
+        for (s, e) in intervals {
+            if let Some(last) = merged.last_mut() {
+                if s <= last.1 {
+                    last.1 = last.1.max(e);
+                } else {
+                    merged.push((s, e));
+                }
             } else {
                 merged.push((s, e));
             }
-        } else {
-            merged.push((s, e));
         }
-    }
 
-    let mut cur = 0;
-    for (s, e) in merged {
-        if s > cur {
-            if let Some(slice) = text.get(cur..s) {
+        let mut cur = 0;
+        for (s, e) in merged {
+            if s > cur {
+                if let Some(slice) = seg_text.get(cur..s) {
+                    job.append(
+                        slice,
+                        0.0,
+                        egui::TextFormat {
+                            font_id: font_id.clone(),
+                            color: seg_color,
+                            ..Default::default()
+                        },
+                    );
+                }
+            }
+            if let Some(slice) = seg_text.get(s..e) {
                 job.append(
                     slice,
                     0.0,
                     egui::TextFormat {
                         font_id: font_id.clone(),
-                        color: default_color,
+                        color: TEXT_TERM_HIGHLIGHT,
+                        background: BG_TERM_HIGHLIGHT,
                         ..Default::default()
                     },
                 );
             }
+            cur = e;
         }
-        if let Some(slice) = text.get(s..e) {
-            job.append(
-                slice,
-                0.0,
-                egui::TextFormat {
-                    font_id: font_id.clone(),
-                    color: TEXT_TERM_HIGHLIGHT,
-                    background: BG_TERM_HIGHLIGHT,
-                    ..Default::default()
-                },
-            );
-        }
-        cur = e;
-    }
 
-    if cur < text.len() {
-        if let Some(slice) = text.get(cur..) {
-            job.append(
-                slice,
-                0.0,
-                egui::TextFormat {
-                    font_id,
-                    color: default_color,
-                    ..Default::default()
-                },
-            );
+        if cur < seg_text.len() {
+            if let Some(slice) = seg_text.get(cur..) {
+                job.append(
+                    slice,
+                    0.0,
+                    egui::TextFormat {
+                        font_id: font_id.clone(),
+                        color: seg_color,
+                        ..Default::default()
+                    },
+                );
+            }
         }
     }
 
@@ -345,5 +420,18 @@ mod tests {
 
         assert_eq!(job.text, "this is a warning and ERROR message");
         assert!(job.sections.len() > 1);
+    }
+
+    #[test]
+    fn test_parse_ansi_segments() {
+        let ansi_text = "\x1b[31mRed text\x1b[0m normal \x1b[32mGreen text\x1b[0m";
+        let segments = parse_ansi_segments(ansi_text, TEXT_PRIMARY);
+        assert_eq!(segments.len(), 3);
+        assert_eq!(segments[0].0, "Red text");
+        assert_eq!(segments[0].1, Color32::from_rgb(0xf3, 0x8b, 0xa8));
+        assert_eq!(segments[1].0, " normal ");
+        assert_eq!(segments[1].1, TEXT_PRIMARY);
+        assert_eq!(segments[2].0, "Green text");
+        assert_eq!(segments[2].1, Color32::from_rgb(0xa6, 0xe3, 0xa1));
     }
 }

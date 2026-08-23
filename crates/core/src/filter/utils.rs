@@ -9,38 +9,68 @@ pub fn now_secs() -> f64 {
 }
 
 /// Chuyển đổi giá trị token thành số f64.
-/// Hỗ trợ số nguyên, số thực và các đơn vị thời gian tương đối: now-5m, now-1h...
+/// Hỗ trợ số nguyên, số thực, thời gian tuyệt đối và các đơn vị thời gian tương đối: now-5m, now-1h, now+30s...
 pub fn parse_numeric_value(s: &str, now: f64) -> Option<f64> {
     let s_trim = s.trim();
     if s_trim.eq_ignore_ascii_case("now") {
         return Some(now);
     }
 
-    if let Ok(v) = s_trim.parse::<f64>() {
-        return Some(v);
-    }
-
-    if !s_trim.is_empty() {
-        let last_char = s_trim.chars().last().unwrap_or(' ');
-        if "smhdwyM".contains(last_char) {
-            let num_part = &s_trim[..s_trim.len() - 1];
-            if let Ok(n) = num_part.parse::<f64>() {
-                let secs = match last_char {
-                    's' => n,
-                    'm' => n * 60.0,
-                    'h' => n * 3600.0,
-                    'd' => n * 86400.0,
-                    'w' => n * 604800.0,
-                    'M' => n * 2629746.0,
-                    'y' => n * 31536000.0,
-                    _ => 0.0,
-                };
+    // 1. Hỗ trợ biểu thức relative timestamp: now-5m, now-1h, now+30s, now - 5m...
+    if s_trim.to_ascii_lowercase().starts_with("now") {
+        let after_now = s_trim[3..].trim();
+        if let Some(rest) = after_now.strip_prefix('-') {
+            let rest = rest.trim();
+            if let Some(secs) = parse_duration_to_secs(rest) {
                 return Some(now - secs);
+            }
+        } else if let Some(rest) = after_now.strip_prefix('+') {
+            let rest = rest.trim();
+            if let Some(secs) = parse_duration_to_secs(rest) {
+                return Some(now + secs);
             }
         }
     }
 
+    // 2. Parse số thực / số nguyên thuần túy
+    if let Ok(v) = s_trim.parse::<f64>() {
+        return Some(v);
+    }
+
+    // 3. Parse duration thuần túy như "5m", "1h", "30s" -> now - secs
+    if let Some(secs) = parse_duration_to_secs(s_trim) {
+        return Some(now - secs);
+    }
+
     parse_iso_to_secs(s)
+}
+
+pub fn parse_duration_to_secs(s: &str) -> Option<f64> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let last_char = s.chars().last().unwrap_or(' ');
+    if "smhdwyM".contains(last_char) {
+        let num_part = &s[..s.len() - 1];
+        if let Ok(n) = num_part.parse::<f64>() {
+            let secs = match last_char {
+                's' => n,
+                'm' => n * 60.0,
+                'h' => n * 3600.0,
+                'd' => n * 86400.0,
+                'w' => n * 604800.0,
+                'M' => n * 2629746.0,
+                'y' => n * 31536000.0,
+                _ => 0.0,
+            };
+            return Some(secs);
+        }
+    }
+    if let Ok(n) = s.parse::<f64>() {
+        return Some(n);
+    }
+    None
 }
 
 pub fn parse_iso_to_secs(s: &str) -> Option<f64> {

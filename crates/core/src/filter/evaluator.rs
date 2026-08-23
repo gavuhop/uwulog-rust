@@ -2,6 +2,22 @@ use super::parser::{Expr, NumOp};
 use super::utils::parse_numeric_value;
 use crate::schema::LogEvent;
 use serde_json::Value;
+use std::borrow::Cow;
+
+#[inline]
+pub fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    if haystack.len() < needle.len() {
+        return false;
+    }
+    let haystack_bytes = haystack.as_bytes();
+    let needle_bytes = needle.as_bytes();
+    haystack_bytes
+        .windows(needle_bytes.len())
+        .any(|w| w.eq_ignore_ascii_case(needle_bytes))
+}
 
 pub fn eval_event(expr: &Expr, log: &LogEvent, now: f64) -> bool {
     match expr {
@@ -17,83 +33,116 @@ pub fn eval_event(expr: &Expr, log: &LogEvent, now: f64) -> bool {
                 if a.is_empty() {
                     return true;
                 }
-                log.message.to_lowercase().contains(a)
-                    || log.level.to_string().to_lowercase().contains(a)
-                    || log.source_id.to_lowercase().contains(a)
-                    || log.timestamp.to_lowercase().contains(a)
-                    || log.raw.to_lowercase().contains(a)
-                    || log.fields.values().any(|v| {
-                        let s = value_to_string(v).to_lowercase();
-                        s.contains(a)
+                contains_ignore_ascii_case(&log.message, a)
+                    || contains_ignore_ascii_case(log.level.as_str(), a)
+                    || contains_ignore_ascii_case(&log.source_id, a)
+                    || contains_ignore_ascii_case(&log.timestamp, a)
+                    || contains_ignore_ascii_case(&log.raw, a)
+                    || log.fields.values().any(|v| match v {
+                        Value::String(s) => contains_ignore_ascii_case(s, a),
+                        Value::Number(n) => contains_ignore_ascii_case(&n.to_string(), a),
+                        Value::Bool(b) => {
+                            if *b {
+                                contains_ignore_ascii_case("true", a)
+                            } else {
+                                contains_ignore_ascii_case("false", a)
+                            }
+                        }
+                        Value::Null => false,
+                        other => contains_ignore_ascii_case(&other.to_string(), a),
                     })
             })
         }
 
         Expr::FieldContainsAny { field, values } => {
-            get_event_field_str(log, field).is_some_and(|actual| {
-                let lower = actual.to_lowercase();
-                values.iter().any(|v| lower.contains(v))
-            })
+            if let Some(actual) = get_event_field_cow(log, field) {
+                values
+                    .iter()
+                    .any(|v| contains_ignore_ascii_case(&actual, v))
+            } else {
+                false
+            }
         }
 
-        Expr::FieldExact { field, value } => get_event_field_str(log, field)
-            .is_some_and(|actual| actual.to_lowercase() == value.to_lowercase()),
+        Expr::FieldExact { field, value } => {
+            if let Some(actual) = get_event_field_cow(log, field) {
+                actual.eq_ignore_ascii_case(value)
+            } else {
+                false
+            }
+        }
 
         Expr::FieldRegex { field, re, .. } => {
-            get_event_field_str(log, field).is_some_and(|actual| re.is_match(&actual))
+            if let Some(actual) = get_event_field_cow(log, field) {
+                re.is_match(&actual)
+            } else {
+                false
+            }
         }
 
         Expr::FieldCmp { field, op, value } => {
-            let actual_f =
-                get_event_field_str(log, field).and_then(|s| parse_numeric_value(&s, now));
+            let actual_f = get_event_field_numeric(log, field, now);
             match actual_f {
-                Some(av) => {
-                    let eps = 0.0001;
-                    match op {
-                        NumOp::Gt => av > (*value + eps),
-                        NumOp::Lt => av < (*value - eps),
-                        NumOp::Gte => av >= (*value - eps),
-                        NumOp::Lte => av <= (*value + eps),
-                    }
-                }
+                Some(av) => match op {
+                    NumOp::Gt => av > *value,
+                    NumOp::Lt => av < *value,
+                    NumOp::Gte => av >= *value,
+                    NumOp::Lte => av <= *value,
+                },
                 None => false,
             }
         }
 
-        Expr::FieldRange { field, lo, hi } => get_event_field_str(log, field)
-            .and_then(|s| parse_numeric_value(&s, now))
-            .is_some_and(|av| {
+        Expr::FieldRange { field, lo, hi } => {
+            get_event_field_numeric(log, field, now).is_some_and(|av| {
                 let min = lo.min(*hi);
                 let max = lo.max(*hi);
-                let eps = 0.0001;
-                av >= (min - eps) && av <= (max + eps)
-            }),
+                av >= min && av <= max
+            })
+        }
     }
 }
 
-pub fn get_event_field_str(log: &LogEvent, field: &str) -> Option<String> {
-    let lower_field = field.to_lowercase();
+pub fn get_event_field_numeric(log: &LogEvent, field: &str, now: f64) -> Option<f64> {
+    if field.eq_ignore_ascii_case("timestamp")
+        || field.eq_ignore_ascii_case("time")
+        || field.eq_ignore_ascii_case("ts")
+        || field.eq_ignore_ascii_case("date")
+    {
+        if let Some(ts_sec) = log.timestamp_secs {
+            return Some(ts_sec);
+        }
+    }
+    get_event_field_cow(log, field).and_then(|s| parse_numeric_value(&s, now))
+}
+
+pub fn get_event_field_cow<'a>(log: &'a LogEvent, field: &str) -> Option<Cow<'a, str>> {
+    let lower_field = field.to_ascii_lowercase();
     match lower_field.as_str() {
-        "level" => Some(log.level.to_string()),
-        "timestamp" | "time" | "ts" | "date" => Some(log.timestamp.clone()),
-        "message" | "msg" => Some(log.message.clone()),
-        "source" | "source_id" => Some(log.source_id.clone()),
-        "id" => Some(log.id.to_string()),
-        "raw" => Some(log.raw.clone()),
+        "level" => Some(Cow::Borrowed(log.level.as_str())),
+        "timestamp" | "time" | "ts" | "date" => Some(Cow::Borrowed(&log.timestamp)),
+        "message" | "msg" => Some(Cow::Borrowed(&log.message)),
+        "source" | "source_id" => Some(Cow::Borrowed(&log.source_id)),
+        "id" => Some(Cow::Owned(log.id.to_string())),
+        "raw" => Some(Cow::Borrowed(&log.raw)),
         _ => {
-            // Check direct match in fields
+            // Direct match in fields
             if let Some(v) = log.fields.get(field) {
-                return Some(value_to_string(v));
+                return value_to_cow(v);
             }
-            // Check case-insensitive match in fields
+            // Case-insensitive match in fields
             for (k, v) in &log.fields {
                 if k.eq_ignore_ascii_case(field) {
-                    return Some(value_to_string(v));
+                    return value_to_cow(v);
                 }
             }
             None
         }
     }
+}
+
+pub fn get_event_field_str(log: &LogEvent, field: &str) -> Option<String> {
+    get_event_field_cow(log, field).map(|c| c.into_owned())
 }
 
 pub fn eval(expr: &Expr, log: &Value, now: f64) -> bool {
@@ -106,32 +155,42 @@ pub fn eval(expr: &Expr, log: &Value, now: f64) -> bool {
             if alts.is_empty() {
                 return true;
             }
-            // Thay vì build full text, ta kiểm tra từng field
             if let Some(obj) = log.as_object() {
                 alts.iter().any(|a| {
                     if a.is_empty() {
                         return true;
                     }
-                    obj.values().any(|v| {
-                        let s = value_to_string(v).to_lowercase();
-                        s.contains(a)
+                    obj.values().any(|v| match v {
+                        Value::String(s) => contains_ignore_ascii_case(s, a),
+                        Value::Number(n) => contains_ignore_ascii_case(&n.to_string(), a),
+                        Value::Bool(b) => {
+                            if *b {
+                                contains_ignore_ascii_case("true", a)
+                            } else {
+                                contains_ignore_ascii_case("false", a)
+                            }
+                        }
+                        Value::Null => false,
+                        other => contains_ignore_ascii_case(&other.to_string(), a),
                     })
                 })
             } else {
-                let s = value_to_string(log).to_lowercase();
-                alts.iter().any(|a| s.contains(a))
+                let s = value_to_string(log);
+                alts.iter().any(|a| contains_ignore_ascii_case(&s, a))
             }
         }
 
         Expr::FieldContainsAny { field, values } => {
             get_field_str(log, field).is_some_and(|actual| {
-                let lower = actual.to_lowercase();
-                values.iter().any(|v| lower.contains(v))
+                values
+                    .iter()
+                    .any(|v| contains_ignore_ascii_case(&actual, v))
             })
         }
 
-        Expr::FieldExact { field, value } => get_field_str(log, field)
-            .is_some_and(|actual| actual.to_lowercase() == value.to_lowercase()),
+        Expr::FieldExact { field, value } => {
+            get_field_str(log, field).is_some_and(|actual| actual.eq_ignore_ascii_case(value))
+        }
 
         Expr::FieldRegex { field, re, .. } => {
             get_field_str(log, field).is_some_and(|actual| re.is_match(&actual))
@@ -140,15 +199,12 @@ pub fn eval(expr: &Expr, log: &Value, now: f64) -> bool {
         Expr::FieldCmp { field, op, value } => {
             let actual_f = get_field_str(log, field).and_then(|s| parse_numeric_value(&s, now));
             match actual_f {
-                Some(av) => {
-                    let eps = 0.0001;
-                    match op {
-                        NumOp::Gt => av > (*value + eps),
-                        NumOp::Lt => av < (*value - eps),
-                        NumOp::Gte => av >= (*value - eps),
-                        NumOp::Lte => av <= (*value + eps),
-                    }
-                }
+                Some(av) => match op {
+                    NumOp::Gt => av > *value,
+                    NumOp::Lt => av < *value,
+                    NumOp::Gte => av >= *value,
+                    NumOp::Lte => av <= *value,
+                },
                 None => false,
             }
         }
@@ -158,14 +214,23 @@ pub fn eval(expr: &Expr, log: &Value, now: f64) -> bool {
             .is_some_and(|av| {
                 let min = lo.min(*hi);
                 let max = lo.max(*hi);
-                let eps = 0.0001;
-                av >= (min - eps) && av <= (max + eps)
+                av >= min && av <= max
             }),
     }
 }
 
 pub fn get_field_str(log: &Value, field: &str) -> Option<String> {
     log.get(field).map(value_to_string)
+}
+
+pub fn value_to_cow(v: &Value) -> Option<Cow<'_, str>> {
+    match v {
+        Value::String(s) => Some(Cow::Borrowed(s)),
+        Value::Number(n) => Some(Cow::Owned(n.to_string())),
+        Value::Bool(b) => Some(Cow::Borrowed(if *b { "true" } else { "false" })),
+        Value::Null => Some(Cow::Borrowed("")),
+        other => Some(Cow::Owned(other.to_string())),
+    }
 }
 
 fn value_to_string(v: &Value) -> String {

@@ -115,6 +115,18 @@ pub fn render_history_popup(ctx: &egui::Context, app: &mut UwuGuiApp, input_rect
 
     let popup_pos = Pos2::new(input_rect.min.x, input_rect.max.y + 8.0);
     let popup_width = input_rect.width().max(420.0);
+    let entry_count = app.history_state.entries.len().max(1);
+    let approx_height = (entry_count as f32 * 28.0) + 48.0;
+    let popup_rect = Rect::from_min_size(popup_pos, egui::vec2(popup_width, approx_height));
+
+    if ctx.input(|i| i.pointer.any_pressed() || i.pointer.any_click()) {
+        if let Some(pos) = ctx.input(|i| i.pointer.interact_pos()) {
+            if !input_rect.contains(pos) && !popup_rect.contains(pos) {
+                app.history_state.is_open = false;
+                return;
+            }
+        }
+    }
 
     let mut selected_history_item = None;
     let mut clear_all_clicked = false;

@@ -57,22 +57,22 @@
 
 ## 2. Filter Engine & Query Evaluator (`crates/core/src/filter`)
 
-- [ ] **2.1. Zero-Allocation String Matching trong Rayon Parallel Loop**
+- [x] **2.1. Zero-Allocation String Matching trong Rayon Parallel Loop**
   - *Hiện trạng:* Gọi `.to_lowercase()` cấp phát hàng triệu `String` heap cho mỗi từ khóa và mỗi dòng log trong `eval_event`.
   - *Giải pháp:* Viết hàm helper `contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool` kiểm tra trực tiếp byte không cấp phát bộ nhớ; chuyển `get_event_field_str` sang `Option<Cow<'a, str>>`.
   - *File:* [`crates/core/src/filter/evaluator.rs`](file:///D:/Learn/Go/uwulog-rust/crates/core/src/filter/evaluator.rs)
 
-- [ ] **2.2. Loại bỏ Hằng Số Epsilon `0.0001` Tùy Tiện**
+- [x] **2.2. Loại bỏ Hằng Số Epsilon `0.0001` Tùy Tiện**
   - *Hiện trạng:* Epsilon `0.0001` làm sai lệch so sánh số thực nhỏ (nuốt mất latency sub-millisecond `< 0.1ms`).
   - *Giải pháp:* Sử dụng so sánh số thực chuẩn IEEE-754.
   - *File:* [`crates/core/src/filter/evaluator.rs`](file:///D:/Learn/Go/uwulog-rust/crates/core/src/filter/evaluator.rs)
 
-- [ ] **2.3. Hoàn thiện Tokenizer: Phân biệt URL, IPv6 và Dấu `-` trong chuỗi ngoặc kép**
+- [x] **2.3. Hoàn thiện Tokenizer: Phân biệt URL, IPv6 và Dấu `-` trong chuỗi ngoặc kép**
   - *Hiện trạng:* Chuỗi `"-500ms"` bị hiểu nhầm thành `NOT "500ms"`; URL `https://api.com` bị tách nhầm thành field `https`.
   - *Giải pháp:* Giữ nguyên dấu `-` bên trong ngoặc kép; chỉ nhận diện `field:value` khi `field` là identifier hợp lệ và không chứa `//`.
   - *File:* [`crates/core/src/filter/parser.rs`](file:///D:/Learn/Go/uwulog-rust/crates/core/src/filter/parser.rs)
 
-- [ ] **2.4. Hỗ trợ cú pháp `now-5m`, `now-1h` & Tối ưu Datetime Parsing**
+- [x] **2.4. Hỗ trợ cú pháp `now-5m`, `now-1h` & Tối ưu Datetime Parsing**
   - *Hiện trạng:* Không parse được tiền tố `now-`; thử 16 định dạng datetime trong hot-path Rayon.
   - *Giải pháp:* Parse tường minh `now-` / `now+`; trích xuất và cache sẵn timestamp dạng giây `f64` trong `LogEvent`.
   - *File:* [`crates/core/src/filter/utils.rs`](file:///D:/Learn/Go/uwulog-rust/crates/core/src/filter/utils.rs)
@@ -81,36 +81,36 @@
 
 ## 3. Desktop GUI (`crates/gui`)
 
-- [ ] **3.1. Sửa Đồng Bộ `last_processed_count` cho Tab Unfiltered Live**
+- [x] **3.1. Sửa Đồng Bộ `last_processed_count` cho Tab Unfiltered Live**
   - *Hiện trạng:* `last_processed_count` bị ghi đè ở nhánh Main Stream khiến nhánh Raw Stream luôn nhận `new_count = 0`.
   - *Giải pháp:* Dùng biến `prev_processed` chung cho cả hai nhánh trong `app.rs:tick()`.
   - *File:* [`crates/gui/src/app.rs`](file:///D:/Learn/Go/uwulog-rust/crates/gui/src/app.rs)
 
-- [ ] **3.2. Dời `filter_incremental` của Log Counter ra khỏi Render Loop**
+- [x] **3.2. Dời `filter_incremental` của Log Counter ra khỏi Render Loop**
   - *Hiện trạng:* `render_log_counter` gọi filter và clone hàng nghìn log mỗi frame khi đang pause.
   - *Giải pháp:* Tính toán `paused_new_matched_count` trong `tick()` khi có log mới; UI chỉ việc đọc biến có sẵn.
   - *File:* [`crates/gui/src/ui/header.rs`](file:///D:/Learn/Go/uwulog-rust/crates/gui/src/ui/header.rs), [`crates/gui/src/app.rs`](file:///D:/Learn/Go/uwulog-rust/crates/gui/src/app.rs)
 
-- [ ] **3.3. Cache Key / Field Discovery (Tránh O(N*M) mỗi frame)**
+- [x] **3.3. Cache Key / Field Discovery (Tránh O(N*M) mỗi frame)**
   - *Hiện trạng:* `sync_discovered_keys` và `get_available_log_fields` quét toàn bộ 50,000 log mỗi frame/mỗi phím gõ.
   - *Giải pháp:* Duy trì cache `known_keys: HashSet<String>` và `known_fields: BTreeMap<String, FieldType>`, chỉ cập nhật khi nạp log mới.
   - *File:* [`crates/gui/src/app.rs`](file:///D:/Learn/Go/uwulog-rust/crates/gui/src/app.rs), [`crates/gui/src/ui/columns_modal.rs`](file:///D:/Learn/Go/uwulog-rust/crates/gui/src/ui/columns_modal.rs)
 
-- [ ] **3.4. Sửa Rung Giật (Jitter) khi Kéo Thả Cột Header**
+- [x] **3.4. Sửa Rung Giật (Jitter) khi Kéo Thả Cột Header**
   - *Hiện trạng:* Tráo đổi cột ngay khi di chuột qua mép cột bên cạnh gây đảo vị trí liên tục giữa các frame.
   - *Giải pháp:* Chỉ thực hiện swap vị trí cột khi người dùng thả chuột (`drop`).
   - *File:* [`crates/gui/src/ui/table/header.rs`](file:///D:/Learn/Go/uwulog-rust/crates/gui/src/ui/table/header.rs), [`crates/gui/src/ui/table/mod.rs`](file:///D:/Learn/Go/uwulog-rust/crates/gui/src/ui/table/mod.rs)
 
-- [ ] **3.5. Xử lý Click-Outside cho Autocomplete & Search History Popup**
+- [x] **3.5. Xử lý Click-Outside cho Autocomplete & Search History Popup**
   - *Hiện trạng:* Popup nổi lơ lửng đè lên bảng khi click ra ngoài mà không tự đóng.
   - *Giải pháp:* Kiểm tra pointer click bên ngoài vùng popup để tự động đóng dropdown.
   - *File:* [`crates/gui/src/ui/autocomplete.rs`](file:///D:/Learn/Go/uwulog-rust/crates/gui/src/ui/autocomplete.rs), [`crates/gui/src/ui/history.rs`](file:///D:/Learn/Go/uwulog-rust/crates/gui/src/ui/history.rs)
 
-- [ ] **3.6. ANSI-Aware Matcher & Tô Màu ANSI 500 Dòng Hiển Thị**
+- [x] **3.6. ANSI-Aware Matcher & Tô Màu ANSI 500 Dòng Hiển Thị**
   - *Yêu cầu:* Phân tích màu ANSI cho tối đa 500 dòng hiển thị trên bảng; loại bỏ mã ANSI khi copy/filter.
   - *File:* [`crates/gui/src/ui/table/cell.rs`](file:///D:/Learn/Go/uwulog-rust/crates/gui/src/ui/table/cell.rs), [`crates/gui/src/ui/theme.rs`](file:///D:/Learn/Go/uwulog-rust/crates/gui/src/ui/theme.rs)
 
-- [ ] **3.7. Dọn dẹp RAM khi đóng Tab Unfiltered bằng phím Escape**
+- [x] **3.7. Dọn dẹp RAM khi đóng Tab Unfiltered bằng phím Escape**
   - *Hiện trạng:* Ấn Escape chỉ chuyển tab mà không gọi `close_unfiltered_stream()`, làm 500 log vẫn kẹt trong RAM.
   - *File:* [`crates/gui/src/ui/mod.rs`](file:///D:/Learn/Go/uwulog-rust/crates/gui/src/ui/mod.rs)
 
