@@ -1,5 +1,10 @@
+use crate::filter::evaluator::eval_event;
+use crate::filter::parser::parse_query;
+use crate::filter::utils::parse_numeric_value;
 use crate::filter::LogEngine;
+use crate::schema::{LogEvent, LogLevel};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 
 fn filter_logs(logs_val: Vec<Value>, query: String) -> Vec<u32> {
     let mut engine = LogEngine::new(100000);
@@ -401,4 +406,93 @@ fn test_quotes_with_special_characters() {
         filter_logs(logs.clone(), "message:\"ETIMEDOUT\"".into()),
         vec![1]
     );
+}
+
+#[test]
+fn test_relative_now_and_sub_millisecond_floats() {
+    let now = 1700000000.0;
+    // 1. Test now-5m, now-1h, now+30s
+    let parsed_5m = parse_numeric_value("now-5m", now).unwrap();
+    assert_eq!(parsed_5m, now - 300.0);
+
+    let parsed_1h = parse_numeric_value("now-1h", now).unwrap();
+    assert_eq!(parsed_1h, now - 3600.0);
+
+    let parsed_30s = parse_numeric_value("now+30s", now).unwrap();
+    assert_eq!(parsed_30s, now + 30.0);
+
+    // 2. Test sub-millisecond float precision without epsilon 0.0001
+    let mut log_item = LogEvent::new(
+        "2026-08-23T10:00:00Z",
+        LogLevel::Info,
+        "app",
+        "Sub-ms latency test",
+        HashMap::new(),
+        "Sub-ms latency test",
+    );
+    log_item
+        .fields
+        .insert("latency".to_string(), serde_json::json!(0.00005)); // 50 microseconds
+
+    let expr_gt_zero = parse_query("latency>0", now);
+    assert!(eval_event(&expr_gt_zero, &log_item, now));
+
+    let expr_lt_100us = parse_query("latency<0.0001", now);
+    assert!(eval_event(&expr_lt_100us, &log_item, now));
+
+    // 3. Test quoted minus literal preservation vs negated quoted string
+    let log_neg_val = LogEvent::new(
+        "2026-08-23T10:00:00Z",
+        LogLevel::Info,
+        "app",
+        "Offset is -500ms between clocks",
+        HashMap::new(),
+        "Offset is -500ms between clocks",
+    );
+    let expr_quoted_minus = parse_query("\"-500ms\"", now);
+    assert!(eval_event(&expr_quoted_minus, &log_neg_val, now));
+
+    let expr_negated_quote = parse_query("-\"clocks\"", now);
+    assert!(!eval_event(&expr_negated_quote, &log_neg_val, now));
+
+    // 4. Test URL matching without quotes
+    let log_url = LogEvent::new(
+        "2026-08-23T10:00:00Z",
+        LogLevel::Info,
+        "app",
+        "Request to https://api.service.io/v1/health status=200",
+        HashMap::new(),
+        "Request to https://api.service.io/v1/health status=200",
+    );
+    let expr_url = parse_query("https://api.service.io/v1/health", now);
+    assert!(eval_event(&expr_url, &log_url, now));
+}
+
+#[test]
+fn test_escaped_quotes_and_nested_quotes_query() {
+    let now = 1755940000.0;
+    let log_event = LogEvent::new(
+        "2026-08-23T10:00:00Z",
+        LogLevel::Error,
+        "payment-service",
+        "Failed to \"validate\" payment token",
+        HashMap::new(),
+        "Failed to \"validate\" payment token",
+    );
+
+    // 1. Field contains with escaped quotes: message:"Failed to \"validate\" payment token"
+    let expr1 = parse_query("message:\"Failed to \\\"validate\\\" payment token\"", now);
+    assert!(eval_event(&expr1, &log_event, now));
+
+    // 2. Free-text with escaped quotes: "Failed to \"validate\" payment token"
+    let expr2 = parse_query("\"Failed to \\\"validate\\\" payment token\"", now);
+    assert!(eval_event(&expr2, &log_event, now));
+
+    // 3. Exact field match with escaped quotes: message="Failed to \"validate\" payment token"
+    let expr3 = parse_query("message=\"Failed to \\\"validate\\\" payment token\"", now);
+    assert!(eval_event(&expr3, &log_event, now));
+
+    // 4. Negated search with escaped quotes: -message:"Failed to \"validate\" payment token"
+    let expr4 = parse_query("-message:\"Failed to \\\"validate\\\" payment token\"", now);
+    assert!(!eval_event(&expr4, &log_event, now));
 }

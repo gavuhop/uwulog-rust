@@ -16,19 +16,23 @@ pub enum LogLevel {
 
 impl std::fmt::Display for LogLevel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            LogLevel::Unknown => write!(f, "UNKNOWN"),
-            LogLevel::Trace => write!(f, "TRACE"),
-            LogLevel::Debug => write!(f, "DEBUG"),
-            LogLevel::Info => write!(f, "INFO"),
-            LogLevel::Warn => write!(f, "WARN"),
-            LogLevel::Error => write!(f, "ERROR"),
-            LogLevel::Fatal => write!(f, "FATAL"),
-        }
+        write!(f, "{}", self.as_str())
     }
 }
 
 impl LogLevel {
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            LogLevel::Unknown => "UNKNOWN",
+            LogLevel::Trace => "TRACE",
+            LogLevel::Debug => "DEBUG",
+            LogLevel::Info => "INFO",
+            LogLevel::Warn => "WARN",
+            LogLevel::Error => "ERROR",
+            LogLevel::Fatal => "FATAL",
+        }
+    }
+
     pub fn parse_str(s: &str) -> Self {
         let clean = s.trim().to_uppercase();
         match clean.as_str() {
@@ -48,6 +52,8 @@ impl LogLevel {
 pub struct LogEvent {
     pub id: Uuid,
     pub timestamp: String,
+    #[serde(default)]
+    pub timestamp_secs: Option<f64>,
     pub level: LogLevel,
     pub source_id: String,
     pub message: String,
@@ -64,9 +70,12 @@ impl LogEvent {
         fields: HashMap<String, serde_json::Value>,
         raw: impl Into<String>,
     ) -> Self {
+        let ts_str = timestamp.into();
+        let timestamp_secs = crate::filter::utils::parse_iso_to_secs(&ts_str);
         Self {
             id: Uuid::new_v4(),
-            timestamp: timestamp.into(),
+            timestamp: ts_str,
+            timestamp_secs,
             level,
             source_id: source_id.into(),
             message: message.into(),
@@ -78,7 +87,13 @@ impl LogEvent {
     pub fn to_json_value(&self) -> serde_json::Value {
         let mut map = serde_json::Map::new();
         map.insert("id".to_string(), serde_json::json!(self.id.to_string()));
-        map.insert("timestamp".to_string(), serde_json::json!(&self.timestamp));
+        map.insert(
+            "timestamp".to_string(),
+            serde_json::json!(self.timestamp.clone()),
+        );
+        if let Some(ts_sec) = self.timestamp_secs {
+            map.insert("timestamp_secs".to_string(), serde_json::json!(ts_sec));
+        }
         map.insert(
             "level".to_string(),
             serde_json::json!(self.level.to_string()),

@@ -296,6 +296,17 @@ pub fn render_autocomplete_popup(ctx: &egui::Context, app: &mut UwuGuiApp, input
     // Vẽ Floating Dropdown Panel (cách đáy filter box một khoảng thông thoáng để không bị đè viền)
     let dropdown_pos = Pos2::new(input_rect.min.x, input_rect.max.y + 8.0);
     let dropdown_width = input_rect.width().max(420.0);
+    let approx_height = (app.autocomplete_state.suggestions.len() as f32 * 26.0) + 16.0;
+    let popup_rect = Rect::from_min_size(dropdown_pos, egui::vec2(dropdown_width, approx_height));
+
+    if ctx.input(|i| i.pointer.any_pressed() || i.pointer.any_click()) {
+        if let Some(pos) = ctx.input(|i| i.pointer.interact_pos()) {
+            if !input_rect.contains(pos) && !popup_rect.contains(pos) {
+                app.autocomplete_state.is_open = false;
+                return;
+            }
+        }
+    }
 
     egui::Area::new(Id::new("search_autocomplete_dropdown_area"))
         .order(Order::Foreground)

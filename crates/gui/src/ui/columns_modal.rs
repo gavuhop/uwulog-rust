@@ -20,16 +20,22 @@ pub struct ColumnState {
     pub columns: Vec<ColumnItem>,
     pub dragged_index: Option<usize>,
     pub header_dragged_name: Option<String>,
+    pub header_drop_target: Option<String>,
+    pub known_keys: std::collections::HashSet<String>,
 }
 
 impl Default for ColumnState {
     fn default() -> Self {
+        let columns = Self::default_columns();
+        let known_keys = columns.iter().map(|c| c.name.clone()).collect();
         Self {
             is_modal_open: false,
             filter_query: String::new(),
-            columns: Self::default_columns(),
+            columns,
             dragged_index: None,
             header_dragged_name: None,
+            header_drop_target: None,
+            known_keys,
         }
     }
 }
@@ -69,6 +75,9 @@ impl ColumnState {
         }
         self.columns = new_cols;
         self.dragged_index = None;
+        self.header_dragged_name = None;
+        self.header_drop_target = None;
+        self.known_keys = self.columns.iter().map(|c| c.name.clone()).collect();
     }
 
     pub fn reorder(&mut self, from_idx: usize, to_idx: usize) {
@@ -81,7 +90,7 @@ impl ColumnState {
     pub fn sync_discovered_keys(&mut self, logs: &[LogEvent]) {
         for log in logs {
             for key in log.fields.keys() {
-                if !self.columns.iter().any(|c| c.name == *key) {
+                if self.known_keys.insert(key.clone()) {
                     self.columns.push(ColumnItem {
                         name: key.clone(),
                         visible: false,

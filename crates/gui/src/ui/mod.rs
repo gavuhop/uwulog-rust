@@ -24,7 +24,7 @@ pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
         } else if app.show_launch_modal {
             app.show_launch_modal = false;
         } else if app.active_tab == crate::app::ActiveTab::Unfiltered {
-            app.active_tab = crate::app::ActiveTab::Filtered;
+            app.close_unfiltered_stream();
         } else if app.selected_log.is_some() {
             app.selected_log = None;
         }
