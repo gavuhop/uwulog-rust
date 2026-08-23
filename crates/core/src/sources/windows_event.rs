@@ -69,19 +69,40 @@ async fn run_win_event_stream(
         .chain(std::iter::once(0))
         .collect();
 
-    // Query các bản ghi hiện tại và lắng nghe sự kiện mới
-    let query_handle = unsafe {
-        EvtQuery(
+    // 1. Đăng ký nhận sự kiện liên tục (live stream) qua EvtSubscribe
+    let sub_handle = unsafe {
+        EvtSubscribe(
             0,
+            std::ptr::null_mut(),
             wide_channel.as_ptr(),
             std::ptr::null(),
-            EvtQueryChannelPath | EvtQueryReverseDirection,
+            0,
+            std::ptr::null_mut(),
+            None,
+            EvtSubscribeStartAtOldestRecord,
         )
     };
 
-    if query_handle == 0 {
-        anyhow::bail!("Failed to EvtQuery Windows Event channel: {}", channel);
-    }
+    let handle = if sub_handle != 0 {
+        sub_handle
+    } else {
+        // Fallback sang EvtQuery nếu EvtSubscribe không khả dụng
+        let query = unsafe {
+            EvtQuery(
+                0,
+                wide_channel.as_ptr(),
+                std::ptr::null(),
+                EvtQueryChannelPath | EvtQueryReverseDirection,
+            )
+        };
+        if query == 0 {
+            anyhow::bail!(
+                "Failed to subscribe or query Windows Event channel: {}",
+                channel
+            );
+        }
+        query
+    };
 
     let mut events: [isize; 10] = [0; 10];
     let mut returned: u32 = 0;
@@ -89,10 +110,10 @@ async fn run_win_event_stream(
     loop {
         let status = unsafe {
             EvtNext(
-                query_handle,
+                handle,
                 events.len() as u32,
                 events.as_mut_ptr(),
-                50, // short timeout ms
+                100, // short timeout ms
                 0,
                 &mut returned,
             )
@@ -106,14 +127,17 @@ async fn run_win_event_stream(
                         payload: RawPayload::Text(xml_str),
                     };
                     if tx.send(entry).await.is_err() {
-                        unsafe { EvtClose(query_handle) };
+                        unsafe {
+                            EvtClose(evt_handle);
+                            EvtClose(handle);
+                        };
                         return Ok(());
                     }
                 }
                 unsafe { EvtClose(evt_handle) };
             }
         } else {
-            // Nghỉ ngắn trước khi đọc lượt tiếp theo
+            // Nghỉ ngắn trước khi poll lượt tiếp theo
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         }
     }

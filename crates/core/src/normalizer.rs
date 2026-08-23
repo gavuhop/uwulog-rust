@@ -5,30 +5,66 @@ pub struct LogNormalizer;
 
 impl LogNormalizer {
     pub fn normalize(entry: RawLogEntry) -> LogEvent {
-        let raw_text = match &entry.payload {
-            RawPayload::Text(s) => s.clone(),
-            RawPayload::Json(v) => v.to_string(),
-            RawPayload::KeyValue(kv) => format!("{:?}", kv),
-        };
+        match entry.payload {
+            RawPayload::Json(v) => {
+                let raw_text = v.to_string();
+                Self::normalize_json(&entry.source_id, &v, &raw_text)
+            }
+            RawPayload::Text(s) => {
+                let clean_ref = if s.contains('\x1b') {
+                    strip_ansi(&s)
+                } else {
+                    s.clone()
+                };
+                let trimmed = clean_ref.trim();
 
-        // 1. Thử parse nếu là JSON
-        if let RawPayload::Json(ref v) = entry.payload {
-            return Self::normalize_json(&entry.source_id, v, &raw_text);
-        }
+                // 1. Fast-check JSON: Chỉ thử parse JSON nếu bắt đầu và kết thúc bằng cặp ngoặc {} hoặc []
+                if (trimmed.starts_with('{') && trimmed.ends_with('}'))
+                    || (trimmed.starts_with('[') && trimmed.ends_with(']'))
+                {
+                    if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(trimmed) {
+                        return Self::normalize_json(&entry.source_id, &json_val, &s);
+                    }
+                }
 
-        if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&raw_text) {
-            return Self::normalize_json(&entry.source_id, &json_val, &raw_text);
-        }
+                // 2. Thử parse nếu là Windows Event XML
+                if (trimmed.starts_with("<Event") || trimmed.starts_with("<System>"))
+                    || (s.contains("<Event ") && s.contains("<System>"))
+                {
+                    if let Some(event) = Self::normalize_win_event_xml(&entry.source_id, &s) {
+                        return event;
+                    }
+                }
 
-        // 2. Thử parse nếu là Windows Event XML
-        if raw_text.contains("<Event ") || raw_text.contains("<System>") {
-            if let Some(event) = Self::normalize_win_event_xml(&entry.source_id, &raw_text) {
-                return event;
+                // 3. Fallback: Parse log dạng văn bản thuần (Unstructured Text)
+                Self::normalize_unstructured_text(&entry.source_id, &s)
+            }
+            RawPayload::KeyValue(kv) => {
+                let raw_text = format!("{:?}", kv);
+                let mut fields = HashMap::new();
+                let mut level = LogLevel::Unknown;
+                let mut timestamp = String::new();
+                let mut message = String::new();
+
+                for (k, v) in kv {
+                    let k_lower = k.to_lowercase();
+                    if k_lower == "level" || k_lower == "lvl" || k_lower == "severity" {
+                        level = LogLevel::parse_str(&v);
+                    } else if k_lower == "timestamp" || k_lower == "time" || k_lower == "ts" {
+                        timestamp = v.clone();
+                    } else if k_lower == "message" || k_lower == "msg" || k_lower == "text" {
+                        message = v.clone();
+                    }
+                    fields.insert(k, serde_json::Value::String(v));
+                }
+
+                if message.is_empty() {
+                    message = raw_text.clone();
+                }
+
+                LogEvent::new(timestamp, level, entry.source_id, message, fields, raw_text)
             }
         }
-
-        // 3. Fallback: Parse log dạng văn bản thuần (Unstructured Text)
-        Self::normalize_unstructured_text(&entry.source_id, &raw_text)
     }
 
     fn flatten_json_value(
@@ -62,14 +98,31 @@ impl LogNormalizer {
         // 1. Phẳng hóa toàn bộ cây JSON object
         Self::flatten_json_value("", v, &mut fields);
 
-        // 2. Nhận diện các trường đặc biệt từ mảng đã phẳng hóa
+        // 2. Nhận diện các trường đặc biệt từ mảng đã phẳng hóa (hỗ trợ cả JSON thông thường và Systemd Journald)
         if let Some(val) = fields
             .get("level")
             .or_else(|| fields.get("lvl"))
             .or_else(|| fields.get("severity"))
+            .or_else(|| fields.get("PRIORITY"))
+            .or_else(|| fields.get("priority"))
         {
             if let Some(s) = val.as_str() {
-                level = LogLevel::parse_str(s);
+                // Hỗ trợ Syslog / Systemd Journald Priority số nguyên dạng string "0".."7"
+                match s.trim() {
+                    "0" | "1" | "2" | "3" => level = LogLevel::Error,
+                    "4" => level = LogLevel::Warn,
+                    "5" | "6" => level = LogLevel::Info,
+                    "7" => level = LogLevel::Debug,
+                    _ => level = LogLevel::parse_str(s),
+                }
+            } else if let Some(n) = val.as_u64() {
+                match n {
+                    0..=3 => level = LogLevel::Error,
+                    4 => level = LogLevel::Warn,
+                    5 | 6 => level = LogLevel::Info,
+                    7 => level = LogLevel::Debug,
+                    _ => level = LogLevel::Unknown,
+                }
             }
         }
 
@@ -78,9 +131,38 @@ impl LogNormalizer {
             .or_else(|| fields.get("time"))
             .or_else(|| fields.get("ts"))
             .or_else(|| fields.get("@timestamp"))
+            .or_else(|| fields.get("__REALTIME_TIMESTAMP"))
+            .or_else(|| fields.get("_SOURCE_REALTIME_TIMESTAMP"))
         {
             if let Some(s) = val.as_str() {
-                timestamp = s.to_string();
+                // Xử lý timestamp microsecond của systemd journald (ví dụ "1724140800000000")
+                if let Ok(usecs) = s.parse::<u64>() {
+                    if usecs > 1_000_000_000_000_000 {
+                        let secs = (usecs / 1_000_000) as i64;
+                        let nsecs = ((usecs % 1_000_000) * 1_000) as u32;
+                        if let Some(dt) = chrono::DateTime::from_timestamp(secs, nsecs) {
+                            timestamp = dt.to_rfc3339();
+                        } else {
+                            timestamp = s.to_string();
+                        }
+                    } else {
+                        timestamp = s.to_string();
+                    }
+                } else {
+                    timestamp = s.to_string();
+                }
+            } else if let Some(usecs) = val.as_u64() {
+                if usecs > 1_000_000_000_000_000 {
+                    let secs = (usecs / 1_000_000) as i64;
+                    let nsecs = ((usecs % 1_000_000) * 1_000) as u32;
+                    if let Some(dt) = chrono::DateTime::from_timestamp(secs, nsecs) {
+                        timestamp = dt.to_rfc3339();
+                    } else {
+                        timestamp = val.to_string();
+                    }
+                } else {
+                    timestamp = val.to_string();
+                }
             } else {
                 timestamp = val.to_string();
             }
@@ -90,6 +172,7 @@ impl LogNormalizer {
             .get("message")
             .or_else(|| fields.get("msg"))
             .or_else(|| fields.get("text"))
+            .or_else(|| fields.get("MESSAGE"))
         {
             if let Some(s) = val.as_str() {
                 message = s.to_string();
@@ -164,22 +247,103 @@ impl LogNormalizer {
         let clean = strip_ansi(raw);
         let mut level = LogLevel::Unknown;
 
-        // Trích xuất level bằng từ khóa đơn giản
-        let upper = clean.to_uppercase();
-        if upper.contains("ERROR") || upper.contains("[ERR]") || upper.contains("FATAL") {
+        // Trích xuất level không cấp phát heap (zero-allocation ASCII case-insensitive search)
+        if contains_ignore_case(&clean, "ERROR")
+            || contains_ignore_case(&clean, "[ERR]")
+            || contains_ignore_case(&clean, "FATAL")
+            || contains_ignore_case(&clean, "[FTL]")
+            || contains_ignore_case(&clean, "CRITICAL")
+        {
             level = LogLevel::Error;
-        } else if upper.contains("WARN") || upper.contains("[WRN]") {
+        } else if contains_ignore_case(&clean, "WARN")
+            || contains_ignore_case(&clean, "[WRN]")
+            || contains_ignore_case(&clean, "WARNING")
+        {
             level = LogLevel::Warn;
-        } else if upper.contains("INFO") || upper.contains("[INF]") {
+        } else if contains_ignore_case(&clean, "INFO")
+            || contains_ignore_case(&clean, "[INF]")
+            || contains_ignore_case(&clean, "NOTICE")
+        {
             level = LogLevel::Info;
-        } else if upper.contains("DEBUG") || upper.contains("[DBG]") {
+        } else if contains_ignore_case(&clean, "DEBUG") || contains_ignore_case(&clean, "[DBG]") {
             level = LogLevel::Debug;
-        } else if upper.contains("TRACE") {
+        } else if contains_ignore_case(&clean, "TRACE")
+            || contains_ignore_case(&clean, "[TRC]")
+            || contains_ignore_case(&clean, "VERBOSE")
+        {
             level = LogLevel::Trace;
         }
 
-        LogEvent::new("", level, source_id, clean.clone(), HashMap::new(), clean)
+        let timestamp = extract_timestamp_from_text(&clean);
+
+        LogEvent::new(
+            timestamp,
+            level,
+            source_id,
+            clean.clone(),
+            HashMap::new(),
+            clean,
+        )
     }
+}
+
+/// Helper tìm kiếm chuỗi không phân biệt hoa thường với 0 heap allocation
+#[inline]
+pub fn contains_ignore_case(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    if haystack.len() < needle.len() {
+        return false;
+    }
+    let haystack_bytes = haystack.as_bytes();
+    let needle_bytes = needle.as_bytes();
+    haystack_bytes
+        .windows(needle_bytes.len())
+        .any(|window| window.eq_ignore_ascii_case(needle_bytes))
+}
+
+/// Trích xuất timestamp cơ bản ở đầu dòng plain text (nếu có)
+pub fn extract_timestamp_from_text(s: &str) -> String {
+    let s_trimmed = s.trim_start();
+    if s_trimmed.is_empty() {
+        return String::new();
+    }
+
+    // 1. Kiểm tra định dạng có ngoặc vuông ở đầu: [2026-08-23T11:00:00Z] hoặc [2026-08-23 11:00:00]
+    if s_trimmed.starts_with('[') {
+        if let Some(close_bracket) = s_trimmed.find(']') {
+            let candidate = s_trimmed[1..close_bracket].trim();
+            if crate::filter::utils::parse_iso_to_secs(candidate).is_some() {
+                return candidate.to_string();
+            }
+        }
+    }
+
+    // 2. Kiểm tra phần đầu chuỗi: lấy token đầu tiên hoặc 2 token đầu (Date + Time)
+    let mut words = s_trimmed.split_whitespace();
+    if let Some(first) = words.next() {
+        // Tránh parse nhầm token level như [INFO] hay WARN:
+        if !first.starts_with('[') {
+            // Trường hợp ISO timestamp liền: 2026-08-23T11:00:00.123Z
+            if first.len() >= 10 && crate::filter::utils::parse_iso_to_secs(first).is_some() {
+                return first.to_string();
+            }
+
+            // Trường hợp Date Time cách nhau dấu cách: 2026-08-23 11:00:00
+            if let Some(second) = words.next() {
+                let combined_len = first.len() + 1 + second.len();
+                if combined_len <= 35 && s_trimmed.len() >= combined_len {
+                    let candidate = &s_trimmed[..combined_len];
+                    if crate::filter::utils::parse_iso_to_secs(candidate).is_some() {
+                        return candidate.to_string();
+                    }
+                }
+            }
+        }
+    }
+
+    String::new()
 }
 
 pub fn strip_ansi(s: &str) -> String {
@@ -406,5 +570,62 @@ mod tests {
         // Plain string without ANSI
         let plain = "Simple plain text";
         assert_eq!(strip_ansi(plain), "Simple plain text");
+    }
+
+    #[test]
+    fn test_normalize_unstructured_text_with_timestamp() {
+        // 1. Bracketed timestamp
+        let log1 = "[2026-08-23 14:30:00] [ERROR] Database deadlock detected";
+        let event1 = LogNormalizer::normalize(RawLogEntry {
+            source_id: "app".to_string(),
+            payload: RawPayload::Text(log1.to_string()),
+        });
+        assert_eq!(event1.level, LogLevel::Error);
+        assert_eq!(event1.timestamp, "2026-08-23 14:30:00");
+
+        // 2. ISO timestamp at start
+        let log2 = "2026-08-23T14:30:00Z INFO Server listening on port 8080";
+        let event2 = LogNormalizer::normalize(RawLogEntry {
+            source_id: "app".to_string(),
+            payload: RawPayload::Text(log2.to_string()),
+        });
+        assert_eq!(event2.level, LogLevel::Info);
+        assert_eq!(event2.timestamp, "2026-08-23T14:30:00Z");
+
+        // 3. Fast-check: text that starts with JSON bracket in RawPayload::Text
+        let json_text = "{\"level\":\"WARN\",\"message\":\"Low disk space\",\"free_mb\":50}";
+        let event3 = LogNormalizer::normalize(RawLogEntry {
+            source_id: "app".to_string(),
+            payload: RawPayload::Text(json_text.to_string()),
+        });
+        assert_eq!(event3.level, LogLevel::Warn);
+        assert_eq!(event3.message, "Low disk space");
+        assert_eq!(
+            event3.fields.get("free_mb").unwrap(),
+            &serde_json::json!(50)
+        );
+    }
+
+    #[test]
+    fn test_normalize_systemd_journald_json() {
+        let journald_payload = serde_json::json!({
+            "MESSAGE": "Started User Manager for UID 1000.",
+            "PRIORITY": "6",
+            "__REALTIME_TIMESTAMP": "1724140800000000",
+            "_SYSTEMD_UNIT": "user@1000.service"
+        });
+
+        let event = LogNormalizer::normalize(RawLogEntry {
+            source_id: "journald:system".to_string(),
+            payload: RawPayload::Json(journald_payload),
+        });
+
+        assert_eq!(event.level, LogLevel::Info); // Priority 6 is Info
+        assert_eq!(event.message, "Started User Manager for UID 1000.");
+        assert!(event.timestamp.contains("2024"));
+        assert_eq!(
+            event.fields.get("_SYSTEMD_UNIT").unwrap(),
+            &serde_json::json!("user@1000.service")
+        );
     }
 }
