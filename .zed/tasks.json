@@ -20,7 +20,15 @@
     "command": "cargo build --workspace"
   },
   {
-    "label": "Run app test",
+    "label": "Run app test (JSON gen_logs)",
     "command": "cargo run -p uwu-gui -- -r \"go run gen_logs.go -rate 50\""
   },
+  {
+    "label": "Run app test plain (ANSI gen_plain_logs)",
+    "command": "cargo run -p uwu-gui -- -r \"go run gen_plain_logs.go -rate 10 -stdout\""
+  },
+  {
+    "label": "Run app test JSON (Zap gen_plain_logs)",
+    "command": "cargo run -p uwu-gui -- -r \"go run gen_plain_logs.go -rate 10 -json\""
+  }
 ]
