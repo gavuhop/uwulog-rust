@@ -66,6 +66,16 @@ impl LogSource for JournaldSource {
             });
         }
 
+        // Drain stderr để tránh tràn pipe buffer gây treo journalctl
+        if let Some(stderr) = child.stderr.take() {
+            tokio::spawn(async move {
+                let mut reader = BufReader::new(stderr).lines();
+                while let Ok(Some(line)) = reader.next_line().await {
+                    log::warn!("journalctl stderr: {}", line);
+                }
+            });
+        }
+
         tokio::spawn(async move {
             let _ = child.wait().await;
         });

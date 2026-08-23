@@ -27,27 +27,68 @@ impl SystemEngine {
         let processed_clone = Arc::clone(&total_processed);
         let max_ts_clone = Arc::clone(&max_timestamp);
 
-        // Async task liên tục đọc RawLogEntry -> Normalizer -> LogEvent -> Storage
+        // Async task liên tục đọc RawLogEntry -> Normalizer -> LogEvent -> Storage theo batch
         tokio::spawn(async move {
-            while let Some(raw_entry) = raw_rx.recv().await {
-                let event = LogNormalizer::normalize(raw_entry);
+            let mut raw_batch = Vec::with_capacity(512);
 
-                if let Some(ts) = crate::filter::utils::parse_iso_to_secs(&event.timestamp) {
+            while let Some(first_entry) = raw_rx.recv().await {
+                raw_batch.push(first_entry);
+
+                // Drain non-blocking các phần tử sẵn có trong channel (tối đa 512)
+                while raw_batch.len() < 512 {
+                    match raw_rx.try_recv() {
+                        Ok(entry) => raw_batch.push(entry),
+                        Err(_) => break,
+                    }
+                }
+
+                // 1. Chuẩn hóa (Normalize) toàn bộ batch bên ngoài lock
+                let mut batch_max_ts = 0.0f64;
+                let mut event_batch = Vec::with_capacity(raw_batch.len());
+                for raw_entry in raw_batch.drain(..) {
+                    let event = LogNormalizer::normalize(raw_entry);
+                    if let Some(ts) = crate::filter::utils::parse_iso_to_secs(&event.timestamp) {
+                        if ts > batch_max_ts {
+                            batch_max_ts = ts;
+                        }
+                    }
+                    event_batch.push(event);
+                }
+
+                let batch_len = event_batch.len();
+
+                // 2. Cập nhật max_timestamp nếu có timestamp lớn hơn
+                if batch_max_ts > 0.0 {
                     if let Ok(mut max_ts) = max_ts_clone.write() {
-                        if ts > *max_ts {
-                            *max_ts = ts;
+                        if batch_max_ts > *max_ts {
+                            *max_ts = batch_max_ts;
                         }
                     }
                 }
 
+                // 3. Acquire write lock 1 lần duy nhất cho toàn bộ batch
                 if let Ok(mut evts) = events_clone.write() {
-                    evts.push_back(event);
-                    if evts.len() > max_capacity {
-                        evts.pop_front();
+                    let current_len = evts.len();
+                    let new_total = current_len + batch_len;
+                    if new_total > max_capacity {
+                        let overflow = new_total - max_capacity;
+                        if overflow >= current_len {
+                            evts.clear();
+                            let skip_in_batch = overflow - current_len;
+                            evts.extend(event_batch.into_iter().skip(skip_in_batch));
+                        } else {
+                            evts.drain(0..overflow);
+                            evts.extend(event_batch);
+                        }
+                    } else {
+                        evts.extend(event_batch);
                     }
-                }
 
-                processed_clone.fetch_add(1, Ordering::Relaxed);
+                    // Cập nhật atomic counter bên trong write lock để reader holding read lock luôn thấy trạng thái nhất quán
+                    processed_clone.fetch_add(batch_len as u64, Ordering::Release);
+                } else {
+                    processed_clone.fetch_add(batch_len as u64, Ordering::Relaxed);
+                }
             }
         });
 
@@ -114,16 +155,25 @@ impl SystemEngine {
                 }
             };
 
-            // Lọc trực tiếp trên evts - Bảo đảm thứ tự 100% trùng khớp và không bao giờ lệch index
-            let matching: Vec<LogEvent> = evts
+            // Index-only collect: Rayon chỉ thu thập index usize, tránh clone hàng trăm nghìn LogEvent
+            let matching_indices: Vec<usize> = evts
                 .par_iter()
-                .filter(|e| crate::filter::evaluator::eval_event(&ast, e, data_now))
-                .cloned()
+                .enumerate()
+                .filter_map(|(idx, e)| {
+                    if crate::filter::evaluator::eval_event(&ast, e, data_now) {
+                        Some(idx)
+                    } else {
+                        None
+                    }
+                })
                 .collect();
 
-            let matched_len = matching.len();
+            let matched_len = matching_indices.len();
             let skip_count = matched_len.saturating_sub(limit);
-            let events = matching.into_iter().skip(skip_count).collect();
+            let events = matching_indices[skip_count..]
+                .iter()
+                .filter_map(|&idx| evts.get(idx).cloned())
+                .collect();
 
             (matched_len, events)
         } else {
@@ -133,14 +183,14 @@ impl SystemEngine {
 
     pub fn filter_incremental(&self, query: &str, last_processed: u64) -> (usize, Vec<LogEvent>) {
         let trimmed = query.trim();
-        let current_total = self.total_processed.load(Ordering::Relaxed);
-        if current_total <= last_processed {
-            return (0, Vec::new());
-        }
-
-        let new_count = (current_total - last_processed) as usize;
 
         if let Ok(evts) = self.events.read() {
+            let current_total = self.total_processed.load(Ordering::Acquire);
+            if current_total <= last_processed {
+                return (0, Vec::new());
+            }
+
+            let new_count = (current_total - last_processed) as usize;
             let total_in_buffer = evts.len();
             let take_count = new_count.min(total_in_buffer);
             let start_idx = total_in_buffer.saturating_sub(take_count);

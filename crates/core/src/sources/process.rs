@@ -49,19 +49,14 @@ impl LogSource for ProcessSource {
 
         // Trên Windows: Gán Child Process vào Windows JobObject để OS tự động Kill cả Cây Tiến Trình (Process Tree) khi uwu-log thoát
         #[cfg(target_os = "windows")]
-        setup_windows_job_object(&child);
+        let job_guard = setup_windows_job_object(&child);
 
         let child_pid = child.id();
         let source_id_out = self.source_id.clone();
         let source_id_err = format!("{}:stderr", self.source_id);
 
-        // Sử dụng WeakSender cho task đọc stdout/stderr để không làm tăng strong reference count của tx.
-        // Nhờ đó, khi tx chính ở ngoài bị drop, tx.closed() ở task giám sát bên dưới sẽ trigger TỨC THÌ.
-        let weak_tx_out = tx.downgrade();
-        let weak_tx_err = tx.downgrade();
-
-        // Task đọc stdout
-        if let Some(stdout) = child.stdout.take() {
+        let tx_out = tx.clone();
+        let stdout_handle = if let Some(stdout) = child.stdout.take() {
             tokio::spawn(async move {
                 let mut reader = BufReader::new(stdout).lines();
                 while let Ok(Some(line)) = reader.next_line().await {
@@ -69,19 +64,17 @@ impl LogSource for ProcessSource {
                         source_id: source_id_out.clone(),
                         payload: RawPayload::Text(line),
                     };
-                    if let Some(tx_out) = weak_tx_out.upgrade() {
-                        if tx_out.send(entry).await.is_err() {
-                            break;
-                        }
-                    } else {
+                    if tx_out.send(entry).await.is_err() {
                         break;
                     }
                 }
-            });
-        }
+            })
+        } else {
+            tokio::spawn(async {})
+        };
 
-        // Task đọc stderr
-        if let Some(stderr) = child.stderr.take() {
+        let tx_err = tx.clone();
+        let stderr_handle = if let Some(stderr) = child.stderr.take() {
             tokio::spawn(async move {
                 let mut reader = BufReader::new(stderr).lines();
                 while let Ok(Some(line)) = reader.next_line().await {
@@ -94,21 +87,27 @@ impl LogSource for ProcessSource {
                         source_id: source_id_err.clone(),
                         payload: RawPayload::Text(formatted_err),
                     };
-                    if let Some(tx_err) = weak_tx_err.upgrade() {
-                        if tx_err.send(entry).await.is_err() {
-                            break;
-                        }
-                    } else {
+                    if tx_err.send(entry).await.is_err() {
                         break;
                     }
                 }
-            });
-        }
+            })
+        } else {
+            tokio::spawn(async {})
+        };
 
-        // Task giám sát lifecycle: khi channel đóng (Stop/Restart hoăc thoát app), diệt TỨC THÌ Cây Tiến Trình (Process Tree)
+        // Task giám sát lifecycle: khi channel đóng (Stop/Restart hoặc thoát app), diệt TỨC THÌ Cây Tiến Trình (Process Tree).
+        // Khi tiến trình kết thúc tự nhiên, đợi stdout/stderr drain hết pipe trước khi shutdown.
         tokio::spawn(async move {
+            #[cfg(target_os = "windows")]
+            let _job_guard = job_guard;
+
             tokio::select! {
-                _ = child.wait() => {},
+                _ = async {
+                    let _ = child.wait().await;
+                    let _ = stdout_handle.await;
+                    let _ = stderr_handle.await;
+                } => {},
                 _ = tx.closed() => {
                     #[cfg(target_os = "windows")]
                     if let Some(pid) = child_pid {
@@ -129,7 +128,27 @@ impl LogSource for ProcessSource {
 }
 
 #[cfg(target_os = "windows")]
-fn setup_windows_job_object(child: &tokio::process::Child) {
+pub struct AutoJobHandle(pub windows_sys::Win32::Foundation::HANDLE);
+
+#[cfg(target_os = "windows")]
+unsafe impl Send for AutoJobHandle {}
+
+#[cfg(target_os = "windows")]
+unsafe impl Sync for AutoJobHandle {}
+
+#[cfg(target_os = "windows")]
+impl Drop for AutoJobHandle {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            unsafe {
+                windows_sys::Win32::Foundation::CloseHandle(self.0);
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn setup_windows_job_object(child: &tokio::process::Child) -> Option<AutoJobHandle> {
     use windows_sys::Win32::Foundation::HANDLE;
     use windows_sys::Win32::System::JobObjects::*;
 
@@ -147,10 +166,13 @@ fn setup_windows_job_object(child: &tokio::process::Child) {
 
             if let Some(raw_handle) = child.raw_handle() {
                 AssignProcessToJobObject(job, raw_handle as HANDLE);
-                let _ = job;
+                return Some(AutoJobHandle(job));
+            } else {
+                windows_sys::Win32::Foundation::CloseHandle(job);
             }
         }
     }
+    None
 }
 
 #[cfg(test)]

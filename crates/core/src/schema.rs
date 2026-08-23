@@ -5,25 +5,25 @@ use uuid::Uuid;
 /// Cấp độ log chuẩn hóa
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum LogLevel {
+    Unknown,
     Trace,
     Debug,
     Info,
     Warn,
     Error,
     Fatal,
-    Unknown,
 }
 
 impl std::fmt::Display for LogLevel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            LogLevel::Unknown => write!(f, "UNKNOWN"),
             LogLevel::Trace => write!(f, "TRACE"),
             LogLevel::Debug => write!(f, "DEBUG"),
             LogLevel::Info => write!(f, "INFO"),
             LogLevel::Warn => write!(f, "WARN"),
             LogLevel::Error => write!(f, "ERROR"),
             LogLevel::Fatal => write!(f, "FATAL"),
-            LogLevel::Unknown => write!(f, "UNKNOWN"),
         }
     }
 }
@@ -167,6 +167,7 @@ mod tests {
 
     #[test]
     fn test_log_level_ordering() {
+        assert!(LogLevel::Unknown < LogLevel::Trace);
         assert!(LogLevel::Trace < LogLevel::Debug);
         assert!(LogLevel::Debug < LogLevel::Info);
         assert!(LogLevel::Info < LogLevel::Warn);

@@ -27,19 +27,18 @@ impl LoomRingBufferModel {
             if evts.len() > self.capacity {
                 evts.pop_front();
             }
+            self.total_processed.fetch_add(1, Ordering::SeqCst);
         }
-        self.total_processed.fetch_add(1, Ordering::SeqCst);
     }
 
     fn read_incremental(&self, last_processed: u64) -> Vec<u64> {
-        let current_total = self.total_processed.load(Ordering::SeqCst);
-        if current_total <= last_processed {
-            return Vec::new();
-        }
-
-        let new_count = (current_total - last_processed) as usize;
-
         if let Ok(evts) = self.events.read() {
+            let current_total = self.total_processed.load(Ordering::SeqCst);
+            if current_total <= last_processed {
+                return Vec::new();
+            }
+
+            let new_count = (current_total - last_processed) as usize;
             let total_in_buffer = evts.len();
             let take_count = new_count.min(total_in_buffer);
             let start_idx = total_in_buffer.saturating_sub(take_count);
