@@ -30,5 +30,9 @@
   {
     "label": "Run app test JSON (Zap gen_plain_logs)",
     "command": "cargo run -p uwu-gui -- -r \"go run gen_plain_logs.go -rate 10 -json\""
+  },
+  {
+    "label": "Build Release",
+    "command": "cargo run --release --bin uwu-gui"
   }
 ]

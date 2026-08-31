@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# uwulog - Universal CLI launcher for Uwu Log Viewer (Windows & WSL)
+# ==============================================================================
+
+set -e
+
+if [ -n "$WSL_DISTRO_NAME" ]; then
+    DISTRO="$WSL_DISTRO_NAME"
+    CURRENT_DIR="$PWD"
+    
+    # 1. Tìm kiếm binary uwu-gui.exe trên Windows
+    UWU_EXE=""
+    if command -v uwu-gui.exe >/dev/null 2>&1; then
+        UWU_EXE="$(command -v uwu-gui.exe)"
+    fi
+
+    if [ -z "$UWU_EXE" ]; then
+        WIN_APPDATA=$(cmd.exe /c "echo %LOCALAPPDATA%" 2>/dev/null | tr -d '\r')
+        if [ -n "$WIN_APPDATA" ]; then
+            UNIX_APPDATA=$(wslpath -u "$WIN_APPDATA" 2>/dev/null || true)
+            if [ -f "$UNIX_APPDATA/Programs/uwulog/bin/uwu-gui.exe" ]; then
+                UWU_EXE="$UNIX_APPDATA/Programs/uwulog/bin/uwu-gui.exe"
+            fi
+        fi
+    fi
+
+    if [ -z "$UWU_EXE" ]; then
+        if [ -f "/mnt/d/Learn/Go/uwulog-rust/target/release/uwu-gui.exe" ]; then
+            UWU_EXE="/mnt/d/Learn/Go/uwulog-rust/target/release/uwu-gui.exe"
+        else
+            UWU_EXE="uwu-gui.exe"
+        fi
+    fi
+
+    # 2. Xử lý các tham số (luôn truyền --wsl-dir để chạy lệnh natively trong Linux workdir)
+    ARGS=("--wsl-distro" "$DISTRO" "--wsl-dir" "$CURRENT_DIR")
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -f|--file)
+                if [ -n "$2" ]; then
+                    if [[ "$2" = /* ]]; then
+                        ARGS+=("--wsl-file" "$2")
+                    else
+                        ARGS+=("--wsl-file" "$CURRENT_DIR/$2")
+                    fi
+                    shift 2
+                else
+                    shift
+                fi
+                ;;
+            -r|--run|-c|--cmd)
+                if [ -n "$2" ]; then
+                    ARGS+=("--wsl-cmd" "$2")
+                    shift 2
+                else
+                    shift
+                fi
+                ;;
+            -j|--journald)
+                if [ -n "$2" ] && [[ "$2" != -* ]]; then
+                    ARGS+=("--wsl-journald" "$2")
+                    shift 2
+                else
+                    ARGS+=("--wsl-journald")
+                    shift 1
+                fi
+                ;;
+            -n|--limit|-cap|--capacity)
+                ARGS+=("$1" "$2")
+                shift 2
+                ;;
+            -h|--help)
+                echo "🚀 Uwu Log Viewer - WSL Remote Interop CLI"
+                echo ""
+                echo "Cách sử dụng:"
+                echo "  uwulog                         Mở giao diện GUI"
+                echo "  uwulog <file>                  Mở và theo dõi file log trong WSL"
+                echo "  uwulog -f <file>               Mở file log Linux chỉ định"
+                echo "  uwulog -r \"<command>\"          Stream log từ lệnh Linux"
+                echo "  uwulog -j [unit]               Stream systemd journald log"
+                exit 0
+                ;;
+            *)
+                if [ -e "$1" ]; then
+                    if [[ "$1" = /* ]]; then
+                        ARGS+=("--wsl-file" "$1")
+                    else
+                        ARGS+=("--wsl-file" "$CURRENT_DIR/$1")
+                    fi
+                else
+                    ARGS+=("$1")
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    # 3. Chạy GUI dưới nền
+    nohup "$UWU_EXE" "${ARGS[@]}" >/dev/null 2>&1 &
+    exit 0
+else
+    uwu-gui.exe "$@" &
+fi

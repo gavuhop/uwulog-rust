@@ -111,7 +111,7 @@ impl LogEvent {
 }
 
 /// RawPayload chứa dữ liệu chưa chuẩn hóa nhận từ Nguồn (Sources)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RawPayload {
     Text(String),
     Json(serde_json::Value),
@@ -119,7 +119,7 @@ pub enum RawPayload {
 }
 
 /// RawLogEntry đại diện cho dữ liệu thô gửi qua async channel
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RawLogEntry {
     pub source_id: String,
     pub payload: RawPayload,

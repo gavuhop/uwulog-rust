@@ -73,6 +73,38 @@ async fn main() -> Result<()> {
                 added_custom_source = true;
                 i += 1;
             }
+        } else if arg == "-j" || arg == "--journald" {
+            let unit = if i + 1 < args.len() && !args[i + 1].starts_with('-') {
+                let u = args[i + 1].clone();
+                i += 1;
+                Some(u)
+            } else {
+                None
+            };
+            let _ = engine
+                .add_source(Box::new(uwu_core::JournaldSource::new(unit)))
+                .await;
+            added_custom_source = true;
+        } else if arg == "--wsl-cmd" && i + 1 < args.len() {
+            let cmd = args[i + 1].clone();
+            let _ = engine
+                .add_source(Box::new(uwu_core::WslSource::new(
+                    "Ubuntu",
+                    uwu_core::WslTargetMode::Command(cmd),
+                )))
+                .await;
+            added_custom_source = true;
+            i += 1;
+        } else if arg == "--wsl-file" && i + 1 < args.len() {
+            let file = args[i + 1].clone();
+            let _ = engine
+                .add_source(Box::new(uwu_core::WslSource::new(
+                    "Ubuntu",
+                    uwu_core::WslTargetMode::File(file),
+                )))
+                .await;
+            added_custom_source = true;
+            i += 1;
         } else if !arg.starts_with('-')
             && i > 0
             && args[i - 1] != "-n"

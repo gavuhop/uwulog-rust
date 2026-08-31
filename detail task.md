@@ -1,138 +1,99 @@
-# Kế Hoạch Chi Tiết Các Nhiệm Vụ Cần Thực Hiện (`detail task.md`)
+# Kế Hoạch Chi Tiết Phát Triển `uwu-log` (Zed-Style Decoupled Architecture)
 
-> **Ghi chú về định hướng thiết kế:**
-> Một số cơ chế hiện tại đã được thiết kế có chủ đích để phục vụ trải nghiệm người dùng đặc thù:
-> - **Data-driven `now` (`max_timestamp`):** Tính toán mốc thời gian tương đối dựa trên log timestamp lớn nhất thay vì đồng hồ máy tính (cho phép query `now..10m` chính xác trên cả log offline/replay).
-> - **`Singleline TextEdit` trên từng Table Cell:** Cho phép người dùng bôi đen từng cụm từ để click chuột phải chọn *Filter by selection* / *Highlight term*.
-> - **Frozen Snapshot khi mở Unfiltered Context (`target_id`):** Đóng băng khung nhìn quanh log lỗi mục tiêu để người dùng phân tích ngữ cảnh mà không bị log mới làm trôi màn hình.
-> - **`WeakSender` + Windows Job Object trong `ProcessSource`:** Đảm bảo khi GUI/TUI đóng channel, toàn bộ cây tiến trình con (process tree) bị hủy tức thì qua `taskkill`.
->
-> Dưới đây là danh sách các nhiệm vụ cần tối ưu hóa, sửa lỗi và hoàn thiện tính năng dựa trên đánh giá kiến trúc toàn diện.
+Tài liệu chi tiết hóa kế hoạch tái cấu trúc và phát triển dự án `uwu-log` theo mô hình **Client-Agent Decoupled Remoting** (học hỏi từ kiến trúc của **Zed Editor**: `remote_server` + `remote_connection` + `remote`), mang lại khả năng stream log từ xa mạnh mẽ cho **WSL**, **Linux Servers (SSH)** và **Containers**.
 
 ---
 
-## 1. Core Engine & Ingestion Pipeline (`crates/core`)
+## 📋 MỤC LỤC CÁC GIAI ĐOẠN
 
-- [x] **1.1. Batching Ingestion & Giảm Lock Contention trong `SystemEngine`**
-  - *Hiện trạng:* Mỗi log đơn lẻ đều tranh chấp 2 `RwLock::write` (`max_timestamp` và `events`), gây nghẽn channel khi UI đang thực hiện Rayon search.
-  - *Giải pháp:* Đọc batch (100 - 1,000 log) từ channel, normalize bên ngoài lock, sau đó acquire `events.write()` 1 lần cho cả batch.
-  - *File:* [`crates/core/src/engine.rs`](file:///D:/Learn/Go/uwulog-rust/crates/core/src/engine.rs)
-
-- [x] **1.2. Tối ưu bộ nhớ `SystemEngine::search_with_count` (Index-only Collect)**
-  - *Hiện trạng:* Rayon `.cloned()` toàn bộ hàng trăm nghìn `LogEvent` khớp bộ lọc rồi mới `.skip(skip_count)` để lấy `limit` log cho UI.
-  - *Giải pháp:* Rayon chỉ đếm tổng số lượng và thu thập `Vec<usize>` (index), sau đó chỉ clone đúng số lượng `limit` phần tử cần thiết.
-  - *File:* [`crates/core/src/engine.rs`](file:///D:/Learn/Go/uwulog-rust/crates/core/src/engine.rs)
-
-- [x] **1.3. Sửa Race Condition trong `filter_incremental`**
-  - *Hiện trạng:* `total_processed` được đọc trước khi lấy read lock `events`, khiến các log mới nạp ở giữa bị bỏ qua và mất trên UI.
-  - *Giải pháp:* Đọc sequence ID hoặc đồng bộ snapshot counter bên trong read lock.
-  - *File:* [`crates/core/src/engine.rs`](file:///D:/Learn/Go/uwulog-rust/crates/core/src/engine.rs)
-
-- [x] **1.4. Chuẩn hóa thứ tự enum `LogLevel`**
-  - *Hiện trạng:* `LogLevel::Unknown` nằm cuối enum nên `Unknown > Fatal > Error` trong phép so sánh `Ord`.
-  - *Giải pháp:* Đặt `Unknown` lên vị trí đầu tiên (index = 0) hoặc implement `Ord`/`PartialOrd` thủ công để phép so sánh `level >= warn` hoạt động chuẩn xác.
-  - *File:* [`crates/core/src/schema.rs`](file:///D:/Learn/Go/uwulog-rust/crates/core/src/schema.rs)
-
-- [x] **1.5. Tối ưu `LogNormalizer` & Fast-check JSON**
-  - *Hiện trạng:* Gọi `serde_json::from_str` trên mọi plain text log gây lãng phí CPU; double serialization trên `RawPayload::Json`.
-  - *Giải pháp:* Fast-check ký tự đầu `{` / `[` trước khi parse JSON; tái sử dụng `serde_json::Value` mà không convert qua String; trích xuất timestamp cơ bản cho plain text.
-  - *File:* [`crates/core/src/normalizer.rs`](file:///D:/Learn/Go/uwulog-rust/crates/core/src/normalizer.rs)
-
-- [x] **1.6. Cải tiến `FileSource` & Log Rotation Support**
-  - *Hiện trạng:* Khi file log bị rotate hoặc truncate (`len < offset`), tailer bị kẹt ở EOF; watcher thư mục cha gây spurious wakeups.
-  - *Giải pháp:* Kiểm tra kích thước file để `seek(SeekFrom::Start(0))` khi bị truncate; lọc `event.paths` khớp chính xác file cần theo dõi.
-  - *File:* [`crates/core/src/sources/file_tailer.rs`](file:///D:/Learn/Go/uwulog-rust/crates/core/src/sources/file_tailer.rs)
-
-- [x] **1.7. Hoàn thiện Flush Buffer trong `ProcessSource` & Tránh rò rỉ JobObject**
-  - *Hiện trạng:* `weak_tx` có thể bị drop trước khi stdout reader đọc hết các dòng cuối cùng khi tiến trình kết thúc tự nhiên; rò rỉ `JobObject` handle trên Windows.
-  - *Giải pháp:* Đảm bảo stdout/stderr drain hết pipe trước khi shutdown; đóng gói `JobObject` vào RAII struct quản lý vòng đời.
-  - *File:* [`crates/core/src/sources/process.rs`](file:///D:/Learn/Go/uwulog-rust/crates/core/src/sources/process.rs)
-
-- [x] **1.8. Cải tiến Windows Event Source & Journald Source**
-  - *Hiện trạng:* `WinEventSource` dùng `EvtQuery` tĩnh không stream được log mới; `JournaldSource` pipe stderr có nguy cơ deadlock và bỏ sót trường `MESSAGE`/`PRIORITY`.
-  - *Giải pháp:* Nâng cấp subscription cho WinEvent; xử lý async stderr và map trường chữ hoa của systemd journal.
-  - *File:* [`crates/core/src/sources/windows_event.rs`](file:///D:/Learn/Go/uwulog-rust/crates/core/src/sources/windows_event.rs), [`crates/core/src/sources/journald.rs`](file:///D:/Learn/Go/uwulog-rust/crates/core/src/sources/journald.rs)
+- [Giai Đoạn 1: Xây Dựng Headless Remote Agent (`crates/agent`)](#1-giai-đoạn-1-xây-dựng-headless-remote-agent-cratesagent)
+- [Giai Đoạn 2: Xây Dựng Driver Nguồn WSL Trong `crates/core` (`WslSource`)](#2-giai-đoạn-2-xây-dựng-driver-nguồn-wsl-trong-cratescore-wslsource)
+- [Giai Đoạn 3: Nâng Cấp Giao Diện Desktop GUI (`crates/gui`)](#3-giai-đoạn-3-nâng-cấp-giao-diện-desktop-gui-cratesgui)
+- [Giai Đoạn 4: Chuẩn Hóa WSL CLI Interop & Script Cài Đặt](#4-giai-đoạn-4-chuẩn-hóa-wsl-cli-interop--script-cài-đặt)
+- [Giai Đoạn 5: Hoàn Thiện Các Tính Năng Roadmap (UI/UX & Performance)](#5-giai-đoạn-5-hoàn-thiện-các-tính-năng-roadmap-uiux--performance)
 
 ---
 
-## 2. Filter Engine & Query Evaluator (`crates/core/src/filter`)
+## 1. GIAI ĐOẠN 1: XÂY DỰNG HEADLESS REMOTE AGENT (`crates/agent`)
 
-- [x] **2.1. Zero-Allocation String Matching trong Rayon Parallel Loop**
-  - *Hiện trạng:* Gọi `.to_lowercase()` cấp phát hàng triệu `String` heap cho mỗi từ khóa và mỗi dòng log trong `eval_event`.
-  - *Giải pháp:* Viết hàm helper `contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool` kiểm tra trực tiếp byte không cấp phát bộ nhớ; chuyển `get_event_field_str` sang `Option<Cow<'a, str>>`.
-  - *File:* [`crates/core/src/filter/evaluator.rs`](file:///D:/Learn/Go/uwulog-rust/crates/core/src/filter/evaluator.rs)
+> **Mục tiêu**: Tạo binary `uwu-agent` siêu nhẹ (không GUI, pure Rust), chạy trực tiếp trong Linux / WSL / Remote Server để thu thập log tại nguồn và stream về client qua stdio pipe hoặc socket theo định dạng NDJSON.
 
-- [x] **2.2. Loại bỏ Hằng Số Epsilon `0.0001` Tùy Tiện**
-  - *Hiện trạng:* Epsilon `0.0001` làm sai lệch so sánh số thực nhỏ (nuốt mất latency sub-millisecond `< 0.1ms`).
-  - *Giải pháp:* Sử dụng so sánh số thực chuẩn IEEE-754.
-  - *File:* [`crates/core/src/filter/evaluator.rs`](file:///D:/Learn/Go/uwulog-rust/crates/core/src/filter/evaluator.rs)
-
-- [x] **2.3. Hoàn thiện Tokenizer: Phân biệt URL, IPv6 và Dấu `-` trong chuỗi ngoặc kép**
-  - *Hiện trạng:* Chuỗi `"-500ms"` bị hiểu nhầm thành `NOT "500ms"`; URL `https://api.com` bị tách nhầm thành field `https`.
-  - *Giải pháp:* Giữ nguyên dấu `-` bên trong ngoặc kép; chỉ nhận diện `field:value` khi `field` là identifier hợp lệ và không chứa `//`.
-  - *File:* [`crates/core/src/filter/parser.rs`](file:///D:/Learn/Go/uwulog-rust/crates/core/src/filter/parser.rs)
-
-- [x] **2.4. Hỗ trợ cú pháp `now-5m`, `now-1h` & Tối ưu Datetime Parsing**
-  - *Hiện trạng:* Không parse được tiền tố `now-`; thử 16 định dạng datetime trong hot-path Rayon.
-  - *Giải pháp:* Parse tường minh `now-` / `now+`; trích xuất và cache sẵn timestamp dạng giây `f64` trong `LogEvent`.
-  - *File:* [`crates/core/src/filter/utils.rs`](file:///D:/Learn/Go/uwulog-rust/crates/core/src/filter/utils.rs)
+- [x] Tạo crate `crates/agent` trong Cargo workspace (`uwu-agent`).
+- [x] Xử lý các cờ CLI chính cho agent:
+  - `--file <path>`: Tail file log cục bộ bằng cơ chế inotify / seek polling.
+  - `--cmd "<command>"`: Khởi chạy command trong môi trường Linux và stream stdout/stderr.
+  - `--journald [unit]`: Stream log từ systemd journalctl theo định dạng JSON.
+- [x] Cơ chế xuất dữ liệu NDJSON (Newline-Delimited JSON) qua stdout: Mỗi log entry được serialize thành 1 dòng JSON chứa `source_id` và `payload`.
+- [x] Quản lý lifecycle & tín hiệu: Bắt `SIGINT` / `SIGTERM` để tự động ngắt các tiến trình con sạch sẽ.
 
 ---
 
-## 3. Desktop GUI (`crates/gui`)
+## 2. GIAI ĐOẠN 2: XÂY DỰNG DRIVER NGUỒN WSL TRONG `crates/core` (`WslSource`)
 
-- [x] **3.1. Sửa Đồng Bộ `last_processed_count` cho Tab Unfiltered Live**
-  - *Hiện trạng:* `last_processed_count` bị ghi đè ở nhánh Main Stream khiến nhánh Raw Stream luôn nhận `new_count = 0`.
-  - *Giải pháp:* Dùng biến `prev_processed` chung cho cả hai nhánh trong `app.rs:tick()`.
-  - *File:* [`crates/gui/src/app.rs`](file:///D:/Learn/Go/uwulog-rust/crates/gui/src/app.rs)
+> **Mục tiêu**: Cung cấp driver `WslSource` chuẩn hóa triển khai trait `LogSource` trong `uwu-core`.
 
-- [x] **3.2. Dời `filter_incremental` của Log Counter ra khỏi Render Loop**
-  - *Hiện trạng:* `render_log_counter` gọi filter và clone hàng nghìn log mỗi frame khi đang pause.
-  - *Giải pháp:* Tính toán `paused_new_matched_count` trong `tick()` khi có log mới; UI chỉ việc đọc biến có sẵn.
-  - *File:* [`crates/gui/src/ui/header.rs`](file:///D:/Learn/Go/uwulog-rust/crates/gui/src/ui/header.rs), [`crates/gui/src/app.rs`](file:///D:/Learn/Go/uwulog-rust/crates/gui/src/app.rs)
-
-- [x] **3.3. Cache Key / Field Discovery (Tránh O(N*M) mỗi frame)**
-  - *Hiện trạng:* `sync_discovered_keys` và `get_available_log_fields` quét toàn bộ 50,000 log mỗi frame/mỗi phím gõ.
-  - *Giải pháp:* Duy trì cache `known_keys: HashSet<String>` và `known_fields: BTreeMap<String, FieldType>`, chỉ cập nhật khi nạp log mới.
-  - *File:* [`crates/gui/src/app.rs`](file:///D:/Learn/Go/uwulog-rust/crates/gui/src/app.rs), [`crates/gui/src/ui/columns_modal.rs`](file:///D:/Learn/Go/uwulog-rust/crates/gui/src/ui/columns_modal.rs)
-
-- [x] **3.4. Sửa Rung Giật (Jitter) khi Kéo Thả Cột Header**
-  - *Hiện trạng:* Tráo đổi cột ngay khi di chuột qua mép cột bên cạnh gây đảo vị trí liên tục giữa các frame.
-  - *Giải pháp:* Chỉ thực hiện swap vị trí cột khi người dùng thả chuột (`drop`).
-  - *File:* [`crates/gui/src/ui/table/header.rs`](file:///D:/Learn/Go/uwulog-rust/crates/gui/src/ui/table/header.rs), [`crates/gui/src/ui/table/mod.rs`](file:///D:/Learn/Go/uwulog-rust/crates/gui/src/ui/table/mod.rs)
-
-- [x] **3.5. Xử lý Click-Outside cho Autocomplete & Search History Popup**
-  - *Hiện trạng:* Popup nổi lơ lửng đè lên bảng khi click ra ngoài mà không tự đóng.
-  - *Giải pháp:* Kiểm tra pointer click bên ngoài vùng popup để tự động đóng dropdown.
-  - *File:* [`crates/gui/src/ui/autocomplete.rs`](file:///D:/Learn/Go/uwulog-rust/crates/gui/src/ui/autocomplete.rs), [`crates/gui/src/ui/history.rs`](file:///D:/Learn/Go/uwulog-rust/crates/gui/src/ui/history.rs)
-
-- [x] **3.6. ANSI-Aware Matcher & Tô Màu ANSI 500 Dòng Hiển Thị**
-  - *Yêu cầu:* Phân tích màu ANSI cho tối đa 500 dòng hiển thị trên bảng; loại bỏ mã ANSI khi copy/filter.
-  - *File:* [`crates/gui/src/ui/table/cell.rs`](file:///D:/Learn/Go/uwulog-rust/crates/gui/src/ui/table/cell.rs), [`crates/gui/src/ui/theme.rs`](file:///D:/Learn/Go/uwulog-rust/crates/gui/src/ui/theme.rs)
-
-- [x] **3.7. Dọn dẹp RAM khi đóng Tab Unfiltered bằng phím Escape**
-  - *Hiện trạng:* Ấn Escape chỉ chuyển tab mà không gọi `close_unfiltered_stream()`, làm 500 log vẫn kẹt trong RAM.
-  - *File:* [`crates/gui/src/ui/mod.rs`](file:///D:/Learn/Go/uwulog-rust/crates/gui/src/ui/mod.rs)
+- [x] Tạo module [`crates/core/src/sources/wsl.rs`](file:///D:/Learn/Go/uwulog-rust/crates/core/src/sources/wsl.rs):
+  - Định nghĩa `WslSource` với cấu hình: `distro`, `working_dir`, `target_mode` (Command, File, Journald).
+  - Tự động spawn tiến trình `wsl.exe -d <distro> -- <command_or_agent>`.
+  - Đọc bất đồng bộ stream stdout qua `BufReader` và parse NDJSON vào `RawLogEntry`.
+  - Quản lý lifecycle: Đảm bảo khi ngắt kết nối hoặc thoát ứng dụng thì process con trong WSL bị hủy triệt để.
+- [x] Export `WslSource` trong [`crates/core/src/sources/mod.rs`](file:///D:/Learn/Go/uwulog-rust/crates/core/src/sources/mod.rs) và [`crates/core/src/lib.rs`](file:///D:/Learn/Go/uwulog-rust/crates/core/src/lib.rs).
 
 ---
 
-## 4. Terminal TUI (`crates/tui`)
+## 3. GIAI ĐOẠN 3: NÂNG CẤP GIAO DIỆN DESKTOP GUI (`crates/gui`)
 
-- [ ] **4.1. Đăng ký Panic Hook Khôi Phục Terminal Raw Mode**
-  - *Hiện trạng:* Nếu ứng dụng panic/crash, terminal bị kẹt ở Raw Mode và Alternate Screen (mất echo, kẹt phím).
-  - *Giải pháp:* Đăng ký `std::panic::set_hook` gọi `disable_raw_mode` và `LeaveAlternateScreen`.
-  - *File:* [`crates/tui/src/main.rs`](file:///D:/Learn/Go/uwulog-rust/crates/tui/src/main.rs)
+> **Mục tiêu**: Tích hợp nguồn WSL vào GUI một cách tự nhiên và trực quan như các ứng dụng Desktop chuyên nghiệp.
 
-- [ ] **4.2. Xử lý Giữ Phím (`KeyEventKind::Repeat`) & Bắt sự kiện `Event::Resize`**
-  - *Hiện trạng:* Giữ phím cuộn/xóa trên Windows bị nuốt phím; resize cửa sổ không kích hoạt redraw.
-  - *Giải pháp:* Chấp nhận cả `KeyEventKind::Repeat`; đặt `should_redraw = true` khi nhận `Event::Resize`.
-  - *File:* [`crates/tui/src/main.rs`](file:///D:/Learn/Go/uwulog-rust/crates/tui/src/main.rs)
+- [x] Mở rộng `SourceType` trong [`crates/gui/src/app.rs`](file:///D:/Learn/Go/uwulog-rust/crates/gui/src/app.rs):
+  - `SourceType::Process` (Local Windows process)
+  - `SourceType::File` (Local Windows file)
+  - `SourceType::WinEvent` (Windows Event Log)
+  - `SourceType::Wsl` (WSL Remote Agent/Process)
+- [x] Cập nhật modal cấu hình [`crates/gui/src/ui/launch_modal.rs`](file:///D:/Learn/Go/uwulog-rust/crates/gui/src/ui/launch_modal.rs):
+  - Thêm lựa chọn **🐧 WSL (Windows Subsystem for Linux)**.
+  - Cho phép chọn Distro name (mặc định `Ubuntu`).
+  - Cho phép chọn loại nguồn trong WSL: 🚀 Command, 📁 Linux File, 📜 Systemd Journald.
+- [x] Cập nhật Header Bar [`crates/gui/src/ui/header.rs`](file:///D:/Learn/Go/uwulog-rust/crates/gui/src/ui/header.rs):
+  - Hiển thị badge trạng thái `🐧 WSL (<Distro>)` khi đang stream log từ WSL.
 
-- [ ] **4.3. Sửa Lỗi Parse CLI Args `-r "command args"`**
-  - *Hiện trạng:* Lệnh `-r "go run gen_logs.go" -n 1000` bị parse nhầm thành tên binary `"go run gen_logs.go"` khiến source chết im lặng.
-  - *Giải pháp:* Sử dụng `shlex` hoặc tách lệnh tôn trọng dấu ngoặc kép.
-  - *File:* [`crates/tui/src/main.rs`](file:///D:/Learn/Go/uwulog-rust/crates/tui/src/main.rs)
+---
 
-- [ ] **4.4. Hỗ trợ Thoát Bằng `Ctrl+C` & Hiển Thị Con Trỏ Trong Ô Tìm Kiếm**
-  - *Hiện trạng:* `Ctrl+C` không thoát; ô nhập liệu không hiển thị con trỏ nhấp nháy.
-  - *File:* [`crates/tui/src/app.rs`](file:///D:/Learn/Go/uwulog-rust/crates/tui/src/app.rs), [`crates/tui/src/ui/input.rs`](file:///D:/Learn/Go/uwulog-rust/crates/tui/src/ui/input.rs)
+## 4. GIAI ĐOẠN 4: CHUẨN HÓA WSL CLI INTEROP
+
+> **Mục tiêu**: Đảm bảo lệnh `uwulog` trong terminal WSL hoạt động hoàn hảo và gọi đúng các cờ cấu hình của Windows GUI.
+
+- [x] Cập nhật [`scripts/uwulog`](file:///D:/Learn/Go/uwulog-rust/scripts/uwulog) để hỗ trợ các tham số cấu trúc mới.
+
+---
+
+## 5. GIAI ĐOẠN 5: WORKSPACE PERSISTENCE & AUTOMATED INSTALLER
+
+> **Mục tiêu**: Lưu trữ cấu hình dự án dạng IDE trong Settings Modal và cung cấp bộ cài đặt tự động cho Windows & WSL.
+
+- [x] Tạo module [`crates/core/src/workspace/mod.rs`](file:///D:/Learn/Go/uwulog-rust/crates/core/src/workspace/mod.rs) (`Workspace`, `WorkspaceLocation`, `WorkspaceStore`).
+- [x] Tích hợp mục **📁 Project & Workspace** vào [`crates/gui/src/ui/launch_modal.rs`](file:///D:/Learn/Go/uwulog-rust/crates/gui/src/ui/launch_modal.rs).
+- [x] Hiển thị badge Project Name và hỗ trợ chuyển đổi nhanh trên [`crates/gui/src/ui/header.rs`](file:///D:/Learn/Go/uwulog-rust/crates/gui/src/ui/header.rs).
+- [x] Xây dựng bộ cài đặt tự động [`installer/install.ps1`](file:///D:/Learn/Go/uwulog-rust/installer/install.ps1), launcher [`installer/uwulog.cmd`](file:///D:/Learn/Go/uwulog-rust/installer/uwulog.cmd) và [`installer/uwulog`](file:///D:/Learn/Go/uwulog-rust/installer/uwulog).
+
+---
+
+## 6. GIAI ĐOẠN 6: HOÀN THIỆN CÁC TÍNH NĂNG ROADMAP (UI/UX & PERFORMANCE)
+
+- [ ] **Tùy chỉnh cột**: Lưu trạng thái cột hiển thị vào cấu hình.
+- [ ] **Lọc nhanh bằng chuột**: Click vào bất kỳ cell nào để append query vào search bar.
+- [ ] **Highlight hàng & từ khóa**: Tô màu nổi bật dòng log quan trọng hoặc từ khóa trên bảng.
+- [ ] **Unfiltered Context Jump**: Nhảy mượt mà từ Filtered View sang Unfiltered View tại đúng vị trí lỗi.
+
+---
+
+## 📊 TIẾN ĐỘ THỰC HIỆN TỔNG QUAN
+
+| Hạng Mục | Độ Ưu Tiên | Trạng Thái | Người Phụ Trách |
+| :--- | :--- | :--- | :--- |
+| **1. Crate `uwu-agent` (`crates/agent`)** | 🔴 Rất Cao | ✅ Hoàn Thành | Antigravity Pair Dev |
+| **2. Driver `WslSource` (`crates/core`)** | 🔴 Rất Cao | ✅ Hoàn Thành | Antigravity Pair Dev |
+| **3. GUI Launch Modal & Source Selector** | 🟡 Cao | ✅ Hoàn Thành | Antigravity Pair Dev |
+| **4. WSL CLI Interop Script** | 🟡 Cao | ✅ Hoàn Thành | Antigravity Pair Dev |
+| **5. Workspace Persistence & Installer** | 🟡 Cao | ✅ Hoàn Thành | Antigravity Pair Dev |
+| **6. Roadmap Features (Columns, Highlight, Context)** | 🟢 Trung Bình | 📋 Đang Lên Kế Hoạch | Antigravity Pair Dev |

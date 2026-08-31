@@ -5,7 +5,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot};
-use uwu_core::{FileSource, LogEvent, LogSource, ProcessSource, RawLogEntry, SystemEngine};
+use uwu_core::{
+    FileSource, LogEvent, LogSource, ProcessSource, RawLogEntry, SystemEngine, WslSource,
+    WslTargetMode,
+};
 
 #[cfg(target_os = "windows")]
 use uwu_core::WinEventSource;
@@ -18,11 +21,42 @@ pub enum ActiveTab {
     Unfiltered,
 }
 
-#[derive(PartialEq, Clone)]
+#[derive(PartialEq, Clone, Debug)]
 pub enum SourceType {
     Process,
     File,
     WinEvent,
+    Wsl,
+}
+
+#[derive(PartialEq, Clone, Debug)]
+pub enum WslSubMode {
+    Command,
+    File,
+    Journald,
+}
+
+#[derive(Clone, Debug)]
+pub struct WslConfig {
+    pub distro: String,
+    pub working_dir: String,
+    pub sub_mode: WslSubMode,
+    pub command_str: String,
+    pub file_path: String,
+    pub journald_unit: String,
+}
+
+impl Default for WslConfig {
+    fn default() -> Self {
+        Self {
+            distro: "Ubuntu".to_string(),
+            working_dir: String::new(),
+            sub_mode: WslSubMode::Command,
+            command_str: "journalctl -f -o json".to_string(),
+            file_path: "/var/log/syslog".to_string(),
+            journald_unit: String::new(),
+        }
+    }
 }
 
 pub struct SourceConfig {
@@ -30,6 +64,7 @@ pub struct SourceConfig {
     pub command_str: String,
     pub file_path: String,
     pub win_channel: String,
+    pub wsl_config: WslConfig,
     pub capacity: usize,
     pub display_limit: usize,
 }
@@ -75,6 +110,9 @@ pub struct UwuGuiApp {
     pub paused_new_matched_count: usize,
     pub discovered_fields_cache:
         std::collections::BTreeMap<String, crate::ui::autocomplete::FieldType>,
+    pub available_wsl_distros: Vec<String>,
+    pub workspace_store: uwu_core::WorkspaceStore,
+    pub project_name_input: String,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -103,6 +141,7 @@ impl UwuGuiApp {
         let mut cmd_to_run = String::new();
         let mut file_to_read = String::new();
         let mut source_type = SourceType::Process;
+        let mut wsl_config = WslConfig::default();
         let mut custom_source_specified = false;
 
         let mut i = 1;
@@ -117,6 +156,32 @@ impl UwuGuiApp {
                     capacity = val;
                 }
                 i += 1;
+            } else if (args[i] == "--wsl-distro") && i + 1 < args.len() {
+                wsl_config.distro = args[i + 1].clone();
+                i += 1;
+            } else if (args[i] == "--wsl-dir" || args[i] == "--wsl-cwd") && i + 1 < args.len() {
+                wsl_config.working_dir = args[i + 1].clone();
+                i += 1;
+            } else if (args[i] == "--wsl-cmd") && i + 1 < args.len() {
+                wsl_config.command_str = args[i + 1].clone();
+                wsl_config.sub_mode = WslSubMode::Command;
+                source_type = SourceType::Wsl;
+                custom_source_specified = true;
+                i += 1;
+            } else if (args[i] == "--wsl-file") && i + 1 < args.len() {
+                wsl_config.file_path = args[i + 1].clone();
+                wsl_config.sub_mode = WslSubMode::File;
+                source_type = SourceType::Wsl;
+                custom_source_specified = true;
+                i += 1;
+            } else if args[i] == "--wsl-journald" {
+                wsl_config.sub_mode = WslSubMode::Journald;
+                source_type = SourceType::Wsl;
+                custom_source_specified = true;
+                if i + 1 < args.len() && !args[i + 1].starts_with('-') {
+                    wsl_config.journald_unit = args[i + 1].clone();
+                    i += 1;
+                }
             } else if (args[i] == "-r"
                 || args[i] == "--run"
                 || args[i] == "-c"
@@ -140,17 +205,69 @@ impl UwuGuiApp {
             i += 1;
         }
 
+        let workspace_store = uwu_core::WorkspaceStore::load();
+        let mut initial_query = String::new();
+        let mut project_name_input = "Default Workspace".to_string();
+
         if !custom_source_specified {
-            cmd_to_run = "go run gen_logs.go".to_string();
+            if let Some(active) = workspace_store.get_active() {
+                project_name_input = active.name.clone();
+                initial_query = active.last_query.clone();
+                match active.source_type.as_str() {
+                    "wsl" => {
+                        source_type = SourceType::Wsl;
+                        if let uwu_core::WorkspaceLocation::Wsl {
+                            distro,
+                            working_dir,
+                        } = &active.location
+                        {
+                            wsl_config.distro = distro.clone();
+                            wsl_config.working_dir = working_dir.clone();
+                        }
+                        if !active.command_str.is_empty() {
+                            wsl_config.sub_mode = WslSubMode::Command;
+                            wsl_config.command_str = active.command_str.clone();
+                        } else if !active.file_path.is_empty() {
+                            wsl_config.sub_mode = WslSubMode::File;
+                            wsl_config.file_path = active.file_path.clone();
+                        } else if !active.journald_unit.is_empty() {
+                            wsl_config.sub_mode = WslSubMode::Journald;
+                            wsl_config.journald_unit = active.journald_unit.clone();
+                        }
+                    }
+                    "file" => {
+                        source_type = SourceType::File;
+                        file_to_read = active.file_path.clone();
+                    }
+                    "process" => {
+                        source_type = SourceType::Process;
+                        cmd_to_run = active.command_str.clone();
+                    }
+                    "winevent" => {
+                        source_type = SourceType::WinEvent;
+                    }
+                    _ => {
+                        cmd_to_run = "go run gen_logs.go".to_string();
+                    }
+                }
+            } else {
+                cmd_to_run = "go run gen_logs.go".to_string();
+            }
         }
 
         let engine = Arc::new(SystemEngine::new(capacity));
+
+        let available_wsl_distros = uwu_core::WslTransport::detect_distros();
+        if wsl_config.distro.is_empty() && !available_wsl_distros.is_empty() {
+            wsl_config.distro = available_wsl_distros[0].clone();
+        }
 
         let source_config = SourceConfig {
             source_type,
             command_str: cmd_to_run,
             file_path: file_to_read,
             win_channel: "System".to_string(),
+            wsl_config,
             capacity,
             display_limit,
         };
@@ -158,7 +275,7 @@ impl UwuGuiApp {
         let mut app = Self {
             engine,
             active_tab: ActiveTab::Filtered,
-            query: String::new(),
+            query: initial_query,
             last_query: String::new(),
             display_limit,
             capacity,
@@ -189,12 +306,112 @@ impl UwuGuiApp {
             filtered_processed_at_pause: 0,
             paused_new_matched_count: 0,
             discovered_fields_cache: Self::default_discovered_fields(),
+            available_wsl_distros,
+            workspace_store,
+            project_name_input,
         };
 
         app.start_configured_source();
         app.trigger_full_search();
 
         app
+    }
+
+    pub fn save_current_workspace(&mut self) {
+        let name = if self.project_name_input.trim().is_empty() {
+            "Workspace".to_string()
+        } else {
+            self.project_name_input.trim().to_string()
+        };
+
+        let location = match self.source_config.source_type {
+            SourceType::Wsl => uwu_core::WorkspaceLocation::Wsl {
+                distro: self.source_config.wsl_config.distro.clone(),
+                working_dir: self.source_config.wsl_config.working_dir.clone(),
+            },
+            _ => uwu_core::WorkspaceLocation::Local {
+                working_dir: std::env::current_dir()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_default(),
+            },
+        };
+
+        let source_type_str = match self.source_config.source_type {
+            SourceType::Process => "process",
+            SourceType::File => "file",
+            SourceType::Wsl => "wsl",
+            SourceType::WinEvent => "winevent",
+        };
+
+        let mut ws = uwu_core::Workspace::new(name, location, source_type_str);
+        ws.last_query = self.query.clone();
+
+        match self.source_config.source_type {
+            SourceType::Process => {
+                ws.command_str = self.source_config.command_str.clone();
+            }
+            SourceType::File => {
+                ws.file_path = self.source_config.file_path.clone();
+            }
+            SourceType::Wsl => match self.source_config.wsl_config.sub_mode {
+                WslSubMode::Command => {
+                    ws.command_str = self.source_config.wsl_config.command_str.clone();
+                }
+                WslSubMode::File => {
+                    ws.file_path = self.source_config.wsl_config.file_path.clone();
+                }
+                WslSubMode::Journald => {
+                    ws.journald_unit = self.source_config.wsl_config.journald_unit.clone();
+                }
+            },
+            SourceType::WinEvent => {
+                ws.win_channel = self.source_config.win_channel.clone();
+            }
+        }
+
+        self.workspace_store.add_or_update(ws);
+    }
+
+    pub fn load_workspace(&mut self, ws: &uwu_core::Workspace) {
+        self.project_name_input = ws.name.clone();
+        self.query = ws.last_query.clone();
+
+        match ws.source_type.as_str() {
+            "wsl" => {
+                self.source_config.source_type = SourceType::Wsl;
+                if let uwu_core::WorkspaceLocation::Wsl {
+                    distro,
+                    working_dir,
+                } = &ws.location
+                {
+                    self.source_config.wsl_config.distro = distro.clone();
+                    self.source_config.wsl_config.working_dir = working_dir.clone();
+                }
+                if !ws.command_str.is_empty() {
+                    self.source_config.wsl_config.sub_mode = WslSubMode::Command;
+                    self.source_config.wsl_config.command_str = ws.command_str.clone();
+                } else if !ws.file_path.is_empty() {
+                    self.source_config.wsl_config.sub_mode = WslSubMode::File;
+                    self.source_config.wsl_config.file_path = ws.file_path.clone();
+                } else {
+                    self.source_config.wsl_config.sub_mode = WslSubMode::Journald;
+                    self.source_config.wsl_config.journald_unit = ws.journald_unit.clone();
+                }
+            }
+            "file" => {
+                self.source_config.source_type = SourceType::File;
+                self.source_config.file_path = ws.file_path.clone();
+            }
+            "process" => {
+                self.source_config.source_type = SourceType::Process;
+                self.source_config.command_str = ws.command_str.clone();
+            }
+            "winevent" => {
+                self.source_config.source_type = SourceType::WinEvent;
+                self.source_config.win_channel = ws.win_channel.clone();
+            }
+            _ => {}
+        }
     }
 
     pub fn start_configured_source(&mut self) {
@@ -268,6 +485,52 @@ impl UwuGuiApp {
                     let channel = config.win_channel.clone();
                     self.rt.spawn(async move {
                         let _ = WinEventSource::new(channel).start_stream(source_tx).await;
+                    });
+                    self.is_source_running = true;
+                }
+            }
+            SourceType::Wsl => {
+                let wsl_cfg = &config.wsl_config;
+                let mode = match wsl_cfg.sub_mode {
+                    WslSubMode::Command => {
+                        if !wsl_cfg.command_str.trim().is_empty() {
+                            Some(WslTargetMode::Command(wsl_cfg.command_str.clone()))
+                        } else {
+                            None
+                        }
+                    }
+                    WslSubMode::File => {
+                        if !wsl_cfg.file_path.trim().is_empty() {
+                            Some(WslTargetMode::File(wsl_cfg.file_path.clone()))
+                        } else {
+                            None
+                        }
+                    }
+                    WslSubMode::Journald => {
+                        let unit = if wsl_cfg.journald_unit.trim().is_empty() {
+                            None
+                        } else {
+                            Some(wsl_cfg.journald_unit.clone())
+                        };
+                        Some(WslTargetMode::Journald(unit))
+                    }
+                };
+
+                if let Some(target_mode) = mode {
+                    let distro = if wsl_cfg.distro.trim().is_empty() {
+                        "Ubuntu".to_string()
+                    } else {
+                        wsl_cfg.distro.clone()
+                    };
+                    let working_dir = if wsl_cfg.working_dir.trim().is_empty() {
+                        None
+                    } else {
+                        Some(wsl_cfg.working_dir.clone())
+                    };
+                    self.rt.spawn(async move {
+                        let _ = WslSource::new_with_dir(distro, target_mode, working_dir)
+                            .start_stream(source_tx)
+                            .await;
                     });
                     self.is_source_running = true;
                 }
@@ -710,6 +973,7 @@ mod tests {
             command_str: String::new(),
             file_path: String::new(),
             win_channel: "System".to_string(),
+            wsl_config: WslConfig::default(),
             capacity: 100,
             display_limit: 50,
         };
@@ -748,6 +1012,9 @@ mod tests {
             filtered_processed_at_pause: 0,
             paused_new_matched_count: 0,
             discovered_fields_cache: UwuGuiApp::default_discovered_fields(),
+            available_wsl_distros: Vec::new(),
+            workspace_store: uwu_core::WorkspaceStore::default(),
+            project_name_input: "Test Project".to_string(),
         }
     }
 

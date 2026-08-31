@@ -23,6 +23,68 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!is_maximized));
         }
 
+        // Nhận diện nguồn log WSL để hiển thị badge
+        let wsl_distro = match app.source_config.source_type {
+            crate::app::SourceType::Wsl => Some(app.source_config.wsl_config.distro.clone()),
+            _ => {
+                if app.source_config.command_str.to_lowercase().contains("wsl.exe")
+                    || app.source_config.command_str.to_lowercase().starts_with("wsl ")
+                {
+                    let cmd = &app.source_config.command_str;
+                    if let Some(idx) = cmd.find("-d ") {
+                        let after = &cmd[idx + 3..];
+                        let distro = after.split_whitespace().next().unwrap_or("WSL");
+                        Some(distro.to_string())
+                    } else {
+                        Some("WSL".to_string())
+                    }
+                } else if app.source_config.file_path.contains(r"\\wsl.localhost\")
+                    || app.source_config.file_path.contains(r"\\wsl$\")
+                {
+                    let p = &app.source_config.file_path;
+                    let after = if let Some(idx) = p.find(r"\\wsl.localhost\") {
+                        &p[idx + 16..]
+                    } else if let Some(idx) = p.find(r"\\wsl$\") {
+                        &p[idx + 8..]
+                    } else {
+                        ""
+                    };
+                    let distro = after.split('\\').next().unwrap_or("WSL");
+                    Some(distro.to_string())
+                } else {
+                    None
+                }
+            }
+        };
+
+        if let Some(distro) = wsl_distro {
+            ui.add_space(2.0);
+            let wsl_badge = egui::Label::new(
+                egui::RichText::new(format!("🐧 {}", distro))
+                    .size(11.0)
+                    .strong()
+                    .color(theme::COLOR_INFO),
+            );
+            ui.add(wsl_badge)
+                .on_hover_text(format!("Connected to WSL Distro: {}", distro));
+        }
+
+        if !app.project_name_input.is_empty() {
+            ui.add_space(2.0);
+            let proj_btn = egui::Button::new(
+                egui::RichText::new(format!("📁 {}", app.project_name_input))
+                    .size(11.0)
+                    .color(theme::TEXT_MUTED),
+            )
+            .fill(theme::BG_SURFACE0)
+            .stroke(Stroke::new(1.0, theme::BG_SURFACE1))
+            .rounding(Rounding::same(4.0));
+
+            if ui.add(proj_btn).on_hover_text("Active Workspace (Click to open Settings & Projects)").clicked() {
+                app.show_launch_modal = true;
+            }
+        }
+
         ui.add_space(4.0);
         ui.separator();
         ui.add_space(4.0);
