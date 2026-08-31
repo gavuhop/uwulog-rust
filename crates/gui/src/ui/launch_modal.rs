@@ -189,35 +189,6 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
             }
 
             ui.add_space(8.0);
-
-            // Active Project Name & Save Bar
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("Project Name:").color(theme::TEXT_MUTED));
-                ui.add(
-                    egui::TextEdit::singleline(&mut app.project_name_input)
-                        .hint_text("e.g. psittacus-erithacus")
-                        .desired_width(200.0),
-                );
-
-                let save_btn = egui::Button::new(
-                    egui::RichText::new("💾 Save Workspace")
-                        .strong()
-                        .color(theme::TEXT_PRIMARY),
-                )
-                .fill(theme::BG_SURFACE0)
-                .stroke(Stroke::new(1.0, theme::BG_SURFACE1))
-                .rounding(Rounding::same(4.0));
-
-                if ui
-                    .add(save_btn)
-                    .on_hover_text("Save current configuration as project workspace")
-                    .clicked()
-                {
-                    app.save_current_workspace();
-                }
-            });
-
-            ui.add_space(8.0);
             ui.separator();
             ui.add_space(6.0);
 

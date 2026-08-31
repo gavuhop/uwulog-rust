@@ -4,6 +4,7 @@ use eframe::egui::{self, Id, Rounding, Stroke};
 use std::time::Instant;
 
 pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
+    let mut proj_btn_rect = None;
     ui.horizontal(|ui| {
         // 1. App Title / Brand (hỗ trợ kéo di chuyển cửa sổ & double click maximize)
         let brand_response = ui.add(
@@ -72,16 +73,30 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
         if !app.project_name_input.is_empty() {
             ui.add_space(2.0);
             let proj_btn = egui::Button::new(
-                egui::RichText::new(format!("📁 {}", app.project_name_input))
+                egui::RichText::new(format!("📁 {} ▾", app.project_name_input))
                     .size(11.0)
-                    .color(theme::TEXT_MUTED),
+                    .strong()
+                    .color(if app.project_picker_open {
+                        theme::TEXT_KEY
+                    } else {
+                        theme::TEXT_PRIMARY
+                    }),
             )
-            .fill(theme::BG_SURFACE0)
+            .fill(if app.project_picker_open {
+                theme::BG_SURFACE1
+            } else {
+                theme::BG_SURFACE0
+            })
             .stroke(Stroke::new(1.0, theme::BG_SURFACE1))
             .rounding(Rounding::same(4.0));
 
-            if ui.add(proj_btn).on_hover_text("Active Workspace (Click to open Settings & Projects)").clicked() {
-                app.show_launch_modal = true;
+            let proj_resp = ui.add(proj_btn);
+            proj_btn_rect = Some(proj_resp.rect);
+            if proj_resp
+                .on_hover_text("Switch or manage workspace projects")
+                .clicked()
+            {
+                app.project_picker_open = !app.project_picker_open;
             }
         }
 
@@ -473,6 +488,11 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
             });
         });
     });
+
+    // Render Zed-Style Project Picker Popover
+    if let Some(rect) = proj_btn_rect {
+        crate::ui::project_picker::render_project_picker_popup(ui.ctx(), app, rect);
+    }
 }
 
 /// Nút điều khiển cửa sổ vector chuẩn Windows (Ẩn / Thu nhỏ, Phóng to / Khôi phục, Đóng)

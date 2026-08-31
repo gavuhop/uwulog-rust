@@ -113,6 +113,8 @@ pub struct UwuGuiApp {
     pub available_wsl_distros: Vec<String>,
     pub workspace_store: uwu_core::WorkspaceStore,
     pub project_name_input: String,
+    pub project_picker_open: bool,
+    pub project_search_query: String,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -309,11 +311,7 @@ impl UwuGuiApp {
                 }
             }
         } else if !custom_source_specified {
-            if is_wsl_invoked {
-                wsl_config.sub_mode = WslSubMode::Journald;
-            } else {
-                cmd_to_run = "go run gen_logs.go".to_string();
-            }
+            cmd_to_run = String::new();
         }
 
         let engine = Arc::new(SystemEngine::new(capacity));
@@ -370,9 +368,15 @@ impl UwuGuiApp {
             available_wsl_distros,
             workspace_store,
             project_name_input,
+            project_picker_open: false,
+            project_search_query: String::new(),
         };
 
-        app.start_configured_source();
+        // Tự động lưu cấu hình workspace và chỉ stream nếu người dùng chỉ định cờ CLI (như -r, -f, -j)
+        if custom_source_specified {
+            app.save_current_workspace();
+            app.start_configured_source();
+        }
         app.trigger_full_search();
 
         app
@@ -476,6 +480,9 @@ impl UwuGuiApp {
     }
 
     pub fn start_configured_source(&mut self) {
+        // Tự động lưu lại lệnh command và cấu hình dự án mỗi khi chạy source
+        self.save_current_workspace();
+
         // Dừng tiến trình cũ nếu đang chạy
         self.stop_current_source();
 
@@ -681,6 +688,7 @@ impl UwuGuiApp {
 
     pub fn restart_current_source(&mut self) {
         self.stop_current_source();
+        self.save_current_workspace();
         if self.source_config.capacity != self.capacity {
             self.capacity = self.source_config.capacity;
             self.engine = Arc::new(SystemEngine::new(self.capacity));
@@ -1076,6 +1084,8 @@ mod tests {
             available_wsl_distros: Vec::new(),
             workspace_store: uwu_core::WorkspaceStore::default(),
             project_name_input: "Test Project".to_string(),
+            project_picker_open: false,
+            project_search_query: String::new(),
         }
     }
 

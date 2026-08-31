@@ -5,6 +5,7 @@ pub mod detail;
 pub mod header;
 pub mod history;
 pub mod launch_modal;
+pub mod project_picker;
 pub mod table;
 pub mod theme;
 pub mod unfiltered_table;
@@ -15,9 +16,11 @@ use eframe::egui;
 pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
     ctx.set_visuals(theme::create_visuals());
 
-    // Phím Escape: Đóng history popup trước, rồi đến modal Params/Columns, rồi đến Tab Unfiltered (trở về Filtered), rồi đến Log Inspector
+    // Phím Escape: Đóng project picker / history popup trước, rồi đến modal Params/Columns, rồi đến Tab Unfiltered (trở về Filtered), rồi đến Log Inspector
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-        if app.history_state.is_open {
+        if app.project_picker_open {
+            app.project_picker_open = false;
+        } else if app.history_state.is_open {
             app.history_state.close_popup();
         } else if app.column_state.is_modal_open {
             app.column_state.is_modal_open = false;
