@@ -10,11 +10,20 @@ use tokio::sync::mpsc;
 pub struct ProcessSource {
     command: String,
     args: Vec<String>,
+    working_dir: Option<String>,
     source_id: String,
 }
 
 impl ProcessSource {
     pub fn new(command: impl Into<String>, args: Vec<String>) -> Self {
+        Self::new_with_dir(command, args, None)
+    }
+
+    pub fn new_with_dir(
+        command: impl Into<String>,
+        args: Vec<String>,
+        working_dir: Option<String>,
+    ) -> Self {
         let cmd = command.into();
         let source_id = if args.is_empty() {
             format!("proc:{}", cmd)
@@ -25,6 +34,7 @@ impl ProcessSource {
         Self {
             command: cmd,
             args,
+            working_dir,
             source_id,
         }
     }
@@ -39,6 +49,11 @@ impl LogSource for ProcessSource {
     async fn start_stream(&self, tx: mpsc::Sender<RawLogEntry>) -> Result<()> {
         let mut cmd = Command::new(&self.command);
         cmd.args(&self.args);
+        if let Some(dir) = &self.working_dir {
+            if !dir.trim().is_empty() {
+                cmd.current_dir(dir);
+            }
+        }
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
         cmd.kill_on_drop(true);

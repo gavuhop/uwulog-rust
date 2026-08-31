@@ -299,12 +299,15 @@ pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, tri
     if open_local_folder_clicked {
         app.project_picker_open = false;
         if let Some(folder) = rfd::FileDialog::new().pick_folder() {
+            let path_str = folder.to_string_lossy().to_string();
+            let _ = std::env::set_current_dir(&folder);
             let folder_name = folder
                 .file_name()
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_else(|| "Workspace".to_string());
             app.project_name_input = folder_name;
             app.source_config.source_type = SourceType::Process;
+            app.source_config.working_dir = path_str;
             app.source_config.command_str.clear();
             app.save_current_workspace();
             app.restart_current_source();

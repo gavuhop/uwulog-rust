@@ -64,6 +64,7 @@ pub struct SourceConfig {
     pub command_str: String,
     pub file_path: String,
     pub win_channel: String,
+    pub working_dir: String,
     pub wsl_config: WslConfig,
     pub capacity: usize,
     pub display_limit: usize,
@@ -326,6 +327,7 @@ impl UwuGuiApp {
             command_str: cmd_to_run,
             file_path: file_to_read,
             win_channel: "System".to_string(),
+            working_dir: active_workdir.clone(),
             wsl_config,
             capacity,
             display_limit,
@@ -394,11 +396,16 @@ impl UwuGuiApp {
                 distro: self.source_config.wsl_config.distro.clone(),
                 working_dir: self.source_config.wsl_config.working_dir.clone(),
             },
-            _ => uwu_core::WorkspaceLocation::Local {
-                working_dir: std::env::current_dir()
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_default(),
-            },
+            _ => {
+                let dir = if !self.source_config.working_dir.trim().is_empty() {
+                    self.source_config.working_dir.clone()
+                } else {
+                    std::env::current_dir()
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_default()
+                };
+                uwu_core::WorkspaceLocation::Local { working_dir: dir }
+            }
         };
 
         let source_type_str = match self.source_config.source_type {
@@ -441,17 +448,25 @@ impl UwuGuiApp {
         self.project_name_input = ws.name.clone();
         self.query = ws.last_query.clone();
 
+        match &ws.location {
+            uwu_core::WorkspaceLocation::Wsl {
+                distro,
+                working_dir,
+            } => {
+                self.source_config.wsl_config.distro = distro.clone();
+                self.source_config.wsl_config.working_dir = working_dir.clone();
+            }
+            uwu_core::WorkspaceLocation::Local { working_dir } => {
+                self.source_config.working_dir = working_dir.clone();
+                if !working_dir.trim().is_empty() {
+                    let _ = std::env::set_current_dir(working_dir);
+                }
+            }
+        }
+
         match ws.source_type.as_str() {
             "wsl" => {
                 self.source_config.source_type = SourceType::Wsl;
-                if let uwu_core::WorkspaceLocation::Wsl {
-                    distro,
-                    working_dir,
-                } = &ws.location
-                {
-                    self.source_config.wsl_config.distro = distro.clone();
-                    self.source_config.wsl_config.working_dir = working_dir.clone();
-                }
                 if !ws.command_str.is_empty() {
                     self.source_config.wsl_config.sub_mode = WslSubMode::Command;
                     self.source_config.wsl_config.command_str = ws.command_str.clone();
@@ -529,8 +544,16 @@ impl UwuGuiApp {
                         let proc_args: Vec<String> =
                             cmd_parts[1..].iter().map(|s| s.to_string()).collect();
 
+                        let workdir = if !config.working_dir.trim().is_empty() {
+                            Some(config.working_dir.clone())
+                        } else {
+                            std::env::current_dir()
+                                .ok()
+                                .map(|p| p.to_string_lossy().to_string())
+                        };
+
                         self.rt.spawn(async move {
-                            let _ = ProcessSource::new(prog, proc_args)
+                            let _ = ProcessSource::new_with_dir(prog, proc_args, workdir)
                                 .start_stream(source_tx)
                                 .await;
                         });
@@ -1042,6 +1065,7 @@ mod tests {
             command_str: String::new(),
             file_path: String::new(),
             win_channel: "System".to_string(),
+            working_dir: String::new(),
             wsl_config: WslConfig::default(),
             capacity: 100,
             display_limit: 50,

@@ -67,7 +67,23 @@ impl LogSource for WslSource {
 
         match &self.mode {
             WslTargetMode::Command(cmd_str) => {
-                cmd.arg("bash").arg("-l").arg("-c").arg(cmd_str);
+                let cd_prefix = if let Some(dir) = &self.working_dir {
+                    if !dir.trim().is_empty() {
+                        format!("cd '{}' 2>/dev/null || true; ", dir.replace('\'', "'\\''"))
+                    } else {
+                        String::new()
+                    }
+                } else {
+                    String::new()
+                };
+                let full_cmd = format!("{}{}", cd_prefix, cmd_str);
+                let quoted_cmd = format!("'{}'", full_cmd.replace('\'', "'\\''"));
+                // Giống Zed: Chạy qua interactive shell của người dùng ($SHELL -i -c hoặc bash -i -c)
+                // để nạp đầy đủ PATH, nvm, fnm, asdf, node, pnpm, cargo, go...
+                cmd.arg("sh").arg("-c").arg(format!(
+                    "if [ -n \"$SHELL\" ] && [ -x \"$SHELL\" ]; then exec \"$SHELL\" -i -c {0}; else exec bash -i -c {0}; fi",
+                    quoted_cmd
+                ));
             }
             WslTargetMode::File(file_path) => {
                 cmd.arg("tail").arg("-n").arg("+1").arg("-F").arg(file_path);
