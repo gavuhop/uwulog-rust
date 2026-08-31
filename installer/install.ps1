@@ -29,13 +29,16 @@ if (-not (Test-Path $InstallDir)) {
 }
 
 # Dừng các tiến trình đang chạy nếu có để tránh lock file khi copy
-Stop-Process -Name "uwu-gui", "uwu-tui", "uwu-agent" -Force -ErrorAction SilentlyContinue
+Stop-Process -Name "uwu-gui", "uwulog", "uwu-tui", "uwu-agent" -Force -ErrorAction SilentlyContinue
 Start-Sleep -Milliseconds 500
 
 Copy-Item -Force (Join-Path $RootDir "target\release\uwu-gui.exe") (Join-Path $InstallDir "uwu-gui.exe")
+Copy-Item -Force (Join-Path $RootDir "target\release\uwu-gui.exe") (Join-Path $InstallDir "uwulog.exe")
 Copy-Item -Force (Join-Path $RootDir "target\release\uwu-tui.exe") (Join-Path $InstallDir "uwu-tui.exe")
 Copy-Item -Force (Join-Path $RootDir "target\release\uwu-agent.exe") (Join-Path $InstallDir "uwu-agent.exe")
 Copy-Item -Force (Join-Path $ScriptDir "uwulog.cmd") (Join-Path $InstallDir "uwulog.cmd")
+Copy-Item -Force (Join-Path $ScriptDir "uwulog.cmd") (Join-Path $InstallDir "uwulog.bat")
+Copy-Item -Force (Join-Path $ScriptDir "uwulog.ps1") (Join-Path $InstallDir "uwulog.ps1")
 Copy-Item -Force (Join-Path $ScriptDir "uwulog") (Join-Path $InstallDir "uwulog")
 
 Write-Host "   -> [OK] Binaries and launchers copied successfully." -ForegroundColor Green
@@ -50,6 +53,9 @@ if ($UserPath -notlike "*$InstallDir*") {
 } else {
     Write-Host "   -> [INFO] '$InstallDir' already exists in Windows User PATH." -ForegroundColor Gray
 }
+
+# Cập nhật PATH cho phiên làm việc hiện tại
+$env:Path = [Environment]::GetEnvironmentVariable("Path", "User") + ";" + [Environment]::GetEnvironmentVariable("Path", "Machine")
 
 # 4. Configure WSL Distros
 Write-Host "`n[4/4] Detecting and configuring WSL Distros..." -ForegroundColor Yellow

@@ -10,9 +10,16 @@ import (
 )
 
 func main() {
-	countFlag := flag.Int("count", 500000000, "Total number of logs to generate")
-	rateFlag := flag.Int("rate", 0, "Logs per second (0 for unlimited)")
+	var count int
+	var rate int
+	flag.IntVar(&count, "count", 500000000, "Total number of logs to generate")
+	flag.IntVar(&count, "c", 500000000, "Total number of logs to generate (alias)")
+	flag.IntVar(&rate, "rate", 0, "Logs per second (0 for unlimited)")
+	flag.IntVar(&rate, "r", 0, "Logs per second (alias)")
 	flag.Parse()
+
+	countFlag := &count
+	rateFlag := &rate
 	levels := []string{"TRACE", "DEBUG", "INFO", "NOTICE", "WARN", "ERROR", "FATAL", "CRITICAL", "ALERT", "EMERGENCY"}
 	sources := []string{
 		"auth_service", "payment_gateway", "image_processor", "db_proxy",

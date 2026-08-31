@@ -130,6 +130,25 @@ impl WorkspaceStore {
         let _ = self.save();
     }
 
+    /// Tìm workspace theo đường dẫn working directory
+    pub fn find_by_workdir(&self, dir: &str) -> Option<&Workspace> {
+        if dir.trim().is_empty() {
+            return None;
+        }
+        let clean_dir = dir.trim_end_matches(&['/', '\\'][..]);
+        self.recent_workspaces.iter().find(|w| {
+            let ws_dir = match &w.location {
+                WorkspaceLocation::Local { working_dir } => {
+                    working_dir.trim_end_matches(&['/', '\\'][..])
+                }
+                WorkspaceLocation::Wsl { working_dir, .. } => {
+                    working_dir.trim_end_matches(&['/', '\\'][..])
+                }
+            };
+            ws_dir.eq_ignore_ascii_case(clean_dir)
+        })
+    }
+
     /// Lấy workspace đang được kích hoạt
     pub fn get_active(&self) -> Option<&Workspace> {
         if let Some(id) = self.active_workspace_id {

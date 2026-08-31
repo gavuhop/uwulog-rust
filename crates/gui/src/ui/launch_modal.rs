@@ -29,92 +29,197 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
             ui.separator();
             ui.add_space(6.0);
 
-            // Project & Workspace Card
-            render_modal_card(ui, "📁 Project & Workspace", |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Recent:").color(theme::TEXT_MUTED));
-                    let current_name = if app.project_name_input.is_empty() {
-                        "Select Workspace".to_string()
+            // Zed-Style Recent Projects Section
+            ui.label(
+                egui::RichText::new("Recent Projects")
+                    .size(12.0)
+                    .strong()
+                    .color(theme::TEXT_MUTED),
+            );
+            ui.add_space(3.0);
+
+            let mut project_to_launch: Option<uwu_core::Workspace> = None;
+            let mut project_to_delete: Option<uuid::Uuid> = None;
+            let mut project_to_load: Option<uwu_core::Workspace> = None;
+
+            egui::Frame::none()
+                .fill(theme::BG_BASE)
+                .stroke(Stroke::new(1.0, theme::BG_SURFACE0))
+                .rounding(Rounding::same(6.0))
+                .inner_margin(egui::Margin::symmetric(6.0, 4.0))
+                .show(ui, |ui| {
+                    if app.workspace_store.recent_workspaces.is_empty() {
+                        ui.add_space(6.0);
+                        ui.label(
+                            egui::RichText::new(
+                                "No recent projects yet. Configure below and save.",
+                            )
+                            .italics()
+                            .size(11.5)
+                            .color(theme::TEXT_MUTED),
+                        );
+                        ui.add_space(6.0);
                     } else {
-                        app.project_name_input.clone()
-                    };
+                        egui::ScrollArea::vertical()
+                            .max_height(140.0)
+                            .show(ui, |ui| {
+                                for ws in &app.workspace_store.recent_workspaces {
+                                    let is_active = ws.name == app.project_name_input;
+                                    let bg_color = if is_active {
+                                        theme::BG_SURFACE0
+                                    } else {
+                                        egui::Color32::TRANSPARENT
+                                    };
 
-                    let mut selected_workspace: Option<uwu_core::Workspace> = None;
+                                    let (icon, label_text, subtitle) = match &ws.location {
+                                        uwu_core::WorkspaceLocation::Wsl {
+                                            distro,
+                                            working_dir,
+                                        } => {
+                                            let sub = if !working_dir.is_empty() {
+                                                working_dir.clone()
+                                            } else {
+                                                format!("🐧 WSL ({})", distro)
+                                            };
+                                            ("🐧", format!("{} ({})", ws.name, distro), sub)
+                                        }
+                                        uwu_core::WorkspaceLocation::Local { working_dir } => {
+                                            let sub = if !working_dir.is_empty() {
+                                                working_dir.clone()
+                                            } else {
+                                                "🪟 Windows Local".to_string()
+                                            };
+                                            ("🖥", ws.name.clone(), sub)
+                                        }
+                                    };
 
-                    egui::ComboBox::from_id_salt("workspace_recent_combo")
-                        .selected_text(
-                            egui::RichText::new(&current_name)
-                                .strong()
-                                .color(theme::TEXT_PRIMARY),
-                        )
-                        .width(260.0)
-                        .show_ui(ui, |ui| {
-                            for ws in &app.workspace_store.recent_workspaces {
-                                let label = match &ws.location {
-                                    uwu_core::WorkspaceLocation::Wsl { distro, .. } => {
-                                        format!("🐧 [{}] {}", distro, ws.name)
-                                    }
-                                    _ => format!("🪟 {}", ws.name),
-                                };
-                                if ui
-                                    .selectable_label(ws.name == app.project_name_input, label)
-                                    .clicked()
-                                {
-                                    selected_workspace = Some(ws.clone());
+                                    egui::Frame::none()
+                                        .fill(bg_color)
+                                        .rounding(Rounding::same(4.0))
+                                        .inner_margin(egui::Margin::symmetric(6.0, 3.0))
+                                        .show(ui, |ui| {
+                                            ui.horizontal(|ui| {
+                                                ui.label(egui::RichText::new(icon).size(13.0));
+
+                                                let name_resp = ui.selectable_label(
+                                                    is_active,
+                                                    egui::RichText::new(&label_text)
+                                                        .size(12.5)
+                                                        .strong()
+                                                        .color(if is_active {
+                                                            theme::TEXT_KEY
+                                                        } else {
+                                                            theme::TEXT_PRIMARY
+                                                        }),
+                                                );
+
+                                                if name_resp.clicked() {
+                                                    project_to_load = Some(ws.clone());
+                                                }
+                                                if !subtitle.is_empty() {
+                                                    name_resp.on_hover_text(format!(
+                                                        "Path: {}",
+                                                        subtitle
+                                                    ));
+                                                }
+
+                                                ui.with_layout(
+                                                    egui::Layout::right_to_left(
+                                                        egui::Align::Center,
+                                                    ),
+                                                    |ui| {
+                                                        // Delete button (✕)
+                                                        let del_btn = egui::Button::new(
+                                                            egui::RichText::new("✕")
+                                                                .size(11.0)
+                                                                .color(theme::TEXT_MUTED),
+                                                        )
+                                                        .fill(egui::Color32::TRANSPARENT)
+                                                        .frame(false);
+
+                                                        if ui
+                                                            .add(del_btn)
+                                                            .on_hover_text(
+                                                                "Remove from recent list",
+                                                            )
+                                                            .clicked()
+                                                        {
+                                                            project_to_delete = Some(ws.id);
+                                                        }
+
+                                                        // Open button (↗)
+                                                        let open_btn = egui::Button::new(
+                                                            egui::RichText::new("↗")
+                                                                .size(12.0)
+                                                                .color(theme::TEXT_PRIMARY),
+                                                        )
+                                                        .fill(egui::Color32::TRANSPARENT)
+                                                        .frame(false);
+
+                                                        if ui
+                                                            .add(open_btn)
+                                                            .on_hover_text(
+                                                                "Open and launch this project",
+                                                            )
+                                                            .clicked()
+                                                        {
+                                                            project_to_launch = Some(ws.clone());
+                                                        }
+                                                    },
+                                                );
+                                            });
+                                        });
                                 }
-                            }
-                        });
-
-                    if let Some(ws) = selected_workspace {
-                        app.load_workspace(&ws);
+                            });
                     }
                 });
 
-                ui.add_space(4.0);
+            if let Some(id) = project_to_delete {
+                app.workspace_store.remove(id);
+            }
+            if let Some(ws) = project_to_load {
+                app.load_workspace(&ws);
+            }
+            if let Some(ws) = project_to_launch {
+                app.load_workspace(&ws);
+                app.save_current_workspace();
+                app.restart_current_source();
+                app.show_launch_modal = false;
+                return;
+            }
 
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Name:").color(theme::TEXT_MUTED));
-                    ui.add(
-                        egui::TextEdit::singleline(&mut app.project_name_input)
-                            .hint_text("Project Name")
-                            .desired_width(170.0),
-                    );
+            ui.add_space(8.0);
 
-                    let save_btn = egui::Button::new(
-                        egui::RichText::new("💾 Save").color(theme::TEXT_PRIMARY),
-                    )
-                    .fill(theme::BG_SURFACE0)
-                    .stroke(Stroke::new(1.0, theme::BG_SURFACE1))
-                    .rounding(Rounding::same(4.0));
+            // Active Project Name & Save Bar
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Project Name:").color(theme::TEXT_MUTED));
+                ui.add(
+                    egui::TextEdit::singleline(&mut app.project_name_input)
+                        .hint_text("e.g. psittacus-erithacus")
+                        .desired_width(200.0),
+                );
 
-                    if ui
-                        .add(save_btn)
-                        .on_hover_text("Save current configuration as project")
-                        .clicked()
-                    {
-                        app.save_current_workspace();
-                    }
+                let save_btn = egui::Button::new(
+                    egui::RichText::new("💾 Save Workspace")
+                        .strong()
+                        .color(theme::TEXT_PRIMARY),
+                )
+                .fill(theme::BG_SURFACE0)
+                .stroke(Stroke::new(1.0, theme::BG_SURFACE1))
+                .rounding(Rounding::same(4.0));
 
-                    if let Some(active) = app.workspace_store.get_active() {
-                        let active_id = active.id;
-                        let del_btn =
-                            egui::Button::new(egui::RichText::new("🗑").color(theme::COLOR_ERROR))
-                                .fill(theme::BG_SURFACE0)
-                                .stroke(Stroke::new(1.0, theme::BG_SURFACE1))
-                                .rounding(Rounding::same(4.0));
-
-                        if ui
-                            .add(del_btn)
-                            .on_hover_text("Delete current project from history")
-                            .clicked()
-                        {
-                            app.workspace_store.remove(active_id);
-                        }
-                    }
-                });
+                if ui
+                    .add(save_btn)
+                    .on_hover_text("Save current configuration as project workspace")
+                    .clicked()
+                {
+                    app.save_current_workspace();
+                }
             });
 
             ui.add_space(8.0);
+            ui.separator();
+            ui.add_space(6.0);
 
             // Engine Performance Card
             render_modal_card(ui, "System Engine Performance", |ui| {

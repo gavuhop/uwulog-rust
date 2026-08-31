@@ -206,50 +206,111 @@ impl UwuGuiApp {
         }
 
         let workspace_store = uwu_core::WorkspaceStore::load();
-        let mut initial_query = String::new();
-        let mut project_name_input = "Default Workspace".to_string();
 
-        if !custom_source_specified {
-            if let Some(active) = workspace_store.get_active() {
-                project_name_input = active.name.clone();
-                initial_query = active.last_query.clone();
-                match active.source_type.as_str() {
+        // 1. Xác định môi trường khởi chạy (WSL hay Windows Host)
+        let is_wsl_invoked = args.contains(&"--wsl-distro".to_string())
+            || args.contains(&"--wsl-cmd".to_string())
+            || args.contains(&"--wsl-file".to_string())
+            || args.contains(&"--wsl-dir".to_string())
+            || source_type == SourceType::Wsl;
+
+        if is_wsl_invoked && source_type != SourceType::Wsl {
+            source_type = SourceType::Wsl;
+        }
+
+        // 2. Lấy Working Directory hiện tại tương ứng với môi trường
+        let active_workdir = if is_wsl_invoked {
+            if !wsl_config.working_dir.is_empty() {
+                wsl_config.working_dir.clone()
+            } else {
+                "/home".to_string()
+            }
+        } else if let Ok(cwd) = std::env::current_dir() {
+            cwd.to_string_lossy().to_string()
+        } else {
+            String::new()
+        };
+
+        if is_wsl_invoked && wsl_config.working_dir.is_empty() {
+            wsl_config.working_dir = active_workdir.clone();
+        }
+
+        // 3. Tự động trích xuất Tên Dự Án (Project Name) từ thư mục làm việc thực tế
+        fn extract_project_name(path_str: &str) -> String {
+            let clean = path_str.trim().trim_end_matches(&['/', '\\'][..]);
+            if clean.is_empty() {
+                return "Workspace".to_string();
+            }
+            let parts: Vec<&str> = clean
+                .split(&['/', '\\'][..])
+                .filter(|s| !s.is_empty())
+                .collect();
+            if let Some(last) = parts.last() {
+                if *last == "." || *last == ".." {
+                    "Workspace".to_string()
+                } else {
+                    last.to_string()
+                }
+            } else {
+                "Workspace".to_string()
+            }
+        }
+
+        let folder_name = if !active_workdir.is_empty() {
+            extract_project_name(&active_workdir)
+        } else {
+            "Workspace".to_string()
+        };
+
+        // 4. Tìm workspace đã lưu cho thư mục này nếu có
+        let matched_workspace = workspace_store.find_by_workdir(&active_workdir).cloned();
+
+        let mut project_name_input = folder_name;
+        let mut initial_query = String::new();
+
+        if let Some(ws) = matched_workspace {
+            project_name_input = ws.name.clone();
+            initial_query = ws.last_query.clone();
+            if !custom_source_specified {
+                match ws.source_type.as_str() {
                     "wsl" => {
                         source_type = SourceType::Wsl;
                         if let uwu_core::WorkspaceLocation::Wsl {
                             distro,
                             working_dir,
-                        } = &active.location
+                        } = &ws.location
                         {
                             wsl_config.distro = distro.clone();
                             wsl_config.working_dir = working_dir.clone();
                         }
-                        if !active.command_str.is_empty() {
+                        if !ws.command_str.is_empty() {
                             wsl_config.sub_mode = WslSubMode::Command;
-                            wsl_config.command_str = active.command_str.clone();
-                        } else if !active.file_path.is_empty() {
+                            wsl_config.command_str = ws.command_str.clone();
+                        } else if !ws.file_path.is_empty() {
                             wsl_config.sub_mode = WslSubMode::File;
-                            wsl_config.file_path = active.file_path.clone();
-                        } else if !active.journald_unit.is_empty() {
+                            wsl_config.file_path = ws.file_path.clone();
+                        } else if !ws.journald_unit.is_empty() {
                             wsl_config.sub_mode = WslSubMode::Journald;
-                            wsl_config.journald_unit = active.journald_unit.clone();
+                            wsl_config.journald_unit = ws.journald_unit.clone();
                         }
                     }
                     "file" => {
                         source_type = SourceType::File;
-                        file_to_read = active.file_path.clone();
+                        file_to_read = ws.file_path.clone();
                     }
                     "process" => {
                         source_type = SourceType::Process;
-                        cmd_to_run = active.command_str.clone();
+                        cmd_to_run = ws.command_str.clone();
                     }
                     "winevent" => {
                         source_type = SourceType::WinEvent;
                     }
-                    _ => {
-                        cmd_to_run = "go run gen_logs.go".to_string();
-                    }
+                    _ => {}
                 }
+            }
+        } else if !custom_source_specified {
+            if is_wsl_invoked {
+                wsl_config.sub_mode = WslSubMode::Journald;
             } else {
                 cmd_to_run = "go run gen_logs.go".to_string();
             }
