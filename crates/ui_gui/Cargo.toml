@@ -1,0 +1,33 @@
+[package]
+name = "uwu-ui-gui"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "uwu-gui"
+path = "src/main.rs"
+
+[dependencies]
+uwu-core-engine.workspace = true
+uwu-core-workspace.workspace = true
+uwu-driver-sources.workspace = true
+uwu-driver-transport.workspace = true
+uwu-core-schema.workspace = true
+uwu-core-util.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+eframe.workspace = true
+egui.workspace = true
+egui_extras.workspace = true
+rfd.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_UI_WindowsAndMessaging",
+] }
+raw-window-handle = "0.6"

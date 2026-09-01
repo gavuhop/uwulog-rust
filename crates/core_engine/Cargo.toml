@@ -1,0 +1,18 @@
+[package]
+name = "uwu-core-engine"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+uwu-driver-sources.workspace = true
+uwu-core-filter.workspace = true
+uwu-core-schema.workspace = true
+uwu-core-util.workspace = true
+rayon.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+loom = "0.7"
+serde_json.workspace = true

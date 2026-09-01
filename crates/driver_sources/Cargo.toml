@@ -1,0 +1,29 @@
+[package]
+name = "uwu-driver-sources"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+uwu-driver-transport.workspace = true
+uwu-core-protocol.workspace = true
+uwu-core-schema.workspace = true
+uwu-core-util.workspace = true
+tokio.workspace = true
+async-trait.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+notify.workspace = true
+log.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_EventLog",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }

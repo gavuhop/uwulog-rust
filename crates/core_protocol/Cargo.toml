@@ -1,0 +1,11 @@
+[package]
+name = "uwu-core-protocol"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+uwu-core-schema.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true

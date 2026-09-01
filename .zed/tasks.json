@@ -1,38 +1,42 @@
 [
   {
-    "label": "Check",
-    "command": "cargo check --workspace"
+    "label": "pre commit",
+    "command": "cargo fmt --all -- --check && cargo clippy --workspace --all-targets --all-features -- -D warnings && cargo test --workspace"
   },
   {
-    "label": "Test",
-    "command": "cargo nextest run --workspace"
+    "label": "Check",
+    "command": "cargo check --workspace"
   },
   {
     "label": "Clippy",
     "command": "cargo clippy --workspace --all-targets --all-features"
   },
   {
+    "label": "Test",
+    "command": "cargo nextest run --workspace"
+  },
+  {
     "label": "Format",
-    "command": "cargo fmt --all -- --check"
+    "command": "cargo fmt --all"
   },
   {
     "label": "Build",
     "command": "cargo build --workspace"
   },
   {
+    "label": "Run Release",
+    "command": "cargo run --release --bin uwu-gui"
+  },
+  {
     "label": "Run app test (JSON gen_logs)",
-    "command": "cargo run -p uwu-gui -- -r \"go run gen_logs.go -rate 50\""
+    "command": "cargo run --bin uwu-gui -- -r \"go run gen_logs.go -rate 50\""
   },
   {
     "label": "Run app test plain (ANSI gen_plain_logs)",
-    "command": "cargo run -p uwu-gui -- -r \"go run gen_plain_logs.go -rate 10 -stdout\""
+    "command": "cargo run --bin uwu-gui -- -r \"go run gen_plain_logs.go -rate 10 -stdout\""
   },
   {
     "label": "Run app test JSON (Zap gen_plain_logs)",
-    "command": "cargo run -p uwu-gui -- -r \"go run gen_plain_logs.go -rate 10 -json\""
-  },
-  {
-    "label": "Build Release",
-    "command": "cargo run --release --bin uwu-gui"
+    "command": "cargo run --bin uwu-gui -- -r \"go run gen_plain_logs.go -rate 10 -json\""
   }
 ]
