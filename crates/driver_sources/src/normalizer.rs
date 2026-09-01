@@ -12,12 +12,13 @@ impl LogNormalizer {
                 Self::normalize_json(&entry.source_id, &v, &raw_text)
             }
             RawPayload::Text(s) => {
-                let clean_ref = if s.contains('\x1b') {
+                let has_ansi = s.contains('\x1b') || s.contains('\r');
+                let clean = if has_ansi {
                     strip_ansi(&s)
                 } else {
-                    s.clone()
+                    String::new()
                 };
-                let trimmed = clean_ref.trim();
+                let trimmed = if has_ansi { clean.trim() } else { s.trim() };
 
                 // 1. Fast-check JSON: Chỉ thử parse JSON nếu bắt đầu và kết thúc bằng cặp ngoặc {} hoặc []
                 if (trimmed.starts_with('{') && trimmed.ends_with('}'))
@@ -38,7 +39,12 @@ impl LogNormalizer {
                 }
 
                 // 3. Fallback: Parse log dạng văn bản thuần (Unstructured Text)
-                Self::normalize_unstructured_text(&entry.source_id, &s)
+                if has_ansi {
+                    Self::normalize_unstructured_text(&entry.source_id, clean, s)
+                } else {
+                    let clean_text = s.clone();
+                    Self::normalize_unstructured_text(&entry.source_id, clean_text, s)
+                }
             }
             RawPayload::KeyValue(kv) => {
                 let raw_text = format!("{:?}", kv);
@@ -244,8 +250,7 @@ impl LogNormalizer {
         ))
     }
 
-    fn normalize_unstructured_text(source_id: &str, raw: &str) -> LogEvent {
-        let clean = strip_ansi(raw);
+    fn normalize_unstructured_text(source_id: &str, clean: String, raw: String) -> LogEvent {
         let mut level = LogLevel::Unknown;
 
         // Trích xuất level không cấp phát heap (zero-allocation ASCII case-insensitive search)
@@ -277,14 +282,7 @@ impl LogNormalizer {
 
         let timestamp = extract_timestamp_from_text(&clean);
 
-        LogEvent::new(
-            timestamp,
-            level,
-            source_id,
-            clean.clone(),
-            HashMap::new(),
-            clean,
-        )
+        LogEvent::new(timestamp, level, source_id, clean, HashMap::new(), raw)
     }
 }
 

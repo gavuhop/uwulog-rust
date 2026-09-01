@@ -4,21 +4,46 @@ use crate::ui::theme;
 use eframe::egui;
 use uwu_core_schema::LogEvent;
 
-/// Extracts formatted display text (with newlines replaced) and raw string value for a column.
-fn extract_cell_content(event: &LogEvent, col_name: &str) -> (String, String) {
+use std::borrow::Cow;
+
+/// Extracts formatted display text (with newlines replaced) and raw string value for a column with zero-allocation for common fields.
+fn extract_cell_content<'a>(event: &'a LogEvent, col_name: &str) -> (Cow<'a, str>, Cow<'a, str>) {
     match col_name {
-        "timestamp" => (event.timestamp.clone(), event.timestamp.clone()),
-        "level" => (event.level.to_string(), event.level.to_string()),
-        "message" => (event.message.replace('\n', " ↵ "), event.message.clone()),
+        "timestamp" => (
+            Cow::Borrowed(&event.timestamp),
+            Cow::Borrowed(&event.timestamp),
+        ),
+        "level" => (
+            Cow::Borrowed(event.level.as_str()),
+            Cow::Borrowed(event.level.as_str()),
+        ),
+        "message" => {
+            if event.message.contains('\n') {
+                (
+                    Cow::Owned(event.message.replace('\n', " ↵ ")),
+                    Cow::Borrowed(&event.message),
+                )
+            } else {
+                (Cow::Borrowed(&event.message), Cow::Borrowed(&event.message))
+            }
+        }
+        "source" | "source_id" => (
+            Cow::Borrowed(&event.source_id),
+            Cow::Borrowed(&event.source_id),
+        ),
         custom_key => {
             if let Some(val) = event.fields.get(custom_key) {
-                let raw = match val {
-                    serde_json::Value::String(s) => s.clone(),
-                    _ => val.to_string(),
-                };
-                (raw.clone(), raw)
+                match val {
+                    serde_json::Value::String(s) => {
+                        (Cow::Borrowed(s.as_str()), Cow::Borrowed(s.as_str()))
+                    }
+                    _ => {
+                        let s = val.to_string();
+                        (Cow::Owned(s.clone()), Cow::Owned(s))
+                    }
+                }
             } else {
-                ("-".to_string(), "-".to_string())
+                (Cow::Borrowed("-"), Cow::Borrowed("-"))
             }
         }
     }
@@ -83,7 +108,7 @@ pub fn render_cell(
 
     let (cell_text, raw_cell_val) = extract_cell_content(event, col_name);
     let cell_id = ui.make_persistent_id((event.id, col_name));
-    let mut text_val = cell_text.clone();
+    let mut text_val = cell_text.as_ref();
 
     let highlighted_terms_ref = ctx.highlighted_terms;
     let mut layouter = |ui: &egui::Ui, _text: &str, _wrap_width: f32| {

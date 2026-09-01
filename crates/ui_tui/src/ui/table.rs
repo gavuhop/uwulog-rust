@@ -27,7 +27,7 @@ pub fn render_table(f: &mut Frame, app: &mut App, area: Rect) {
             let line_content = format!(
                 "[{}] [{:<5}] [{}] {}",
                 log.timestamp,
-                log.level.to_string(),
+                log.level.as_str(),
                 log.source_id,
                 log.message
             );

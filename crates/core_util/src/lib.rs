@@ -9,8 +9,11 @@ pub fn now_secs() -> f64 {
         .unwrap_or(0.0)
 }
 
-/// Loại bỏ các mã màu và định dạng ANSI escape sequence khỏi chuỗi văn bản
+/// Loại bỏ các mã màu và định dạng ANSI escape sequence khỏi chuỗi văn bản (Fast-path 0 heap alloc nếu không có mã ANSI/\r)
 pub fn strip_ansi(s: &str) -> String {
+    if !s.contains('\x1b') && !s.contains('\r') {
+        return s.to_string();
+    }
     let mut result = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
@@ -58,8 +61,8 @@ pub fn parse_numeric_value(s: &str, now: f64) -> Option<f64> {
         return Some(now);
     }
 
-    // 1. Hỗ trợ biểu thức relative timestamp: now-5m, now-1h, now+30s, now - 5m...
-    if s_trim.to_ascii_lowercase().starts_with("now") {
+    // 1. Hỗ trợ biểu thức relative timestamp: now-5m, now-1h, now+30s, now - 5m... (0 allocation & an toàn UTF-8)
+    if s_trim.len() >= 3 && s_trim.as_bytes()[..3].eq_ignore_ascii_case(b"now") {
         let after_now = s_trim[3..].trim();
         if let Some(rest) = after_now.strip_prefix('-') {
             let rest = rest.trim();
@@ -218,6 +221,13 @@ mod tests {
         assert_eq!(parse_numeric_value("1w", now), Some(now - 604800.0));
         assert_eq!(parse_numeric_value("1M", now), Some(now - 2629746.0));
         assert_eq!(parse_numeric_value("1y", now), Some(now - 31536000.0));
+
+        // Multi-byte Unicode & Emoji safety (must not panic on UTF-8 char boundary)
+        assert_eq!(parse_numeric_value("🚀10", now), None);
+        assert_eq!(parse_numeric_value("đồng", now), None);
+        assert_eq!(parse_numeric_value("🔥", now), None);
+        assert_eq!(parse_numeric_value("á123", now), None);
+        assert_eq!(parse_numeric_value("đ", now), None);
 
         // Invalid strings
         assert_eq!(parse_numeric_value("not_a_number", now), None);

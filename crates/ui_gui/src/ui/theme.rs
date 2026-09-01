@@ -286,6 +286,20 @@ pub fn create_highlighted_layout_job(
         return job;
     }
 
+    // Fast-path 0 heap allocation cho log thuần túy không có ANSI và không có Highlight
+    if highlighted_terms.is_empty() && !text.contains('\x1b') {
+        job.append(
+            text,
+            0.0,
+            egui::TextFormat {
+                font_id,
+                color: default_color,
+                ..Default::default()
+            },
+        );
+        return job;
+    }
+
     let segments = parse_ansi_segments(text, default_color);
 
     for (seg_text, seg_color) in segments {

@@ -7,7 +7,7 @@ use tokio::sync::mpsc;
 use uwu_core_filter::evaluator::eval_event;
 use uwu_core_filter::parser::{tokenize, Parser};
 use uwu_core_schema::{LogEvent, RawLogEntry};
-use uwu_core_util::{now_secs, parse_iso_to_secs};
+use uwu_core_util::now_secs;
 use uwu_driver_sources::{LogNormalizer, LogSource};
 
 pub struct SystemEngine {
@@ -49,7 +49,7 @@ impl SystemEngine {
                 let mut event_batch = Vec::with_capacity(raw_batch.len());
                 for raw_entry in raw_batch.drain(..) {
                     let event = LogNormalizer::normalize(raw_entry);
-                    if let Some(ts) = parse_iso_to_secs(&event.timestamp) {
+                    if let Some(ts) = event.timestamp_secs {
                         if ts > batch_max_ts {
                             batch_max_ts = ts;
                         }
@@ -197,11 +197,10 @@ impl SystemEngine {
             let take_count = new_count.min(total_in_buffer);
             let start_idx = total_in_buffer.saturating_sub(take_count);
 
-            let new_slice: Vec<LogEvent> = evts.iter().skip(start_idx).cloned().collect();
-
             if trimmed.is_empty() {
-                let matched_len = new_slice.len();
-                return (matched_len, new_slice);
+                let events: Vec<LogEvent> = evts.iter().skip(start_idx).cloned().collect();
+                let matched_len = events.len();
+                return (matched_len, events);
             }
 
             let data_now = if let Ok(max_ts) = self.max_timestamp.read() {
@@ -218,12 +217,18 @@ impl SystemEngine {
             let mut parser = Parser::new(tokens, data_now);
             let ast = match parser.parse() {
                 Some(e) => e,
-                None => return (new_slice.len(), new_slice),
+                None => {
+                    let events: Vec<LogEvent> = evts.iter().skip(start_idx).cloned().collect();
+                    let matched_len = events.len();
+                    return (matched_len, events);
+                }
             };
 
-            let matched_events: Vec<LogEvent> = new_slice
-                .into_iter()
+            let matched_events: Vec<LogEvent> = evts
+                .iter()
+                .skip(start_idx)
                 .filter(|e| eval_event(&ast, e, data_now))
+                .cloned()
                 .collect();
             let matched_len = matched_events.len();
             return (matched_len, matched_events);

@@ -87,13 +87,24 @@ pub fn eval_event(expr: &Expr, log: &LogEvent, now: f64) -> bool {
 }
 
 pub fn get_event_field_numeric(log: &LogEvent, field: &str, now: f64) -> Option<f64> {
-    if field.eq_ignore_ascii_case("timestamp")
-        || field.eq_ignore_ascii_case("time")
-        || field.eq_ignore_ascii_case("ts")
-        || field.eq_ignore_ascii_case("date")
-    {
+    if field == "timestamp" || field == "time" || field == "ts" || field == "date" {
         if let Some(ts_sec) = log.timestamp_secs {
             return Some(ts_sec);
+        }
+    }
+    // Direct numeric evaluation (0 heap allocation, 0 string formatting/parsing overhead)
+    if let Some(v) = log.fields.get(field) {
+        if let Some(n) = v.as_f64() {
+            return Some(n);
+        }
+        if let Some(n) = v.as_i64() {
+            return Some(n as f64);
+        }
+        if let Some(n) = v.as_u64() {
+            return Some(n as f64);
+        }
+        if let Some(s) = v.as_str() {
+            return parse_numeric_value(s, now);
         }
     }
     get_event_field_cow(log, field).and_then(|s| parse_numeric_value(&s, now))

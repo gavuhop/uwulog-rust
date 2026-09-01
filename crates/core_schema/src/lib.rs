@@ -34,15 +34,40 @@ impl LogLevel {
     }
 
     pub fn parse_str(s: &str) -> Self {
-        let clean = s.trim().to_uppercase();
-        match clean.as_str() {
-            "TRACE" | "TRC" | "VERBOSE" => LogLevel::Trace,
-            "DEBUG" | "DBG" => LogLevel::Debug,
-            "INFO" | "INF" | "INFORMATION" | "NOTICE" => LogLevel::Info,
-            "WARN" | "WARNING" | "WRN" => LogLevel::Warn,
-            "ERROR" | "ERR" | "CRITICAL" | "CRIT" => LogLevel::Error,
-            "FATAL" | "FTL" | "EMERG" | "EMERGENCY" | "ALERT" => LogLevel::Fatal,
-            _ => LogLevel::Unknown,
+        let clean = s.trim();
+        if clean.eq_ignore_ascii_case("TRACE")
+            || clean.eq_ignore_ascii_case("TRC")
+            || clean.eq_ignore_ascii_case("VERBOSE")
+        {
+            LogLevel::Trace
+        } else if clean.eq_ignore_ascii_case("DEBUG") || clean.eq_ignore_ascii_case("DBG") {
+            LogLevel::Debug
+        } else if clean.eq_ignore_ascii_case("INFO")
+            || clean.eq_ignore_ascii_case("INF")
+            || clean.eq_ignore_ascii_case("INFORMATION")
+            || clean.eq_ignore_ascii_case("NOTICE")
+        {
+            LogLevel::Info
+        } else if clean.eq_ignore_ascii_case("WARN")
+            || clean.eq_ignore_ascii_case("WARNING")
+            || clean.eq_ignore_ascii_case("WRN")
+        {
+            LogLevel::Warn
+        } else if clean.eq_ignore_ascii_case("ERROR")
+            || clean.eq_ignore_ascii_case("ERR")
+            || clean.eq_ignore_ascii_case("CRITICAL")
+            || clean.eq_ignore_ascii_case("CRIT")
+        {
+            LogLevel::Error
+        } else if clean.eq_ignore_ascii_case("FATAL")
+            || clean.eq_ignore_ascii_case("FTL")
+            || clean.eq_ignore_ascii_case("EMERG")
+            || clean.eq_ignore_ascii_case("EMERGENCY")
+            || clean.eq_ignore_ascii_case("ALERT")
+        {
+            LogLevel::Fatal
+        } else {
+            LogLevel::Unknown
         }
     }
 }
