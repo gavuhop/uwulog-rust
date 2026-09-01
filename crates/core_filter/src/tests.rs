@@ -1,17 +1,81 @@
 use super::evaluator::eval_event;
 use super::parser::parse_query;
-use super::LogEngine;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use uwu_core_schema::{LogEvent, LogLevel};
 use uwu_core_util::parse_numeric_value;
 
-fn filter_logs(logs_val: Vec<Value>, query: String) -> Vec<u32> {
-    let mut engine = LogEngine::new(100000);
-    for l in logs_val {
-        engine.push(&serde_json::to_string(&l).unwrap());
+fn val_to_log_event(v: &Value) -> LogEvent {
+    let mut fields = HashMap::new();
+    let mut level = LogLevel::Unknown;
+    let mut timestamp = String::new();
+    let mut message = String::new();
+    let mut source_id = "src".to_string();
+
+    if let Some(obj) = v.as_object() {
+        for (k, val) in obj {
+            match k.as_str() {
+                "level" => {
+                    if let Some(s) = val.as_str() {
+                        level = LogLevel::parse_str(s);
+                    }
+                }
+                "timestamp" | "ts" | "time" => {
+                    if let Some(s) = val.as_str() {
+                        timestamp = s.to_string();
+                    } else {
+                        timestamp = val.to_string();
+                    }
+                }
+                "message" | "msg" => {
+                    if let Some(s) = val.as_str() {
+                        message = s.to_string();
+                    }
+                }
+                "source" | "source_id" => {
+                    if let Some(s) = val.as_str() {
+                        source_id = s.to_string();
+                    }
+                }
+                _ => {
+                    fields.insert(k.clone(), val.clone());
+                }
+            }
+        }
     }
-    engine.filter(query)
+
+    let raw = v.to_string();
+    if message.is_empty() {
+        message = raw.clone();
+    }
+
+    LogEvent::new(timestamp, level, source_id, message, fields, raw)
+}
+
+fn filter_logs(logs_val: Vec<Value>, query: String) -> Vec<u32> {
+    let events: Vec<LogEvent> = logs_val.iter().map(val_to_log_event).collect();
+    let max_ts = events
+        .iter()
+        .filter_map(|e| e.timestamp_secs)
+        .fold(0.0f64, |acc, ts| acc.max(ts));
+    let now = if max_ts > 0.0 {
+        max_ts
+    } else {
+        uwu_core_util::now_secs()
+    };
+
+    let expr = parse_query(&query, now);
+    events
+        .iter()
+        .enumerate()
+        .filter_map(|(i, e)| {
+            if eval_event(&expr, e, now) {
+                Some(i as u32)
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 fn log(level: &str, ts: &str, msg: &str, src: &str) -> Value {
