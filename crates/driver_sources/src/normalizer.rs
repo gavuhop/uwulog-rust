@@ -93,21 +93,7 @@ impl LogNormalizer {
         let level = if let Some(ref lk) = level_key {
             if let Some(val) = fields.get(lk) {
                 if let Some(s) = val.as_str() {
-                    match s.trim() {
-                        "0" | "1" | "2" | "3" => LogLevel::Error,
-                        "4" => LogLevel::Warn,
-                        "5" | "6" => LogLevel::Info,
-                        "7" => LogLevel::Debug,
-                        _ => LogLevel::parse_str(s),
-                    }
-                } else if let Some(n) = val.as_u64() {
-                    match n {
-                        0..=3 => LogLevel::Error,
-                        4 => LogLevel::Warn,
-                        5 | 6 => LogLevel::Info,
-                        7 => LogLevel::Debug,
-                        _ => LogLevel::Unknown,
-                    }
+                    LogLevel::parse_str(s)
                 } else {
                     LogLevel::parse_str(&val.to_string())
                 }
@@ -121,33 +107,7 @@ impl LogNormalizer {
         let timestamp = if let Some(ref tk) = timestamp_key {
             if let Some(val) = fields.get(tk) {
                 if let Some(s) = val.as_str() {
-                    if let Ok(usecs) = s.parse::<u64>() {
-                        if usecs > 1_000_000_000_000_000 {
-                            let secs = (usecs / 1_000_000) as i64;
-                            let nsecs = ((usecs % 1_000_000) * 1_000) as u32;
-                            if let Some(dt) = chrono::DateTime::from_timestamp(secs, nsecs) {
-                                dt.to_rfc3339()
-                            } else {
-                                s.to_string()
-                            }
-                        } else {
-                            s.to_string()
-                        }
-                    } else {
-                        s.to_string()
-                    }
-                } else if let Some(usecs) = val.as_u64() {
-                    if usecs > 1_000_000_000_000_000 {
-                        let secs = (usecs / 1_000_000) as i64;
-                        let nsecs = ((usecs % 1_000_000) * 1_000) as u32;
-                        if let Some(dt) = chrono::DateTime::from_timestamp(secs, nsecs) {
-                            dt.to_rfc3339()
-                        } else {
-                            val.to_string()
-                        }
-                    } else {
-                        val.to_string()
-                    }
+                    s.to_string()
                 } else {
                     val.to_string()
                 }
@@ -339,27 +299,5 @@ mod tests {
         assert_eq!(event.level, LogLevel::Warn);
         assert_eq!(event.message, "Low disk space");
         assert_eq!(event.fields.get("free_mb").unwrap(), &serde_json::json!(50));
-    }
-
-    #[test]
-    fn test_normalize_systemd_journald_json() {
-        let journald_payload = serde_json::json!({
-            "MESSAGE": "Started User Manager for UID 1000.",
-            "PRIORITY": "6",
-            "__REALTIME_TIMESTAMP": "1724140800000000",
-            "_SYSTEMD_UNIT": "user@1000.service"
-        });
-
-        let event = LogNormalizer::normalize(RawLogEntry {
-            payload: RawPayload::Json(journald_payload),
-        });
-
-        assert_eq!(event.level, LogLevel::Info); // Priority 6 is Info
-        assert_eq!(event.message, "Started User Manager for UID 1000.");
-        assert!(event.timestamp.contains("2024"));
-        assert_eq!(
-            event.fields.get("_SYSTEMD_UNIT").unwrap(),
-            &serde_json::json!("user@1000.service")
-        );
     }
 }

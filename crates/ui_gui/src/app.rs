@@ -11,9 +11,6 @@ use uwu_core_workspace::{Workspace, WorkspaceLocation, WorkspaceStore};
 use uwu_driver_sources::{FileSource, LogSource, ProcessSource, WslSource, WslTargetMode};
 use uwu_driver_transport::WslTransport;
 
-#[cfg(target_os = "windows")]
-use uwu_driver_sources::WinEventSource;
-
 pub const RAW_STREAM_LIMIT: usize = 500;
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
@@ -26,7 +23,6 @@ pub enum ActiveTab {
 pub enum SourceType {
     Process,
     File,
-    WinEvent,
     Wsl,
 }
 
@@ -34,7 +30,6 @@ pub enum SourceType {
 pub enum WslSubMode {
     Command,
     File,
-    Journald,
 }
 
 #[derive(Clone, Debug)]
@@ -44,7 +39,6 @@ pub struct WslConfig {
     pub sub_mode: WslSubMode,
     pub command_str: String,
     pub file_path: String,
-    pub journald_unit: String,
 }
 
 impl Default for WslConfig {
@@ -53,9 +47,8 @@ impl Default for WslConfig {
             distro: "Ubuntu".to_string(),
             working_dir: String::new(),
             sub_mode: WslSubMode::Command,
-            command_str: "journalctl -f -o json".to_string(),
+            command_str: "python3 app.py".to_string(),
             file_path: "/var/log/syslog".to_string(),
-            journald_unit: String::new(),
         }
     }
 }
@@ -64,7 +57,6 @@ pub struct SourceConfig {
     pub source_type: SourceType,
     pub command_str: String,
     pub file_path: String,
-    pub win_channel: String,
     pub working_dir: String,
     pub wsl_config: WslConfig,
     pub capacity: usize,
@@ -144,6 +136,7 @@ impl UwuGuiApp {
 
         let mut cmd_to_run = String::new();
         let mut file_to_read = String::new();
+        let mut working_dir = String::new();
         let mut source_type = SourceType::Process;
         let mut wsl_config = WslConfig::default();
         let mut custom_source_specified = false;
@@ -178,14 +171,6 @@ impl UwuGuiApp {
                 source_type = SourceType::Wsl;
                 custom_source_specified = true;
                 i += 1;
-            } else if args[i] == "--wsl-journald" {
-                wsl_config.sub_mode = WslSubMode::Journald;
-                source_type = SourceType::Wsl;
-                custom_source_specified = true;
-                if i + 1 < args.len() && !args[i + 1].starts_with('-') {
-                    wsl_config.journald_unit = args[i + 1].clone();
-                    i += 1;
-                }
             } else if (args[i] == "-r"
                 || args[i] == "--run"
                 || args[i] == "-c"
@@ -211,7 +196,6 @@ impl UwuGuiApp {
 
         let workspace_store = WorkspaceStore::load();
 
-        // 1. Xác định môi trường khởi chạy (WSL hay Windows Host)
         let is_wsl_invoked = args.contains(&"--wsl-distro".to_string())
             || args.contains(&"--wsl-cmd".to_string())
             || args.contains(&"--wsl-file".to_string())
@@ -222,13 +206,14 @@ impl UwuGuiApp {
             source_type = SourceType::Wsl;
         }
 
-        // 2. Lấy Working Directory hiện tại tương ứng với môi trường
         let active_workdir = if is_wsl_invoked {
             if !wsl_config.working_dir.is_empty() {
                 wsl_config.working_dir.clone()
             } else {
                 "/home".to_string()
             }
+        } else if !working_dir.is_empty() {
+            working_dir.clone()
         } else if let Ok(cwd) = std::env::current_dir() {
             cwd.to_string_lossy().to_string()
         } else {
@@ -237,9 +222,10 @@ impl UwuGuiApp {
 
         if is_wsl_invoked && wsl_config.working_dir.is_empty() {
             wsl_config.working_dir = active_workdir.clone();
+        } else if working_dir.is_empty() {
+            working_dir = active_workdir.clone();
         }
 
-        // 3. Tự động trích xuất Tên Dự Án (Project Name) từ thư mục làm việc thực tế
         fn extract_project_name(path_str: &str) -> String {
             let clean = path_str.trim().trim_end_matches(&['/', '\\'][..]);
             if clean.is_empty() {
@@ -260,21 +246,13 @@ impl UwuGuiApp {
             }
         }
 
-        let folder_name = if !active_workdir.is_empty() {
-            extract_project_name(&active_workdir)
-        } else {
-            "Workspace".to_string()
-        };
-
-        // 4. Tìm workspace đã lưu cho thư mục này nếu có
-        let matched_workspace = workspace_store.find_by_workdir(&active_workdir).cloned();
-
-        let mut project_name_input = folder_name;
+        let mut initial_project_name = extract_project_name(&active_workdir);
         let mut initial_query = String::new();
 
-        if let Some(ws) = matched_workspace {
-            project_name_input = ws.name.clone();
+        if let Some(ws) = workspace_store.find_by_workdir(&active_workdir) {
+            initial_project_name = ws.name.clone();
             initial_query = ws.last_query.clone();
+
             if !custom_source_specified {
                 match ws.source_type.as_str() {
                     "wsl" => {
@@ -293,9 +271,6 @@ impl UwuGuiApp {
                         } else if !ws.file_path.is_empty() {
                             wsl_config.sub_mode = WslSubMode::File;
                             wsl_config.file_path = ws.file_path.clone();
-                        } else if !ws.journald_unit.is_empty() {
-                            wsl_config.sub_mode = WslSubMode::Journald;
-                            wsl_config.journald_unit = ws.journald_unit.clone();
                         }
                     }
                     "file" => {
@@ -306,9 +281,6 @@ impl UwuGuiApp {
                         source_type = SourceType::Process;
                         cmd_to_run = ws.command_str.clone();
                     }
-                    "winevent" => {
-                        source_type = SourceType::WinEvent;
-                    }
                     _ => {}
                 }
             }
@@ -317,18 +289,13 @@ impl UwuGuiApp {
         }
 
         let engine = Arc::new(SystemEngine::new(capacity));
-
         let available_wsl_distros = WslTransport::detect_distros();
-        if wsl_config.distro.is_empty() && !available_wsl_distros.is_empty() {
-            wsl_config.distro = available_wsl_distros[0].clone();
-        }
 
         let source_config = SourceConfig {
             source_type,
             command_str: cmd_to_run,
             file_path: file_to_read,
-            win_channel: "System".to_string(),
-            working_dir: active_workdir.clone(),
+            working_dir,
             wsl_config,
             capacity,
             display_limit,
@@ -370,7 +337,7 @@ impl UwuGuiApp {
             discovered_fields_cache: Self::default_discovered_fields(),
             available_wsl_distros,
             workspace_store,
-            project_name_input,
+            project_name_input: initial_project_name,
             project_picker_open: false,
             project_search_query: String::new(),
         };
@@ -413,7 +380,6 @@ impl UwuGuiApp {
             SourceType::Process => "process",
             SourceType::File => "file",
             SourceType::Wsl => "wsl",
-            SourceType::WinEvent => "winevent",
         };
 
         let mut ws = Workspace::new(name, location, source_type_str);
@@ -433,13 +399,7 @@ impl UwuGuiApp {
                 WslSubMode::File => {
                     ws.file_path = self.source_config.wsl_config.file_path.clone();
                 }
-                WslSubMode::Journald => {
-                    ws.journald_unit = self.source_config.wsl_config.journald_unit.clone();
-                }
             },
-            SourceType::WinEvent => {
-                ws.win_channel = self.source_config.win_channel.clone();
-            }
         }
 
         self.workspace_store.add_or_update(ws);
@@ -474,9 +434,6 @@ impl UwuGuiApp {
                 } else if !ws.file_path.is_empty() {
                     self.source_config.wsl_config.sub_mode = WslSubMode::File;
                     self.source_config.wsl_config.file_path = ws.file_path.clone();
-                } else {
-                    self.source_config.wsl_config.sub_mode = WslSubMode::Journald;
-                    self.source_config.wsl_config.journald_unit = ws.journald_unit.clone();
                 }
             }
             "file" => {
@@ -486,10 +443,6 @@ impl UwuGuiApp {
             "process" => {
                 self.source_config.source_type = SourceType::Process;
                 self.source_config.command_str = ws.command_str.clone();
-            }
-            "winevent" => {
-                self.source_config.source_type = SourceType::WinEvent;
-                self.source_config.win_channel = ws.win_channel.clone();
             }
             _ => {}
         }
@@ -571,16 +524,6 @@ impl UwuGuiApp {
                     self.is_source_running = true;
                 }
             }
-            SourceType::WinEvent => {
-                #[cfg(target_os = "windows")]
-                {
-                    let channel = config.win_channel.clone();
-                    self.rt.spawn(async move {
-                        let _ = WinEventSource::new(channel).start_stream(source_tx).await;
-                    });
-                    self.is_source_running = true;
-                }
-            }
             SourceType::Wsl => {
                 let wsl_cfg = &config.wsl_config;
                 let mode = match wsl_cfg.sub_mode {
@@ -597,14 +540,6 @@ impl UwuGuiApp {
                         } else {
                             None
                         }
-                    }
-                    WslSubMode::Journald => {
-                        let unit = if wsl_cfg.journald_unit.trim().is_empty() {
-                            None
-                        } else {
-                            Some(wsl_cfg.journald_unit.clone())
-                        };
-                        Some(WslTargetMode::Journald(unit))
                     }
                 };
 
@@ -1058,7 +993,6 @@ mod tests {
             source_type: SourceType::Process,
             command_str: String::new(),
             file_path: String::new(),
-            win_channel: "System".to_string(),
             working_dir: String::new(),
             wsl_config: WslConfig::default(),
             capacity: 100,

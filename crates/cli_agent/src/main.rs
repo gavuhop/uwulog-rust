@@ -8,7 +8,7 @@ use uwu_core_protocol::{
     ClientEnvelope, FramedReader, FramedWriter, RemoteLogSourceSpec, ServerEnvelope,
 };
 use uwu_core_schema::RawLogEntry;
-use uwu_driver_sources::{FileSource, JournaldSource, LogSource, ProcessSource};
+use uwu_driver_sources::{FileSource, LogSource, ProcessSource};
 
 /// uwu-agent: Headless log streaming agent for remote environments (Linux / WSL / SSH / Containers)
 #[derive(Parser, Debug)]
@@ -28,10 +28,6 @@ struct Cli {
     /// Run a command and capture its stdout/stderr (standalone CLI mode)
     #[arg(short = 'r', long, alias = "cmd")]
     cmd: Option<String>,
-
-    /// Stream systemd journald logs (standalone CLI mode)
-    #[arg(short = 'j', long)]
-    journald: Option<Option<String>>,
 
     /// Positional argument fallback for file path
     file_pos: Option<String>,
@@ -57,11 +53,7 @@ async fn main() -> Result<()> {
         }
         None => {
             // Nếu không truyền cờ nào mà stdin là pipe thì tự động fallback vào proxy mode
-            if cli.file.is_none()
-                && cli.cmd.is_none()
-                && cli.journald.is_none()
-                && cli.file_pos.is_none()
-            {
+            if cli.file.is_none() && cli.cmd.is_none() && cli.file_pos.is_none() {
                 run_rpc_proxy_mode().await
             } else {
                 run_standalone_mode(cli).await
@@ -113,9 +105,6 @@ async fn run_rpc_proxy_mode() -> Result<()> {
                         Box::new(ProcessSource::new(prog, args))
                     }
                     RemoteLogSourceSpec::File(path) => Box::new(FileSource::new(path)),
-                    RemoteLogSourceSpec::Journald(unit_opt) => {
-                        Box::new(JournaldSource::new(unit_opt))
-                    }
                 };
 
                 let (tx, mut rx) = mpsc::channel::<RawLogEntry>(10_000);
@@ -211,10 +200,8 @@ async fn run_standalone_mode(cli: Cli) -> Result<()> {
         Box::new(ProcessSource::new(prog, args))
     } else if let Some(file_path) = cli.file.or(cli.file_pos) {
         Box::new(FileSource::new(file_path))
-    } else if let Some(journald_opt) = cli.journald {
-        Box::new(JournaldSource::new(journald_opt))
     } else {
-        Box::new(JournaldSource::new(None::<String>))
+        anyhow::bail!("Please specify a log file (-f <path>) or command (-r '<cmd>')");
     };
 
     let (tx, mut rx) = mpsc::channel::<RawLogEntry>(10_000);

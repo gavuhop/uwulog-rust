@@ -351,13 +351,6 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
                                         .size(11.5)
                                         .color(theme::TEXT_PRIMARY),
                                 );
-                                ui.radio_value(
-                                    &mut app.source_config.wsl_config.sub_mode,
-                                    WslSubMode::Journald,
-                                    egui::RichText::new("📜 Journald")
-                                        .size(11.5)
-                                        .color(theme::TEXT_PRIMARY),
-                                );
                             });
 
                             ui.add_space(4.0);
@@ -373,9 +366,7 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
                                             egui::TextEdit::singleline(
                                                 &mut app.source_config.wsl_config.command_str,
                                             )
-                                            .hint_text(
-                                                "e.g. journalctl -f -o json or python3 app.py",
-                                            )
+                                            .hint_text("e.g. python3 app.py or cargo run")
                                             .font(egui::TextStyle::Monospace)
                                             .desired_width(280.0),
                                         );
@@ -391,65 +382,14 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
                                             egui::TextEdit::singleline(
                                                 &mut app.source_config.wsl_config.file_path,
                                             )
-                                            .hint_text("/var/log/syslog")
+                                            .hint_text("/var/log/app.log")
                                             .font(egui::TextStyle::Monospace)
                                             .desired_width(280.0),
                                         );
                                     });
                                 }
-                                WslSubMode::Journald => {
-                                    ui.horizontal(|ui| {
-                                        ui.label(
-                                            egui::RichText::new("Unit (opt):")
-                                                .color(theme::TEXT_MUTED),
-                                        );
-                                        ui.add(
-                                            egui::TextEdit::singleline(
-                                                &mut app.source_config.wsl_config.journald_unit,
-                                            )
-                                            .hint_text("e.g. nginx.service (leave blank for all)")
-                                            .font(egui::TextStyle::Monospace)
-                                            .desired_width(240.0),
-                                        );
-                                    });
-                                }
                             }
                         });
-                }
-
-                ui.add_space(6.0);
-
-                #[cfg(target_os = "windows")]
-                {
-                    ui.radio_value(
-                        &mut app.source_config.source_type,
-                        SourceType::WinEvent,
-                        egui::RichText::new("🪟 Windows Event Log").color(theme::TEXT_PRIMARY),
-                    );
-                    if app.source_config.source_type == SourceType::WinEvent {
-                        ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new("Channel:").color(theme::TEXT_MUTED));
-                            egui::ComboBox::from_id_salt("win_channel_combo")
-                                .selected_text(&app.source_config.win_channel)
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(
-                                        &mut app.source_config.win_channel,
-                                        "System".to_string(),
-                                        "System",
-                                    );
-                                    ui.selectable_value(
-                                        &mut app.source_config.win_channel,
-                                        "Application".to_string(),
-                                        "Application",
-                                    );
-                                    ui.selectable_value(
-                                        &mut app.source_config.win_channel,
-                                        "Security".to_string(),
-                                        "Security",
-                                    );
-                                });
-                        });
-                    }
                 }
             });
 

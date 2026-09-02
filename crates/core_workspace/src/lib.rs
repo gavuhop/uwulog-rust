@@ -16,11 +16,9 @@ pub struct Workspace {
     pub id: Uuid,
     pub name: String,
     pub location: WorkspaceLocation,
-    pub source_type: String, // "process", "file", "wsl", "winevent"
+    pub source_type: String, // "process", "file", "wsl"
     pub command_str: String,
     pub file_path: String,
-    pub journald_unit: String,
-    pub win_channel: String,
     pub last_query: String,
     pub last_opened: DateTime<Utc>,
 }
@@ -38,8 +36,6 @@ impl Workspace {
             source_type: source_type.into(),
             command_str: String::new(),
             file_path: String::new(),
-            journald_unit: String::new(),
-            win_channel: "System".to_string(),
             last_query: String::new(),
             last_opened: Utc::now(),
         }

@@ -13,10 +13,7 @@ use std::io::{self, Write};
 use std::sync::Arc;
 use std::time::Duration;
 use uwu_core_engine::SystemEngine;
-use uwu_driver_sources::{FileSource, JournaldSource, ProcessSource, WslSource, WslTargetMode};
-
-#[cfg(target_os = "windows")]
-use uwu_driver_sources::WinEventSource;
+use uwu_driver_sources::{FileSource, ProcessSource, WslSource, WslTargetMode};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -39,7 +36,6 @@ async fn main() -> Result<()> {
     }
 
     let engine = Arc::new(SystemEngine::new(capacity));
-    let mut added_custom_source = false;
 
     let mut i = 1;
     while i < args.len() {
@@ -62,7 +58,6 @@ async fn main() -> Result<()> {
                 let _ = engine
                     .add_source(Box::new(ProcessSource::new(prog, proc_args)))
                     .await;
-                added_custom_source = true;
                 break;
             }
         } else if arg == "-f" || arg == "--file" {
@@ -71,19 +66,8 @@ async fn main() -> Result<()> {
                 let _ = engine
                     .add_source(Box::new(FileSource::new(file_path)))
                     .await;
-                added_custom_source = true;
                 i += 1;
             }
-        } else if arg == "-j" || arg == "--journald" {
-            let unit = if i + 1 < args.len() && !args[i + 1].starts_with('-') {
-                let u = args[i + 1].clone();
-                i += 1;
-                Some(u)
-            } else {
-                None
-            };
-            let _ = engine.add_source(Box::new(JournaldSource::new(unit))).await;
-            added_custom_source = true;
         } else if arg == "--wsl-cmd" && i + 1 < args.len() {
             let cmd = args[i + 1].clone();
             let _ = engine
@@ -92,7 +76,6 @@ async fn main() -> Result<()> {
                     WslTargetMode::Command(cmd),
                 )))
                 .await;
-            added_custom_source = true;
             i += 1;
         } else if arg == "--wsl-file" && i + 1 < args.len() {
             let file = args[i + 1].clone();
@@ -102,7 +85,6 @@ async fn main() -> Result<()> {
                     WslTargetMode::File(file),
                 )))
                 .await;
-            added_custom_source = true;
             i += 1;
         } else if !arg.starts_with('-')
             && i > 0
@@ -112,21 +94,8 @@ async fn main() -> Result<()> {
             && args[i - 1] != "--capacity"
         {
             let _ = engine.add_source(Box::new(FileSource::new(arg))).await;
-            added_custom_source = true;
         }
         i += 1;
-    }
-
-    if !added_custom_source {
-        #[cfg(target_os = "windows")]
-        {
-            let _ = engine
-                .add_source(Box::new(WinEventSource::new("System")))
-                .await;
-            let _ = engine
-                .add_source(Box::new(WinEventSource::new("Application")))
-                .await;
-        }
     }
 
     enable_raw_mode()?;

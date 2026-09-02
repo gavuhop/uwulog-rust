@@ -31,8 +31,6 @@ impl WslSource {
         let source_id = match &mode {
             WslTargetMode::Command(cmd) => format!("wsl:{}:cmd:{}", distro_str, cmd),
             WslTargetMode::File(file) => format!("wsl:{}:file:{}", distro_str, file),
-            WslTargetMode::Journald(Some(unit)) => format!("wsl:{}:journald:{}", distro_str, unit),
-            WslTargetMode::Journald(None) => format!("wsl:{}:journald", distro_str),
         };
         Self {
             distro: distro_str,
@@ -87,12 +85,6 @@ impl LogSource for WslSource {
             }
             WslTargetMode::File(file_path) => {
                 cmd.arg("tail").arg("-n").arg("+1").arg("-F").arg(file_path);
-            }
-            WslTargetMode::Journald(unit) => {
-                cmd.arg("journalctl").arg("-f").arg("-o").arg("json");
-                if let Some(u) = unit {
-                    cmd.arg("-u").arg(u);
-                }
             }
         }
 

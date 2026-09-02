@@ -10,7 +10,6 @@ pub const MAX_FRAME_SIZE: usize = 64 * 1024 * 1024; // 64 MB frame limit
 pub enum RemoteLogSourceSpec {
     Command(String),
     File(String),
-    Journald(Option<String>),
 }
 
 /// ClientEnvelope: Thông điệp điều khiển từ Local Client gửi tới Remote Agent

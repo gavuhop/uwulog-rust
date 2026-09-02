@@ -106,16 +106,11 @@ impl StandardField {
     pub fn from_alias(key: &str) -> Option<Self> {
         let clean = key.trim();
         match clean {
-            "timestamp"
-            | "time"
-            | "ts"
-            | "@timestamp"
-            | "date"
-            | "datetime"
-            | "__REALTIME_TIMESTAMP"
-            | "_SOURCE_REALTIME_TIMESTAMP" => Some(Self::Timestamp),
-            "level" | "lvl" | "lv" | "severity" | "priority" | "PRIORITY" => Some(Self::Level),
-            "message" | "msg" | "text" | "MESSAGE" | "body" => Some(Self::Message),
+            "timestamp" | "time" | "ts" | "@timestamp" | "date" | "datetime" => {
+                Some(Self::Timestamp)
+            }
+            "level" | "lvl" | "lv" | "severity" | "priority" => Some(Self::Level),
+            "message" | "msg" | "text" | "body" => Some(Self::Message),
             "id" => Some(Self::Id),
             _ => None,
         }
@@ -390,7 +385,7 @@ mod tests {
             Some(StandardField::Message)
         );
         assert_eq!(
-            StandardField::from_alias("MESSAGE"),
+            StandardField::from_alias("text"),
             Some(StandardField::Message)
         );
         assert_eq!(StandardField::from_alias("custom_field"), None);

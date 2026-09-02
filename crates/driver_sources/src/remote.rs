@@ -31,12 +31,6 @@ impl RemoteSource {
             RemoteLogSourceSpec::File(path) => {
                 format!("{}:file:{}", transport.name(), path)
             }
-            RemoteLogSourceSpec::Journald(Some(u)) => {
-                format!("{}:journald:{}", transport.name(), u)
-            }
-            RemoteLogSourceSpec::Journald(None) => {
-                format!("{}:journald:system", transport.name())
-            }
         };
 
         Self {
