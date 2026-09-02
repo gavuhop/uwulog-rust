@@ -79,7 +79,6 @@ pub enum StandardField {
     Timestamp,
     Level,
     Message,
-    Raw,
     Id,
 }
 
@@ -99,7 +98,6 @@ impl StandardField {
             Self::Timestamp => "timestamp",
             Self::Level => "level",
             Self::Message => "message",
-            Self::Raw => "raw",
             Self::Id => "id",
         }
     }
@@ -118,7 +116,6 @@ impl StandardField {
             | "_SOURCE_REALTIME_TIMESTAMP" => Some(Self::Timestamp),
             "level" | "lvl" | "lv" | "severity" | "priority" | "PRIORITY" => Some(Self::Level),
             "message" | "msg" | "text" | "MESSAGE" | "body" => Some(Self::Message),
-            "raw" => Some(Self::Raw),
             "id" => Some(Self::Id),
             _ => None,
         }
@@ -135,7 +132,7 @@ impl StandardField {
             match std_field {
                 Self::Timestamp => FieldType::Time,
                 Self::Level => FieldType::Enum,
-                Self::Message | Self::Raw | Self::Id => FieldType::Text,
+                Self::Message | Self::Id => FieldType::Text,
             }
         } else {
             let lower = name.to_ascii_lowercase();
@@ -252,7 +249,6 @@ impl LogEvent {
                 StandardField::Timestamp => Some(Cow::Borrowed(&self.timestamp)),
                 StandardField::Level => Some(Cow::Borrowed(self.level.as_str())),
                 StandardField::Message => Some(Cow::Borrowed(&self.message)),
-                StandardField::Raw => Some(self.raw_display()),
                 StandardField::Id => Some(Cow::Owned(self.id.to_string())),
             }
         } else if let Some(v) = self.fields.get(field_name) {

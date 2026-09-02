@@ -199,7 +199,7 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                     .fields
                     .iter()
                     .filter(|(k, _)| {
-                        !matches!(k.as_str(), "timestamp" | "level" | "message" | "raw" | "id")
+                        !matches!(k.as_str(), "timestamp" | "level" | "message" | "id")
                             && uwu_core_schema::StandardField::from_alias(k).is_none()
                     })
                     .collect();
