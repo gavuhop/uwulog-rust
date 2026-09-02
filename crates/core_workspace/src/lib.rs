@@ -83,7 +83,8 @@ impl WorkspaceStore {
         Self::default()
     }
 
-    /// Lưu danh sách workspace ra file
+    /// Lưu danh sách workspace ra file (bỏ qua khi chạy unit tests để tránh làm bẩn cấu hình thật)
+    #[cfg(not(test))]
     pub fn save(&self) -> Result<()> {
         let path = Self::get_storage_path();
         if let Some(parent) = path.parent() {
@@ -94,6 +95,11 @@ impl WorkspaceStore {
             serde_json::to_string_pretty(self).context("Failed to serialize WorkspaceStore")?;
         fs::write(&path, json)
             .with_context(|| format!("Failed to write workspaces to {:?}", path))?;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub fn save(&self) -> Result<()> {
         Ok(())
     }
 
