@@ -39,12 +39,7 @@ fn val_to_log_event(v: &Value) -> LogEvent {
         }
     }
 
-    let raw = v.to_string();
-    if message.is_empty() {
-        message = raw.clone();
-    }
-
-    LogEvent::new(timestamp, level, message, fields, raw)
+    LogEvent::new(timestamp, level, message, fields)
 }
 
 fn filter_logs(logs_val: Vec<Value>, query: String) -> Vec<u32> {
@@ -486,7 +481,6 @@ fn test_relative_now_and_sub_millisecond_floats() {
         LogLevel::Info,
         "Sub-ms latency test",
         HashMap::new(),
-        "Sub-ms latency test",
     );
     log_item
         .fields
@@ -504,7 +498,6 @@ fn test_relative_now_and_sub_millisecond_floats() {
         LogLevel::Info,
         "Offset is -500ms between clocks",
         HashMap::new(),
-        "Offset is -500ms between clocks",
     );
     let expr_quoted_minus = parse_query("\"-500ms\"", now);
     assert!(eval_event(&expr_quoted_minus, &log_neg_val, now));
@@ -518,7 +511,6 @@ fn test_relative_now_and_sub_millisecond_floats() {
         LogLevel::Info,
         "Request to https://api.service.io/v1/health status=200",
         HashMap::new(),
-        "Request to https://api.service.io/v1/health status=200",
     );
     let expr_url = parse_query("https://api.service.io/v1/health", now);
     assert!(eval_event(&expr_url, &log_url, now));
@@ -532,7 +524,6 @@ fn test_escaped_quotes_and_nested_quotes_query() {
         LogLevel::Error,
         "Failed to \"validate\" payment token",
         HashMap::new(),
-        "Failed to \"validate\" payment token",
     );
 
     // 1. Field contains with escaped quotes: message:"Failed to \"validate\" payment token"

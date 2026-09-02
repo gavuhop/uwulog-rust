@@ -206,7 +206,6 @@ pub struct LogEvent {
     pub level: LogLevel,
     pub message: String,
     pub fields: HashMap<String, serde_json::Value>,
-    pub raw: String,
 }
 
 impl LogEvent {
@@ -215,7 +214,6 @@ impl LogEvent {
         level: LogLevel,
         message: impl Into<String>,
         fields: HashMap<String, serde_json::Value>,
-        raw: impl Into<String>,
     ) -> Self {
         let ts_str = timestamp.into();
         let timestamp_secs = uwu_core_util::parse_iso_to_secs(&ts_str);
@@ -226,8 +224,25 @@ impl LogEvent {
             level,
             message: message.into(),
             fields,
-            raw: raw.into(),
         }
+    }
+
+    /// Tạo chuỗi hiển thị thô On-Demand (tiết kiệm bộ nhớ RAM)
+    pub fn raw_display(&self) -> Cow<'_, str> {
+        if self.fields.is_empty() {
+            Cow::Borrowed(&self.message)
+        } else {
+            Cow::Owned(serde_json::to_string(&self.fields).unwrap_or_default())
+        }
+    }
+
+    /// Trả về tên key thực tế xuất hiện trong `fields` tương ứng với trường chuẩn (nếu có), hoặc trả về canonical_name của trường đó
+    pub fn semantic_key(&self, field: StandardField) -> &str {
+        self.fields
+            .keys()
+            .find(|k| StandardField::from_alias(k) == Some(field))
+            .map(|s| s.as_str())
+            .unwrap_or_else(|| field.canonical_name())
     }
 
     /// Lấy giá trị chuỗi (Zero-Alloc Cow) của bất kỳ trường chuẩn hay custom nào
@@ -237,7 +252,7 @@ impl LogEvent {
                 StandardField::Timestamp => Some(Cow::Borrowed(&self.timestamp)),
                 StandardField::Level => Some(Cow::Borrowed(self.level.as_str())),
                 StandardField::Message => Some(Cow::Borrowed(&self.message)),
-                StandardField::Raw => Some(Cow::Borrowed(&self.raw)),
+                StandardField::Raw => Some(self.raw_display()),
                 StandardField::Id => Some(Cow::Owned(self.id.to_string())),
             }
         } else if let Some(v) = self.fields.get(field_name) {
@@ -275,7 +290,6 @@ impl LogEvent {
         uwu_core_util::contains_ignore_case(&self.message, needle)
             || uwu_core_util::contains_ignore_case(self.level.as_str(), needle)
             || uwu_core_util::contains_ignore_case(&self.timestamp, needle)
-            || uwu_core_util::contains_ignore_case(&self.raw, needle)
             || self.fields.values().any(|v| match v {
                 serde_json::Value::String(s) => uwu_core_util::contains_ignore_case(s, needle),
                 serde_json::Value::Number(n) => {
@@ -287,30 +301,6 @@ impl LogEvent {
                 serde_json::Value::Null => false,
                 other => uwu_core_util::contains_ignore_case(&other.to_string(), needle),
             })
-    }
-
-    pub fn to_json_value(&self) -> serde_json::Value {
-        let mut map = serde_json::Map::new();
-        map.insert("id".to_string(), serde_json::json!(self.id.to_string()));
-        map.insert(
-            "timestamp".to_string(),
-            serde_json::json!(self.timestamp.clone()),
-        );
-        if let Some(ts_sec) = self.timestamp_secs {
-            map.insert("timestamp_secs".to_string(), serde_json::json!(ts_sec));
-        }
-        map.insert(
-            "level".to_string(),
-            serde_json::json!(self.level.to_string()),
-        );
-        map.insert("message".to_string(), serde_json::json!(&self.message));
-        map.insert("raw".to_string(), serde_json::json!(&self.raw));
-
-        for (k, v) in &self.fields {
-            map.insert(k.clone(), v.clone());
-        }
-
-        serde_json::Value::Object(map)
     }
 }
 
@@ -433,7 +423,6 @@ mod tests {
             LogLevel::Error,
             "Something failed badly",
             fields,
-            "[ERROR] Something failed badly",
         );
 
         // Access via alias

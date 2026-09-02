@@ -487,7 +487,7 @@ mod tests {
         fields.insert("latency_ms".to_string(), serde_json::json!(150));
         fields.insert("user_id".to_string(), serde_json::json!("u42"));
 
-        let log = LogEvent::new("2026-08-20T10:00:00Z", LogLevel::Info, "msg", fields, "raw");
+        let log = LogEvent::new("2026-08-20T10:00:00Z", LogLevel::Info, "msg", fields);
 
         state.sync_discovered_keys(&[log]);
         assert_eq!(state.columns.len(), 5);
@@ -510,13 +510,7 @@ mod tests {
         fields.insert("msg".to_string(), serde_json::json!("hello"));
         fields.insert("user_id".to_string(), serde_json::json!("u42"));
 
-        let log = LogEvent::new(
-            "2026-08-20T10:00:00Z",
-            LogLevel::Info,
-            "hello",
-            fields,
-            "raw",
-        );
+        let log = LogEvent::new("2026-08-20T10:00:00Z", LogLevel::Info, "hello", fields);
 
         state.sync_discovered_keys(&[log]);
         assert_eq!(state.columns.len(), 4);

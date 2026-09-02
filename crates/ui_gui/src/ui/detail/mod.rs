@@ -10,7 +10,7 @@ use card::render_card;
 use eframe::egui::{self, Id, Rounding, Stroke};
 use fields::{render_kv_field, render_meta_field};
 use text_box::render_text_box;
-use uwu_core_schema::LogLevel;
+use uwu_core_schema::{LogLevel, StandardField};
 
 pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     let mut filter_action: Option<FilterAction> = None;
@@ -131,9 +131,13 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                         highlight_action: &mut highlight_action,
                     };
 
+                    let ts_key = event.semantic_key(StandardField::Timestamp);
+                    let lvl_key = event.semantic_key(StandardField::Level);
+                    let id_key = event.semantic_key(StandardField::Id);
+
                     render_meta_field(
                         ui,
-                        "ID",
+                        id_key,
                         &event.id.to_string(),
                         theme::TEXT_PRIMARY,
                         true,
@@ -142,7 +146,7 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                     ui.add_space(5.0);
                     render_meta_field(
                         ui,
-                        "Timestamp",
+                        ts_key,
                         &event.timestamp,
                         theme::TEXT_PRIMARY,
                         true,
@@ -151,7 +155,7 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                     ui.add_space(5.0);
                     render_meta_field(
                         ui,
-                        "Level",
+                        lvl_key,
                         &event.level.to_string(),
                         log_color,
                         false,
@@ -160,6 +164,8 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 });
 
                 ui.add_space(8.0);
+
+                let msg_key = event.semantic_key(StandardField::Message);
 
                 // Message Card
                 render_card(ui, "Message", |ui| {
@@ -181,7 +187,7 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                         &event.message,
                         msg_color,
                         3,
-                        Some("message"),
+                        Some(msg_key),
                         &mut ctx,
                     );
                 });
@@ -255,12 +261,13 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                             ))
                             .rounding(Rounding::same(4.0));
 
+                        let raw_str = event.raw_display();
                         let copy_resp = ui
                             .add(copy_btn)
                             .on_hover_text("Copy raw payload to clipboard");
                         if copy_resp.clicked() {
                             ui.data_mut(|d| d.insert_temp(copy_id, now));
-                            ui.ctx().copy_text(event.raw.clone());
+                            ui.ctx().copy_text(raw_str.to_string());
                             ui.ctx().request_repaint();
                         }
                     });
@@ -272,10 +279,11 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                         highlight_action: &mut highlight_action,
                     };
 
+                    let raw_str = event.raw_display();
                     render_text_box(
                         ui,
                         Id::new("detail_inspector_raw_box"),
-                        &event.raw,
+                        &raw_str,
                         theme::TEXT_PRIMARY,
                         4,
                         None,

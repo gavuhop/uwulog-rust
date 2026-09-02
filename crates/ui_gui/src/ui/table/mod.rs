@@ -87,16 +87,17 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 .auto_shrink([false, false]);
 
             for col in &visible_cols {
-                let (initial_w, min_w) = if col.name == "timestamp" {
-                    (ts_needed_width, ts_needed_width)
-                } else if col.name == "level" {
-                    (level_needed_width, level_needed_width)
-                } else if col.name == "message" {
-                    (col.width.max(350.0), 100.0)
-                } else if col.width >= 40.0 {
-                    (col.width, 40.0)
-                } else {
-                    (120.0, 40.0)
+                let std_field = uwu_core_schema::StandardField::from_alias(&col.name);
+                let (initial_w, min_w) = match std_field {
+                    Some(uwu_core_schema::StandardField::Timestamp) => {
+                        (ts_needed_width, ts_needed_width)
+                    }
+                    Some(uwu_core_schema::StandardField::Level) => {
+                        (level_needed_width, level_needed_width)
+                    }
+                    Some(uwu_core_schema::StandardField::Message) => (col.width.max(350.0), 100.0),
+                    _ if col.width >= 40.0 => (col.width, 40.0),
+                    _ => (120.0, 40.0),
                 };
 
                 builder = builder.column(Column::initial(initial_w).at_least(min_w).clip(true));

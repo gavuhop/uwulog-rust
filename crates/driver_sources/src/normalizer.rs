@@ -13,13 +13,10 @@ pub struct LogNormalizer;
 impl LogNormalizer {
     pub fn normalize(entry: RawLogEntry) -> LogEvent {
         match entry.payload {
-            RawPayload::Json(v) => {
-                let raw_text = v.to_string();
-                Self::normalize_json(&v, &raw_text)
-            }
+            RawPayload::Json(v) => Self::normalize_json(&v),
             RawPayload::Text(s) => {
                 let has_ansi = s.contains('\x1b') || s.contains('\r');
-                let clean = if has_ansi { strip_ansi(&s) } else { s.clone() };
+                let clean = if has_ansi { strip_ansi(&s) } else { s };
                 let trimmed = clean.trim();
 
                 // 1. Fast-check JSON: Chỉ thử parse JSON nếu bắt đầu và kết thúc bằng cặp ngoặc {} hoặc []
@@ -27,28 +24,21 @@ impl LogNormalizer {
                     || (trimmed.starts_with('[') && trimmed.ends_with(']'))
                 {
                     if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(trimmed) {
-                        return Self::normalize_json(&json_val, &s);
+                        return Self::normalize_json(&json_val);
                     }
                 }
 
                 // 2. Plain text thuần túy: Không nhận dạng level/timestamp giả định
-                LogEvent::new(String::new(), LogLevel::Unknown, clean, HashMap::new(), s)
+                LogEvent::new(String::new(), LogLevel::Unknown, clean, HashMap::new())
             }
             RawPayload::KeyValue(kv) => {
-                let raw_text = format!("{:?}", kv);
                 let fields: HashMap<String, serde_json::Value> = kv
                     .into_iter()
                     .map(|(k, v)| (k, serde_json::Value::String(v)))
                     .collect();
-                let detected = Self::detect_semantic_fields(&fields, &raw_text);
+                let detected = Self::detect_semantic_fields(&fields);
 
-                LogEvent::new(
-                    detected.timestamp,
-                    detected.level,
-                    detected.message,
-                    fields,
-                    raw_text,
-                )
+                LogEvent::new(detected.timestamp, detected.level, detected.message, fields)
             }
         }
     }
@@ -77,7 +67,6 @@ impl LogNormalizer {
 
     fn detect_semantic_fields(
         fields: &HashMap<String, serde_json::Value>,
-        raw: &str,
     ) -> DetectedSemanticFields {
         let mut timestamp_key = None;
         let mut level_key = None;
@@ -177,10 +166,10 @@ impl LogNormalizer {
                     val.to_string()
                 }
             } else {
-                raw.to_string()
+                String::new()
             }
         } else {
-            raw.to_string()
+            String::new()
         };
 
         DetectedSemanticFields {
@@ -190,18 +179,12 @@ impl LogNormalizer {
         }
     }
 
-    fn normalize_json(v: &serde_json::Value, raw: &str) -> LogEvent {
+    fn normalize_json(v: &serde_json::Value) -> LogEvent {
         let mut fields = HashMap::new();
         Self::flatten_json_value("", v, &mut fields);
-        let detected = Self::detect_semantic_fields(&fields, raw);
+        let detected = Self::detect_semantic_fields(&fields);
 
-        LogEvent::new(
-            detected.timestamp,
-            detected.level,
-            detected.message,
-            fields,
-            raw,
-        )
+        LogEvent::new(detected.timestamp, detected.level, detected.message, fields)
     }
 }
 
@@ -302,7 +285,7 @@ mod tests {
         };
 
         let event = LogNormalizer::normalize(entry);
-        assert!(event.raw.contains("Service started"));
+        assert_eq!(event.message, "Service started");
     }
 
     #[test]
@@ -337,14 +320,14 @@ mod tests {
         assert_eq!(event2.message, "High CPU");
         assert_eq!(event2.timestamp, "2026-08-20T10:00:00Z");
 
-        // Test fallback to raw when no message field
+        // Test custom fields when no message field
         let json_payload3 = serde_json::json!({
             "code": 404
         });
         let event3 = LogNormalizer::normalize(RawLogEntry {
             payload: RawPayload::Json(json_payload3),
         });
-        assert!(event3.message.contains("404"));
+        assert_eq!(event3.fields.get("code").unwrap(), &serde_json::json!(404));
     }
 
     #[test]
