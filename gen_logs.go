@@ -92,10 +92,10 @@ func main() {
 			}
 		}
 		entry := make(map[string]interface{})
-		entry["timestamp"] = ts.Format(time.RFC3339)
-		entry["level"] = levels[rand.Intn(len(levels))]
+		entry["ts"] = ts.Format(time.RFC3339)
+		entry["lv"] = levels[rand.Intn(len(levels))]
 		entry["source"] = sources[rand.Intn(len(sources))]
-		entry["message"] = messages[rand.Intn(len(messages))]
+		entry["text"] = messages[rand.Intn(len(messages))]
 		entry["trace_id"] = fmt.Sprintf("tr-%x", rand.Intn(1000000000))
 		if rand.Float32() < 0.6 {
 			entry["user_id"] = fmt.Sprintf("user_%d", rand.Intn(500))

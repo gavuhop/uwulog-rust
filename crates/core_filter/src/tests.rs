@@ -10,12 +10,12 @@ fn val_to_log_event(v: &Value) -> LogEvent {
     let mut level = LogLevel::Unknown;
     let mut timestamp = String::new();
     let mut message = String::new();
-    let mut source_id = "src".to_string();
 
     if let Some(obj) = v.as_object() {
         for (k, val) in obj {
+            fields.insert(k.clone(), val.clone());
             match k.as_str() {
-                "level" => {
+                "level" | "lvl" | "severity" => {
                     if let Some(s) = val.as_str() {
                         level = LogLevel::parse_str(s);
                     }
@@ -32,14 +32,7 @@ fn val_to_log_event(v: &Value) -> LogEvent {
                         message = s.to_string();
                     }
                 }
-                "source" | "source_id" => {
-                    if let Some(s) = val.as_str() {
-                        source_id = s.to_string();
-                    }
-                }
-                _ => {
-                    fields.insert(k.clone(), val.clone());
-                }
+                _ => {}
             }
         }
     }
@@ -49,7 +42,7 @@ fn val_to_log_event(v: &Value) -> LogEvent {
         message = raw.clone();
     }
 
-    LogEvent::new(timestamp, level, source_id, message, fields, raw)
+    LogEvent::new(timestamp, level, message, fields, raw)
 }
 
 fn filter_logs(logs_val: Vec<Value>, query: String) -> Vec<u32> {
@@ -489,7 +482,6 @@ fn test_relative_now_and_sub_millisecond_floats() {
     let mut log_item = LogEvent::new(
         "2026-08-23T10:00:00Z",
         LogLevel::Info,
-        "app",
         "Sub-ms latency test",
         HashMap::new(),
         "Sub-ms latency test",
@@ -508,7 +500,6 @@ fn test_relative_now_and_sub_millisecond_floats() {
     let log_neg_val = LogEvent::new(
         "2026-08-23T10:00:00Z",
         LogLevel::Info,
-        "app",
         "Offset is -500ms between clocks",
         HashMap::new(),
         "Offset is -500ms between clocks",
@@ -523,7 +514,6 @@ fn test_relative_now_and_sub_millisecond_floats() {
     let log_url = LogEvent::new(
         "2026-08-23T10:00:00Z",
         LogLevel::Info,
-        "app",
         "Request to https://api.service.io/v1/health status=200",
         HashMap::new(),
         "Request to https://api.service.io/v1/health status=200",
@@ -538,7 +528,6 @@ fn test_escaped_quotes_and_nested_quotes_query() {
     let log_event = LogEvent::new(
         "2026-08-23T10:00:00Z",
         LogLevel::Error,
-        "payment-service",
         "Failed to \"validate\" payment token",
         HashMap::new(),
         "Failed to \"validate\" payment token",

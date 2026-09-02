@@ -91,9 +91,10 @@ impl ColumnState {
         for log in logs {
             for key in log.fields.keys() {
                 if self.known_keys.insert(key.clone()) {
+                    let is_default = log.default_columns.contains(key);
                     self.columns.push(ColumnItem {
                         name: key.clone(),
-                        visible: false,
+                        visible: is_default,
                         width: 120.0,
                     });
                 }
@@ -474,14 +475,7 @@ mod tests {
         fields.insert("latency_ms".to_string(), serde_json::json!(150));
         fields.insert("user_id".to_string(), serde_json::json!("u42"));
 
-        let log = LogEvent::new(
-            "2026-08-20T10:00:00Z",
-            LogLevel::Info,
-            "test",
-            "msg",
-            fields,
-            "raw",
-        );
+        let log = LogEvent::new("2026-08-20T10:00:00Z", LogLevel::Info, "msg", fields, "raw");
 
         state.sync_discovered_keys(&[log]);
         assert_eq!(state.columns.len(), 5);

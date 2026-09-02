@@ -2,6 +2,13 @@ use std::collections::HashMap;
 use uwu_core_schema::{LogEvent, LogLevel, RawLogEntry, RawPayload};
 use uwu_core_util::{contains_ignore_case, parse_iso_to_secs, strip_ansi};
 
+struct DetectedSemanticFields {
+    level: LogLevel,
+    timestamp: String,
+    message: String,
+    default_columns: Vec<String>,
+}
+
 pub struct LogNormalizer;
 
 impl LogNormalizer {
@@ -9,7 +16,7 @@ impl LogNormalizer {
         match entry.payload {
             RawPayload::Json(v) => {
                 let raw_text = v.to_string();
-                Self::normalize_json(&entry.source_id, &v, &raw_text)
+                Self::normalize_json(&v, &raw_text)
             }
             RawPayload::Text(s) => {
                 let has_ansi = s.contains('\x1b') || s.contains('\r');
@@ -20,56 +27,46 @@ impl LogNormalizer {
                 };
                 let trimmed = if has_ansi { clean.trim() } else { s.trim() };
 
-                // 1. Fast-check JSON: Chỉ thử parse JSON nếu bắt đầu và kết thúc bằng cặp ngoặc {} hoặc []
+                // 1. Fast-check XML: Windows Event Log XML
+                if trimmed.starts_with("<Event") {
+                    if let Some(event) = Self::normalize_win_event_xml(&s) {
+                        return event;
+                    }
+                }
+
+                // 2. Fast-check JSON: Chỉ thử parse JSON nếu bắt đầu và kết thúc bằng cặp ngoặc {} hoặc []
                 if (trimmed.starts_with('{') && trimmed.ends_with('}'))
                     || (trimmed.starts_with('[') && trimmed.ends_with(']'))
                 {
                     if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(trimmed) {
-                        return Self::normalize_json(&entry.source_id, &json_val, &s);
-                    }
-                }
-
-                // 2. Thử parse nếu là Windows Event XML
-                if (trimmed.starts_with("<Event") || trimmed.starts_with("<System>"))
-                    || (s.contains("<Event ") && s.contains("<System>"))
-                {
-                    if let Some(event) = Self::normalize_win_event_xml(&entry.source_id, &s) {
-                        return event;
+                        return Self::normalize_json(&json_val, &s);
                     }
                 }
 
                 // 3. Fallback: Parse log dạng văn bản thuần (Unstructured Text)
                 if has_ansi {
-                    Self::normalize_unstructured_text(&entry.source_id, clean, s)
+                    Self::normalize_unstructured_text(clean, s)
                 } else {
                     let clean_text = s.clone();
-                    Self::normalize_unstructured_text(&entry.source_id, clean_text, s)
+                    Self::normalize_unstructured_text(clean_text, s)
                 }
             }
             RawPayload::KeyValue(kv) => {
                 let raw_text = format!("{:?}", kv);
-                let mut fields = HashMap::new();
-                let mut level = LogLevel::Unknown;
-                let mut timestamp = String::new();
-                let mut message = String::new();
+                let fields: HashMap<String, serde_json::Value> = kv
+                    .into_iter()
+                    .map(|(k, v)| (k, serde_json::Value::String(v)))
+                    .collect();
+                let detected = Self::detect_semantic_fields(&fields, &raw_text);
 
-                for (k, v) in kv {
-                    let k_lower = k.to_lowercase();
-                    if k_lower == "level" || k_lower == "lvl" || k_lower == "severity" {
-                        level = LogLevel::parse_str(&v);
-                    } else if k_lower == "timestamp" || k_lower == "time" || k_lower == "ts" {
-                        timestamp = v.clone();
-                    } else if k_lower == "message" || k_lower == "msg" || k_lower == "text" {
-                        message = v.clone();
-                    }
-                    fields.insert(k, serde_json::Value::String(v));
-                }
-
-                if message.is_empty() {
-                    message = raw_text.clone();
-                }
-
-                LogEvent::new(timestamp, level, entry.source_id, message, fields, raw_text)
+                LogEvent::new_with_columns(
+                    detected.timestamp,
+                    detected.level,
+                    detected.message,
+                    fields,
+                    detected.default_columns,
+                    raw_text,
+                )
             }
         }
     }
@@ -96,104 +93,162 @@ impl LogNormalizer {
         }
     }
 
-    fn normalize_json(source_id: &str, v: &serde_json::Value, raw: &str) -> LogEvent {
-        let mut fields = HashMap::new();
-        let mut level = LogLevel::Unknown;
-        let mut timestamp = String::new();
-        let mut message = String::new();
+    fn detect_semantic_fields(
+        fields: &HashMap<String, serde_json::Value>,
+        raw: &str,
+    ) -> DetectedSemanticFields {
+        let mut timestamp_key = None;
+        let mut level_key = None;
+        let mut message_key = None;
 
-        // 1. Phẳng hóa toàn bộ cây JSON object
-        Self::flatten_json_value("", v, &mut fields);
-
-        // 2. Nhận diện các trường đặc biệt từ mảng đã phẳng hóa (hỗ trợ cả JSON thông thường và Systemd Journald)
-        if let Some(val) = fields
-            .get("level")
-            .or_else(|| fields.get("lvl"))
-            .or_else(|| fields.get("severity"))
-            .or_else(|| fields.get("PRIORITY"))
-            .or_else(|| fields.get("priority"))
-        {
-            if let Some(s) = val.as_str() {
-                // Hỗ trợ Syslog / Systemd Journald Priority số nguyên dạng string "0".."7"
-                match s.trim() {
-                    "0" | "1" | "2" | "3" => level = LogLevel::Error,
-                    "4" => level = LogLevel::Warn,
-                    "5" | "6" => level = LogLevel::Info,
-                    "7" => level = LogLevel::Debug,
-                    _ => level = LogLevel::parse_str(s),
-                }
-            } else if let Some(n) = val.as_u64() {
-                match n {
-                    0..=3 => level = LogLevel::Error,
-                    4 => level = LogLevel::Warn,
-                    5 | 6 => level = LogLevel::Info,
-                    7 => level = LogLevel::Debug,
-                    _ => level = LogLevel::Unknown,
-                }
+        // Nhận diện các trường đặc biệt từ mảng đã phẳng hóa 1 lần duy nhất
+        for k in fields.keys() {
+            let k_lower = k.to_lowercase();
+            if level_key.is_none()
+                && (k_lower == "level"
+                    || k_lower == "lvl"
+                    || k_lower == "severity"
+                    || k_lower == "priority")
+            {
+                level_key = Some(k.clone());
+            }
+            if timestamp_key.is_none()
+                && (k_lower == "timestamp"
+                    || k_lower == "time"
+                    || k_lower == "ts"
+                    || k_lower == "@timestamp"
+                    || k_lower == "__realtime_timestamp"
+                    || k_lower == "_source_realtime_timestamp")
+            {
+                timestamp_key = Some(k.clone());
+            }
+            if message_key.is_none()
+                && (k_lower == "message"
+                    || k_lower == "msg"
+                    || k_lower == "text"
+                    || k_lower == "message_content")
+            {
+                message_key = Some(k.clone());
             }
         }
 
-        if let Some(val) = fields
-            .get("timestamp")
-            .or_else(|| fields.get("time"))
-            .or_else(|| fields.get("ts"))
-            .or_else(|| fields.get("@timestamp"))
-            .or_else(|| fields.get("__REALTIME_TIMESTAMP"))
-            .or_else(|| fields.get("_SOURCE_REALTIME_TIMESTAMP"))
-        {
-            if let Some(s) = val.as_str() {
-                // Xử lý timestamp microsecond của systemd journald (ví dụ "1724140800000000")
-                if let Ok(usecs) = s.parse::<u64>() {
+        let level = if let Some(ref lk) = level_key {
+            if let Some(val) = fields.get(lk) {
+                if let Some(s) = val.as_str() {
+                    match s.trim() {
+                        "0" | "1" | "2" | "3" => LogLevel::Error,
+                        "4" => LogLevel::Warn,
+                        "5" | "6" => LogLevel::Info,
+                        "7" => LogLevel::Debug,
+                        _ => LogLevel::parse_str(s),
+                    }
+                } else if let Some(n) = val.as_u64() {
+                    match n {
+                        0..=3 => LogLevel::Error,
+                        4 => LogLevel::Warn,
+                        5 | 6 => LogLevel::Info,
+                        7 => LogLevel::Debug,
+                        _ => LogLevel::Unknown,
+                    }
+                } else {
+                    LogLevel::parse_str(&val.to_string())
+                }
+            } else {
+                LogLevel::Unknown
+            }
+        } else {
+            LogLevel::Unknown
+        };
+
+        let timestamp = if let Some(ref tk) = timestamp_key {
+            if let Some(val) = fields.get(tk) {
+                if let Some(s) = val.as_str() {
+                    if let Ok(usecs) = s.parse::<u64>() {
+                        if usecs > 1_000_000_000_000_000 {
+                            let secs = (usecs / 1_000_000) as i64;
+                            let nsecs = ((usecs % 1_000_000) * 1_000) as u32;
+                            if let Some(dt) = chrono::DateTime::from_timestamp(secs, nsecs) {
+                                dt.to_rfc3339()
+                            } else {
+                                s.to_string()
+                            }
+                        } else {
+                            s.to_string()
+                        }
+                    } else {
+                        s.to_string()
+                    }
+                } else if let Some(usecs) = val.as_u64() {
                     if usecs > 1_000_000_000_000_000 {
                         let secs = (usecs / 1_000_000) as i64;
                         let nsecs = ((usecs % 1_000_000) * 1_000) as u32;
                         if let Some(dt) = chrono::DateTime::from_timestamp(secs, nsecs) {
-                            timestamp = dt.to_rfc3339();
+                            dt.to_rfc3339()
                         } else {
-                            timestamp = s.to_string();
+                            val.to_string()
                         }
                     } else {
-                        timestamp = s.to_string();
+                        val.to_string()
                     }
                 } else {
-                    timestamp = s.to_string();
-                }
-            } else if let Some(usecs) = val.as_u64() {
-                if usecs > 1_000_000_000_000_000 {
-                    let secs = (usecs / 1_000_000) as i64;
-                    let nsecs = ((usecs % 1_000_000) * 1_000) as u32;
-                    if let Some(dt) = chrono::DateTime::from_timestamp(secs, nsecs) {
-                        timestamp = dt.to_rfc3339();
-                    } else {
-                        timestamp = val.to_string();
-                    }
-                } else {
-                    timestamp = val.to_string();
+                    val.to_string()
                 }
             } else {
-                timestamp = val.to_string();
+                String::new()
             }
-        }
+        } else {
+            String::new()
+        };
 
-        if let Some(val) = fields
-            .get("message")
-            .or_else(|| fields.get("msg"))
-            .or_else(|| fields.get("text"))
-            .or_else(|| fields.get("MESSAGE"))
-        {
-            if let Some(s) = val.as_str() {
-                message = s.to_string();
+        let message = if let Some(ref mk) = message_key {
+            if let Some(val) = fields.get(mk) {
+                if let Some(s) = val.as_str() {
+                    s.to_string()
+                } else {
+                    val.to_string()
+                }
+            } else {
+                raw.to_string()
             }
+        } else {
+            raw.to_string()
+        };
+
+        let mut default_columns = Vec::new();
+        if let Some(tk) = timestamp_key {
+            default_columns.push(tk);
+        }
+        if let Some(lk) = level_key {
+            default_columns.push(lk);
+        }
+        if let Some(mk) = message_key {
+            default_columns.push(mk);
         }
 
-        if message.is_empty() {
-            message = raw.to_string();
+        DetectedSemanticFields {
+            level,
+            timestamp,
+            message,
+            default_columns,
         }
-
-        LogEvent::new(timestamp, level, source_id, message, fields, raw)
     }
 
-    fn normalize_win_event_xml(source_id: &str, xml: &str) -> Option<LogEvent> {
+    fn normalize_json(v: &serde_json::Value, raw: &str) -> LogEvent {
+        let mut fields = HashMap::new();
+        Self::flatten_json_value("", v, &mut fields);
+        let detected = Self::detect_semantic_fields(&fields, raw);
+
+        LogEvent::new_with_columns(
+            detected.timestamp,
+            detected.level,
+            detected.message,
+            fields,
+            detected.default_columns,
+            raw,
+        )
+    }
+
+    fn normalize_win_event_xml(xml: &str) -> Option<LogEvent> {
         let mut level = LogLevel::Info;
         let mut timestamp = String::new();
         let mut fields = HashMap::new();
@@ -245,12 +300,19 @@ impl LogNormalizer {
                 .unwrap_or(&serde_json::json!("Unknown"))
         );
 
-        Some(LogEvent::new(
-            timestamp, level, source_id, message, fields, xml,
+        let default_columns = vec!["message".to_string()];
+
+        Some(LogEvent::new_with_columns(
+            timestamp,
+            level,
+            message,
+            fields,
+            default_columns,
+            xml,
         ))
     }
 
-    fn normalize_unstructured_text(source_id: &str, clean: String, raw: String) -> LogEvent {
+    fn normalize_unstructured_text(clean: String, raw: String) -> LogEvent {
         let mut level = LogLevel::Unknown;
 
         // Trích xuất level không cấp phát heap (zero-allocation ASCII case-insensitive search)
@@ -282,7 +344,17 @@ impl LogNormalizer {
 
         let timestamp = extract_timestamp_from_text(&clean);
 
-        LogEvent::new(timestamp, level, source_id, clean, HashMap::new(), raw)
+        let mut fields = HashMap::new();
+        // Lưu văn bản vào cả "message" và "msg" để đồng bộ với log JSON nếu log JSON có key msg
+        fields.insert(
+            "message".to_string(),
+            serde_json::Value::String(clean.clone()),
+        );
+        // fields.insert("msg".to_string(), serde_json::Value::String(clean.clone()));
+
+        let default_columns = vec!["message".to_string()];
+
+        LogEvent::new_with_columns(timestamp, level, clean, fields, default_columns, raw)
     }
 }
 
@@ -461,7 +533,6 @@ mod tests {
         };
 
         let event = LogNormalizer::normalize(entry);
-        assert_eq!(event.source_id, "kv:source");
         assert!(event.raw.contains("Service started"));
     }
 

@@ -1233,14 +1233,7 @@ mod tests {
         );
         fields.insert("environment".to_string(), serde_json::json!("production"));
 
-        let log = LogEvent::new(
-            "2026-08-20T10:00:00Z",
-            LogLevel::Info,
-            "test",
-            "msg",
-            fields,
-            "raw",
-        );
+        let log = LogEvent::new("2026-08-20T10:00:00Z", LogLevel::Info, "msg", fields, "raw");
         app.sync_discovered_fields(std::slice::from_ref(&log));
         app.cached_logs.push(log);
 
@@ -1519,7 +1512,6 @@ mod tests {
         app.unfiltered_state.cached_unfiltered = vec![LogEvent::new(
             "2026-08-20T10:00:00Z",
             LogLevel::Info,
-            "test",
             "msg",
             HashMap::new(),
             "raw",

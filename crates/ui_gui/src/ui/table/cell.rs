@@ -8,43 +8,45 @@ use std::borrow::Cow;
 
 /// Extracts formatted display text (with newlines replaced) and raw string value for a column with zero-allocation for common fields.
 fn extract_cell_content<'a>(event: &'a LogEvent, col_name: &str) -> (Cow<'a, str>, Cow<'a, str>) {
-    match col_name {
-        "timestamp" => (
-            Cow::Borrowed(&event.timestamp),
-            Cow::Borrowed(&event.timestamp),
-        ),
-        "level" => (
-            Cow::Borrowed(event.level.as_str()),
-            Cow::Borrowed(event.level.as_str()),
-        ),
-        "message" => {
-            if event.message.contains('\n') {
-                (
-                    Cow::Owned(event.message.replace('\n', " ↵ ")),
-                    Cow::Borrowed(&event.message),
-                )
-            } else {
-                (Cow::Borrowed(&event.message), Cow::Borrowed(&event.message))
+    if let Some(val) = event.fields.get(col_name) {
+        match val {
+            serde_json::Value::String(s) => {
+                if s.contains('\n') {
+                    (
+                        Cow::Owned(s.replace('\n', " ↵ ")),
+                        Cow::Borrowed(s.as_str()),
+                    )
+                } else {
+                    (Cow::Borrowed(s.as_str()), Cow::Borrowed(s.as_str()))
+                }
+            }
+            _ => {
+                let s = val.to_string();
+                (Cow::Owned(s.clone()), Cow::Owned(s))
             }
         }
-        "source" | "source_id" => (
-            Cow::Borrowed(&event.source_id),
-            Cow::Borrowed(&event.source_id),
-        ),
-        custom_key => {
-            if let Some(val) = event.fields.get(custom_key) {
-                match val {
-                    serde_json::Value::String(s) => {
-                        (Cow::Borrowed(s.as_str()), Cow::Borrowed(s.as_str()))
-                    }
-                    _ => {
-                        let s = val.to_string();
-                        (Cow::Owned(s.clone()), Cow::Owned(s))
-                    }
+    } else {
+        match col_name {
+            "timestamp" => (
+                Cow::Borrowed(&event.timestamp),
+                Cow::Borrowed(&event.timestamp),
+            ),
+            "level" => (
+                Cow::Borrowed(event.level.as_str()),
+                Cow::Borrowed(event.level.as_str()),
+            ),
+            "message" => {
+                if event.message.contains('\n') {
+                    (
+                        Cow::Owned(event.message.replace('\n', " ↵ ")),
+                        Cow::Borrowed(&event.message),
+                    )
+                } else {
+                    (Cow::Borrowed(&event.message), Cow::Borrowed(&event.message))
                 }
-            } else {
-                (Cow::Borrowed("-"), Cow::Borrowed("-"))
             }
+            "raw" => (Cow::Borrowed(&event.raw), Cow::Borrowed(&event.raw)),
+            _ => (Cow::Borrowed("-"), Cow::Borrowed("-")),
         }
     }
 }

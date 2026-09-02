@@ -80,9 +80,10 @@ pub struct LogEvent {
     #[serde(default)]
     pub timestamp_secs: Option<f64>,
     pub level: LogLevel,
-    pub source_id: String,
     pub message: String,
     pub fields: HashMap<String, serde_json::Value>,
+    #[serde(default)]
+    pub default_columns: Vec<String>,
     pub raw: String,
 }
 
@@ -90,9 +91,19 @@ impl LogEvent {
     pub fn new(
         timestamp: impl Into<String>,
         level: LogLevel,
-        source_id: impl Into<String>,
         message: impl Into<String>,
         fields: HashMap<String, serde_json::Value>,
+        raw: impl Into<String>,
+    ) -> Self {
+        Self::new_with_columns(timestamp, level, message, fields, Vec::new(), raw)
+    }
+
+    pub fn new_with_columns(
+        timestamp: impl Into<String>,
+        level: LogLevel,
+        message: impl Into<String>,
+        fields: HashMap<String, serde_json::Value>,
+        default_columns: Vec<String>,
         raw: impl Into<String>,
     ) -> Self {
         let ts_str = timestamp.into();
@@ -102,9 +113,9 @@ impl LogEvent {
             timestamp: ts_str,
             timestamp_secs,
             level,
-            source_id: source_id.into(),
             message: message.into(),
             fields,
+            default_columns,
             raw: raw.into(),
         }
     }
@@ -123,7 +134,6 @@ impl LogEvent {
             "level".to_string(),
             serde_json::json!(self.level.to_string()),
         );
-        map.insert("source_id".to_string(), serde_json::json!(&self.source_id));
         map.insert("message".to_string(), serde_json::json!(&self.message));
         map.insert("raw".to_string(), serde_json::json!(&self.raw));
 
@@ -224,7 +234,6 @@ mod tests {
         let event = LogEvent::new(
             "2026-08-20T10:00:00Z",
             LogLevel::Error,
-            "test_source",
             "Something failed",
             fields,
             "[ERROR] Something failed",
@@ -232,17 +241,12 @@ mod tests {
 
         assert_eq!(event.timestamp, "2026-08-20T10:00:00Z");
         assert_eq!(event.level, LogLevel::Error);
-        assert_eq!(event.source_id, "test_source");
         assert_eq!(event.message, "Something failed");
         assert_eq!(event.raw, "[ERROR] Something failed");
         assert!(!event.id.is_nil());
 
         let json_val = event.to_json_value();
         assert_eq!(json_val.get("level").unwrap(), &serde_json::json!("ERROR"));
-        assert_eq!(
-            json_val.get("source_id").unwrap(),
-            &serde_json::json!("test_source")
-        );
         assert_eq!(json_val.get("user_id").unwrap(), &serde_json::json!("u123"));
         assert_eq!(json_val.get("latency").unwrap(), &serde_json::json!(125));
     }

@@ -20,7 +20,6 @@ pub fn eval_event(expr: &Expr, log: &LogEvent, now: f64) -> bool {
                 }
                 contains_ignore_case(&log.message, a)
                     || contains_ignore_case(log.level.as_str(), a)
-                    || contains_ignore_case(&log.source_id, a)
                     || contains_ignore_case(&log.timestamp, a)
                     || contains_ignore_case(&log.raw, a)
                     || log.fields.values().any(|v| match v {
@@ -111,20 +110,16 @@ pub fn get_event_field_numeric(log: &LogEvent, field: &str, now: f64) -> Option<
 }
 
 pub fn get_event_field_cow<'a>(log: &'a LogEvent, field: &str) -> Option<Cow<'a, str>> {
+    if let Some(v) = log.fields.get(field) {
+        return value_to_cow(v);
+    }
     match field {
         "level" => Some(Cow::Borrowed(log.level.as_str())),
-        "timestamp" | "time" | "ts" | "date" => Some(Cow::Borrowed(&log.timestamp)),
-        "message" | "msg" => Some(Cow::Borrowed(&log.message)),
-        "source" | "source_id" => Some(Cow::Borrowed(&log.source_id)),
-        "id" => Some(Cow::Owned(log.id.to_string())),
+        "timestamp" => Some(Cow::Borrowed(&log.timestamp)),
+        "message" => Some(Cow::Borrowed(&log.message)),
         "raw" => Some(Cow::Borrowed(&log.raw)),
-        _ => {
-            if let Some(v) = log.fields.get(field) {
-                value_to_cow(v)
-            } else {
-                None
-            }
-        }
+        "id" => Some(Cow::Owned(log.id.to_string())),
+        _ => None,
     }
 }
 
