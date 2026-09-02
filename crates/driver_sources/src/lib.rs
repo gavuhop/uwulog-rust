@@ -9,7 +9,7 @@ pub mod wsl;
 
 pub use file_tailer::FileSource;
 pub use journald::JournaldSource;
-pub use normalizer::{extract_timestamp_from_text, LogNormalizer};
+pub use normalizer::LogNormalizer;
 pub use process::ProcessSource;
 pub use remote::RemoteSource;
 pub use traits::LogSource;

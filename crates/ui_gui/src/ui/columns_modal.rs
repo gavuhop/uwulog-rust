@@ -42,23 +42,23 @@ impl Default for ColumnState {
 
 impl ColumnState {
     pub fn default_columns() -> Vec<ColumnItem> {
-        vec![
-            ColumnItem {
-                name: "timestamp".to_string(),
-                visible: true,
-                width: 150.0,
-            },
-            ColumnItem {
-                name: "level".to_string(),
-                visible: true,
-                width: 56.0,
-            },
-            ColumnItem {
-                name: "message".to_string(),
-                visible: true,
-                width: 350.0,
-            },
-        ]
+        uwu_core_schema::StandardField::default_columns()
+            .iter()
+            .map(|f| {
+                let name = f.canonical_name().to_string();
+                let width = match f {
+                    uwu_core_schema::StandardField::Timestamp => 150.0,
+                    uwu_core_schema::StandardField::Level => 56.0,
+                    uwu_core_schema::StandardField::Message => 350.0,
+                    _ => 120.0,
+                };
+                ColumnItem {
+                    name,
+                    visible: true,
+                    width,
+                }
+            })
+            .collect()
     }
 
     pub fn reset_to_defaults(&mut self) {
@@ -91,7 +91,7 @@ impl ColumnState {
         for log in logs {
             for key in log.fields.keys() {
                 if self.known_keys.insert(key.clone()) {
-                    let is_default = log.default_columns.contains(key);
+                    let is_default = uwu_core_schema::StandardField::from_alias(key).is_some();
                     self.columns.push(ColumnItem {
                         name: key.clone(),
                         visible: is_default,

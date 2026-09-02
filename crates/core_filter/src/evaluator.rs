@@ -1,8 +1,7 @@
 use super::parser::{Expr, NumOp};
-use serde_json::Value;
 use std::borrow::Cow;
 use uwu_core_schema::LogEvent;
-use uwu_core_util::{contains_ignore_case, parse_numeric_value};
+use uwu_core_util::contains_ignore_case;
 
 pub fn eval_event(expr: &Expr, log: &LogEvent, now: f64) -> bool {
     match expr {
@@ -14,32 +13,11 @@ pub fn eval_event(expr: &Expr, log: &LogEvent, now: f64) -> bool {
             if alts.is_empty() {
                 return true;
             }
-            alts.iter().any(|a| {
-                if a.is_empty() {
-                    return true;
-                }
-                contains_ignore_case(&log.message, a)
-                    || contains_ignore_case(log.level.as_str(), a)
-                    || contains_ignore_case(&log.timestamp, a)
-                    || contains_ignore_case(&log.raw, a)
-                    || log.fields.values().any(|v| match v {
-                        Value::String(s) => contains_ignore_case(s, a),
-                        Value::Number(n) => contains_ignore_case(&n.to_string(), a),
-                        Value::Bool(b) => {
-                            if *b {
-                                contains_ignore_case("true", a)
-                            } else {
-                                contains_ignore_case("false", a)
-                            }
-                        }
-                        Value::Null => false,
-                        other => contains_ignore_case(&other.to_string(), a),
-                    })
-            })
+            alts.iter().any(|a| a.is_empty() || log.matches_text(a))
         }
 
         Expr::FieldContainsAny { field, values } => {
-            if let Some(actual) = get_event_field_cow(log, field) {
+            if let Some(actual) = log.get_field_cow(field) {
                 values.iter().any(|v| contains_ignore_case(&actual, v))
             } else {
                 false
@@ -47,7 +25,7 @@ pub fn eval_event(expr: &Expr, log: &LogEvent, now: f64) -> bool {
         }
 
         Expr::FieldExact { field, value } => {
-            if let Some(actual) = get_event_field_cow(log, field) {
+            if let Some(actual) = log.get_field_cow(field) {
                 actual.eq_ignore_ascii_case(value)
             } else {
                 false
@@ -55,7 +33,7 @@ pub fn eval_event(expr: &Expr, log: &LogEvent, now: f64) -> bool {
         }
 
         Expr::FieldRegex { field, re, .. } => {
-            if let Some(actual) = get_event_field_cow(log, field) {
+            if let Some(actual) = log.get_field_cow(field) {
                 re.is_match(&actual)
             } else {
                 false
@@ -63,7 +41,7 @@ pub fn eval_event(expr: &Expr, log: &LogEvent, now: f64) -> bool {
         }
 
         Expr::FieldCmp { field, op, value } => {
-            let actual_f = get_event_field_numeric(log, field, now);
+            let actual_f = log.get_field_numeric(field, now);
             match actual_f {
                 Some(av) => match op {
                     NumOp::Gt => av > *value,
@@ -75,64 +53,26 @@ pub fn eval_event(expr: &Expr, log: &LogEvent, now: f64) -> bool {
             }
         }
 
-        Expr::FieldRange { field, lo, hi } => {
-            get_event_field_numeric(log, field, now).is_some_and(|av| {
-                let min = lo.min(*hi);
-                let max = lo.max(*hi);
-                av >= min && av <= max
-            })
-        }
+        Expr::FieldRange { field, lo, hi } => log.get_field_numeric(field, now).is_some_and(|av| {
+            let min = lo.min(*hi);
+            let max = lo.max(*hi);
+            av >= min && av <= max
+        }),
     }
-}
-
-pub fn get_event_field_numeric(log: &LogEvent, field: &str, now: f64) -> Option<f64> {
-    if field == "timestamp" || field == "time" || field == "ts" || field == "date" {
-        if let Some(ts_sec) = log.timestamp_secs {
-            return Some(ts_sec);
-        }
-    }
-    // Direct numeric evaluation (0 heap allocation, 0 string formatting/parsing overhead)
-    if let Some(v) = log.fields.get(field) {
-        if let Some(n) = v.as_f64() {
-            return Some(n);
-        }
-        if let Some(n) = v.as_i64() {
-            return Some(n as f64);
-        }
-        if let Some(n) = v.as_u64() {
-            return Some(n as f64);
-        }
-        if let Some(s) = v.as_str() {
-            return parse_numeric_value(s, now);
-        }
-    }
-    get_event_field_cow(log, field).and_then(|s| parse_numeric_value(&s, now))
 }
 
 pub fn get_event_field_cow<'a>(log: &'a LogEvent, field: &str) -> Option<Cow<'a, str>> {
-    if let Some(v) = log.fields.get(field) {
-        return value_to_cow(v);
-    }
-    match field {
-        "level" => Some(Cow::Borrowed(log.level.as_str())),
-        "timestamp" => Some(Cow::Borrowed(&log.timestamp)),
-        "message" => Some(Cow::Borrowed(&log.message)),
-        "raw" => Some(Cow::Borrowed(&log.raw)),
-        "id" => Some(Cow::Owned(log.id.to_string())),
-        _ => None,
-    }
+    log.get_field_cow(field)
+}
+
+pub fn get_event_field_numeric(log: &LogEvent, field: &str, now: f64) -> Option<f64> {
+    log.get_field_numeric(field, now)
 }
 
 pub fn get_event_field_str(log: &LogEvent, field: &str) -> Option<String> {
-    get_event_field_cow(log, field).map(|c| c.into_owned())
+    log.get_field_cow(field).map(|c| c.into_owned())
 }
 
-pub fn value_to_cow(v: &Value) -> Option<Cow<'_, str>> {
-    match v {
-        Value::String(s) => Some(Cow::Borrowed(s)),
-        Value::Number(n) => Some(Cow::Owned(n.to_string())),
-        Value::Bool(b) => Some(Cow::Borrowed(if *b { "true" } else { "false" })),
-        Value::Null => Some(Cow::Borrowed("")),
-        other => Some(Cow::Owned(other.to_string())),
-    }
+pub fn value_to_cow(v: &serde_json::Value) -> Option<Cow<'_, str>> {
+    uwu_core_schema::value_to_cow(v)
 }

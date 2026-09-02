@@ -207,7 +207,6 @@ mod tests {
 
         for i in 0..item_count {
             tx.send(RawLogEntry {
-                source_id: format!("src_{}", i),
                 payload: RawPayload::Text(format!("[INFO] Log row {}", i)),
             })
             .await

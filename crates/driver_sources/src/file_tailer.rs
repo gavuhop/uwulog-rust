@@ -30,10 +30,9 @@ impl LogSource for FileSource {
 
     async fn start_stream(&self, tx: mpsc::Sender<RawLogEntry>) -> Result<()> {
         let path = self.path.clone();
-        let source_id = self.source_id.clone();
 
         tokio::spawn(async move {
-            if let Err(e) = run_file_tailer(path, source_id, tx).await {
+            if let Err(e) = run_file_tailer(path, tx).await {
                 log::error!("FileSource error: {:?}", e);
             }
         });
@@ -42,11 +41,7 @@ impl LogSource for FileSource {
     }
 }
 
-async fn run_file_tailer(
-    path: PathBuf,
-    source_id: String,
-    tx: mpsc::Sender<RawLogEntry>,
-) -> Result<()> {
+async fn run_file_tailer(path: PathBuf, tx: mpsc::Sender<RawLogEntry>) -> Result<()> {
     let file = File::open(&path)
         .await
         .with_context(|| format!("Failed to open log file: {}", path.display()))?;
@@ -60,7 +55,6 @@ async fn run_file_tailer(
         line.clear();
         if !trimmed.is_empty() {
             let entry = RawLogEntry {
-                source_id: source_id.clone(),
                 payload: RawPayload::Text(trimmed),
             };
             if tx.send(entry).await.is_err() {
@@ -128,7 +122,6 @@ async fn run_file_tailer(
             line.clear();
             if !trimmed.is_empty() {
                 let entry = RawLogEntry {
-                    source_id: source_id.clone(),
                     payload: RawPayload::Text(trimmed),
                 };
                 if tx.send(entry).await.is_err() {

@@ -2,12 +2,7 @@ use crate::app::UwuGuiApp;
 use crate::ui::theme;
 use eframe::egui::{self, Color32, FontId, Id, Key, Order, Pos2, Rect, Rounding, Stroke};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FieldType {
-    Text,
-    Number,
-    Time,
-}
+pub use uwu_core_schema::FieldType;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SuggestionKind {
@@ -33,15 +28,9 @@ pub struct AutocompleteState {
     pub just_applied: bool,
 }
 
-/// Xác định kiểu dữ liệu của một key (Text, Number, Time)
+/// Xác định kiểu dữ liệu của một key (Text, Number, Time, Enum) qua SSOT
 pub fn classify_field(key: &str) -> FieldType {
-    let lower = key.to_lowercase();
-    match lower.as_str() {
-        "timestamp" | "time" | "ts" | "date" | "datetime" => FieldType::Time,
-        "latency" | "duration" | "status" | "status_code" | "code" | "port" | "bytes" | "size"
-        | "cost" | "count" | "response_time" | "response_time_ms" | "elapsed" => FieldType::Number,
-        _ => FieldType::Text,
-    }
+    uwu_core_schema::StandardField::classify(key)
 }
 
 /// Phân tích query và sinh danh sách gợi ý CHỈ DỰA TRÊN các trường thực sự có trong log
@@ -104,7 +93,7 @@ pub fn generate_suggestions(
                 .unwrap_or_else(|| classify_field(key));
 
             let suggestions = match field_type {
-                FieldType::Text => vec![
+                FieldType::Text | FieldType::Enum => vec![
                     SuggestionItem {
                         kind: SuggestionKind::OperatorOrValue,
                         op_symbol: "~",
@@ -400,7 +389,7 @@ mod tests {
         assert_eq!(classify_field("status"), FieldType::Number);
         assert_eq!(classify_field("duration"), FieldType::Number);
         assert_eq!(classify_field("msg"), FieldType::Text);
-        assert_eq!(classify_field("level"), FieldType::Text);
+        assert_eq!(classify_field("level"), FieldType::Enum);
         assert_eq!(classify_field("tag"), FieldType::Text);
     }
 

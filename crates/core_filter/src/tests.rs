@@ -14,25 +14,27 @@ fn val_to_log_event(v: &Value) -> LogEvent {
     if let Some(obj) = v.as_object() {
         for (k, val) in obj {
             fields.insert(k.clone(), val.clone());
-            match k.as_str() {
-                "level" | "lvl" | "severity" => {
-                    if let Some(s) = val.as_str() {
-                        level = LogLevel::parse_str(s);
+            if let Some(std_field) = uwu_core_schema::StandardField::from_alias(k) {
+                match std_field {
+                    uwu_core_schema::StandardField::Level => {
+                        if let Some(s) = val.as_str() {
+                            level = LogLevel::parse_str(s);
+                        }
                     }
-                }
-                "timestamp" | "ts" | "time" => {
-                    if let Some(s) = val.as_str() {
-                        timestamp = s.to_string();
-                    } else {
-                        timestamp = val.to_string();
+                    uwu_core_schema::StandardField::Timestamp => {
+                        if let Some(s) = val.as_str() {
+                            timestamp = s.to_string();
+                        } else {
+                            timestamp = val.to_string();
+                        }
                     }
-                }
-                "message" | "msg" => {
-                    if let Some(s) = val.as_str() {
-                        message = s.to_string();
+                    uwu_core_schema::StandardField::Message => {
+                        if let Some(s) = val.as_str() {
+                            message = s.to_string();
+                        }
                     }
+                    _ => {}
                 }
-                _ => {}
             }
         }
     }

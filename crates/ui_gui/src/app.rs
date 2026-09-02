@@ -779,18 +779,12 @@ impl UwuGuiApp {
     ) -> std::collections::BTreeMap<String, crate::ui::autocomplete::FieldType> {
         use std::collections::BTreeMap;
         let mut fields_map = BTreeMap::new();
-        fields_map.insert(
-            "level".to_string(),
-            crate::ui::autocomplete::FieldType::Text,
-        );
-        fields_map.insert(
-            "timestamp".to_string(),
-            crate::ui::autocomplete::FieldType::Time,
-        );
-        fields_map.insert(
-            "message".to_string(),
-            crate::ui::autocomplete::FieldType::Text,
-        );
+        for field in uwu_core_schema::StandardField::default_columns() {
+            fields_map.insert(
+                field.canonical_name().to_string(),
+                uwu_core_schema::StandardField::classify(field.canonical_name()),
+            );
+        }
         fields_map
     }
 
@@ -798,19 +792,11 @@ impl UwuGuiApp {
         self.column_state.sync_discovered_keys(logs);
         for log in logs {
             for (key, val) in &log.fields {
-                if key == "source" || key == "source_id" {
-                    continue;
-                }
                 if !self.discovered_fields_cache.contains_key(key) {
                     let field_type = if val.is_number() {
                         crate::ui::autocomplete::FieldType::Number
-                    } else if key.to_lowercase().contains("time")
-                        || key.to_lowercase().contains("date")
-                        || key.to_lowercase() == "ts"
-                    {
-                        crate::ui::autocomplete::FieldType::Time
                     } else {
-                        crate::ui::autocomplete::FieldType::Text
+                        uwu_core_schema::StandardField::classify(key)
                     };
                     self.discovered_fields_cache.insert(key.clone(), field_type);
                 }
@@ -1241,10 +1227,9 @@ mod tests {
         let field_types: HashMap<String, FieldType> = available.into_iter().collect();
 
         // Core fields
-        assert_eq!(field_types.get("level"), Some(&FieldType::Text));
+        assert_eq!(field_types.get("level"), Some(&FieldType::Enum));
         assert_eq!(field_types.get("message"), Some(&FieldType::Text));
         assert_eq!(field_types.get("timestamp"), Some(&FieldType::Time));
-        assert_eq!(field_types.get("source"), None);
 
         // Inferred fields
         assert_eq!(field_types.get("latency_ms"), Some(&FieldType::Number));
@@ -1278,7 +1263,6 @@ mod tests {
 
         for i in 0..5 {
             let log = RawLogEntry {
-                source_id: "test".to_string(),
                 payload: RawPayload::Text(format!("[INFO] Message {}", i)),
             };
             tx.send(log).await.unwrap();
@@ -1321,7 +1305,6 @@ mod tests {
 
         for i in 0..5 {
             let log = RawLogEntry {
-                source_id: "test".to_string(),
                 payload: RawPayload::Text(format!("[INFO] Message {}", i)),
             };
             tx.send(log).await.unwrap();
@@ -1340,7 +1323,6 @@ mod tests {
         // Ingest 10 new logs into the engine
         for i in 5..15 {
             let log = RawLogEntry {
-                source_id: "test".to_string(),
                 payload: RawPayload::Text(format!("[INFO] Message {}", i)),
             };
             tx.send(log).await.unwrap();
@@ -1370,8 +1352,10 @@ mod tests {
         for i in 0..10 {
             let level = if i % 2 == 0 { "ERROR" } else { "INFO" };
             let log = RawLogEntry {
-                source_id: "test".to_string(),
-                payload: RawPayload::Text(format!("[{}] Message {}", level, i)),
+                payload: RawPayload::Json(serde_json::json!({
+                    "level": level,
+                    "message": format!("Message {}", i)
+                })),
             };
             tx.send(log).await.unwrap();
         }
@@ -1397,8 +1381,10 @@ mod tests {
         for i in 10..20 {
             let level = if i % 2 == 0 { "ERROR" } else { "INFO" };
             let log = RawLogEntry {
-                source_id: "test".to_string(),
-                payload: RawPayload::Text(format!("[{}] Message {}", level, i)),
+                payload: RawPayload::Json(serde_json::json!({
+                    "level": level,
+                    "message": format!("Message {}", i)
+                })),
             };
             tx.send(log).await.unwrap();
         }
@@ -1429,7 +1415,6 @@ mod tests {
 
         for i in 0..10 {
             let log = RawLogEntry {
-                source_id: "test".to_string(),
                 payload: RawPayload::Text(format!("[INFO] Message {}", i)),
             };
             tx.send(log).await.unwrap();
@@ -1449,7 +1434,6 @@ mod tests {
         // Ingest 5 more logs
         for i in 10..15 {
             let log = RawLogEntry {
-                source_id: "test".to_string(),
                 payload: RawPayload::Text(format!("[INFO] Message {}", i)),
             };
             tx.send(log).await.unwrap();
@@ -1471,7 +1455,6 @@ mod tests {
         // 1. Initial 5 logs
         for i in 0..5 {
             let log = RawLogEntry {
-                source_id: "test".to_string(),
                 payload: RawPayload::Text(format!("[INFO] Message {}", i)),
             };
             tx.send(log).await.unwrap();
@@ -1489,7 +1472,6 @@ mod tests {
         // 3. Ingest 5 more logs
         for i in 5..10 {
             let log = RawLogEntry {
-                source_id: "test".to_string(),
                 payload: RawPayload::Text(format!("[INFO] Message {}", i)),
             };
             tx.send(log).await.unwrap();

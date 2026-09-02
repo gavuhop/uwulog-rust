@@ -32,9 +32,8 @@ impl LogSource for WinEventSource {
         #[cfg(target_os = "windows")]
         {
             let channel = self.channel.clone();
-            let source_id = self.source_id.clone();
             tokio::spawn(async move {
-                if let Err(e) = run_win_event_stream(channel, source_id, tx).await {
+                if let Err(e) = run_win_event_stream(channel, tx).await {
                     log::error!("WinEventSource error: {:?}", e);
                 }
             });
@@ -51,11 +50,7 @@ impl LogSource for WinEventSource {
 }
 
 #[cfg(target_os = "windows")]
-async fn run_win_event_stream(
-    channel: String,
-    source_id: String,
-    tx: mpsc::Sender<RawLogEntry>,
-) -> Result<()> {
+async fn run_win_event_stream(channel: String, tx: mpsc::Sender<RawLogEntry>) -> Result<()> {
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::System::EventLog::*;
@@ -119,7 +114,6 @@ async fn run_win_event_stream(
             for &evt_handle in events.iter().take(returned as usize) {
                 if let Some(xml_str) = render_event_xml(evt_handle) {
                     let entry = RawLogEntry {
-                        source_id: source_id.clone(),
                         payload: RawPayload::Text(xml_str),
                     };
                     if tx.send(entry).await.is_err() {

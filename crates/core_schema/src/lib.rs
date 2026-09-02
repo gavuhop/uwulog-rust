@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -72,6 +73,129 @@ impl LogLevel {
     }
 }
 
+/// Các trường cơ sở chuẩn hóa trong toàn bộ hệ thống (Single Source of Truth)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum StandardField {
+    Timestamp,
+    Level,
+    Message,
+    Raw,
+    Id,
+}
+
+/// Phân loại kiểu dữ liệu của trường log
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum FieldType {
+    Time,
+    Enum,
+    Text,
+    Number,
+}
+
+impl StandardField {
+    /// Tên chuẩn tắc (Canonical Name)
+    pub const fn canonical_name(&self) -> &'static str {
+        match self {
+            Self::Timestamp => "timestamp",
+            Self::Level => "level",
+            Self::Message => "message",
+            Self::Raw => "raw",
+            Self::Id => "id",
+        }
+    }
+
+    /// Tự động quy đổi mọi bí danh (aliases: ts, time, @timestamp, lvl, severity, msg...) về trường chuẩn
+    pub fn from_alias(key: &str) -> Option<Self> {
+        let clean = key.trim();
+        match clean {
+            "timestamp"
+            | "time"
+            | "ts"
+            | "@timestamp"
+            | "date"
+            | "datetime"
+            | "__REALTIME_TIMESTAMP"
+            | "_SOURCE_REALTIME_TIMESTAMP" => Some(Self::Timestamp),
+            "level" | "lvl" | "severity" | "priority" | "PRIORITY" => Some(Self::Level),
+            "message" | "msg" | "text" | "MESSAGE" | "body" => Some(Self::Message),
+            "raw" => Some(Self::Raw),
+            "id" => Some(Self::Id),
+            _ => None,
+        }
+    }
+
+    /// Trả về danh sách 3 cột chuẩn hiển thị mặc định trên UI
+    pub const fn default_columns() -> &'static [Self] {
+        &[Self::Timestamp, Self::Level, Self::Message]
+    }
+
+    /// Tự động phân loại kiểu dữ liệu cho một trường bất kỳ (chuẩn hoặc tùy biến)
+    pub fn classify(name: &str) -> FieldType {
+        if let Some(std_field) = Self::from_alias(name) {
+            match std_field {
+                Self::Timestamp => FieldType::Time,
+                Self::Level => FieldType::Enum,
+                Self::Message | Self::Raw | Self::Id => FieldType::Text,
+            }
+        } else {
+            let lower = name.to_ascii_lowercase();
+            if lower.contains("time")
+                || lower.contains("date")
+                || lower.ends_with("_at")
+                || lower.starts_with("at_")
+            {
+                FieldType::Time
+            } else if lower == "status"
+                || lower == "status_code"
+                || lower == "code"
+                || lower == "port"
+                || lower == "bytes"
+                || lower == "size"
+                || lower == "cost"
+                || lower == "count"
+                || lower == "elapsed"
+                || lower.ends_with("_ms")
+                || lower.ends_with("_ns")
+                || lower.ends_with("_us")
+                || lower.ends_with("_sec")
+                || lower.ends_with("_secs")
+                || lower.ends_with("_bytes")
+                || lower.ends_with("_count")
+                || lower.ends_with("_total")
+                || lower.ends_with("_size")
+                || lower.ends_with("_len")
+                || lower.ends_with("_id")
+                || lower.ends_with("_port")
+                || lower.ends_with("_code")
+                || lower.ends_with("_status")
+                || lower.contains("latency")
+                || lower.contains("duration")
+                || lower.contains("response_time")
+                || lower.contains("memory")
+                || lower.contains("cpu")
+                || lower.contains("ram")
+                || lower.contains("disk")
+                || lower.contains("rate")
+            {
+                FieldType::Number
+            } else {
+                FieldType::Text
+            }
+        }
+    }
+}
+
+/// Chuyển đổi an toàn serde_json::Value sang Cow<'_, str> không cấp phát thừa
+pub fn value_to_cow(v: &serde_json::Value) -> Option<Cow<'_, str>> {
+    match v {
+        serde_json::Value::String(s) => Some(Cow::Borrowed(s)),
+        serde_json::Value::Number(n) => Some(Cow::Owned(n.to_string())),
+        serde_json::Value::Bool(b) => Some(Cow::Borrowed(if *b { "true" } else { "false" })),
+        serde_json::Value::Null => Some(Cow::Borrowed("")),
+        other => Some(Cow::Owned(other.to_string())),
+    }
+}
+
 /// LogEvent đại diện cho 1 bản ghi log đã được chuẩn hóa
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogEvent {
@@ -82,8 +206,6 @@ pub struct LogEvent {
     pub level: LogLevel,
     pub message: String,
     pub fields: HashMap<String, serde_json::Value>,
-    #[serde(default)]
-    pub default_columns: Vec<String>,
     pub raw: String,
 }
 
@@ -95,17 +217,6 @@ impl LogEvent {
         fields: HashMap<String, serde_json::Value>,
         raw: impl Into<String>,
     ) -> Self {
-        Self::new_with_columns(timestamp, level, message, fields, Vec::new(), raw)
-    }
-
-    pub fn new_with_columns(
-        timestamp: impl Into<String>,
-        level: LogLevel,
-        message: impl Into<String>,
-        fields: HashMap<String, serde_json::Value>,
-        default_columns: Vec<String>,
-        raw: impl Into<String>,
-    ) -> Self {
         let ts_str = timestamp.into();
         let timestamp_secs = uwu_core_util::parse_iso_to_secs(&ts_str);
         Self {
@@ -115,9 +226,67 @@ impl LogEvent {
             level,
             message: message.into(),
             fields,
-            default_columns,
             raw: raw.into(),
         }
+    }
+
+    /// Lấy giá trị chuỗi (Zero-Alloc Cow) của bất kỳ trường chuẩn hay custom nào
+    pub fn get_field_cow<'a>(&'a self, field_name: &str) -> Option<Cow<'a, str>> {
+        if let Some(std_field) = StandardField::from_alias(field_name) {
+            match std_field {
+                StandardField::Timestamp => Some(Cow::Borrowed(&self.timestamp)),
+                StandardField::Level => Some(Cow::Borrowed(self.level.as_str())),
+                StandardField::Message => Some(Cow::Borrowed(&self.message)),
+                StandardField::Raw => Some(Cow::Borrowed(&self.raw)),
+                StandardField::Id => Some(Cow::Owned(self.id.to_string())),
+            }
+        } else if let Some(v) = self.fields.get(field_name) {
+            value_to_cow(v)
+        } else {
+            None
+        }
+    }
+
+    /// Lấy giá trị số (f64) phục vụ lọc số và thời gian
+    pub fn get_field_numeric(&self, field_name: &str, now: f64) -> Option<f64> {
+        if let Some(StandardField::Timestamp) = StandardField::from_alias(field_name) {
+            return self.timestamp_secs;
+        }
+        if let Some(v) = self.fields.get(field_name) {
+            if let Some(n) = v.as_f64() {
+                return Some(n);
+            }
+            if let Some(n) = v.as_i64() {
+                return Some(n as f64);
+            }
+            if let Some(n) = v.as_u64() {
+                return Some(n as f64);
+            }
+            if let Some(s) = v.as_str() {
+                return uwu_core_util::parse_numeric_value(s, now);
+            }
+        }
+        self.get_field_cow(field_name)
+            .and_then(|s| uwu_core_util::parse_numeric_value(&s, now))
+    }
+
+    /// Tìm kiếm Text tự do trên toàn bộ bản ghi log (Canonical Full-Text Search)
+    pub fn matches_text(&self, needle: &str) -> bool {
+        uwu_core_util::contains_ignore_case(&self.message, needle)
+            || uwu_core_util::contains_ignore_case(self.level.as_str(), needle)
+            || uwu_core_util::contains_ignore_case(&self.timestamp, needle)
+            || uwu_core_util::contains_ignore_case(&self.raw, needle)
+            || self.fields.values().any(|v| match v {
+                serde_json::Value::String(s) => uwu_core_util::contains_ignore_case(s, needle),
+                serde_json::Value::Number(n) => {
+                    uwu_core_util::contains_ignore_case(&n.to_string(), needle)
+                }
+                serde_json::Value::Bool(b) => {
+                    uwu_core_util::contains_ignore_case(if *b { "true" } else { "false" }, needle)
+                }
+                serde_json::Value::Null => false,
+                other => uwu_core_util::contains_ignore_case(&other.to_string(), needle),
+            })
     }
 
     pub fn to_json_value(&self) -> serde_json::Value {
@@ -156,7 +325,6 @@ pub enum RawPayload {
 /// RawLogEntry đại diện cho dữ liệu thô gửi qua async channel
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RawLogEntry {
-    pub source_id: String,
     pub payload: RawPayload,
 }
 
@@ -166,40 +334,27 @@ mod tests {
 
     #[test]
     fn test_log_level_parse_all_variants() {
-        // Trace variants
         assert_eq!(LogLevel::parse_str("TRACE"), LogLevel::Trace);
         assert_eq!(LogLevel::parse_str("trc"), LogLevel::Trace);
         assert_eq!(LogLevel::parse_str("VERBOSE"), LogLevel::Trace);
-
-        // Debug variants
         assert_eq!(LogLevel::parse_str("DEBUG"), LogLevel::Debug);
         assert_eq!(LogLevel::parse_str("dbg"), LogLevel::Debug);
-
-        // Info variants
         assert_eq!(LogLevel::parse_str("INFO"), LogLevel::Info);
         assert_eq!(LogLevel::parse_str("inf"), LogLevel::Info);
         assert_eq!(LogLevel::parse_str("INFORMATION"), LogLevel::Info);
         assert_eq!(LogLevel::parse_str("Notice"), LogLevel::Info);
-
-        // Warn variants
         assert_eq!(LogLevel::parse_str("WARN"), LogLevel::Warn);
         assert_eq!(LogLevel::parse_str("warning"), LogLevel::Warn);
         assert_eq!(LogLevel::parse_str("wrn"), LogLevel::Warn);
-
-        // Error variants
         assert_eq!(LogLevel::parse_str("ERROR"), LogLevel::Error);
         assert_eq!(LogLevel::parse_str("err"), LogLevel::Error);
         assert_eq!(LogLevel::parse_str("CRITICAL"), LogLevel::Error);
         assert_eq!(LogLevel::parse_str("crit"), LogLevel::Error);
-
-        // Fatal variants
         assert_eq!(LogLevel::parse_str("FATAL"), LogLevel::Fatal);
         assert_eq!(LogLevel::parse_str("ftl"), LogLevel::Fatal);
         assert_eq!(LogLevel::parse_str("EMERG"), LogLevel::Fatal);
         assert_eq!(LogLevel::parse_str("emergency"), LogLevel::Fatal);
         assert_eq!(LogLevel::parse_str("ALERT"), LogLevel::Fatal);
-
-        // Unknown / Fallback
         assert_eq!(LogLevel::parse_str("CUSTOM_LEVEL"), LogLevel::Unknown);
         assert_eq!(LogLevel::parse_str(""), LogLevel::Unknown);
     }
@@ -226,29 +381,79 @@ mod tests {
     }
 
     #[test]
-    fn test_log_event_creation_and_json_value() {
+    fn test_standard_field_alias_resolution() {
+        assert_eq!(
+            StandardField::from_alias("time"),
+            Some(StandardField::Timestamp)
+        );
+        assert_eq!(
+            StandardField::from_alias("ts"),
+            Some(StandardField::Timestamp)
+        );
+        assert_eq!(
+            StandardField::from_alias("@timestamp"),
+            Some(StandardField::Timestamp)
+        );
+        assert_eq!(StandardField::from_alias("lvl"), Some(StandardField::Level));
+        assert_eq!(
+            StandardField::from_alias("severity"),
+            Some(StandardField::Level)
+        );
+        assert_eq!(
+            StandardField::from_alias("msg"),
+            Some(StandardField::Message)
+        );
+        assert_eq!(
+            StandardField::from_alias("MESSAGE"),
+            Some(StandardField::Message)
+        );
+        assert_eq!(StandardField::from_alias("custom_field"), None);
+    }
+
+    #[test]
+    fn test_standard_field_classification() {
+        assert_eq!(StandardField::classify("timestamp"), FieldType::Time);
+        assert_eq!(StandardField::classify("ts"), FieldType::Time);
+        assert_eq!(StandardField::classify("level"), FieldType::Enum);
+        assert_eq!(StandardField::classify("message"), FieldType::Text);
+        assert_eq!(StandardField::classify("latency_ms"), FieldType::Number);
+        assert_eq!(StandardField::classify("db_port"), FieldType::Number);
+        assert_eq!(StandardField::classify("status"), FieldType::Number);
+        assert_eq!(StandardField::classify("user_name"), FieldType::Text);
+    }
+
+    #[test]
+    fn test_log_event_ssot_accessors() {
         let mut fields = HashMap::new();
-        fields.insert("user_id".to_string(), serde_json::json!("u123"));
-        fields.insert("latency".to_string(), serde_json::json!(125));
+        fields.insert("latency_ms".to_string(), serde_json::json!(125.5));
+        fields.insert("user_id".to_string(), serde_json::json!("u99"));
 
         let event = LogEvent::new(
             "2026-08-20T10:00:00Z",
             LogLevel::Error,
-            "Something failed",
+            "Something failed badly",
             fields,
-            "[ERROR] Something failed",
+            "[ERROR] Something failed badly",
         );
 
-        assert_eq!(event.timestamp, "2026-08-20T10:00:00Z");
-        assert_eq!(event.level, LogLevel::Error);
-        assert_eq!(event.message, "Something failed");
-        assert_eq!(event.raw, "[ERROR] Something failed");
-        assert!(!event.id.is_nil());
+        // Access via alias
+        assert_eq!(event.get_field_cow("ts").unwrap(), "2026-08-20T10:00:00Z");
+        assert_eq!(event.get_field_cow("lvl").unwrap(), "ERROR");
+        assert_eq!(
+            event.get_field_cow("msg").unwrap(),
+            "Something failed badly"
+        );
+        assert_eq!(event.get_field_cow("latency_ms").unwrap(), "125.5");
 
-        let json_val = event.to_json_value();
-        assert_eq!(json_val.get("level").unwrap(), &serde_json::json!("ERROR"));
-        assert_eq!(json_val.get("user_id").unwrap(), &serde_json::json!("u123"));
-        assert_eq!(json_val.get("latency").unwrap(), &serde_json::json!(125));
+        // Numeric access
+        assert_eq!(event.get_field_numeric("latency_ms", 0.0), Some(125.5));
+        assert!(event.get_field_numeric("ts", 0.0).is_some());
+
+        // Full text search
+        assert!(event.matches_text("failed"));
+        assert!(event.matches_text("error"));
+        assert!(event.matches_text("u99"));
+        assert!(!event.matches_text("non_existent_text"));
     }
 
     #[test]
@@ -260,10 +465,8 @@ mod tests {
         let kv_payload = RawPayload::KeyValue(kv_map);
 
         let entry = RawLogEntry {
-            source_id: "proc:test".to_string(),
             payload: text_payload,
         };
-        assert_eq!(entry.source_id, "proc:test");
 
         match entry.payload {
             RawPayload::Text(s) => assert_eq!(s, "plain log"),

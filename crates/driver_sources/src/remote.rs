@@ -100,7 +100,6 @@ impl LogSource for RemoteSource {
         });
 
         // 3. Vòng lặp nhận dữ liệu (Ingestion Loop)
-        let source_id = self.source_id.clone();
         tokio::spawn(async move {
             while let Ok(Some(envelope)) = framed_reader.next::<ServerEnvelope>().await {
                 match envelope {
@@ -116,7 +115,6 @@ impl LogSource for RemoteSource {
                     }
                     ServerEnvelope::Error { message } => {
                         let err_entry = RawLogEntry {
-                            source_id: format!("{}:error", source_id),
                             payload: RawPayload::Text(format!("[REMOTE ERROR] {}", message)),
                         };
                         let _ = tx.send(err_entry).await;

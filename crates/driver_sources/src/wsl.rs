@@ -104,16 +104,12 @@ impl LogSource for WslSource {
             .spawn()
             .with_context(|| format!("Failed to spawn WSL process on distro '{}'", self.distro))?;
 
-        let source_id_out = self.source_id.clone();
-        let source_id_err = format!("{}:stderr", self.source_id);
-
         let tx_out = tx.clone();
         let stdout_handle = if let Some(stdout) = child.stdout.take() {
             tokio::spawn(async move {
                 let mut reader = BufReader::new(stdout).lines();
                 while let Ok(Some(line)) = reader.next_line().await {
                     let entry = RawLogEntry {
-                        source_id: source_id_out.clone(),
                         payload: RawPayload::Text(line),
                     };
                     if tx_out.send(entry).await.is_err() {
@@ -131,7 +127,6 @@ impl LogSource for WslSource {
                 let mut reader = BufReader::new(stderr).lines();
                 while let Ok(Some(line)) = reader.next_line().await {
                     let entry = RawLogEntry {
-                        source_id: source_id_err.clone(),
                         payload: RawPayload::Text(line),
                     };
                     if tx_err.send(entry).await.is_err() {

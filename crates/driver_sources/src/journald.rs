@@ -49,14 +49,11 @@ impl LogSource for JournaldSource {
             .spawn()
             .with_context(|| format!("Failed to spawn journalctl for unit: {:?}", self.unit))?;
 
-        let source_id = self.source_id.clone();
-
         if let Some(stdout) = child.stdout.take() {
             tokio::spawn(async move {
                 let mut reader = BufReader::new(stdout).lines();
                 while let Ok(Some(line)) = reader.next_line().await {
                     let entry = RawLogEntry {
-                        source_id: source_id.clone(),
                         payload: RawPayload::Text(line),
                     };
                     if tx.send(entry).await.is_err() {

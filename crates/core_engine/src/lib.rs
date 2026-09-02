@@ -311,8 +311,10 @@ mod tests {
         let tx = engine.get_channel();
 
         let raw = RawLogEntry {
-            source_id: "test:stream".to_string(),
-            payload: RawPayload::Text("[ERROR] Critical failure in module auth".to_string()),
+            payload: RawPayload::Json(serde_json::json!({
+                "level": "ERROR",
+                "message": "Critical failure in module auth"
+            })),
         };
 
         tx.send(raw).await.unwrap();
@@ -331,8 +333,10 @@ mod tests {
 
         for i in 0..6 {
             tx.send(RawLogEntry {
-                source_id: format!("src_{}", i),
-                payload: RawPayload::Text(format!("[INFO] Message {}", i)),
+                payload: RawPayload::Json(serde_json::json!({
+                    "level": "INFO",
+                    "message": format!("Message {}", i)
+                })),
             })
             .await
             .unwrap();
@@ -362,14 +366,18 @@ mod tests {
 
         // 1. Send first batch
         tx.send(RawLogEntry {
-            source_id: "s1".to_string(),
-            payload: RawPayload::Text("[ERROR] Error 1".to_string()),
+            payload: RawPayload::Json(serde_json::json!({
+                "level": "ERROR",
+                "message": "Error 1"
+            })),
         })
         .await
         .unwrap();
         tx.send(RawLogEntry {
-            source_id: "s2".to_string(),
-            payload: RawPayload::Text("[INFO] Info 1".to_string()),
+            payload: RawPayload::Json(serde_json::json!({
+                "level": "INFO",
+                "message": "Info 1"
+            })),
         })
         .await
         .unwrap();
@@ -380,8 +388,10 @@ mod tests {
 
         // 2. Send second batch
         tx.send(RawLogEntry {
-            source_id: "s3".to_string(),
-            payload: RawPayload::Text("[ERROR] Error 2".to_string()),
+            payload: RawPayload::Json(serde_json::json!({
+                "level": "ERROR",
+                "message": "Error 2"
+            })),
         })
         .await
         .unwrap();
@@ -401,7 +411,6 @@ mod tests {
         let tx = engine.get_channel();
 
         tx.send(RawLogEntry {
-            source_id: "s1".to_string(),
             payload: RawPayload::Text("[INFO] Test log".to_string()),
         })
         .await
@@ -423,7 +432,6 @@ mod tests {
 
         for i in 0..5 {
             tx.send(RawLogEntry {
-                source_id: format!("s{}", i),
                 payload: RawPayload::Text(format!("[INFO] Message {}", i)),
             })
             .await
@@ -455,7 +463,6 @@ mod tests {
 
         for i in 0..20 {
             tx.send(RawLogEntry {
-                source_id: "test".to_string(),
                 payload: RawPayload::Text(format!("[INFO] Log number {}", i)),
             })
             .await
@@ -499,8 +506,10 @@ mod tests {
 
         for (lvl, msg) in &sequence {
             tx.send(RawLogEntry {
-                source_id: "test".to_string(),
-                payload: RawPayload::Text(format!("[{}] {}", lvl, msg)),
+                payload: RawPayload::Json(serde_json::json!({
+                    "level": lvl,
+                    "message": msg
+                })),
             })
             .await
             .unwrap();

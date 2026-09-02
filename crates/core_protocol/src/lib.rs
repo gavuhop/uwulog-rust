@@ -148,11 +148,9 @@ mod tests {
 
         let batch = ServerEnvelope::LogBatch(vec![
             RawLogEntry {
-                source_id: "wsl:Ubuntu:proc:app".into(),
                 payload: RawPayload::Text("[INFO] Server started".into()),
             },
             RawLogEntry {
-                source_id: "wsl:Ubuntu:proc:app".into(),
                 payload: RawPayload::Text("[ERROR] DB connection timeout".into()),
             },
         ]);
@@ -163,7 +161,6 @@ mod tests {
         match received {
             Some(ServerEnvelope::LogBatch(logs)) => {
                 assert_eq!(logs.len(), 2);
-                assert_eq!(logs[0].source_id, "wsl:Ubuntu:proc:app");
             }
             _ => panic!("Expected LogBatch"),
         }
