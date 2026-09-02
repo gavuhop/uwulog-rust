@@ -90,16 +90,23 @@ impl ColumnState {
     pub fn sync_discovered_keys(&mut self, logs: &[LogEvent]) {
         for log in logs {
             for key in log.fields.keys() {
-                let canonical_name = match uwu_core_schema::StandardField::from_alias(key) {
-                    Some(std_field) => std_field.canonical_name(),
-                    None => key.as_str(),
-                };
-                if self.known_keys.insert(canonical_name.to_string()) {
-                    let is_default =
-                        uwu_core_schema::StandardField::from_alias(canonical_name).is_some();
+                if let Some(std_field) = uwu_core_schema::StandardField::from_alias(key) {
+                    let found_idx = self.columns.iter().position(|c| {
+                        uwu_core_schema::StandardField::from_alias(&c.name) == Some(std_field)
+                    });
+
+                    if let Some(idx) = found_idx {
+                        if self.columns[idx].name != *key {
+                            let old_name = self.columns[idx].name.clone();
+                            self.known_keys.remove(&old_name);
+                            self.columns[idx].name = key.clone();
+                            self.known_keys.insert(key.clone());
+                        }
+                    }
+                } else if self.known_keys.insert(key.clone()) {
                     self.columns.push(ColumnItem {
-                        name: canonical_name.to_string(),
-                        visible: is_default,
+                        name: key.clone(),
+                        visible: false,
                         width: 120.0,
                     });
                 }
@@ -492,6 +499,37 @@ mod tests {
             .columns
             .iter()
             .any(|c| c.name == "user_id" && !c.visible));
+    }
+
+    #[test]
+    fn test_sync_discovered_keys_replaces_default_names() {
+        let mut state = ColumnState::default();
+        let mut fields = HashMap::new();
+        fields.insert("ts".to_string(), serde_json::json!("2026-08-20T10:00:00Z"));
+        fields.insert("lvl".to_string(), serde_json::json!("INFO"));
+        fields.insert("msg".to_string(), serde_json::json!("hello"));
+        fields.insert("user_id".to_string(), serde_json::json!("u42"));
+
+        let log = LogEvent::new(
+            "2026-08-20T10:00:00Z",
+            LogLevel::Info,
+            "hello",
+            fields,
+            "raw",
+        );
+
+        state.sync_discovered_keys(&[log]);
+        assert_eq!(state.columns.len(), 4);
+        assert!(state.columns.iter().any(|c| c.name == "ts" && c.visible));
+        assert!(state.columns.iter().any(|c| c.name == "lvl" && c.visible));
+        assert!(state.columns.iter().any(|c| c.name == "msg" && c.visible));
+        assert!(state
+            .columns
+            .iter()
+            .any(|c| c.name == "user_id" && !c.visible));
+        assert!(!state.columns.iter().any(|c| c.name == "timestamp"));
+        assert!(!state.columns.iter().any(|c| c.name == "level"));
+        assert!(!state.columns.iter().any(|c| c.name == "message"));
     }
 
     #[test]

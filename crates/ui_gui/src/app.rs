@@ -792,18 +792,20 @@ impl UwuGuiApp {
         self.column_state.sync_discovered_keys(logs);
         for log in logs {
             for (key, val) in &log.fields {
-                let canonical_key = match uwu_core_schema::StandardField::from_alias(key) {
-                    Some(std_field) => std_field.canonical_name(),
-                    None => key.as_str(),
-                };
-                if !self.discovered_fields_cache.contains_key(canonical_key) {
+                if let Some(std_field) = uwu_core_schema::StandardField::from_alias(key) {
+                    let canonical = std_field.canonical_name();
+                    if canonical != key {
+                        self.discovered_fields_cache.remove(canonical);
+                    }
+                }
+
+                if !self.discovered_fields_cache.contains_key(key) {
                     let field_type = if val.is_number() {
                         crate::ui::autocomplete::FieldType::Number
                     } else {
-                        uwu_core_schema::StandardField::classify(canonical_key)
+                        uwu_core_schema::StandardField::classify(key)
                     };
-                    self.discovered_fields_cache
-                        .insert(canonical_key.to_string(), field_type);
+                    self.discovered_fields_cache.insert(key.clone(), field_type);
                 }
             }
         }
@@ -1240,6 +1242,40 @@ mod tests {
         assert_eq!(field_types.get("latency_ms"), Some(&FieldType::Number));
         assert_eq!(field_types.get("created_time"), Some(&FieldType::Time));
         assert_eq!(field_types.get("environment"), Some(&FieldType::Text));
+    }
+
+    #[tokio::test]
+    async fn test_sync_discovered_fields_replaces_aliases() {
+        let mut app = create_test_app();
+
+        let mut fields = HashMap::new();
+        fields.insert("ts".to_string(), serde_json::json!("2026-08-20T10:00:00Z"));
+        fields.insert("lvl".to_string(), serde_json::json!("WARN"));
+        fields.insert("msg".to_string(), serde_json::json!("warning msg"));
+        fields.insert("user_id".to_string(), serde_json::json!(42));
+
+        let log = LogEvent::new(
+            "2026-08-20T10:00:00Z",
+            LogLevel::Warn,
+            "warning msg",
+            fields,
+            "raw",
+        );
+        app.sync_discovered_fields(std::slice::from_ref(&log));
+
+        let available = app.get_available_log_fields();
+        let field_types: HashMap<String, FieldType> = available.into_iter().collect();
+
+        // Exact discovered keys replaced default names
+        assert_eq!(field_types.get("lvl"), Some(&FieldType::Enum));
+        assert_eq!(field_types.get("msg"), Some(&FieldType::Text));
+        assert_eq!(field_types.get("ts"), Some(&FieldType::Time));
+        assert_eq!(field_types.get("user_id"), Some(&FieldType::Number));
+
+        // Generic canonical names are removed
+        assert!(!field_types.contains_key("level"));
+        assert!(!field_types.contains_key("message"));
+        assert!(!field_types.contains_key("timestamp"));
     }
 
     #[tokio::test]
