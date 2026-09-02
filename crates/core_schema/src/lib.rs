@@ -116,7 +116,7 @@ impl StandardField {
             | "datetime"
             | "__REALTIME_TIMESTAMP"
             | "_SOURCE_REALTIME_TIMESTAMP" => Some(Self::Timestamp),
-            "level" | "lvl" | "severity" | "priority" | "PRIORITY" => Some(Self::Level),
+            "level" | "lvl" | "lv" | "severity" | "priority" | "PRIORITY" => Some(Self::Level),
             "message" | "msg" | "text" | "MESSAGE" | "body" => Some(Self::Message),
             "raw" => Some(Self::Raw),
             "id" => Some(Self::Id),
