@@ -36,11 +36,11 @@ impl LogNormalizer {
             }
             RawPayload::KeyValue(kv) => {
                 let raw_text = format!("{:?}", kv);
-                let fields: HashMap<String, serde_json::Value> = kv
+                let mut fields: HashMap<String, serde_json::Value> = kv
                     .into_iter()
                     .map(|(k, v)| (k, serde_json::Value::String(v)))
                     .collect();
-                let detected = Self::detect_semantic_fields(&fields, &raw_text);
+                let detected = Self::detect_semantic_fields(&mut fields, &raw_text);
 
                 LogEvent::new(
                     detected.timestamp,
@@ -76,7 +76,7 @@ impl LogNormalizer {
     }
 
     fn detect_semantic_fields(
-        fields: &HashMap<String, serde_json::Value>,
+        fields: &mut HashMap<String, serde_json::Value>,
         raw: &str,
     ) -> DetectedSemanticFields {
         let mut timestamp_key = None;
@@ -183,6 +183,37 @@ impl LogNormalizer {
             raw.to_string()
         };
 
+        // Thay thế các key bí danh đã phát hiện thành key chuẩn mặc định (timestamp, level, message)
+        let alias_keys: Vec<(String, uwu_core_schema::StandardField)> = fields
+            .keys()
+            .filter_map(|k| uwu_core_schema::StandardField::from_alias(k).map(|sf| (k.clone(), sf)))
+            .collect();
+
+        for (k, sf) in alias_keys {
+            if k != sf.canonical_name() {
+                fields.remove(&k);
+            }
+        }
+
+        if !timestamp.is_empty() {
+            fields.insert(
+                "timestamp".to_string(),
+                serde_json::Value::String(timestamp.clone()),
+            );
+        }
+        if level != LogLevel::Unknown {
+            fields.insert(
+                "level".to_string(),
+                serde_json::Value::String(level.to_string()),
+            );
+        }
+        if !message.is_empty() {
+            fields.insert(
+                "message".to_string(),
+                serde_json::Value::String(message.clone()),
+            );
+        }
+
         DetectedSemanticFields {
             level,
             timestamp,
@@ -193,7 +224,7 @@ impl LogNormalizer {
     fn normalize_json(v: &serde_json::Value, raw: &str) -> LogEvent {
         let mut fields = HashMap::new();
         Self::flatten_json_value("", v, &mut fields);
-        let detected = Self::detect_semantic_fields(&fields, raw);
+        let detected = Self::detect_semantic_fields(&mut fields, raw);
 
         LogEvent::new(
             detected.timestamp,

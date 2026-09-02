@@ -188,8 +188,17 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
 
                 ui.add_space(8.0);
 
-                // Parsed JSON / K-V Fields Card
-                if !event.fields.is_empty() {
+                // Parsed JSON / K-V Fields Card (loại trừ các trường mặc định đã có card riêng)
+                let custom_fields: Vec<(&String, &serde_json::Value)> = event
+                    .fields
+                    .iter()
+                    .filter(|(k, _)| {
+                        !matches!(k.as_str(), "timestamp" | "level" | "message" | "raw" | "id")
+                            && uwu_core_schema::StandardField::from_alias(k).is_none()
+                    })
+                    .collect();
+
+                if !custom_fields.is_empty() {
                     render_card(ui, "Parsed Fields", |ui| {
                         let mut ctx = DetailContext {
                             highlighted_terms: &app.highlighted_terms,
@@ -197,7 +206,7 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                             highlight_action: &mut highlight_action,
                         };
 
-                        for (i, (key, val)) in event.fields.iter().enumerate() {
+                        for (i, (key, val)) in custom_fields.iter().enumerate() {
                             if i > 0 {
                                 ui.add_space(6.0);
                             }

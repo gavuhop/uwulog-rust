@@ -792,13 +792,18 @@ impl UwuGuiApp {
         self.column_state.sync_discovered_keys(logs);
         for log in logs {
             for (key, val) in &log.fields {
-                if !self.discovered_fields_cache.contains_key(key) {
+                let canonical_key = match uwu_core_schema::StandardField::from_alias(key) {
+                    Some(std_field) => std_field.canonical_name(),
+                    None => key.as_str(),
+                };
+                if !self.discovered_fields_cache.contains_key(canonical_key) {
                     let field_type = if val.is_number() {
                         crate::ui::autocomplete::FieldType::Number
                     } else {
-                        uwu_core_schema::StandardField::classify(key)
+                        uwu_core_schema::StandardField::classify(canonical_key)
                     };
-                    self.discovered_fields_cache.insert(key.clone(), field_type);
+                    self.discovered_fields_cache
+                        .insert(canonical_key.to_string(), field_type);
                 }
             }
         }

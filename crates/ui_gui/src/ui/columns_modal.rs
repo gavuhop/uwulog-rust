@@ -90,10 +90,15 @@ impl ColumnState {
     pub fn sync_discovered_keys(&mut self, logs: &[LogEvent]) {
         for log in logs {
             for key in log.fields.keys() {
-                if self.known_keys.insert(key.clone()) {
-                    let is_default = uwu_core_schema::StandardField::from_alias(key).is_some();
+                let canonical_name = match uwu_core_schema::StandardField::from_alias(key) {
+                    Some(std_field) => std_field.canonical_name(),
+                    None => key.as_str(),
+                };
+                if self.known_keys.insert(canonical_name.to_string()) {
+                    let is_default =
+                        uwu_core_schema::StandardField::from_alias(canonical_name).is_some();
                     self.columns.push(ColumnItem {
-                        name: key.clone(),
+                        name: canonical_name.to_string(),
                         visible: is_default,
                         width: 120.0,
                     });
