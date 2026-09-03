@@ -12,6 +12,7 @@ members = [
     "crates/cli_agent",
     "crates/ui_tui",
     "crates/ui_gui",
+    "crates/benchmarks",
 ]
 
 [workspace.dependencies]

@@ -371,6 +371,49 @@ impl SystemEngine {
         }
     }
 
+    /// (Benchmark) Nạp trực tiếp một tập LogEvent vào SystemEngine (hữu ích cho khởi tạo nhanh & benchmark)
+    pub fn push_events(&self, new_events: Vec<LogEvent>) {
+        if new_events.is_empty() {
+            return;
+        }
+        let batch_len = new_events.len();
+        let mut batch_max_ts = 0.0f64;
+        for event in &new_events {
+            if let Some(ts) = event.timestamp_secs {
+                if ts > batch_max_ts {
+                    batch_max_ts = ts;
+                }
+            }
+        }
+        if batch_max_ts > 0.0 {
+            if let Ok(mut max_ts) = self.max_timestamp.write() {
+                if batch_max_ts > *max_ts {
+                    *max_ts = batch_max_ts;
+                }
+            }
+        }
+
+        if let Ok(mut evts) = self.events.write() {
+            let current_len = evts.len();
+            let new_total = current_len + batch_len;
+            if new_total > self.max_capacity {
+                let overflow = new_total - self.max_capacity;
+                if overflow >= current_len {
+                    evts.clear();
+                    let skip_in_batch = overflow - current_len;
+                    evts.extend(new_events.into_iter().skip(skip_in_batch));
+                } else {
+                    evts.drain(0..overflow);
+                    evts.extend(new_events);
+                }
+            } else {
+                evts.extend(new_events);
+            }
+            self.total_processed
+                .fetch_add(batch_len as u64, Ordering::Release);
+        }
+    }
+
     pub fn clear(&self) {
         if let Ok(mut evts) = self.events.write() {
             evts.clear();

@@ -1,0 +1,48 @@
+[package]
+name = "uwu-benchmarks"
+version = "0.1.0"
+edition = "2021"
+description = "Comprehensive Benchmark Suite and CPU Profiler for uwulog-rust"
+
+[dependencies]
+uwu-core-util = { workspace = true }
+uwu-core-schema = { workspace = true }
+uwu-core-filter = { workspace = true }
+uwu-core-engine = { workspace = true }
+uwu-driver-sources = { workspace = true }
+tokio = { workspace = true }
+rayon = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+clap = { workspace = true }
+sysinfo = "0.30"
+tempfile = "3.10"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
+tempfile = "3.10"
+
+[[bench]]
+name = "micro_benches"
+harness = false
+
+[[bench]]
+name = "engine_search_benches"
+harness = false
+
+[[bench]]
+name = "cpu_scaling_benches"
+harness = false
+
+[[bench]]
+name = "concurrent_stress_benches"
+harness = false
+
+[[bench]]
+name = "file_ingestion_benches"
+harness = false
+
+[[bench]]
+name = "ui_simulation_benches"
+harness = false
