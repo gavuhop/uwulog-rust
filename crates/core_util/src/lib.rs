@@ -1,4 +1,5 @@
 use chrono::{DateTime, Datelike, Local, TimeZone};
+use std::borrow::Cow;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Trả về thời gian Unix timestamp hiện tại tính theo giây (f64)
@@ -9,10 +10,10 @@ pub fn now_secs() -> f64 {
         .unwrap_or(0.0)
 }
 
-/// Loại bỏ các mã màu và định dạng ANSI escape sequence khỏi chuỗi văn bản (Fast-path 0 heap alloc nếu không có mã ANSI/\r)
-pub fn strip_ansi(s: &str) -> String {
+/// Loại bỏ các mã màu và định dạng ANSI escape sequence khỏi chuỗi văn bản (Fast-path Zero-alloc Cow nếu không có mã ANSI/\r)
+pub fn strip_ansi(s: &str) -> Cow<'_, str> {
     if !s.contains('\x1b') && !s.contains('\r') {
-        return s.to_string();
+        return Cow::Borrowed(s);
     }
     let mut result = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
@@ -34,7 +35,7 @@ pub fn strip_ansi(s: &str) -> String {
         }
         result.push(c);
     }
-    result
+    Cow::Owned(result)
 }
 
 /// Helper tìm kiếm chuỗi không phân biệt hoa thường với 0 heap allocation

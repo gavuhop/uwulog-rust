@@ -72,23 +72,31 @@ impl SystemEngine {
 
                     if let Some(ref schema_ref) = current_schema {
                         for (k, v) in &event.fields {
-                            match schema_ref.get(k) {
-                                None => {
-                                    let ft = if StandardField::from_alias(k)
-                                        == Some(StandardField::Timestamp)
-                                    {
-                                        FieldType::Time
-                                    } else if v.is_number() {
-                                        FieldType::Number
-                                    } else {
-                                        FieldType::Text
-                                    };
-                                    schema_updates.push((k.clone(), ft));
+                            if let Some(existing_update) =
+                                schema_updates.iter_mut().find(|(uk, _)| uk == k)
+                            {
+                                if existing_update.1 == FieldType::Text && v.is_number() {
+                                    existing_update.1 = FieldType::Number;
                                 }
-                                Some(FieldType::Text) if v.is_number() => {
-                                    schema_updates.push((k.clone(), FieldType::Number));
+                            } else {
+                                match schema_ref.get(k) {
+                                    None => {
+                                        let ft = if StandardField::from_alias(k)
+                                            == Some(StandardField::Timestamp)
+                                        {
+                                            FieldType::Time
+                                        } else if v.is_number() {
+                                            FieldType::Number
+                                        } else {
+                                            FieldType::Text
+                                        };
+                                        schema_updates.push((k.clone(), ft));
+                                    }
+                                    Some(FieldType::Text) if v.is_number() => {
+                                        schema_updates.push((k.clone(), FieldType::Number));
+                                    }
+                                    _ => {}
                                 }
-                                _ => {}
                             }
                         }
                     }

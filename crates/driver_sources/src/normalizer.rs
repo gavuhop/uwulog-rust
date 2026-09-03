@@ -15,8 +15,7 @@ impl LogNormalizer {
         match entry.payload {
             RawPayload::Json(v) => Self::normalize_json(&v),
             RawPayload::Text(s) => {
-                let has_ansi = s.contains('\x1b') || s.contains('\r');
-                let clean = if has_ansi { strip_ansi(&s) } else { s };
+                let clean = strip_ansi(&s);
                 let trimmed = clean.trim();
 
                 // 1. Fast-check JSON: Chỉ thử parse JSON nếu bắt đầu và kết thúc bằng cặp ngoặc {} hoặc []
@@ -28,8 +27,12 @@ impl LogNormalizer {
                     }
                 }
 
-                // 2. Plain text thuần túy: Không nhận dạng level/timestamp giả định
-                LogEvent::new(String::new(), LogLevel::Unknown, clean, HashMap::new())
+                // 2. Plain text thuần túy: Tái sử dụng chuỗi gốc nếu không có ANSI
+                let message = match clean {
+                    std::borrow::Cow::Borrowed(_) => s,
+                    std::borrow::Cow::Owned(owned) => owned,
+                };
+                LogEvent::new(String::new(), LogLevel::Unknown, message, HashMap::new())
             }
             RawPayload::KeyValue(kv) => {
                 let fields: HashMap<String, serde_json::Value> = kv
@@ -68,65 +71,53 @@ impl LogNormalizer {
     fn detect_semantic_fields(
         fields: &HashMap<String, serde_json::Value>,
     ) -> DetectedSemanticFields {
-        let mut timestamp_key = None;
-        let mut level_key = None;
-        let mut message_key = None;
+        let mut timestamp_val = None;
+        let mut level_val = None;
+        let mut message_val = None;
 
-        // Nhận diện các trường đặc biệt từ mảng đã phẳng hóa 1 lần duy nhất bằng SSOT
-        for k in fields.keys() {
+        // Nhận diện các trường đặc biệt trong 1 lượt duyệt trực tiếp con trỏ tham chiếu (Zero-alloc & không HashMap lookup lần 2)
+        for (k, val) in fields {
             if let Some(std_field) = uwu_core_schema::StandardField::from_alias(k) {
                 match std_field {
-                    uwu_core_schema::StandardField::Level if level_key.is_none() => {
-                        level_key = Some(k.clone());
+                    uwu_core_schema::StandardField::Level if level_val.is_none() => {
+                        level_val = Some(val);
                     }
-                    uwu_core_schema::StandardField::Timestamp if timestamp_key.is_none() => {
-                        timestamp_key = Some(k.clone());
+                    uwu_core_schema::StandardField::Timestamp if timestamp_val.is_none() => {
+                        timestamp_val = Some(val);
                     }
-                    uwu_core_schema::StandardField::Message if message_key.is_none() => {
-                        message_key = Some(k.clone());
+                    uwu_core_schema::StandardField::Message if message_val.is_none() => {
+                        message_val = Some(val);
                     }
                     _ => {}
                 }
             }
         }
 
-        let level = if let Some(ref lk) = level_key {
-            if let Some(val) = fields.get(lk) {
-                if let Some(s) = val.as_str() {
-                    LogLevel::parse_str(s)
-                } else {
-                    LogLevel::parse_str(&val.to_string())
-                }
+        let level = if let Some(val) = level_val {
+            if let Some(s) = val.as_str() {
+                LogLevel::parse_str(s)
             } else {
-                LogLevel::Unknown
+                LogLevel::parse_str(&val.to_string())
             }
         } else {
             LogLevel::Unknown
         };
 
-        let timestamp = if let Some(ref tk) = timestamp_key {
-            if let Some(val) = fields.get(tk) {
-                if let Some(s) = val.as_str() {
-                    s.to_string()
-                } else {
-                    val.to_string()
-                }
+        let timestamp = if let Some(val) = timestamp_val {
+            if let Some(s) = val.as_str() {
+                s.to_string()
             } else {
-                String::new()
+                val.to_string()
             }
         } else {
             String::new()
         };
 
-        let message = if let Some(ref mk) = message_key {
-            if let Some(val) = fields.get(mk) {
-                if let Some(s) = val.as_str() {
-                    s.to_string()
-                } else {
-                    val.to_string()
-                }
+        let message = if let Some(val) = message_val {
+            if let Some(s) = val.as_str() {
+                s.to_string()
             } else {
-                String::new()
+                val.to_string()
             }
         } else {
             String::new()
