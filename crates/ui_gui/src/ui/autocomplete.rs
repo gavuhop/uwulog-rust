@@ -385,12 +385,10 @@ mod tests {
     fn test_classify_field() {
         assert_eq!(classify_field("timestamp"), FieldType::Time);
         assert_eq!(classify_field("time"), FieldType::Time);
-        assert_eq!(classify_field("latency"), FieldType::Number);
-        assert_eq!(classify_field("status"), FieldType::Number);
-        assert_eq!(classify_field("duration"), FieldType::Number);
         assert_eq!(classify_field("msg"), FieldType::Text);
         assert_eq!(classify_field("level"), FieldType::Enum);
         assert_eq!(classify_field("tag"), FieldType::Text);
+        assert_eq!(classify_field("latency"), FieldType::Text);
     }
 
     #[test]
@@ -412,7 +410,8 @@ mod tests {
 
     #[test]
     fn test_number_field_suggestions_with_active_key() {
-        let (suggestions, _) = generate_suggestions("latency:", &[]);
+        let available = vec![("latency".to_string(), FieldType::Number)];
+        let (suggestions, _) = generate_suggestions("latency:", &available);
         assert!(!suggestions.is_empty());
         assert_eq!(suggestions[0].kind, SuggestionKind::OperatorOrValue);
 

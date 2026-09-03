@@ -121,7 +121,7 @@ impl StandardField {
         &[Self::Timestamp, Self::Level, Self::Message]
     }
 
-    /// Tự động phân loại kiểu dữ liệu cho một trường bất kỳ (chuẩn hoặc tùy biến)
+    /// Tự động phân loại kiểu dữ liệu cho một trường dựa theo StandardField
     pub fn classify(name: &str) -> FieldType {
         if let Some(std_field) = Self::from_alias(name) {
             match std_field {
@@ -130,49 +130,7 @@ impl StandardField {
                 Self::Message | Self::Id => FieldType::Text,
             }
         } else {
-            let lower = name.to_ascii_lowercase();
-            if lower.contains("time")
-                || lower.contains("date")
-                || lower.ends_with("_at")
-                || lower.starts_with("at_")
-            {
-                FieldType::Time
-            } else if lower == "status"
-                || lower == "status_code"
-                || lower == "code"
-                || lower == "port"
-                || lower == "bytes"
-                || lower == "size"
-                || lower == "cost"
-                || lower == "count"
-                || lower == "elapsed"
-                || lower.ends_with("_ms")
-                || lower.ends_with("_ns")
-                || lower.ends_with("_us")
-                || lower.ends_with("_sec")
-                || lower.ends_with("_secs")
-                || lower.ends_with("_bytes")
-                || lower.ends_with("_count")
-                || lower.ends_with("_total")
-                || lower.ends_with("_size")
-                || lower.ends_with("_len")
-                || lower.ends_with("_id")
-                || lower.ends_with("_port")
-                || lower.ends_with("_code")
-                || lower.ends_with("_status")
-                || lower.contains("latency")
-                || lower.contains("duration")
-                || lower.contains("response_time")
-                || lower.contains("memory")
-                || lower.contains("cpu")
-                || lower.contains("ram")
-                || lower.contains("disk")
-                || lower.contains("rate")
-            {
-                FieldType::Number
-            } else {
-                FieldType::Text
-            }
+            FieldType::Text
         }
     }
 }
@@ -397,10 +355,8 @@ mod tests {
         assert_eq!(StandardField::classify("ts"), FieldType::Time);
         assert_eq!(StandardField::classify("level"), FieldType::Enum);
         assert_eq!(StandardField::classify("message"), FieldType::Text);
-        assert_eq!(StandardField::classify("latency_ms"), FieldType::Number);
-        assert_eq!(StandardField::classify("db_port"), FieldType::Number);
-        assert_eq!(StandardField::classify("status"), FieldType::Number);
-        assert_eq!(StandardField::classify("user_name"), FieldType::Text);
+        assert_eq!(StandardField::classify("id"), FieldType::Text);
+        assert_eq!(StandardField::classify("custom_field"), FieldType::Text);
     }
 
     #[test]

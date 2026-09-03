@@ -1174,7 +1174,7 @@ mod tests {
 
         // Inferred fields
         assert_eq!(field_types.get("latency_ms"), Some(&FieldType::Number));
-        assert_eq!(field_types.get("created_time"), Some(&FieldType::Time));
+        assert_eq!(field_types.get("created_time"), Some(&FieldType::Text));
         assert_eq!(field_types.get("environment"), Some(&FieldType::Text));
     }
 
