@@ -28,9 +28,11 @@ pub struct AutocompleteState {
     pub just_applied: bool,
 }
 
-/// Xác định kiểu dữ liệu của một key (Text, Number, Time, Enum) qua SSOT
+/// Xác định kiểu dữ liệu của một key (Time, Number, Text) qua SSOT
 pub fn classify_field(key: &str) -> FieldType {
-    uwu_core_schema::StandardField::classify(key)
+    uwu_core_schema::StandardField::from_alias(key)
+        .map(|f| f.field_type())
+        .unwrap_or(FieldType::Text)
 }
 
 /// Phân tích query và sinh danh sách gợi ý CHỈ DỰA TRÊN các trường thực sự có trong log
@@ -93,7 +95,7 @@ pub fn generate_suggestions(
                 .unwrap_or_else(|| classify_field(key));
 
             let suggestions = match field_type {
-                FieldType::Text | FieldType::Enum => vec![
+                FieldType::Text => vec![
                     SuggestionItem {
                         kind: SuggestionKind::OperatorOrValue,
                         op_symbol: "~",
@@ -386,7 +388,7 @@ mod tests {
         assert_eq!(classify_field("timestamp"), FieldType::Time);
         assert_eq!(classify_field("time"), FieldType::Time);
         assert_eq!(classify_field("msg"), FieldType::Text);
-        assert_eq!(classify_field("level"), FieldType::Enum);
+        assert_eq!(classify_field("level"), FieldType::Text);
         assert_eq!(classify_field("tag"), FieldType::Text);
         assert_eq!(classify_field("latency"), FieldType::Text);
     }

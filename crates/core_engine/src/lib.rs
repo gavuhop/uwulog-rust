@@ -1,18 +1,19 @@
 use anyhow::Result;
 use rayon::prelude::*;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use tokio::sync::mpsc;
 use uwu_core_filter::evaluator::eval_event;
 use uwu_core_filter::parser::{tokenize, Parser};
-use uwu_core_schema::{LogEvent, RawLogEntry};
+use uwu_core_schema::{FieldType, LogEvent, RawLogEntry, StandardField};
 use uwu_core_util::now_secs;
 use uwu_driver_sources::{LogNormalizer, LogSource};
 
 pub struct SystemEngine {
     raw_tx: mpsc::Sender<RawLogEntry>,
     events: Arc<RwLock<VecDeque<LogEvent>>>,
+    schema: Arc<RwLock<HashMap<String, FieldType>>>,
     total_processed: Arc<AtomicU64>,
     max_timestamp: Arc<RwLock<f64>>,
     max_capacity: usize,
@@ -25,9 +26,20 @@ impl SystemEngine {
         let total_processed = Arc::new(AtomicU64::new(0));
         let max_timestamp = Arc::new(RwLock::new(0.0));
 
+        let default_schema = {
+            let mut map = HashMap::new();
+            for field in StandardField::default_columns() {
+                map.insert(field.canonical_name().to_string(), field.field_type());
+            }
+            map.insert("id".to_string(), FieldType::Text);
+            map
+        };
+        let schema = Arc::new(RwLock::new(default_schema));
+
         let events_clone = Arc::clone(&events);
         let processed_clone = Arc::clone(&total_processed);
         let max_ts_clone = Arc::clone(&max_timestamp);
+        let schema_clone = Arc::clone(&schema);
 
         // Async task liên tục đọc RawLogEntry -> Normalizer -> LogEvent -> Storage theo batch
         tokio::spawn(async move {
@@ -44,9 +56,12 @@ impl SystemEngine {
                     }
                 }
 
-                // 1. Chuẩn hóa (Normalize) toàn bộ batch bên ngoài lock
+                // 1. Chuẩn hóa (Normalize) + Schema Discovery trong 1-Pass duy nhất ngoài lock
                 let mut batch_max_ts = 0.0f64;
                 let mut event_batch = Vec::with_capacity(raw_batch.len());
+                let mut schema_updates = Vec::new();
+                let current_schema = schema_clone.read().ok();
+
                 for raw_entry in raw_batch.drain(..) {
                     let event = LogNormalizer::normalize(raw_entry);
                     if let Some(ts) = event.timestamp_secs {
@@ -54,8 +69,33 @@ impl SystemEngine {
                             batch_max_ts = ts;
                         }
                     }
+
+                    if let Some(ref schema_ref) = current_schema {
+                        for (k, v) in &event.fields {
+                            match schema_ref.get(k) {
+                                None => {
+                                    let ft = if StandardField::from_alias(k)
+                                        == Some(StandardField::Timestamp)
+                                    {
+                                        FieldType::Time
+                                    } else if v.is_number() {
+                                        FieldType::Number
+                                    } else {
+                                        FieldType::Text
+                                    };
+                                    schema_updates.push((k.clone(), ft));
+                                }
+                                Some(FieldType::Text) if v.is_number() => {
+                                    schema_updates.push((k.clone(), FieldType::Number));
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+
                     event_batch.push(event);
                 }
+                drop(current_schema);
 
                 let batch_len = event_batch.len();
 
@@ -68,7 +108,22 @@ impl SystemEngine {
                     }
                 }
 
-                // 3. Acquire write lock 1 lần duy nhất cho toàn bộ batch
+                // 3. Cập nhật Schema Registry in-memory và Type Promotion nếu có trường mới
+                if !schema_updates.is_empty() {
+                    if let Ok(mut schema_write) = schema_clone.write() {
+                        for (k, ft) in schema_updates {
+                            if let Some(std_field) = StandardField::from_alias(&k) {
+                                let canonical = std_field.canonical_name();
+                                if canonical != k {
+                                    schema_write.remove(canonical);
+                                }
+                            }
+                            schema_write.insert(k, ft);
+                        }
+                    }
+                }
+
+                // 4. Acquire write lock 1 lần duy nhất cho toàn bộ batch
                 if let Ok(mut evts) = events_clone.write() {
                     let current_len = evts.len();
                     let new_total = current_len + batch_len;
@@ -97,6 +152,7 @@ impl SystemEngine {
         Self {
             raw_tx,
             events,
+            schema,
             total_processed,
             max_timestamp,
             max_capacity,
@@ -289,6 +345,24 @@ impl SystemEngine {
         }
     }
 
+    /// Lấy danh sách toàn bộ các trường đã phát hiện cùng kiểu dữ liệu tương ứng (O(1) read lock)
+    pub fn get_schema(&self) -> Vec<(String, FieldType)> {
+        if let Ok(schema) = self.schema.read() {
+            schema.iter().map(|(k, v)| (k.clone(), *v)).collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Lấy bản sao HashMap của Schema Registry
+    pub fn get_schema_map(&self) -> HashMap<String, FieldType> {
+        if let Ok(schema) = self.schema.read() {
+            schema.clone()
+        } else {
+            HashMap::new()
+        }
+    }
+
     pub fn clear(&self) {
         if let Ok(mut evts) = self.events.write() {
             evts.clear();
@@ -297,6 +371,13 @@ impl SystemEngine {
             *max_ts = 0.0;
         }
         self.total_processed.store(0, Ordering::Relaxed);
+        if let Ok(mut schema_write) = self.schema.write() {
+            schema_write.clear();
+            for field in StandardField::default_columns() {
+                schema_write.insert(field.canonical_name().to_string(), field.field_type());
+            }
+            schema_write.insert("id".to_string(), FieldType::Text);
+        }
     }
 }
 
@@ -534,5 +615,54 @@ mod tests {
 
         assert_eq!(raw_info_ids.len(), 5);
         assert_eq!(raw_info_ids, filtered_info_ids);
+    }
+
+    #[tokio::test]
+    async fn test_system_engine_schema_discovery_and_promotion() {
+        let engine = SystemEngine::new(50);
+        let tx = engine.get_channel();
+
+        // 1. Initial schema has defaults
+        let initial_schema = engine.get_schema_map();
+        assert_eq!(initial_schema.get("timestamp"), Some(&FieldType::Time));
+        assert_eq!(initial_schema.get("level"), Some(&FieldType::Text));
+        assert_eq!(initial_schema.get("message"), Some(&FieldType::Text));
+        assert_eq!(initial_schema.get("id"), Some(&FieldType::Text));
+
+        // 2. Ingest log with text field, numeric field, and alias
+        tx.send(RawLogEntry {
+            payload: RawPayload::Json(serde_json::json!({
+                "ts": "2026-08-20T10:00:00Z",
+                "lvl": "INFO",
+                "msg": "hello",
+                "custom_txt": "null_init",
+                "latency_val": 250
+            })),
+        })
+        .await
+        .unwrap();
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let schema1 = engine.get_schema_map();
+        assert_eq!(schema1.get("ts"), Some(&FieldType::Time));
+        assert_eq!(schema1.get("lvl"), Some(&FieldType::Text));
+        assert_eq!(schema1.get("msg"), Some(&FieldType::Text));
+        assert_eq!(schema1.get("custom_txt"), Some(&FieldType::Text));
+        assert_eq!(schema1.get("latency_val"), Some(&FieldType::Number));
+
+        // 3. Promote custom_txt from Text to Number
+        tx.send(RawLogEntry {
+            payload: RawPayload::Json(serde_json::json!({
+                "custom_txt": 404
+            })),
+        })
+        .await
+        .unwrap();
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let schema2 = engine.get_schema_map();
+        assert_eq!(schema2.get("custom_txt"), Some(&FieldType::Number));
     }
 }

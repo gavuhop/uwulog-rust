@@ -715,35 +715,15 @@ impl UwuGuiApp {
         use std::collections::BTreeMap;
         let mut fields_map = BTreeMap::new();
         for field in uwu_core_schema::StandardField::default_columns() {
-            fields_map.insert(
-                field.canonical_name().to_string(),
-                uwu_core_schema::StandardField::classify(field.canonical_name()),
-            );
+            fields_map.insert(field.canonical_name().to_string(), field.field_type());
         }
         fields_map
     }
 
     pub fn sync_discovered_fields(&mut self, logs: &[LogEvent]) {
         self.column_state.sync_discovered_keys(logs);
-        for log in logs {
-            for (key, val) in &log.fields {
-                if let Some(std_field) = uwu_core_schema::StandardField::from_alias(key) {
-                    let canonical = std_field.canonical_name();
-                    if canonical != key {
-                        self.discovered_fields_cache.remove(canonical);
-                    }
-                }
-
-                if !self.discovered_fields_cache.contains_key(key) {
-                    let field_type = if val.is_number() {
-                        crate::ui::autocomplete::FieldType::Number
-                    } else {
-                        uwu_core_schema::StandardField::classify(key)
-                    };
-                    self.discovered_fields_cache.insert(key.clone(), field_type);
-                }
-            }
-        }
+        // Đồng bộ Schema Registry trực tiếp từ Engine (O(1) read lock, zero loops)
+        self.discovered_fields_cache = self.engine.get_schema_map().into_iter().collect();
     }
 
     pub fn get_available_log_fields(&self) -> Vec<(String, crate::ui::autocomplete::FieldType)> {
@@ -1151,24 +1131,26 @@ mod tests {
     #[tokio::test]
     async fn test_get_available_log_fields_inference() {
         let mut app = create_test_app();
+        let tx = app.engine.get_channel();
 
-        let mut fields = HashMap::new();
-        fields.insert("latency_ms".to_string(), serde_json::json!(250));
-        fields.insert(
-            "created_time".to_string(),
-            serde_json::json!("2026-08-20T10:00:00Z"),
-        );
-        fields.insert("environment".to_string(), serde_json::json!("production"));
+        tx.send(RawLogEntry {
+            payload: RawPayload::Json(serde_json::json!({
+                "latency_ms": 250,
+                "created_time": "2026-08-20T10:00:00Z",
+                "environment": "production"
+            })),
+        })
+        .await
+        .unwrap();
 
-        let log = LogEvent::new("2026-08-20T10:00:00Z", LogLevel::Info, "msg", fields);
-        app.sync_discovered_fields(std::slice::from_ref(&log));
-        app.cached_logs.push(log);
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        app.sync_discovered_fields(&[]);
 
         let available = app.get_available_log_fields();
         let field_types: HashMap<String, FieldType> = available.into_iter().collect();
 
         // Core fields
-        assert_eq!(field_types.get("level"), Some(&FieldType::Enum));
+        assert_eq!(field_types.get("level"), Some(&FieldType::Text));
         assert_eq!(field_types.get("message"), Some(&FieldType::Text));
         assert_eq!(field_types.get("timestamp"), Some(&FieldType::Time));
 
@@ -1181,26 +1163,27 @@ mod tests {
     #[tokio::test]
     async fn test_sync_discovered_fields_replaces_aliases() {
         let mut app = create_test_app();
+        let tx = app.engine.get_channel();
 
-        let mut fields = HashMap::new();
-        fields.insert("ts".to_string(), serde_json::json!("2026-08-20T10:00:00Z"));
-        fields.insert("lvl".to_string(), serde_json::json!("WARN"));
-        fields.insert("msg".to_string(), serde_json::json!("warning msg"));
-        fields.insert("user_id".to_string(), serde_json::json!(42));
+        tx.send(RawLogEntry {
+            payload: RawPayload::Json(serde_json::json!({
+                "ts": "2026-08-20T10:00:00Z",
+                "lvl": "WARN",
+                "msg": "warning msg",
+                "user_id": 42
+            })),
+        })
+        .await
+        .unwrap();
 
-        let log = LogEvent::new(
-            "2026-08-20T10:00:00Z",
-            LogLevel::Warn,
-            "warning msg",
-            fields,
-        );
-        app.sync_discovered_fields(std::slice::from_ref(&log));
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        app.sync_discovered_fields(&[]);
 
         let available = app.get_available_log_fields();
         let field_types: HashMap<String, FieldType> = available.into_iter().collect();
 
         // Exact discovered keys replaced default names
-        assert_eq!(field_types.get("lvl"), Some(&FieldType::Enum));
+        assert_eq!(field_types.get("lvl"), Some(&FieldType::Text));
         assert_eq!(field_types.get("msg"), Some(&FieldType::Text));
         assert_eq!(field_types.get("ts"), Some(&FieldType::Time));
         assert_eq!(field_types.get("user_id"), Some(&FieldType::Number));

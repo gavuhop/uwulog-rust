@@ -86,9 +86,8 @@ pub enum StandardField {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum FieldType {
     Time,
-    Enum,
-    Text,
     Number,
+    Text,
 }
 
 impl StandardField {
@@ -121,16 +120,11 @@ impl StandardField {
         &[Self::Timestamp, Self::Level, Self::Message]
     }
 
-    /// Tự động phân loại kiểu dữ liệu cho một trường dựa theo StandardField
-    pub fn classify(name: &str) -> FieldType {
-        if let Some(std_field) = Self::from_alias(name) {
-            match std_field {
-                Self::Timestamp => FieldType::Time,
-                Self::Level => FieldType::Enum,
-                Self::Message | Self::Id => FieldType::Text,
-            }
-        } else {
-            FieldType::Text
+    /// Kiểu dữ liệu mặc định của trường chuẩn
+    pub const fn field_type(&self) -> FieldType {
+        match self {
+            Self::Timestamp => FieldType::Time,
+            Self::Level | Self::Message | Self::Id => FieldType::Text,
         }
     }
 }
@@ -350,13 +344,11 @@ mod tests {
     }
 
     #[test]
-    fn test_standard_field_classification() {
-        assert_eq!(StandardField::classify("timestamp"), FieldType::Time);
-        assert_eq!(StandardField::classify("ts"), FieldType::Time);
-        assert_eq!(StandardField::classify("level"), FieldType::Enum);
-        assert_eq!(StandardField::classify("message"), FieldType::Text);
-        assert_eq!(StandardField::classify("id"), FieldType::Text);
-        assert_eq!(StandardField::classify("custom_field"), FieldType::Text);
+    fn test_standard_field_type() {
+        assert_eq!(StandardField::Timestamp.field_type(), FieldType::Time);
+        assert_eq!(StandardField::Level.field_type(), FieldType::Text);
+        assert_eq!(StandardField::Message.field_type(), FieldType::Text);
+        assert_eq!(StandardField::Id.field_type(), FieldType::Text);
     }
 
     #[test]
@@ -400,15 +392,27 @@ mod tests {
         kv_map.insert("k".to_string(), "v".to_string());
         let kv_payload = RawPayload::KeyValue(kv_map);
 
-        let entry = RawLogEntry {
+        let entry1 = RawLogEntry {
             payload: text_payload,
         };
+        let entry2 = RawLogEntry {
+            payload: json_payload,
+        };
+        let entry3 = RawLogEntry {
+            payload: kv_payload,
+        };
 
-        match entry.payload {
+        match entry1.payload {
             RawPayload::Text(s) => assert_eq!(s, "plain log"),
             _ => panic!("Expected text payload"),
         }
-
-        let _ = (json_payload, kv_payload);
+        match entry2.payload {
+            RawPayload::Json(v) => assert_eq!(v["key"], "val"),
+            _ => panic!("Expected json payload"),
+        }
+        match entry3.payload {
+            RawPayload::KeyValue(m) => assert_eq!(m.get("k").unwrap(), "v"),
+            _ => panic!("Expected key-value payload"),
+        }
     }
 }
