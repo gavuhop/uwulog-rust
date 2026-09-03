@@ -99,7 +99,70 @@ graph TD
 
 ---
 
-## 3. Triết Lý Thiết Kế Cốt Lõi (Core Principles)
+## 3. Kiến Trúc Luồng Dữ Liệu & Giao Thức Truyền Tải (Data Pipeline & Transport Architecture)
+
+Dữ liệu log từ **WSL, Windows, Linux, và Remote Server** được truyền lên UI theo mô hình kết hợp **OS Anonymous Pipes (Piped Stdio) + In-Memory Async Channels + Shared Memory RingBuffer**:
+
+```
+┌───────────────────────────────────────────────────────────┐
+│ Windows / Linux Local Process                             │
+│ (stdout/stderr) ───[ Anonymous Pipe: Stdio::piped() ]────┐│
+└───────────────────────────────────────────────────────────┼┘
+┌───────────────────────────────────────────────────────────┤
+│ Local Log File                                            │
+│ (Disk File)     ───[ Non-blocking File I/O + Seek ]──────┤│
+└───────────────────────────────────────────────────────────┼┘
+┌───────────────────────────────────────────────────────────┤
+│ WSL (Linux kernel on Windows)                             │
+│ (wsl.exe)       ───[ Windows <-> WSL Bridge Pipe ]────────┤│
+└───────────────────────────────────────────────────────────┼┘
+┌───────────────────────────────────────────────────────────┤
+│ Remote Server / Container                                 │
+│ (uwu-agent)     ───[ SSH / StdIn-StdOut Framed RPC ]──────┘│
+└───────────────────────────────────────────────────────────┘
+                               │
+                               ▼
+               [ Tokio Async In-Memory Channel (mpsc) ]
+                               │
+                               ▼
+                   [ SystemEngine RingBuffer ]
+                               │
+                               ▼
+                      [ Direct Memory Read ]
+                               │
+                               ▼
+                       [ UI Render Loop ]
+```
+
+### 3.1. Tầng Thu Thập Ngoại Vi (OS I/O Transport Layer)
+1. **Tiến trình con trên Windows / Linux Host ([`ProcessSource`](file:///D:/Learn/Go/uwulog-rust/crates/driver_sources/src/process.rs))**:
+   - Khởi chạy bằng `tokio::process::Command` với `.stdout(Stdio::piped())` và `.stderr(Stdio::piped())`.
+   - **Đường truyền**: **OS Anonymous Pipes (Piped Stdio)**. Dữ liệu từ stdout/stderr của tiến trình con được đẩy liên tục qua pipe handle, `tokio::io::BufReader` trên luồng background đọc từng dòng text không chặn.
+   - Trên Windows: Tích hợp Windows Job Object để tự động dọn dẹp và hủy toàn bộ cây tiến trình con (Process Tree) khi ứng dụng dừng.
+2. **WSL Subprocess Bridge ([`WslSource`](file:///D:/Learn/Go/uwulog-rust/crates/driver_sources/src/wsl.rs) & [`WslTransport`](file:///D:/Learn/Go/uwulog-rust/crates/driver_transport/src/wsl.rs))**:
+   - Khởi chạy `wsl.exe -d <distro> --cd <dir> -- <cmd>` với `.stdout(Stdio::piped())`.
+   - **Đường truyền**: **Windows ➔ WSL Subprocess Inter-Process Pipe**. Hệ điều hành Windows tự động bridge luồng stdout/stderr từ Linux kernel trong WSL qua Windows pipes, `WslSource` đọc trực tiếp các dòng text mà không cần thông qua socket hay network stack.
+   - Khi chạy ở chế độ phân tán: Binary [`uwu-agent`](file:///D:/Learn/Go/uwulog-rust/crates/cli_agent/src/main.rs) được nạp vào WSL, giao tiếp hai chiều dạng **Framed Binary Envelopes qua Stdin/Stdout Pipe** của `wsl.exe`.
+3. **Remote Server qua SSH / Container ([`RemoteSource`](file:///D:/Learn/Go/uwulog-rust/crates/driver_sources/src/remote.rs) + [`SshTransport`](file:///D:/Learn/Go/uwulog-rust/crates/driver_transport/src/ssh.rs))**:
+   - **Đường truyền**: **SSH Secure Tunnel (Stdio Pipe)** truyền các gói tin nhị phân có cấu trúc (`ClientEnvelope`, `ServerEnvelope` thuộc [`core_protocol`](file:///D:/Learn/Go/uwulog-rust/crates/core_protocol)).
+4. **Tệp tin cục bộ ([`FileSource`](file:///D:/Learn/Go/uwulog-rust/crates/driver_sources/src/file_tailer.rs))**:
+   - **Đường truyền**: **Async Non-blocking File I/O + File Seek Polling** theo chu kỳ nano-giây, hỗ trợ tự động phát hiện file rotation và file truncation.
+
+### 3.2. Tầng Chuyển Tiếp Nội Bộ Vào UI (In-Memory Pipeline)
+1. **Driver ➔ Engine Channel (`mpsc`)**:
+   - Mọi driver đều thực thi trait `LogSource`, đẩy `RawLogEntry` vào kênh bất đồng bộ `tokio::sync::mpsc::channel(10_000)`.
+2. **Batch Normalizer**:
+   - [`SystemEngine`](file:///D:/Learn/Go/uwulog-rust/crates/core_engine/src/lib.rs) gom batch (tối đa 512 log) từ channel, đưa qua [`LogNormalizer`](file:///D:/Learn/Go/uwulog-rust/crates/driver_sources/src/normalizer.rs) phân tích JSON/Text và trích xuất trường ngữ nghĩa ngoài lock.
+3. **RAM RingBuffer Storage (`VecDeque`)**:
+   - Toàn bộ batch `LogEvent` được nạp vào `Arc<RwLock<VecDeque<LogEvent>>>` trong RAM (với cơ chế xoay vòng FIFO eviction khi vượt quá dung lượng tối đa).
+4. **Engine ➔ UI Render Thread ([`ui_gui`](file:///D:/Learn/Go/uwulog-rust/crates/ui_gui) / [`ui_tui`](file:///D:/Learn/Go/uwulog-rust/crates/ui_tui))**:
+   - **Direct Memory Access (Không qua network/IPC)**: Luồng giao diện (chạy ở tốc độ 60 FPS hoặc tick 150ms) đọc trực tiếp từ bộ nhớ RAM thông qua Read Lock trên `SystemEngine`:
+     - **Live Tail Mode**: Lấy log mới nhất qua `filter_incremental`.
+     - **Search Query Mode**: Kích hoạt **Rayon ThreadPool** lọc song song đa lõi (`par_iter`) và render thẳng lên GPU (thông qua `egui`) hoặc terminal cells (thông qua `ratatui`).
+
+---
+
+## 4. Triết Lý Thiết Kế Cốt Lõi (Core Principles)
 
 1. **Đơn Chiều Tuyệt Đối (Strict 1-Way DAG)**: Mối quan hệ phụ thuộc chỉ chảy từ tầng trên xuống tầng dưới (Tier 4 ➔ Tier 2 ➔ Tier 1 ➔ Tier 0). Không bao giờ có phụ thuộc vòng (Circular Dependency) hoặc phụ thuộc ngược.
 2. **Tiền Tố Đàng Hoàng & Tự Giải Thích (Explicit Prefix Taxonomy)**:
@@ -113,7 +176,7 @@ graph TD
 
 ---
 
-## 4. Mô Hình Concurrency & Multi-Threading (Thread Model)
+## 5. Mô Hình Concurrency & Multi-Threading (Thread Model)
 
 Mô hình xử lý bất đồng bộ phối hợp giữa **Tokio Async Runtime** (cho I/O thu thập log đa luồng) và **Rayon Parallel ThreadPool** (cho động cơ lọc log song song):
 
@@ -154,7 +217,7 @@ sequenceDiagram
 
 ---
 
-## 5. Lộ Trình Phát Triển Chi Tiết (Roadmap)
+## 6. Lộ Trình Phát Triển Chi Tiết (Roadmap)
 
 ### 🧩 Giai Đoạn 1: Single Source of Truth Schema & High-Performance Normalizer
 - **Trạng thái**: ✅ **ĐÃ HOÀN THÀNH (Implemented)**
