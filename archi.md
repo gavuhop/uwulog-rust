@@ -90,11 +90,11 @@ graph TD
 | **Tier 4** | `cli_agent` | `uwu-cli-agent` | [`crates/cli_agent`](file:///D:/Learn/Go/uwulog-rust/crates/cli_agent) | Binary `uwu-agent`: Headless daemon thu thập log trên remote server/WSL/container qua giao thức stdio framing | `driver_sources`, `core_protocol`, `core_schema` |
 | **Tier 2** | `core_engine` | `uwu-core-engine` | [`crates/core_engine`](file:///D:/Learn/Go/uwulog-rust/crates/core_engine) | `SystemEngine`: Quản lý Tokio Ingestion Pipeline, RingBuffer `VecDeque`, Rayon Parallel Index-only Filter, Incremental Filter | `driver_sources`, `core_filter`, `core_schema`, `core_util` |
 | **Tier 2** | `core_workspace` | `uwu-core-workspace` | [`crates/core_workspace`](file:///D:/Learn/Go/uwulog-rust/crates/core_workspace) | Quản lý dự án, cấu hình session, lưu trữ `workspaces.json` đa môi trường (Local / WSL) | `core_schema` |
-| **Tier 1** | `driver_sources` | `uwu-driver-sources` | [`crates/driver_sources`](file:///D:/Learn/Go/uwulog-rust/crates/driver_sources) | Các driver nguồn log: `FileSource`, `ProcessSource`, `JournaldSource`, `WinEventSource`, `WslSource`, `RemoteSource`, `LogNormalizer` | `driver_transport`, `core_protocol`, `core_schema`, `core_util` |
+| **Tier 1** | `driver_sources` | `uwu-driver-sources` | [`crates/driver_sources`](file:///D:/Learn/Go/uwulog-rust/crates/driver_sources) | Các driver nguồn log ứng dụng: `FileSource`, `ProcessSource`, `WslSource` (Command/File), `RemoteSource`, `LogNormalizer` | `driver_transport`, `core_protocol`, `core_schema`, `core_util` |
 | **Tier 1** | `driver_transport` | `uwu-driver-transport` | [`crates/driver_transport`](file:///D:/Learn/Go/uwulog-rust/crates/driver_transport) | Giao thức truyền tải proxy từ xa (`RemoteTransport` trait, `WslTransport`, `SshTransport`, `ProcessTransport`) | `core_protocol` |
 | **Tier 0** | `core_filter` | `uwu-core-filter` | [`crates/core_filter`](file:///D:/Learn/Go/uwulog-rust/crates/core_filter) | Bộ phân tích cú pháp AST (`tokenize`, `Parser`, `Expr`), Zero-alloc Dynamic Event Evaluator (`eval_event`) | `core_schema`, `core_util` |
 | **Tier 0** | `core_protocol` | `uwu-core-protocol` | [`crates/core_protocol`](file:///D:/Learn/Go/uwulog-rust/crates/core_protocol) | Giao thức framed envelope nhị phân 2 chiều (`ClientEnvelope`, `ServerEnvelope`, `FramedReader`, `FramedWriter`) | `core_schema` |
-| **Tier 0** | `core_schema` | `uwu-core-schema` | [`crates/core_schema`](file:///D:/Learn/Go/uwulog-rust/crates/core_schema) | Định nghĩa các cấu trúc dữ liệu cốt lõi: `LogEvent`, `LogLevel`, `RawPayload`, `RawLogEntry` | `core_util` |
+| **Tier 0** | `core_schema` | `uwu-core-schema` | [`crates/core_schema`](file:///D:/Learn/Go/uwulog-rust/crates/core_schema) | Định nghĩa các cấu trúc dữ liệu cốt lõi & SSOT Schema: `LogEvent`, `LogLevel`, `RawPayload`, `RawLogEntry`, `StandardField` | `core_util` |
 | **Tier 0** | `core_util` | `uwu-core-util` | [`crates/core_util`](file:///D:/Learn/Go/uwulog-rust/crates/core_util) | Tiện ích zero-alloc: `strip_ansi`, `contains_ignore_case`, `parse_iso_to_secs`, `parse_numeric_value` | Không phụ thuộc crate nội bộ |
 
 ---
@@ -107,8 +107,8 @@ graph TD
    - `driver_*`: Giao tiếp phần cứng, hệ điều hành, I/O, mạng, IPC (OS, I/O, network, transport drivers).
    - `ui_*`: Giao diện người dùng đồ họa hoặc terminal (Presentation layer).
    - `cli_*`: Công cụ dòng lệnh hoặc daemon headless (Command-line binaries).
-3. **Không Có Thùng Rác / Tầng Giả Tạo**: Mỗi crate có ranh giới rõ ràng, không sử dụng facade crate hay umbrella package che giấu phụ thuộc.
-4. **Hiệu Suất Zero-Allocation**: Xử lý chuỗi (ANSI, substring, casing) và đánh giá biểu thức lọc hạn chế tối đa việc cấp phát bộ nhớ heap không cần thiết.
+3. **Tập Trung Nguồn Log Ứng Dụng (Developer-First Application Logs)**: Thiết kế chuyên sâu phục vụ các tác vụ gỡ lỗi và phát triển phần mềm (File tailing, Command stdout/stderr execution, WSL subprocess, Stdin pipes, Remote Agents).
+4. **Hiệu Suất Zero-Allocation & SSOT Schema**: Xử lý chuỗi (ANSI, substring, casing) và đánh giá biểu thức lọc hạn chế tối đa heap allocations. Cơ chế `StandardField` làm Single Source of Truth cho các bí danh trường ngữ nghĩa (`ts`, `lvl`, `msg`...).
 5. **Độc Lập Biên Dịch Song Song**: Các crate ở Tier 0 và Tier 1 có thể được compiler Rust biên dịch hoàn toàn song song (Parallel Compilation), rút ngắn tối đa thời gian build.
 
 ---
@@ -120,7 +120,7 @@ Mô hình xử lý bất đồng bộ phối hợp giữa **Tokio Async Runtime*
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Driver as OS Native Driver (File / Process / WinEvent / Journald / Remote)
+    actor Driver as App Log Driver (File / Process / WSL / Remote)
     participant TokioRx as Batch Ingestion Task (Tokio)
     participant Normalizer as Log Normalizer (driver_sources)
     participant RingBuf as Storage RingBuffer (core_engine)
@@ -156,13 +156,13 @@ sequenceDiagram
 
 ## 5. Lộ Trình Phát Triển Chi Tiết (Roadmap)
 
-### 🐧 Giai Đoạn 1: Native Linux & WSL `journald` Driver
+### 🧩 Giai Đoạn 1: Single Source of Truth Schema & High-Performance Normalizer
 - **Trạng thái**: ✅ **ĐÃ HOÀN THÀNH (Implemented)**
-- **Hiện thực**: `JournaldSource` impl `LogSource` trait, stream trực tiếp qua `journalctl -f -o json`, drain stderr chống deadlock và chuẩn hóa các trường đặc thù của systemd (`PRIORITY`, `__REALTIME_TIMESTAMP`, `MESSAGE`).
+- **Hiện thực**: `StandardField` làm chuẩn mực định danh (SSOT) cho các bí danh (`timestamp`, `level`, `message`, `id`), `LogNormalizer` tự động nhận diện định dạng log (JSON cấu trúc, Key-Value pairs, Text thuần) và trích xuất trường ngữ nghĩa siêu tốc mà không làm mất cấu trúc dữ liệu nguyên bản.
 
 ### 💻 Giai Đoạn 2: Desktop Native GUI & TUI
 - **Trạng thái**: ✅ **ĐÃ HOÀN THÀNH (Implemented)**
-- **Hiện thực**: `crates/ui_gui` xây dựng trên nền `eframe` / `egui`, `crates/ui_tui` trên nền `ratatui`, tích hợp trực tiếp `SystemEngine` với Live Incremental Filtering, Unfiltered View ngữ cảnh lỗi và tùy biến hiển thị cột động.
+- **Hiện thực**: `crates/ui_gui` xây dựng trên nền `eframe` / `egui`, `crates/ui_tui` trên nền `ratatui`, tích hợp trực tiếp `SystemEngine` với Live Incremental Filtering, Unfiltered View ngữ cảnh lỗi, đồng bộ Workspace tự động theo thư mục làm việc, và tùy biến hiển thị cột động.
 
 ### 📡 Giai Đoạn 3: Remote Log Agent & Distributed Streaming
 - **Trạng thái**: ✅ **ĐÃ HOÀN THÀNH (Implemented)**
