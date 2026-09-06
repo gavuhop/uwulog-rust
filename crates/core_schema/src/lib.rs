@@ -130,13 +130,13 @@ impl StandardField {
 }
 
 /// Chuyển đổi an toàn serde_json::Value sang Cow<'_, str> không cấp phát thừa
-pub fn value_to_cow(v: &serde_json::Value) -> Option<Cow<'_, str>> {
+pub fn value_to_cow(v: &serde_json::Value) -> Cow<'_, str> {
     match v {
-        serde_json::Value::String(s) => Some(Cow::Borrowed(s)),
-        serde_json::Value::Number(n) => Some(Cow::Owned(n.to_string())),
-        serde_json::Value::Bool(b) => Some(Cow::Borrowed(if *b { "true" } else { "false" })),
-        serde_json::Value::Null => Some(Cow::Borrowed("")),
-        other => Some(Cow::Owned(other.to_string())),
+        serde_json::Value::String(s) => Cow::Borrowed(s),
+        serde_json::Value::Number(n) => Cow::Owned(n.to_string()),
+        serde_json::Value::Bool(b) => Cow::Borrowed(if *b { "true" } else { "false" }),
+        serde_json::Value::Null => Cow::Borrowed(""),
+        other => Cow::Owned(other.to_string()),
     }
 }
 
@@ -198,17 +198,20 @@ impl LogEvent {
                 StandardField::Message => Some(Cow::Borrowed(&self.message)),
                 StandardField::Id => Some(Cow::Owned(self.id.to_string())),
             }
-        } else if let Some(v) = self.fields.get(field_name) {
-            value_to_cow(v)
         } else {
-            None
+            self.fields.get(field_name).map(value_to_cow)
         }
     }
 
     /// Lấy giá trị số (f64) phục vụ lọc số và thời gian
     pub fn get_field_numeric(&self, field_name: &str, now: f64) -> Option<f64> {
-        if let Some(StandardField::Timestamp) = StandardField::from_alias(field_name) {
-            return self.timestamp_secs;
+        if let Some(std_field) = StandardField::from_alias(field_name) {
+            return match std_field {
+                StandardField::Timestamp => self
+                    .timestamp_secs
+                    .or_else(|| uwu_core_util::parse_numeric_value(&self.timestamp, now)),
+                _ => None,
+            };
         }
         if let Some(v) = self.fields.get(field_name) {
             if let Some(n) = v.as_f64() {
@@ -224,8 +227,7 @@ impl LogEvent {
                 return uwu_core_util::parse_numeric_value(s, now);
             }
         }
-        self.get_field_cow(field_name)
-            .and_then(|s| uwu_core_util::parse_numeric_value(&s, now))
+        None
     }
 
     /// Tìm kiếm Text tự do trên toàn bộ bản ghi log (Canonical Full-Text Search)
@@ -376,12 +378,24 @@ mod tests {
         // Numeric access
         assert_eq!(event.get_field_numeric("latency_ms", 0.0), Some(125.5));
         assert!(event.get_field_numeric("ts", 0.0).is_some());
+        assert_eq!(event.get_field_numeric("lvl", 0.0), None);
+        assert_eq!(event.get_field_numeric("non_existent", 0.0), None);
 
         // Full text search
         assert!(event.matches_text("failed"));
         assert!(event.matches_text("error"));
         assert!(event.matches_text("u99"));
         assert!(!event.matches_text("non_existent_text"));
+    }
+
+    #[test]
+    fn test_value_to_cow() {
+        assert_eq!(value_to_cow(&serde_json::json!("hello")), "hello");
+        assert_eq!(value_to_cow(&serde_json::json!(42)), "42");
+        assert_eq!(value_to_cow(&serde_json::json!(true)), "true");
+        assert_eq!(value_to_cow(&serde_json::json!(false)), "false");
+        assert_eq!(value_to_cow(&serde_json::Value::Null), "");
+        assert_eq!(value_to_cow(&serde_json::json!([1, 2])), "[1,2]");
     }
 
     #[test]

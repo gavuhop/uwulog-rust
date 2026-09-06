@@ -1,5 +1,4 @@
 use super::parser::{Expr, NumOp};
-use std::borrow::Cow;
 use uwu_core_schema::LogEvent;
 use uwu_core_util::contains_ignore_case;
 
@@ -59,20 +58,4 @@ pub fn eval_event(expr: &Expr, log: &LogEvent, now: f64) -> bool {
             av >= min && av <= max
         }),
     }
-}
-
-pub fn get_event_field_cow<'a>(log: &'a LogEvent, field: &str) -> Option<Cow<'a, str>> {
-    log.get_field_cow(field)
-}
-
-pub fn get_event_field_numeric(log: &LogEvent, field: &str, now: f64) -> Option<f64> {
-    log.get_field_numeric(field, now)
-}
-
-pub fn get_event_field_str(log: &LogEvent, field: &str) -> Option<String> {
-    log.get_field_cow(field).map(|c| c.into_owned())
-}
-
-pub fn value_to_cow(v: &serde_json::Value) -> Option<Cow<'_, str>> {
-    uwu_core_schema::value_to_cow(v)
 }
