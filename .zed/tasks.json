@@ -38,5 +38,25 @@
   {
     "label": "Run app test JSON (Zap gen_plain_logs)",
     "command": "cargo run --bin uwu-gui -- -r \"go run gen_plain_logs.go -rate 10 -json\""
+  },
+  {
+    "label": "Benchmark (Compare with Baseline / HEAD~1)",
+    "command": "powershell -ExecutionPolicy Bypass -File .agents/skills/uwu-benchmark/scripts/run_bench.ps1 -Mode compare"
+  },
+  {
+    "label": "Benchmark (Profiler Summary)",
+    "command": "cargo run --release --bin bench_profile -- --logs 100000 --queries 50"
+  },
+  {
+    "label": "Benchmark (Full Profiler Report)",
+    "command": "cargo run --release --bin bench_profile -- --logs 500000 --queries 100 --output-md BENCHMARK_REPORT.md"
+  },
+  {
+    "label": "Benchmark (Criterion All)",
+    "command": "cargo bench -p uwu-benchmarks"
+  },
+  {
+    "label": "Benchmark (Criterion Micro)",
+    "command": "cargo bench -p uwu-benchmarks --bench micro_benches"
   }
 ]
