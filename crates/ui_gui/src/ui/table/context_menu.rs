@@ -10,7 +10,7 @@ pub struct CellMenuContext<'a> {
     pub raw_cell_val: &'a str,
     pub selected_text: Option<&'a str>,
     pub is_row_highlighted: bool,
-    pub event_id: uuid::Uuid,
+    pub event_id: u64,
 }
 
 pub fn render_cell_context_menu(

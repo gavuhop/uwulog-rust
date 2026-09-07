@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::collections::HashMap;
-use uuid::Uuid;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Cấp độ log chuẩn hóa
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -124,7 +124,8 @@ impl StandardField {
     pub const fn field_type(&self) -> FieldType {
         match self {
             Self::Timestamp => FieldType::Time,
-            Self::Level | Self::Message | Self::Id => FieldType::Text,
+            Self::Id => FieldType::Number,
+            Self::Level | Self::Message => FieldType::Text,
         }
     }
 }
@@ -140,10 +141,22 @@ pub fn value_to_cow(v: &serde_json::Value) -> Cow<'_, str> {
     }
 }
 
+static NEXT_LOG_ID: AtomicU64 = AtomicU64::new(1);
+
+/// Sinh ID số tuần tự tăng dần (Monotonic ID) phục vụ định danh LogEvent
+pub fn next_log_id() -> u64 {
+    NEXT_LOG_ID.fetch_add(1, Ordering::Relaxed)
+}
+
+/// Đặt lại bộ đếm ID (chủ yếu dùng cho unit test)
+pub fn reset_log_id_counter(val: u64) {
+    NEXT_LOG_ID.store(val, Ordering::Relaxed);
+}
+
 /// LogEvent đại diện cho 1 bản ghi log đã được chuẩn hóa
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogEvent {
-    pub id: Uuid,
+    pub id: u64,
     pub timestamp: String,
     #[serde(default)]
     pub timestamp_secs: Option<f64>,
@@ -162,13 +175,19 @@ impl LogEvent {
         let ts_str = timestamp.into();
         let timestamp_secs = uwu_core_util::parse_iso_to_secs(&ts_str);
         Self {
-            id: Uuid::new_v4(),
+            id: next_log_id(),
             timestamp: ts_str,
             timestamp_secs,
             level,
             message: message.into(),
             fields,
         }
+    }
+
+    /// Khởi tạo hoặc gán ID chỉ định cho LogEvent
+    pub fn with_id(mut self, id: u64) -> Self {
+        self.id = id;
+        self
     }
 
     /// Tạo chuỗi hiển thị thô On-Demand (tiết kiệm bộ nhớ RAM)
@@ -210,6 +229,7 @@ impl LogEvent {
                 StandardField::Timestamp => self
                     .timestamp_secs
                     .or_else(|| uwu_core_util::parse_numeric_value(&self.timestamp, now)),
+                StandardField::Id => Some(self.id as f64),
                 _ => None,
             };
         }
@@ -350,7 +370,7 @@ mod tests {
         assert_eq!(StandardField::Timestamp.field_type(), FieldType::Time);
         assert_eq!(StandardField::Level.field_type(), FieldType::Text);
         assert_eq!(StandardField::Message.field_type(), FieldType::Text);
-        assert_eq!(StandardField::Id.field_type(), FieldType::Text);
+        assert_eq!(StandardField::Id.field_type(), FieldType::Number);
     }
 
     #[test]
@@ -378,6 +398,7 @@ mod tests {
         // Numeric access
         assert_eq!(event.get_field_numeric("latency_ms", 0.0), Some(125.5));
         assert!(event.get_field_numeric("ts", 0.0).is_some());
+        assert_eq!(event.get_field_numeric("id", 0.0), Some(event.id as f64));
         assert_eq!(event.get_field_numeric("lvl", 0.0), None);
         assert_eq!(event.get_field_numeric("non_existent", 0.0), None);
 

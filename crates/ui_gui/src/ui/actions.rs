@@ -10,7 +10,7 @@ pub enum FilterAction {
 /// Actions for UI highlighting (row bookmarking & keyword term highlights)
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HighlightAction {
-    ToggleRow(uuid::Uuid),
+    ToggleRow(u64),
     ToggleTerm(String),
     ClearAll,
 }
@@ -19,7 +19,7 @@ pub enum HighlightAction {
 #[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum UnfilteredAction {
-    Open(uuid::Uuid),
+    Open(u64),
     Close,
     FocusInMain,
 }

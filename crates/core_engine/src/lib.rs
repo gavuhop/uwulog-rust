@@ -31,7 +31,10 @@ impl SystemEngine {
             for field in StandardField::default_columns() {
                 map.insert(field.canonical_name().to_string(), field.field_type());
             }
-            map.insert("id".to_string(), FieldType::Text);
+            map.insert(
+                StandardField::Id.canonical_name().to_string(),
+                StandardField::Id.field_type(),
+            );
             map
         };
         let schema = Arc::new(RwLock::new(default_schema));
@@ -317,7 +320,7 @@ impl SystemEngine {
     /// Nếu target_id được chỉ định, trả về cửa sổ ngữ cảnh đối xứng xung quanh target_id.
     pub fn get_unfiltered_events(
         &self,
-        target_id: Option<uuid::Uuid>,
+        target_id: Option<u64>,
         limit: usize,
     ) -> (Option<usize>, Vec<LogEvent>) {
         if let Ok(evts) = self.events.read() {
@@ -326,8 +329,8 @@ impl SystemEngine {
                 return (None, Vec::new());
             }
 
-            if let Some(target_uuid) = target_id {
-                if let Some(pos) = evts.iter().position(|e| e.id == target_uuid) {
+            if let Some(target_log_id) = target_id {
+                if let Some(pos) = evts.iter().position(|e| e.id == target_log_id) {
                     let half = limit / 2;
                     let start_idx = pos.saturating_sub(half);
                     let end_idx = (start_idx + limit).min(total);
@@ -339,7 +342,7 @@ impl SystemEngine {
                         .take(end_idx - actual_start)
                         .cloned()
                         .collect();
-                    let target_idx = events.iter().position(|e| e.id == target_uuid);
+                    let target_idx = events.iter().position(|e| e.id == target_log_id);
                     return (target_idx, events);
                 }
             }
@@ -678,7 +681,7 @@ mod tests {
         assert_eq!(initial_schema.get("timestamp"), Some(&FieldType::Time));
         assert_eq!(initial_schema.get("level"), Some(&FieldType::Text));
         assert_eq!(initial_schema.get("message"), Some(&FieldType::Text));
-        assert_eq!(initial_schema.get("id"), Some(&FieldType::Text));
+        assert_eq!(initial_schema.get("id"), Some(&FieldType::Number));
 
         // 2. Ingest log with text field, numeric field, and alias
         tx.send(RawLogEntry {

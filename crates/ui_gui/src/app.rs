@@ -92,7 +92,7 @@ pub struct UwuGuiApp {
     pub autocomplete_state: AutocompleteState,
     pub history_state: SearchHistoryState,
     pub column_state: crate::ui::columns_modal::ColumnState,
-    pub highlighted_row_ids: std::collections::HashSet<uuid::Uuid>,
+    pub highlighted_row_ids: std::collections::HashSet<u64>,
     pub highlighted_terms: std::collections::HashSet<String>,
     /// Tỷ lệ chiều rộng của Log Inspector so với màn hình (mặc định 0.35 = 35%)
     pub inspector_width_ratio: f32,
@@ -114,7 +114,7 @@ pub struct UwuGuiApp {
 #[derive(Clone, Debug, Default)]
 pub struct UnfilteredViewState {
     pub is_open: bool,
-    pub target_id: Option<uuid::Uuid>,
+    pub target_id: Option<u64>,
     pub cached_unfiltered: Vec<LogEvent>,
     pub target_index: Option<usize>,
     pub request_scroll_to_target: bool,
@@ -773,7 +773,7 @@ impl UwuGuiApp {
         }
     }
 
-    pub fn toggle_row_highlight(&mut self, id: uuid::Uuid) {
+    pub fn toggle_row_highlight(&mut self, id: u64) {
         if self.highlighted_row_ids.contains(&id) {
             self.highlighted_row_ids.remove(&id);
         } else {
@@ -781,7 +781,7 @@ impl UwuGuiApp {
         }
     }
 
-    pub fn is_row_highlighted(&self, id: &uuid::Uuid) -> bool {
+    pub fn is_row_highlighted(&self, id: &u64) -> bool {
         self.highlighted_row_ids.contains(id)
     }
 
@@ -872,7 +872,7 @@ impl UwuGuiApp {
         self.trigger_full_search();
     }
 
-    pub fn open_unfiltered_stream(&mut self, target_id: Option<uuid::Uuid>) {
+    pub fn open_unfiltered_stream(&mut self, target_id: Option<u64>) {
         self.unfiltered_state.is_open = true;
         self.unfiltered_state.target_id = target_id;
         // Mặc định: Nếu mở theo 1 log mục tiêu -> Đóng băng (Freeze/Snapshot) để điều tra không bị trôi
@@ -1043,8 +1043,8 @@ mod tests {
     #[tokio::test]
     async fn test_highlight_toggle_and_clear() {
         let mut app = create_test_app();
-        let id1 = uuid::Uuid::new_v4();
-        let id2 = uuid::Uuid::new_v4();
+        let id1 = 1001u64;
+        let id2 = 1002u64;
 
         assert!(!app.is_row_highlighted(&id1));
         assert!(!app.has_any_highlights());

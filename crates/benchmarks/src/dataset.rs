@@ -2,7 +2,6 @@
 
 use chrono::Utc;
 use std::collections::HashMap;
-use uuid::Uuid;
 use uwu_core_schema::{LogEvent, LogLevel, RawLogEntry, RawPayload};
 
 pub struct SyntheticLogGenerator {
@@ -108,7 +107,7 @@ impl SyntheticLogGenerator {
             );
 
             events.push(LogEvent {
-                id: Uuid::new_v4(),
+                id: (i + 1) as u64,
                 timestamp: ts_str,
                 timestamp_secs: Some(ts_secs),
                 level: lvl,
