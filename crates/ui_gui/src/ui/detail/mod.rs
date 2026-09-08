@@ -134,17 +134,7 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
 
                     let ts_key = event.semantic_key(StandardField::Timestamp);
                     let lvl_key = event.semantic_key(StandardField::Level);
-                    let id_key = event.semantic_key(StandardField::Id);
 
-                    render_meta_field(
-                        ui,
-                        id_key,
-                        &event.id.to_string(),
-                        theme::TEXT_PRIMARY,
-                        true,
-                        &mut ctx,
-                    );
-                    ui.add_space(5.0);
                     render_meta_field(
                         ui,
                         ts_key,

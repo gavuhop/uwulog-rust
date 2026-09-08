@@ -35,10 +35,6 @@ impl SystemEngine {
             for field in StandardField::default_columns() {
                 map.insert(field.canonical_name().to_string(), field.field_type());
             }
-            map.insert(
-                StandardField::Id.canonical_name().to_string(),
-                StandardField::Id.field_type(),
-            );
             map
         };
         let schema = Arc::new(RwLock::new(default_schema));
@@ -48,7 +44,6 @@ impl SystemEngine {
             for field in StandardField::default_columns() {
                 set.insert(field.canonical_name().to_string());
             }
-            set.insert(StandardField::Id.canonical_name().to_string());
             set
         };
         let known_keys = Arc::new(RwLock::new(default_known_keys));
@@ -469,10 +464,6 @@ impl SystemEngine {
             for field in StandardField::default_columns() {
                 map.insert(field.canonical_name().to_string(), field.field_type());
             }
-            map.insert(
-                StandardField::Id.canonical_name().to_string(),
-                StandardField::Id.field_type(),
-            );
             *schema_write = map;
         }
         if let Ok(mut known_write) = self.known_keys.write() {
@@ -480,7 +471,6 @@ impl SystemEngine {
             for field in StandardField::default_columns() {
                 set.insert(field.canonical_name().to_string());
             }
-            set.insert(StandardField::Id.canonical_name().to_string());
             *known_write = set;
         }
         self.schema_version.fetch_add(1, Ordering::Release);
@@ -813,7 +803,7 @@ mod tests {
         assert_eq!(initial_schema.get("timestamp"), Some(&FieldType::Time));
         assert_eq!(initial_schema.get("level"), Some(&FieldType::Text));
         assert_eq!(initial_schema.get("message"), Some(&FieldType::Text));
-        assert_eq!(initial_schema.get("id"), Some(&FieldType::Number));
+        assert_eq!(initial_schema.get("id"), None);
 
         // 2. Ingest log with text field, numeric field, and alias
         tx.send(RawLogEntry {
