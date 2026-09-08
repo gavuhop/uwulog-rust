@@ -373,10 +373,6 @@ impl UwuGuiApp {
             if !ws.env_vars.is_empty() {
                 app.env_vars = ws.env_vars.clone();
                 app.env_watch_tx.send_replace(Some(app.env_vars.clone()));
-                app.env_status = uwu_core_workspace::EnvLoadStatus::Ready {
-                    source_summary: format!("{} variable (Workspace cache)", app.env_vars.len()),
-                    updated_at: Instant::now(),
-                };
             }
         }
 
@@ -493,10 +489,6 @@ impl UwuGuiApp {
         if !ws.env_vars.is_empty() {
             self.env_vars = ws.env_vars.clone();
             self.env_watch_tx.send_replace(Some(self.env_vars.clone()));
-            self.env_status = uwu_core_workspace::EnvLoadStatus::Ready {
-                source_summary: format!("{} biến (Workspace cache)", self.env_vars.len()),
-                updated_at: Instant::now(),
-            };
         } else {
             self.env_vars.clear();
             self.env_watch_tx.send_replace(None);
@@ -659,13 +651,9 @@ impl UwuGuiApp {
     pub fn spawn_load_environment(&mut self) {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         self.env_channel_rx = Some(rx);
-        // Chỉ hiển thị spinner Loading khi chưa từng có biến môi trường (lần đầu nạp).
-        // Nếu đã có cache cũ, chạy ngầm âm thầm (Silent Refresh) để không gây nhấp nháy UI.
-        if self.env_vars.is_empty() {
-            self.env_status = uwu_core_workspace::EnvLoadStatus::Loading {
-                started_at: Instant::now(),
-            };
-        }
+        self.env_status = uwu_core_workspace::EnvLoadStatus::Loading {
+            started_at: Instant::now(),
+        };
 
         let workdir = if !self.source_config.working_dir.trim().is_empty() {
             self.source_config.working_dir.clone()
@@ -678,7 +666,12 @@ impl UwuGuiApp {
         let watch_tx = self.env_watch_tx.clone();
         self.rt.spawn(async move {
             let path = std::path::PathBuf::from(workdir);
+            let start = std::time::Instant::now();
             let res = uwu_core_workspace::load_workspace_environment(&path).await;
+            // Giữ spinner hiển thị tối thiểu 300ms để người dùng nhìn rõ phản hồi trực quan
+            if start.elapsed() < std::time::Duration::from_millis(300) {
+                tokio::time::sleep(std::time::Duration::from_millis(300) - start.elapsed()).await;
+            }
             if let Ok(envs) = &res {
                 let _ = watch_tx.send_replace(Some(envs.clone()));
             }
@@ -1659,7 +1652,7 @@ mod tests {
         }
 
         // Chờ background task hoàn thành
-        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(350)).await;
         app.tick();
 
         match &app.env_status {
