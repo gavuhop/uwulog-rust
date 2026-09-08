@@ -653,6 +653,7 @@ impl UwuGuiApp {
             self.engine = Arc::new(SystemEngine::new(self.capacity));
         } else {
             self.engine.clear();
+            self.engine.reset_runtime_detection();
         }
 
         self.display_limit = self.source_config.display_limit;

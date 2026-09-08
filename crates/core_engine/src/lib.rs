@@ -1,19 +1,23 @@
 use anyhow::Result;
 use rayon::prelude::*;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use tokio::sync::mpsc;
 use uwu_core_filter::evaluator::eval_event;
 use uwu_core_filter::parser::{tokenize, Parser};
 use uwu_core_schema::{FieldType, LogEvent, RawLogEntry, StandardField};
-use uwu_core_util::now_secs;
+use uwu_core_util::{detect_timestamp_format, now_secs, parse_with_format, TimestampFormat};
 use uwu_driver_sources::{LogNormalizer, LogSource};
 
 pub struct SystemEngine {
     raw_tx: mpsc::Sender<RawLogEntry>,
     events: Arc<RwLock<VecDeque<LogEvent>>>,
     schema: Arc<RwLock<HashMap<String, FieldType>>>,
+    known_keys: Arc<RwLock<HashSet<String>>>,
+    /// Trạng thái nhận diện timestamp: (key_name, format) — gộp 1 RwLock để tránh inconsistent state
+    active_timestamp_info: Arc<RwLock<Option<(String, TimestampFormat)>>>,
+    schema_version: Arc<AtomicU64>,
     total_processed: Arc<AtomicU64>,
     max_timestamp: Arc<RwLock<f64>>,
     max_capacity: usize,
@@ -39,12 +43,28 @@ impl SystemEngine {
         };
         let schema = Arc::new(RwLock::new(default_schema));
 
+        let default_known_keys = {
+            let mut set = HashSet::new();
+            for field in StandardField::default_columns() {
+                set.insert(field.canonical_name().to_string());
+            }
+            set.insert(StandardField::Id.canonical_name().to_string());
+            set
+        };
+        let known_keys = Arc::new(RwLock::new(default_known_keys));
+        let active_timestamp_info: Arc<RwLock<Option<(String, TimestampFormat)>>> =
+            Arc::new(RwLock::new(None));
+        let schema_version = Arc::new(AtomicU64::new(1));
+
         let events_clone = Arc::clone(&events);
         let processed_clone = Arc::clone(&total_processed);
         let max_ts_clone = Arc::clone(&max_timestamp);
         let schema_clone = Arc::clone(&schema);
+        let known_keys_clone = Arc::clone(&known_keys);
+        let ts_info_clone = Arc::clone(&active_timestamp_info);
+        let schema_version_clone = Arc::clone(&schema_version);
 
-        // Async task liên tục đọc RawLogEntry -> Normalizer -> LogEvent -> Storage theo batch
+        // Async task liên tục đọc RawLogEntry -> Normalizer -> Adaptive Timestamp & Change-Driven Schema -> Storage
         tokio::spawn(async move {
             let mut raw_batch = Vec::with_capacity(512);
 
@@ -59,46 +79,91 @@ impl SystemEngine {
                     }
                 }
 
-                // 1. Chuẩn hóa (Normalize) + Schema Discovery trong 1-Pass duy nhất ngoài lock
+                // 1. Chuẩn hóa (Normalize) + Adaptive Timestamp + Change-Driven Schema Discovery
                 let mut batch_max_ts = 0.0f64;
                 let mut event_batch = Vec::with_capacity(raw_batch.len());
-                let mut schema_updates = Vec::new();
+                let mut schema_updates: HashMap<String, FieldType> = HashMap::new();
                 let current_schema = schema_clone.read().ok();
+                let current_known_keys = known_keys_clone.read().ok();
+                let mut cached_ts_info = ts_info_clone.read().ok().and_then(|g| g.clone());
+                let mut ts_info_dirty = false;
 
                 for raw_entry in raw_batch.drain(..) {
-                    let event = LogNormalizer::normalize(raw_entry);
+                    let mut event = LogNormalizer::normalize(raw_entry);
+
+                    // A. Fast-Path / Adaptive Timestamp: Tự thích ứng format động
+                    if !event.timestamp.is_empty() {
+                        if let Some((_, fmt)) = cached_ts_info.as_ref() {
+                            if let Some(ts) = parse_with_format(&event.timestamp, *fmt) {
+                                event.timestamp_secs = Some(ts);
+                            } else if let Some((new_fmt, new_ts)) =
+                                detect_timestamp_format(&event.timestamp)
+                            {
+                                event.timestamp_secs = Some(new_ts);
+                                cached_ts_info = Some((
+                                    cached_ts_info.map(|(k, _)| k).unwrap_or_default(),
+                                    new_fmt,
+                                ));
+                                ts_info_dirty = true;
+                            }
+                        } else if let Some((new_fmt, new_ts)) =
+                            detect_timestamp_format(&event.timestamp)
+                        {
+                            event.timestamp_secs = Some(new_ts);
+                            cached_ts_info = Some((String::new(), new_fmt));
+                            ts_info_dirty = true;
+                        }
+                    }
+
                     if let Some(ts) = event.timestamp_secs {
                         if ts > batch_max_ts {
                             batch_max_ts = ts;
                         }
                     }
 
-                    if let Some(ref schema_ref) = current_schema {
+                    // B. Change-Driven Schema Discovery: Chỉ duyệt sâu khi có key mới hoặc Type Promotion
+                    if let Some(ref known) = current_known_keys {
                         for (k, v) in &event.fields {
-                            if let Some(existing_update) =
-                                schema_updates.iter_mut().find(|(uk, _)| uk == k)
-                            {
-                                if existing_update.1 == FieldType::Text && v.is_number() {
-                                    existing_update.1 = FieldType::Number;
-                                }
-                            } else {
-                                match schema_ref.get(k) {
-                                    None => {
-                                        let ft = if StandardField::from_alias(k)
-                                            == Some(StandardField::Timestamp)
-                                        {
-                                            FieldType::Time
-                                        } else if v.is_number() {
-                                            FieldType::Number
-                                        } else {
-                                            FieldType::Text
-                                        };
-                                        schema_updates.push((k.clone(), ft));
+                            if !known.contains(k) {
+                                // Key hoàn toàn mới — HashMap O(1) lookup thay vì Vec O(n)
+                                let ft = if StandardField::from_alias(k)
+                                    == Some(StandardField::Timestamp)
+                                {
+                                    if cached_ts_info
+                                        .as_ref()
+                                        .is_none_or(|(key, _)| key.is_empty())
+                                    {
+                                        cached_ts_info = Some((
+                                            k.clone(),
+                                            cached_ts_info.map(|(_, f)| f).unwrap_or(
+                                                TimestampFormat::Rfc3339, // placeholder, sẽ bị ghi đè bởi detect
+                                            ),
+                                        ));
+                                        ts_info_dirty = true;
                                     }
-                                    Some(FieldType::Text) if v.is_number() => {
-                                        schema_updates.push((k.clone(), FieldType::Number));
+                                    FieldType::Time
+                                } else if v.is_number() {
+                                    FieldType::Number
+                                } else {
+                                    FieldType::Text
+                                };
+                                schema_updates
+                                    .entry(k.clone())
+                                    .and_modify(|existing_ft| {
+                                        if *existing_ft == FieldType::Text && v.is_number() {
+                                            *existing_ft = FieldType::Number;
+                                        }
+                                    })
+                                    .or_insert(ft);
+                            } else if v.is_number() {
+                                // Key đã biết nhưng có thể cần Type Promotion từ Text -> Number
+                                if let Some(ref schema_ref) = current_schema {
+                                    if schema_ref.get(k) == Some(&FieldType::Text) {
+                                        schema_updates
+                                            .entry(k.clone())
+                                            .and_modify(|ft| *ft = FieldType::Number)
+                                            .or_insert(FieldType::Number);
                                     }
-                                    _ => {}
                                 }
                             }
                         }
@@ -107,6 +172,14 @@ impl SystemEngine {
                     event_batch.push(event);
                 }
                 drop(current_schema);
+                drop(current_known_keys);
+
+                // Cập nhật timestamp info nếu có thay đổi / redetect (1 write lock duy nhất)
+                if ts_info_dirty {
+                    if let Ok(mut lock) = ts_info_clone.write() {
+                        *lock = cached_ts_info;
+                    }
+                }
 
                 let batch_len = event_batch.len();
 
@@ -119,19 +192,27 @@ impl SystemEngine {
                     }
                 }
 
-                // 3. Cập nhật Schema Registry in-memory và Type Promotion nếu có trường mới
+                // 3. Cập nhật Schema Registry và known_keys nếu có trường mới
                 if !schema_updates.is_empty() {
                     if let Ok(mut schema_write) = schema_clone.write() {
-                        for (k, ft) in schema_updates {
-                            if let Some(std_field) = StandardField::from_alias(&k) {
+                        for (k, ft) in &schema_updates {
+                            if let Some(std_field) = StandardField::from_alias(k) {
                                 let canonical = std_field.canonical_name();
                                 if canonical != k {
                                     schema_write.remove(canonical);
                                 }
                             }
-                            schema_write.insert(k, ft);
+                            schema_write.insert(k.clone(), *ft);
                         }
                     }
+
+                    if let Ok(mut known_write) = known_keys_clone.write() {
+                        for k in schema_updates.keys() {
+                            known_write.insert(k.clone());
+                        }
+                    }
+
+                    schema_version_clone.fetch_add(1, Ordering::Release);
                 }
 
                 // 4. Acquire write lock 1 lần duy nhất cho toàn bộ batch
@@ -164,6 +245,9 @@ impl SystemEngine {
             raw_tx,
             events,
             schema,
+            known_keys,
+            active_timestamp_info,
+            schema_version,
             total_processed,
             max_timestamp,
             max_capacity,
@@ -372,6 +456,54 @@ impl SystemEngine {
         } else {
             HashMap::new()
         }
+    }
+
+    /// Làm mới biến nhận diện timestamp format và known keys khi bắt đầu phiên chạy mới (Fresh State on Run/Restart).
+    /// Precondition: Hàm này nên được gọi từ thread điều khiển UI khi stream vừa restart hoặc tạm dừng để tránh xung đột ghi đồng thời.
+    pub fn reset_runtime_detection(&self) {
+        if let Ok(mut info_lock) = self.active_timestamp_info.write() {
+            *info_lock = None;
+        }
+        if let Ok(mut schema_write) = self.schema.write() {
+            let mut map = HashMap::new();
+            for field in StandardField::default_columns() {
+                map.insert(field.canonical_name().to_string(), field.field_type());
+            }
+            map.insert(
+                StandardField::Id.canonical_name().to_string(),
+                StandardField::Id.field_type(),
+            );
+            *schema_write = map;
+        }
+        if let Ok(mut known_write) = self.known_keys.write() {
+            let mut set = HashSet::new();
+            for field in StandardField::default_columns() {
+                set.insert(field.canonical_name().to_string());
+            }
+            set.insert(StandardField::Id.canonical_name().to_string());
+            *known_write = set;
+        }
+        self.schema_version.fetch_add(1, Ordering::Release);
+    }
+
+    /// Lấy phiên bản schema hiện tại (tăng dần khi có key mới hoặc type promotion)
+    pub fn get_schema_version(&self) -> u64 {
+        self.schema_version.load(Ordering::Acquire)
+    }
+
+    /// Lấy thông tin định dạng timestamp đang hoạt động (key_name, TimestampFormat)
+    pub fn get_detected_timestamp_info(&self) -> (Option<String>, Option<TimestampFormat>) {
+        if let Ok(info_lock) = self.active_timestamp_info.read() {
+            if let Some((ref key, fmt)) = *info_lock {
+                let key_opt = if key.is_empty() {
+                    None
+                } else {
+                    Some(key.clone())
+                };
+                return (key_opt, Some(fmt));
+            }
+        }
+        (None, None)
     }
 
     /// (Benchmark) Nạp trực tiếp một tập LogEvent vào SystemEngine (hữu ích cho khởi tạo nhanh & benchmark)
@@ -718,5 +850,78 @@ mod tests {
 
         let schema2 = engine.get_schema_map();
         assert_eq!(schema2.get("custom_txt"), Some(&FieldType::Number));
+    }
+
+    #[tokio::test]
+    async fn test_system_engine_adaptive_timestamp_and_reset() {
+        let engine = SystemEngine::new(50);
+        let tx = engine.get_channel();
+
+        let v0 = engine.get_schema_version();
+        assert!(v0 >= 1);
+
+        // 1. Ingest RFC3339 timestamp
+        tx.send(RawLogEntry {
+            payload: RawPayload::Json(serde_json::json!({
+                "ts": "2026-08-20T10:00:00Z",
+                "level": "INFO",
+                "msg": "Log 1"
+            })),
+        })
+        .await
+        .unwrap();
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let (key1, fmt1) = engine.get_detected_timestamp_info();
+        assert_eq!(key1, Some("ts".to_string()));
+        assert_eq!(fmt1, Some(TimestampFormat::Rfc3339));
+
+        let (_, logs1) = engine.search_with_count("", 10);
+        assert_eq!(logs1.len(), 1);
+        assert!(logs1[0].timestamp_secs.is_some());
+
+        // 2. Dev changes logger format mid-stream: Ingest EpochSeconds
+        tx.send(RawLogEntry {
+            payload: RawPayload::Json(serde_json::json!({
+                "ts": "1724148000.5",
+                "level": "INFO",
+                "msg": "Log 2"
+            })),
+        })
+        .await
+        .unwrap();
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let (_, fmt2) = engine.get_detected_timestamp_info();
+        assert_eq!(fmt2, Some(TimestampFormat::EpochSeconds));
+
+        let (_, logs2) = engine.search_with_count("", 10);
+        assert_eq!(logs2.len(), 2);
+        assert_eq!(logs2[1].timestamp_secs, Some(1724148000.5));
+
+        // 3. Reset runtime detection on fresh run / restart
+        engine.reset_runtime_detection();
+        let (key3, fmt3) = engine.get_detected_timestamp_info();
+        assert_eq!(key3, None);
+        assert_eq!(fmt3, None);
+
+        // 4. Ingest new format after reset: Standard space format
+        tx.send(RawLogEntry {
+            payload: RawPayload::Json(serde_json::json!({
+                "time": "2026-08-20 10:00:00.123",
+                "level": "WARN",
+                "msg": "Log 3"
+            })),
+        })
+        .await
+        .unwrap();
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let (key4, fmt4) = engine.get_detected_timestamp_info();
+        assert_eq!(key4, Some("time".to_string()));
+        assert!(matches!(fmt4, Some(TimestampFormat::NaiveDateTime(_))));
     }
 }

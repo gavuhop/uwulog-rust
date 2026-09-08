@@ -120,79 +120,156 @@ pub fn parse_duration_to_secs(s: &str) -> Option<f64> {
     None
 }
 
-/// Chuyển đổi các định dạng ngày giờ phổ biến sang timestamp tính bằng giây (f64)
-pub fn parse_iso_to_secs(s: &str) -> Option<f64> {
+/// Chuẩn hóa chuỗi timestamp: thay T→space, /→-, ,→. — Zero-alloc (Cow::Borrowed) nếu chuỗi không chứa ký tự cần thay
+#[inline]
+fn normalize_timestamp_str(s: &str) -> Cow<'_, str> {
+    if s.contains('T') || s.contains('/') || s.contains(',') {
+        Cow::Owned(s.replace('T', " ").replace('/', "-").replace(',', "."))
+    } else {
+        Cow::Borrowed(s)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TimestampFormat {
+    Rfc3339,
+    DateTimeTz(&'static str),
+    NaiveDateTime(&'static str),
+    NaiveDateTimeYearPrefixed(&'static str),
+    NaiveDate(&'static str),
+    EpochSeconds,
+    EpochMillis,
+    EpochNanos,
+}
+
+pub const STANDARD_FORMATS: &[(&str, bool, bool)] = &[
+    ("%Y-%m-%d %H:%M:%S%.f %z", true, false),
+    ("%Y-%m-%d %H:%M:%S%.f%z", true, false),
+    ("%Y-%m-%d %H:%M:%S %z", true, false),
+    ("%Y-%m-%d %H:%M:%S%z", true, false),
+    ("%Y-%m-%d %H:%M:%S%.f", false, false),
+    ("%Y-%m-%d %H:%M:%S", false, false),
+    ("%Y-%m-%d %H:%M", false, false),
+    ("%m-%d %H:%M:%S%.f", false, true), // Logcat
+    ("%m-%d %H:%M:%S", false, true),
+    ("%d/%m/%Y %H:%M:%S%.f", false, false),
+    ("%d/%m/%Y %H:%M:%S", false, false),
+    ("%d/%m/%y %H:%M:%S", false, false),
+    ("%d-%m-%Y %H:%M:%S", false, false),
+    ("%b %d %H:%M:%S", false, true), // Syslog
+    ("%d/%b/%Y:%H:%M:%S %z", true, false),
+    ("%Y-%m-%d", false, false),
+];
+
+/// Nhận diện định dạng timestamp từ chuỗi và trả về cả Format cùng giá trị epoch seconds (f64).
+/// Logic chuyển đổi nằm tập trung trong `parse_with_format` — hàm này chỉ xác định format rồi delegate.
+pub fn detect_timestamp_format(s: &str) -> Option<(TimestampFormat, f64)> {
     let s = s.trim();
     if s.is_empty() {
         return None;
     }
 
-    let s_norm = s.replace('T', " ").replace('/', "-").replace(',', ".");
-
-    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
-        return Some(dt.timestamp() as f64 + dt.timestamp_subsec_nanos() as f64 / 1_000_000_000.0);
+    // 1. RFC3339
+    if DateTime::parse_from_rfc3339(s).is_ok() {
+        let ts = parse_with_format(s, TimestampFormat::Rfc3339)?;
+        return Some((TimestampFormat::Rfc3339, ts));
     }
 
-    let formats = [
-        "%Y-%m-%d %H:%M:%S%.f %z",
-        "%Y-%m-%d %H:%M:%S%.f%z",
-        "%Y-%m-%d %H:%M:%S %z",
-        "%Y-%m-%d %H:%M:%S%z",
-        "%Y-%m-%d %H:%M:%S%.f",
-        "%Y-%m-%d %H:%M:%S",
-        "%Y-%m-%d %H:%M",
-        "%m-%d %H:%M:%S%.f", // Logcat
-        "%m-%d %H:%M:%S",
-        "%d/%m/%Y %H:%M:%S%.f",
-        "%d/%m/%Y %H:%M:%S",
-        "%d/%m/%y %H:%M:%S",
-        "%d-%m-%Y %H:%M:%S",
-        "%b %d %H:%M:%S", // Syslog
-        "%d/%b/%Y:%H:%M:%S %z",
-        "%Y-%m-%d",
-    ];
-
-    let current_year = Local::now().year();
-
-    for fmt in formats {
-        // try normal format
-        if let Ok(dt) = DateTime::parse_from_str(&s_norm, fmt) {
-            return Some(
-                dt.timestamp() as f64 + dt.timestamp_subsec_nanos() as f64 / 1_000_000_000.0,
-            );
+    // 2. Epoch số nguyên / số thực
+    if let Ok(n) = s.parse::<f64>() {
+        if (1_000_000_000.0..3_000_000_000.0).contains(&n) {
+            return Some((TimestampFormat::EpochSeconds, n));
         }
+        if (1_000_000_000_000.0..3_000_000_000_000.0).contains(&n) {
+            return Some((TimestampFormat::EpochMillis, n / 1_000.0));
+        }
+        if (1_000_000_000_000_000_000.0..3_000_000_000_000_000_000.0).contains(&n) {
+            return Some((TimestampFormat::EpochNanos, n / 1_000_000_000.0));
+        }
+    }
 
-        if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(&s_norm, fmt) {
-            if let Some(final_dt) = Local.from_local_datetime(&dt).single() {
-                return Some(
-                    final_dt.timestamp() as f64
-                        + final_dt.timestamp_subsec_nanos() as f64 / 1_000_000_000.0,
-                );
+    // 3. Duyệt STANDARD_FORMATS, delegate parse cho parse_with_format
+    for &(fmt, has_tz, needs_year_prefix) in STANDARD_FORMATS {
+        if has_tz {
+            let candidate = TimestampFormat::DateTimeTz(fmt);
+            if let Some(ts) = parse_with_format(s, candidate) {
+                return Some((candidate, ts));
             }
-        }
-
-        // try format with current year
-        if !fmt.contains("%Y") && !fmt.contains("%y") {
-            let s_with_year = format!("{}-{}", current_year, s_norm);
-            let fmt_with_year = format!("%Y-{}", fmt);
-            if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(&s_with_year, &fmt_with_year) {
-                if let Some(final_dt) = Local.from_local_datetime(&dt).single() {
-                    return Some(
-                        final_dt.timestamp() as f64
-                            + final_dt.timestamp_subsec_nanos() as f64 / 1_000_000_000.0,
-                    );
-                }
+        } else if needs_year_prefix {
+            let candidate = TimestampFormat::NaiveDateTimeYearPrefixed(fmt);
+            if let Some(ts) = parse_with_format(s, candidate) {
+                return Some((candidate, ts));
             }
-        }
-
-        if let Ok(d) = chrono::NaiveDate::parse_from_str(&s_norm, fmt) {
-            if let Some(final_dt) = Local.from_local_datetime(&d.and_hms_opt(0, 0, 0)?).single() {
-                return Some(final_dt.timestamp() as f64);
+        } else {
+            let candidate = TimestampFormat::NaiveDateTime(fmt);
+            if let Some(ts) = parse_with_format(s, candidate) {
+                return Some((candidate, ts));
+            }
+            let date_candidate = TimestampFormat::NaiveDate(fmt);
+            if let Some(ts) = parse_with_format(s, date_candidate) {
+                return Some((date_candidate, ts));
             }
         }
     }
 
     None
+}
+
+/// Fast-Path: Parse timestamp trực tiếp bằng format đã biết trong O(1) không duyệt lặp.
+/// Dùng `normalize_timestamp_str` (Cow) để tránh heap allocation khi chuỗi không cần chuẩn hóa.
+pub fn parse_with_format(s: &str, fmt: TimestampFormat) -> Option<f64> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+
+    match fmt {
+        TimestampFormat::Rfc3339 => {
+            let dt = DateTime::parse_from_rfc3339(s).ok()?;
+            Some(dt.timestamp() as f64 + dt.timestamp_subsec_nanos() as f64 / 1_000_000_000.0)
+        }
+        TimestampFormat::EpochSeconds => s.parse::<f64>().ok(),
+        TimestampFormat::EpochMillis => s.parse::<f64>().ok().map(|n| n / 1_000.0),
+        TimestampFormat::EpochNanos => s.parse::<f64>().ok().map(|n| n / 1_000_000_000.0),
+        TimestampFormat::DateTimeTz(pat) => {
+            let s_norm = normalize_timestamp_str(s);
+            let dt = DateTime::parse_from_str(&s_norm, pat).ok()?;
+            Some(dt.timestamp() as f64 + dt.timestamp_subsec_nanos() as f64 / 1_000_000_000.0)
+        }
+        TimestampFormat::NaiveDateTime(pat) => {
+            let s_norm = normalize_timestamp_str(s);
+            let dt = chrono::NaiveDateTime::parse_from_str(&s_norm, pat).ok()?;
+            let final_dt = Local.from_local_datetime(&dt).single()?;
+            Some(
+                final_dt.timestamp() as f64
+                    + final_dt.timestamp_subsec_nanos() as f64 / 1_000_000_000.0,
+            )
+        }
+        TimestampFormat::NaiveDateTimeYearPrefixed(pat) => {
+            let s_norm = normalize_timestamp_str(s);
+            let current_year = Local::now().year();
+            let s_with_year = format!("{}-{}", current_year, s_norm);
+            let fmt_with_year = format!("%Y-{}", pat);
+            let dt = chrono::NaiveDateTime::parse_from_str(&s_with_year, &fmt_with_year).ok()?;
+            let final_dt = Local.from_local_datetime(&dt).single()?;
+            Some(
+                final_dt.timestamp() as f64
+                    + final_dt.timestamp_subsec_nanos() as f64 / 1_000_000_000.0,
+            )
+        }
+        TimestampFormat::NaiveDate(pat) => {
+            let s_norm = normalize_timestamp_str(s);
+            let d = chrono::NaiveDate::parse_from_str(&s_norm, pat).ok()?;
+            let opt_dt = d.and_hms_opt(0, 0, 0)?;
+            let final_dt = Local.from_local_datetime(&opt_dt).single()?;
+            Some(final_dt.timestamp() as f64)
+        }
+    }
+}
+
+/// Chuyển đổi các định dạng ngày giờ phổ biến sang timestamp tính bằng giây (f64)
+pub fn parse_iso_to_secs(s: &str) -> Option<f64> {
+    detect_timestamp_format(s).map(|(_, ts)| ts)
 }
 
 #[cfg(test)]
@@ -278,5 +355,51 @@ mod tests {
         assert!(contains_ignore_case("ERROR: something broke", "error"));
         assert!(!contains_ignore_case("INFO: ok", "error"));
         assert!(contains_ignore_case("anything", ""));
+    }
+
+    #[test]
+    fn test_detect_and_fast_parse_timestamp() {
+        // RFC3339
+        let (fmt_rfc, ts_rfc) = detect_timestamp_format("2026-08-20T10:00:00Z").unwrap();
+        assert_eq!(fmt_rfc, TimestampFormat::Rfc3339);
+        assert_eq!(
+            parse_with_format("2026-08-20T10:00:00Z", fmt_rfc),
+            Some(ts_rfc)
+        );
+
+        // Epoch seconds
+        let (fmt_sec, ts_sec) = detect_timestamp_format("1724148000.5").unwrap();
+        assert_eq!(fmt_sec, TimestampFormat::EpochSeconds);
+        assert_eq!(ts_sec, 1724148000.5);
+        assert_eq!(
+            parse_with_format("1724148000.5", fmt_sec),
+            Some(1724148000.5)
+        );
+
+        // Epoch millis
+        let (fmt_ms, ts_ms) = detect_timestamp_format("1724148000000").unwrap();
+        assert_eq!(fmt_ms, TimestampFormat::EpochMillis);
+        assert_eq!(ts_ms, 1724148000.0);
+        assert_eq!(
+            parse_with_format("1724148000000", fmt_ms),
+            Some(1724148000.0)
+        );
+
+        // Standard space format
+        let (fmt_std, ts_std) = detect_timestamp_format("2026-08-20 10:00:00.123").unwrap();
+        assert!(matches!(fmt_std, TimestampFormat::NaiveDateTime(_)));
+        assert_eq!(
+            parse_with_format("2026-08-20 10:00:00.123", fmt_std),
+            Some(ts_std)
+        );
+
+        // Format switch / dev change test: Parse fail triggers redetection
+        let old_fmt = fmt_rfc;
+        let new_str = "1724148000.5";
+        // Parse with wrong format returns None -> triggers redetect
+        assert_eq!(parse_with_format(new_str, old_fmt), None);
+        let (new_fmt, new_ts) = detect_timestamp_format(new_str).unwrap();
+        assert_eq!(new_fmt, TimestampFormat::EpochSeconds);
+        assert_eq!(new_ts, 1724148000.5);
     }
 }
