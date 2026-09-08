@@ -141,6 +141,40 @@ pub fn value_to_cow(v: &serde_json::Value) -> Cow<'_, str> {
     }
 }
 
+/// Chuyển đổi một HashMap có chứa các key dạng dot-notation ("a.b.c") về cấu trúc JSON lồng nhau (nested JSON object)
+pub fn unflatten_json(fields: &HashMap<String, serde_json::Value>) -> serde_json::Value {
+    let mut root = serde_json::Map::new();
+
+    for (k, v) in fields {
+        if !k.contains('.') {
+            root.insert(k.clone(), v.clone());
+        } else {
+            let parts: Vec<&str> = k.split('.').filter(|s| !s.is_empty()).collect();
+            if parts.is_empty() {
+                root.insert(k.clone(), v.clone());
+                continue;
+            }
+            let mut curr = &mut root;
+            let last_idx = parts.len() - 1;
+            for (i, &part) in parts.iter().enumerate() {
+                if i == last_idx {
+                    curr.insert(part.to_string(), v.clone());
+                } else {
+                    let entry = curr
+                        .entry(part.to_string())
+                        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+                    if !entry.is_object() {
+                        *entry = serde_json::Value::Object(serde_json::Map::new());
+                    }
+                    curr = entry.as_object_mut().unwrap();
+                }
+            }
+        }
+    }
+
+    serde_json::Value::Object(root)
+}
+
 static NEXT_LOG_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Sinh ID số tuần tự tăng dần (Monotonic ID) phục vụ định danh LogEvent
@@ -191,11 +225,13 @@ impl LogEvent {
     }
 
     /// Tạo chuỗi hiển thị thô On-Demand (tiết kiệm bộ nhớ RAM)
+    /// Tự động khôi phục cấu trúc JSON lồng nhau từ các trường dot-notation nếu có
     pub fn raw_display(&self) -> Cow<'_, str> {
         if self.fields.is_empty() {
             Cow::Borrowed(&self.message)
         } else {
-            Cow::Owned(serde_json::to_string(&self.fields).unwrap_or_default())
+            let unflattened = unflatten_json(&self.fields);
+            Cow::Owned(serde_json::to_string(&unflattened).unwrap_or_default())
         }
     }
 
@@ -449,5 +485,83 @@ mod tests {
             RawPayload::KeyValue(m) => assert_eq!(m.get("k").unwrap(), "v"),
             _ => panic!("Expected key-value payload"),
         }
+    }
+
+    #[test]
+    fn test_unflatten_json_nested() {
+        let mut fields = HashMap::new();
+        fields.insert("status".to_string(), serde_json::json!(201));
+        fields.insert(
+            "metadata.instance_id".to_string(),
+            serde_json::json!("i-7e5c5d"),
+        );
+        fields.insert(
+            "metadata.system.infra.cluster".to_string(),
+            serde_json::json!("eu-central-cluster-a"),
+        );
+        fields.insert(
+            "metadata.system.infra.zone".to_string(),
+            serde_json::json!("us-west-2-c"),
+        );
+        fields.insert(
+            "metadata.system.env".to_string(),
+            serde_json::json!("production"),
+        );
+        fields.insert(
+            "metadata.region".to_string(),
+            serde_json::json!("us-west-2"),
+        );
+        fields.insert("metadata.version".to_string(), serde_json::json!("v2.0.1"));
+        fields.insert("latency".to_string(), serde_json::json!(831));
+        fields.insert("lv".to_string(), serde_json::json!("INFO"));
+
+        let unflattened = unflatten_json(&fields);
+
+        assert_eq!(unflattened["status"], 201);
+        assert_eq!(unflattened["latency"], 831);
+        assert_eq!(unflattened["lv"], "INFO");
+        assert_eq!(unflattened["metadata"]["instance_id"], "i-7e5c5d");
+        assert_eq!(unflattened["metadata"]["region"], "us-west-2");
+        assert_eq!(unflattened["metadata"]["version"], "v2.0.1");
+        assert_eq!(unflattened["metadata"]["system"]["env"], "production");
+        assert_eq!(
+            unflattened["metadata"]["system"]["infra"]["cluster"],
+            "eu-central-cluster-a"
+        );
+        assert_eq!(
+            unflattened["metadata"]["system"]["infra"]["zone"],
+            "us-west-2-c"
+        );
+    }
+
+    #[test]
+    fn test_raw_display_unflattens_nested_keys() {
+        let mut fields = HashMap::new();
+        fields.insert("status".to_string(), serde_json::json!(201));
+        fields.insert(
+            "metadata.instance_id".to_string(),
+            serde_json::json!("i-7e5c5d"),
+        );
+        fields.insert(
+            "metadata.system.infra.cluster".to_string(),
+            serde_json::json!("eu-central-cluster-a"),
+        );
+
+        let event = LogEvent::new("2026-09-07T11:47:52+07:00", LogLevel::Info, "test", fields);
+        let raw = event.raw_display();
+        let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
+
+        assert_eq!(parsed["status"], 201);
+        assert_eq!(parsed["metadata"]["instance_id"], "i-7e5c5d");
+        assert_eq!(
+            parsed["metadata"]["system"]["infra"]["cluster"],
+            "eu-central-cluster-a"
+        );
+    }
+
+    #[test]
+    fn test_raw_display_plain_text() {
+        let event = LogEvent::new("", LogLevel::Unknown, "plain message text", HashMap::new());
+        assert_eq!(event.raw_display(), "plain message text");
     }
 }

@@ -223,6 +223,11 @@ mod tests {
             event.fields.get("metadata.latency_ms").unwrap(),
             &serde_json::json!(120)
         );
+
+        let raw_json: serde_json::Value = serde_json::from_str(&event.raw_display()).unwrap();
+        assert_eq!(raw_json["metadata"]["system"]["env"], "production");
+        assert_eq!(raw_json["metadata"]["system"]["cluster"], "k8s-us-west");
+        assert_eq!(raw_json["metadata"]["latency_ms"], 120);
     }
 
     #[test]
