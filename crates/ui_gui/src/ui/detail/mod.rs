@@ -9,6 +9,7 @@ use actions::{dispatch_actions, DetailContext, FilterAction, HighlightAction};
 use card::render_card;
 use eframe::egui::{self, Id, Rounding, Stroke};
 use fields::{render_kv_field, render_meta_field};
+use std::collections::HashMap;
 use text_box::render_text_box;
 use uwu_core_schema::{LogLevel, StandardField};
 
@@ -204,6 +205,8 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                     })
                     .collect();
 
+                let custom_fields = cluster_log_fields(custom_fields);
+
                 if !custom_fields.is_empty() {
                     render_card(ui, "Parsed Fields", |ui| {
                         let mut ctx = DetailContext {
@@ -297,5 +300,72 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
 
     if close_requested {
         app.selected_log = None;
+    }
+}
+
+/// Gom nhóm các trường theo cụm (cluster prefix) dựa trên thứ tự xuất hiện tự nhiên đầu tiên:
+/// - Các trường cùng prefix (vd: metadata.*) được gom lại liền kề nhau ngay tại vị trí xuất hiện đầu tiên của prefix đó.
+/// - Không đẩy cả cụm xuống cuối danh sách (giữ nguyên vị trí tự nhiên).
+/// - Không sắp xếp theo bảng chữ cái toàn bộ danh sách (các trường độc lập giữ nguyên thứ tự).
+/// - Bên trong cụm lồng nhau, các nhánh con được sắp xếp để các nhánh cùng cấp nằm cạnh nhau.
+pub fn cluster_log_fields<'a, V>(fields: Vec<(&'a String, V)>) -> Vec<(&'a String, V)> {
+    let mut order_of_prefixes = Vec::new();
+    let mut groups: HashMap<&str, Vec<(&'a String, V)>> = HashMap::new();
+
+    for item in fields {
+        let prefix = if let Some(dot_idx) = item.0.find('.') {
+            &item.0[..dot_idx]
+        } else {
+            item.0.as_str()
+        };
+
+        if !groups.contains_key(prefix) {
+            order_of_prefixes.push(prefix);
+        }
+        groups.entry(prefix).or_default().push(item);
+    }
+
+    let mut result = Vec::new();
+    for prefix in order_of_prefixes {
+        if let Some(mut items) = groups.remove(prefix) {
+            if items.len() > 1 && items.iter().any(|(k, _)| k.contains('.')) {
+                items.sort_unstable_by(|a, b| a.0.cmp(b.0));
+            }
+            result.extend(items);
+        }
+    }
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cluster_log_fields_preserves_position_and_groups_prefix() {
+        let k1 = "status".to_string();
+        let k2 = "metadata.instance_id".to_string();
+        let k3 = "latency".to_string();
+        let k4 = "metadata.version".to_string();
+        let k5 = "method".to_string();
+        let k6 = "metadata.region".to_string();
+
+        let fields: Vec<(&String, i32)> =
+            vec![(&k1, 1), (&k2, 2), (&k3, 3), (&k4, 4), (&k5, 5), (&k6, 6)];
+
+        let clustered = cluster_log_fields(fields);
+        let keys: Vec<&str> = clustered.into_iter().map(|(k, _)| k.as_str()).collect();
+
+        assert_eq!(
+            keys,
+            vec![
+                "status",
+                "metadata.instance_id",
+                "metadata.region",
+                "metadata.version",
+                "latency",
+                "method",
+            ]
+        );
     }
 }
