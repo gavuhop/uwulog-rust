@@ -141,17 +141,55 @@ pub fn value_to_cow(v: &serde_json::Value) -> Cow<'_, str> {
     }
 }
 
-/// Chuyển đổi một HashMap có chứa các key dạng dot-notation ("a.b.c") về cấu trúc JSON lồng nhau (nested JSON object)
-pub fn unflatten_json(fields: &HashMap<String, serde_json::Value>) -> serde_json::Value {
+/// Gom nhóm các trường theo cụm (cluster prefix) dựa trên thứ tự xuất hiện tự nhiên đầu tiên:
+/// - Các trường cùng prefix (vd: metadata.*) được gom lại liền kề nhau ngay tại vị trí xuất hiện đầu tiên của prefix đó.
+/// - Không đẩy cả cụm xuống cuối danh sách (giữ nguyên vị trí tự nhiên).
+/// - Không sắp xếp theo bảng chữ cái toàn bộ danh sách (các trường độc lập giữ nguyên thứ tự).
+/// - Bên trong cụm lồng nhau, các nhánh con được sắp xếp để các nhánh cùng cấp nằm cạnh nhau.
+pub fn cluster_fields<'a, V>(
+    fields: impl IntoIterator<Item = (&'a String, V)>,
+) -> Vec<(&'a String, V)> {
+    let mut order_of_prefixes = Vec::new();
+    let mut groups: HashMap<&str, Vec<(&'a String, V)>> = HashMap::new();
+
+    for item in fields {
+        let prefix = if let Some(dot_idx) = item.0.find('.') {
+            &item.0[..dot_idx]
+        } else {
+            item.0.as_str()
+        };
+
+        if !groups.contains_key(prefix) {
+            order_of_prefixes.push(prefix);
+        }
+        groups.entry(prefix).or_default().push(item);
+    }
+
+    let mut result = Vec::new();
+    for prefix in order_of_prefixes {
+        if let Some(mut items) = groups.remove(prefix) {
+            if items.len() > 1 && items.iter().any(|(k, _)| k.contains('.')) {
+                items.sort_unstable_by(|a, b| a.0.cmp(b.0));
+            }
+            result.extend(items);
+        }
+    }
+    result
+}
+
+/// Chuyển đổi một danh sách các trường có thứ tự dạng dot-notation về cấu trúc JSON lồng nhau (nested JSON object)
+pub fn unflatten_json_ordered<'a>(
+    fields: impl IntoIterator<Item = (&'a str, &'a serde_json::Value)>,
+) -> serde_json::Value {
     let mut root = serde_json::Map::new();
 
     for (k, v) in fields {
         if !k.contains('.') {
-            root.insert(k.clone(), v.clone());
+            root.insert(k.to_string(), v.clone());
         } else {
             let parts: Vec<&str> = k.split('.').filter(|s| !s.is_empty()).collect();
             if parts.is_empty() {
-                root.insert(k.clone(), v.clone());
+                root.insert(k.to_string(), v.clone());
                 continue;
             }
             let mut curr = &mut root;
@@ -173,6 +211,13 @@ pub fn unflatten_json(fields: &HashMap<String, serde_json::Value>) -> serde_json
     }
 
     serde_json::Value::Object(root)
+}
+
+/// Chuyển đổi một HashMap có chứa các key dạng dot-notation ("a.b.c") về cấu trúc JSON lồng nhau (nested JSON object)
+/// Tự động gom nhóm các trường cùng cụm theo thứ tự xuất hiện tự nhiên
+pub fn unflatten_json(fields: &HashMap<String, serde_json::Value>) -> serde_json::Value {
+    let clustered = cluster_fields(fields);
+    unflatten_json_ordered(clustered.into_iter().map(|(k, v)| (k.as_str(), v)))
 }
 
 static NEXT_LOG_ID: AtomicU64 = AtomicU64::new(1);
@@ -225,13 +270,24 @@ impl LogEvent {
     }
 
     /// Tạo chuỗi hiển thị thô On-Demand (tiết kiệm bộ nhớ RAM)
-    /// Tự động khôi phục cấu trúc JSON lồng nhau từ các trường dot-notation nếu có
+    /// Tự động khôi phục cấu trúc JSON lồng nhau từ các trường dot-notation theo cụm
     pub fn raw_display(&self) -> Cow<'_, str> {
         if self.fields.is_empty() {
             Cow::Borrowed(&self.message)
         } else {
             let unflattened = unflatten_json(&self.fields);
             Cow::Owned(serde_json::to_string(&unflattened).unwrap_or_default())
+        }
+    }
+
+    /// Tạo chuỗi JSON hiển thị định dạng Beauty (Pretty / Indented) On-Demand
+    /// Tự động khôi phục cấu trúc JSON lồng nhau từ các trường dot-notation theo cụm
+    pub fn beauty_display(&self) -> Cow<'_, str> {
+        if self.fields.is_empty() {
+            Cow::Borrowed(&self.message)
+        } else {
+            let unflattened = unflatten_json(&self.fields);
+            Cow::Owned(serde_json::to_string_pretty(&unflattened).unwrap_or_default())
         }
     }
 
@@ -563,5 +619,22 @@ mod tests {
     fn test_raw_display_plain_text() {
         let event = LogEvent::new("", LogLevel::Unknown, "plain message text", HashMap::new());
         assert_eq!(event.raw_display(), "plain message text");
+    }
+
+    #[test]
+    fn test_beauty_display() {
+        let mut fields = HashMap::new();
+        fields.insert("status".to_string(), serde_json::json!(201));
+        fields.insert(
+            "metadata.instance_id".to_string(),
+            serde_json::json!("i-7e5c5d"),
+        );
+
+        let event = LogEvent::new("2026-09-07T11:47:52+07:00", LogLevel::Info, "test", fields);
+        let beauty = event.beauty_display();
+        assert!(beauty.contains('\n'));
+        assert!(beauty.contains("\"status\": 201"));
+        assert!(beauty.contains("\"metadata\": {"));
+        assert!(beauty.contains("\"instance_id\": \"i-7e5c5d\""));
     }
 }

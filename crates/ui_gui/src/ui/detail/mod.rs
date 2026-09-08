@@ -229,9 +229,85 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                     ui.add_space(8.0);
                 }
 
-                // Raw Payload Card with Copy button
+                // Raw Payload Card with Raw/Beauty mode toggle & Copy button
                 render_card(ui, "Raw Payload", |ui| {
+                    let view_mode_id = Id::new("detail_payload_view_mode_is_beauty");
+                    let mut is_beauty = ui
+                        .data(|d| d.get_temp::<bool>(view_mode_id))
+                        .unwrap_or(false);
+                    let is_json = !event.fields.is_empty();
+
+                    if !is_json {
+                        is_beauty = false;
+                    }
+
                     ui.horizontal(|ui| {
+                        // 1. Nút "Raw"
+                        let raw_btn = egui::Button::new(
+                            egui::RichText::new("Raw").size(11.0).color(if !is_beauty {
+                                theme::TEXT_KEY
+                            } else {
+                                theme::TEXT_PRIMARY
+                            }),
+                        )
+                        .fill(if !is_beauty {
+                            theme::BG_SURFACE1
+                        } else {
+                            theme::BG_SURFACE0
+                        })
+                        .stroke(Stroke::new(
+                            1.0,
+                            if !is_beauty {
+                                theme::TEXT_KEY
+                            } else {
+                                theme::BG_SURFACE1
+                            },
+                        ))
+                        .rounding(Rounding::same(4.0));
+
+                        let raw_resp = ui.add(raw_btn);
+                        if raw_resp.clicked() {
+                            is_beauty = false;
+                            ui.data_mut(|d| d.insert_temp(view_mode_id, false));
+                        }
+
+                        ui.add_space(4.0);
+
+                        // 2. Nút "Beauty" (kế bên nút Raw)
+                        let beauty_btn =
+                            egui::Button::new(egui::RichText::new("Beauty").size(11.0).color(
+                                if is_beauty {
+                                    theme::TEXT_KEY
+                                } else if is_json {
+                                    theme::TEXT_PRIMARY
+                                } else {
+                                    theme::TEXT_MUTED
+                                },
+                            ))
+                            .fill(if is_beauty {
+                                theme::BG_SURFACE1
+                            } else {
+                                theme::BG_SURFACE0
+                            })
+                            .stroke(Stroke::new(
+                                1.0,
+                                if is_beauty {
+                                    theme::TEXT_KEY
+                                } else {
+                                    theme::BG_SURFACE1
+                                },
+                            ))
+                            .rounding(Rounding::same(4.0));
+
+                        let beauty_resp = ui.add_enabled(is_json, beauty_btn);
+                        if beauty_resp.clicked() {
+                            is_beauty = true;
+                            ui.data_mut(|d| d.insert_temp(view_mode_id, true));
+                        }
+
+                        ui.add_space(8.0);
+
+                        // 3. Nút Copy
                         let copy_id = Id::new("copy_raw_flash");
                         let now = ui.input(|i| i.time);
                         let last_copy = ui.data(|d| d.get_temp::<f64>(copy_id)).unwrap_or(0.0);
@@ -241,8 +317,9 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                             ui.ctx().request_repaint();
                         }
 
+                        let copy_label = if is_beauty { "Copy Beauty" } else { "Copy Raw" };
                         let copy_btn =
-                            egui::Button::new(egui::RichText::new("Copy Raw").size(11.0).color(
+                            egui::Button::new(egui::RichText::new(copy_label).size(11.0).color(
                                 if is_flashing {
                                     theme::TEXT_KEY
                                 } else {
@@ -264,13 +341,15 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                             ))
                             .rounding(Rounding::same(4.0));
 
-                        let raw_str = event.raw_display();
-                        let copy_resp = ui
-                            .add(copy_btn)
-                            .on_hover_text("Copy raw payload to clipboard");
-                        if copy_resp.clicked() {
+                        let copy_text_val = if is_beauty {
+                            event.beauty_display()
+                        } else {
+                            event.raw_display()
+                        };
+
+                        if ui.add(copy_btn).clicked() {
                             ui.data_mut(|d| d.insert_temp(copy_id, now));
-                            ui.ctx().copy_text(raw_str.to_string());
+                            ui.ctx().copy_text(copy_text_val.to_string());
                             ui.ctx().request_repaint();
                         }
                     });
@@ -282,13 +361,18 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                         highlight_action: &mut highlight_action,
                     };
 
-                    let raw_str = event.raw_display();
+                    let display_str = if is_beauty {
+                        event.beauty_display()
+                    } else {
+                        event.raw_display()
+                    };
+
                     render_text_box(
                         ui,
                         Id::new("detail_inspector_raw_box"),
-                        &raw_str,
+                        &display_str,
                         theme::TEXT_PRIMARY,
-                        4,
+                        if is_beauty { 10 } else { 4 },
                         None,
                         &mut ctx,
                     );
