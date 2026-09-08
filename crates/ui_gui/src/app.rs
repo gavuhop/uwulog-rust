@@ -108,6 +108,9 @@ pub struct UwuGuiApp {
     pub wsl_distro_rx: Option<tokio::sync::oneshot::Receiver<Vec<String>>>,
     pub env_status: uwu_core_workspace::EnvLoadStatus,
     pub env_vars: std::collections::HashMap<String, String>,
+    pub env_watch_tx: tokio::sync::watch::Sender<Option<std::collections::HashMap<String, String>>>,
+    pub env_watch_rx:
+        tokio::sync::watch::Receiver<Option<std::collections::HashMap<String, String>>>,
     pub env_channel_rx: Option<
         tokio::sync::mpsc::UnboundedReceiver<
             Result<std::collections::HashMap<String, String>, String>,
@@ -305,6 +308,9 @@ impl UwuGuiApp {
             let _ = wsl_tx.send(distros);
         });
 
+        // Watch channel đồng bộ hóa bất đồng bộ biến môi trường
+        let (env_watch_tx, env_watch_rx) = tokio::sync::watch::channel(None);
+
         let source_config = SourceConfig {
             source_type,
             command_str: cmd_to_run,
@@ -353,6 +359,8 @@ impl UwuGuiApp {
             wsl_distro_rx: Some(wsl_rx),
             env_status: uwu_core_workspace::EnvLoadStatus::Idle,
             env_vars: std::collections::HashMap::new(),
+            env_watch_tx,
+            env_watch_rx,
             env_channel_rx: None,
             workspace_store,
             project_name_input: initial_project_name,
@@ -364,8 +372,9 @@ impl UwuGuiApp {
         if let Some(ws) = app.workspace_store.find_by_workdir(&active_workdir) {
             if !ws.env_vars.is_empty() {
                 app.env_vars = ws.env_vars.clone();
+                app.env_watch_tx.send_replace(Some(app.env_vars.clone()));
                 app.env_status = uwu_core_workspace::EnvLoadStatus::Ready {
-                    source_summary: format!("{} vars (Workspace cache)", app.env_vars.len()),
+                    source_summary: format!("{} variable (Workspace cache)", app.env_vars.len()),
                     updated_at: Instant::now(),
                 };
             }
@@ -483,10 +492,14 @@ impl UwuGuiApp {
         // Nếu workspace đã lưu sẵn env_vars trong store, nạp trước để dùng ngay
         if !ws.env_vars.is_empty() {
             self.env_vars = ws.env_vars.clone();
+            self.env_watch_tx.send_replace(Some(self.env_vars.clone()));
             self.env_status = uwu_core_workspace::EnvLoadStatus::Ready {
                 source_summary: format!("{} biến (Workspace cache)", self.env_vars.len()),
                 updated_at: Instant::now(),
             };
+        } else {
+            self.env_vars.clear();
+            self.env_watch_tx.send_replace(None);
         }
 
         // Đồng thời spawn background task để làm mới biến môi trường mới nhất từ disk / .env
@@ -551,12 +564,39 @@ impl UwuGuiApp {
                                 .map(|p| p.to_string_lossy().to_string())
                         };
 
-                        let env_vars = self.env_vars.clone();
+                        let mut watch_rx = self.env_watch_rx.clone();
+                        let current_envs = self.env_vars.clone();
                         self.rt.spawn(async move {
+                            // Đợi biến môi trường nạp xong nếu đang load dở dang (tương tự cơ chế Shared Task của Zed)
+                            let envs = if !current_envs.is_empty() {
+                                // Nếu đã có sẵn cache, lấy giá trị mới nhất nếu có, hoặc dùng ngay cache cũ không chờ
+                                if let Some(latest) = watch_rx.borrow().as_ref() {
+                                    latest.clone()
+                                } else {
+                                    current_envs
+                                }
+                            } else {
+                                // Nếu workspace mới tinh chưa có cache, kiên nhẫn đợi background task nạp tối đa 500ms
+                                let wait_res = tokio::time::timeout(
+                                    std::time::Duration::from_millis(500),
+                                    async {
+                                        while watch_rx.borrow().is_none() {
+                                            if watch_rx.changed().await.is_err() {
+                                                break;
+                                            }
+                                        }
+                                        watch_rx.borrow().clone()
+                                    },
+                                )
+                                .await;
+
+                                wait_res.ok().flatten().unwrap_or_default()
+                            };
+
                             let mut proc_src =
                                 ProcessSource::new_with_dir(prog, proc_args, workdir);
-                            if !env_vars.is_empty() {
-                                proc_src = proc_src.with_envs(env_vars);
+                            if !envs.is_empty() {
+                                proc_src = proc_src.with_envs(envs);
                             }
                             let _ = proc_src.start_stream(source_tx).await;
                         });
@@ -635,9 +675,13 @@ impl UwuGuiApp {
                 .unwrap_or_default()
         };
 
+        let watch_tx = self.env_watch_tx.clone();
         self.rt.spawn(async move {
             let path = std::path::PathBuf::from(workdir);
             let res = uwu_core_workspace::load_workspace_environment(&path).await;
+            if let Ok(envs) = &res {
+                let _ = watch_tx.send_replace(Some(envs.clone()));
+            }
             let _ = tx.send(res.map_err(|e| e.to_string()));
         });
     }
@@ -664,15 +708,16 @@ impl UwuGuiApp {
                         let count = envs.len();
                         let has_dotenv = envs.iter().any(|(k, _)| std::env::var(k).is_err());
                         let source_summary = if has_dotenv {
-                            format!("{count} vars (System + .env)")
+                            format!("{count} biến (System + .env)")
                         } else {
-                            format!("{count} vars (System)")
+                            format!("{count} biến (System)")
                         };
                         self.env_status = uwu_core_workspace::EnvLoadStatus::Ready {
                             source_summary,
                             updated_at: Instant::now(),
                         };
                         self.env_vars = envs;
+                        self.env_watch_tx.send_replace(Some(self.env_vars.clone()));
 
                         // Đồng bộ vào workspace hiện tại trong store
                         if let Some(ws_id) = self.workspace_store.active_workspace_id {
@@ -1108,6 +1153,7 @@ mod tests {
             capacity: 100,
             display_limit: 50,
         };
+        let (env_watch_tx, env_watch_rx) = tokio::sync::watch::channel(None);
 
         UwuGuiApp {
             engine,
@@ -1147,6 +1193,8 @@ mod tests {
             wsl_distro_rx: None,
             env_status: uwu_core_workspace::EnvLoadStatus::Idle,
             env_vars: std::collections::HashMap::new(),
+            env_watch_tx,
+            env_watch_rx,
             env_channel_rx: None,
             workspace_store: WorkspaceStore::default(),
             project_name_input: "Test Project".to_string(),
@@ -1617,6 +1665,7 @@ mod tests {
         match &app.env_status {
             uwu_core_workspace::EnvLoadStatus::Ready { .. } => {
                 assert!(!app.env_vars.is_empty());
+                assert!(app.env_watch_rx.borrow().is_some());
             }
             _ => panic!("Expected Ready state after tick"),
         }
