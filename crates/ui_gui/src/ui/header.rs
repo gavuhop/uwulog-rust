@@ -100,6 +100,9 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
             }
         }
 
+        // Environment Status Indicator (lấy cảm hứng từ ActivityIndicator trong Zed)
+        render_environment_status(ui, app);
+
         ui.add_space(4.0);
         ui.separator();
         ui.add_space(4.0);
@@ -724,4 +727,51 @@ fn format_fraction(numerator: usize, denominator: usize) -> String {
         theme::format_number(numerator),
         theme::format_number(denominator)
     )
+}
+
+/// Hiển thị chỉ báo trạng thái nạp biến môi trường của Workspace
+fn render_environment_status(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
+    match &app.env_status {
+        uwu_core_workspace::EnvLoadStatus::Loading { .. } => {
+            ui.add_space(2.0);
+            let spinner_frames = ['◐', '◓', '◑', '◒'];
+            let frame_idx = (ui.input(|i| i.time) * 6.0) as usize % spinner_frames.len();
+            let spinner_char = spinner_frames[frame_idx];
+
+            let badge = egui::Button::new(
+                egui::RichText::new(format!("{spinner_char} Env loading..."))
+                    .size(10.5)
+                    .strong()
+                    .color(theme::COLOR_INFO),
+            )
+            .fill(theme::BG_SURFACE0)
+            .stroke(Stroke::new(1.0, theme::BG_SURFACE1))
+            .rounding(Rounding::same(4.0));
+
+            ui.add(badge)
+                .on_hover_text("Loading system environment variables");
+            ui.ctx().request_repaint();
+        }
+        uwu_core_workspace::EnvLoadStatus::Ready { .. }
+        | uwu_core_workspace::EnvLoadStatus::Idle => {}
+        uwu_core_workspace::EnvLoadStatus::Failed { error } => {
+            ui.add_space(2.0);
+            let badge = egui::Button::new(
+                egui::RichText::new("⚠️ env error")
+                    .size(10.5)
+                    .strong()
+                    .color(theme::COLOR_WARN),
+            )
+            .fill(theme::BG_SURFACE0)
+            .stroke(Stroke::new(1.0, theme::COLOR_WARN))
+            .rounding(Rounding::same(4.0));
+
+            let resp = ui.add(badge).on_hover_text(format!(
+                "Lỗi nạp biến môi trường:\n{error}\n• Click để thử lại (Retry)"
+            ));
+            if resp.clicked() {
+                app.spawn_load_environment();
+            }
+        }
+    }
 }

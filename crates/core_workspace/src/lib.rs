@@ -1,8 +1,12 @@
+pub mod environment;
+pub use environment::{load_workspace_environment, parse_dot_env, EnvLoadStatus};
+
 #[allow(unused_imports)]
 use anyhow::Context;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use uuid::Uuid;
@@ -23,6 +27,8 @@ pub struct Workspace {
     pub file_path: String,
     pub last_query: String,
     pub last_opened: DateTime<Utc>,
+    #[serde(default)]
+    pub env_vars: HashMap<String, String>,
 }
 
 impl Workspace {
@@ -40,6 +46,7 @@ impl Workspace {
             file_path: String::new(),
             last_query: String::new(),
             last_opened: Utc::now(),
+            env_vars: HashMap::new(),
         }
     }
 }

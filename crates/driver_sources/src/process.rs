@@ -11,6 +11,7 @@ pub struct ProcessSource {
     command: String,
     args: Vec<String>,
     working_dir: Option<String>,
+    env_vars: Option<std::collections::HashMap<String, String>>,
     source_id: String,
 }
 
@@ -35,8 +36,15 @@ impl ProcessSource {
             command: cmd,
             args,
             working_dir,
+            env_vars: None,
             source_id,
         }
+    }
+
+    /// Thiết lập các biến môi trường tùy biến (như từ file .env hoặc workspace) cho tiến trình con
+    pub fn with_envs(mut self, envs: std::collections::HashMap<String, String>) -> Self {
+        self.env_vars = Some(envs);
+        self
     }
 }
 
@@ -53,6 +61,9 @@ impl LogSource for ProcessSource {
             if !dir.trim().is_empty() {
                 cmd.current_dir(dir);
             }
+        }
+        if let Some(envs) = &self.env_vars {
+            cmd.envs(envs);
         }
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
@@ -256,5 +267,41 @@ mod tests {
         assert!(!received.is_empty());
         assert!(received[0].contains("[ERROR]"));
         assert!(received[0].contains("Critical stderr failure"));
+    }
+
+    #[tokio::test]
+    async fn test_process_source_with_custom_envs() {
+        let (tx, mut rx) = mpsc::channel(100);
+        let mut custom_envs = std::collections::HashMap::new();
+        custom_envs.insert("UWU_CUSTOM_VAR".to_string(), "UWU_ENV_OK_42".to_string());
+
+        #[cfg(target_os = "windows")]
+        let proc = ProcessSource::new(
+            "cmd",
+            vec!["/c".to_string(), "echo %UWU_CUSTOM_VAR%".to_string()],
+        )
+        .with_envs(custom_envs);
+
+        #[cfg(not(target_os = "windows"))]
+        let proc = ProcessSource::new(
+            "sh",
+            vec!["-c".to_string(), "echo $UWU_CUSTOM_VAR".to_string()],
+        )
+        .with_envs(custom_envs);
+
+        proc.start_stream(tx).await.unwrap();
+
+        let mut received = Vec::new();
+        while let Ok(Some(entry)) =
+            tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv()).await
+        {
+            if let RawPayload::Text(text) = entry.payload {
+                received.push(text);
+                break;
+            }
+        }
+
+        assert!(!received.is_empty());
+        assert!(received[0].contains("UWU_ENV_OK_42"));
     }
 }
