@@ -18,12 +18,14 @@ Dự án `uwulog-rust` sở hữu hai hệ thống đo kiểm bổ trợ cho nha
 1. **Live End-to-End Profiler CLI ([`bench_profile`](file:///D:/Learn/Go/uwulog-rust/crates/benchmarks/src/bin/bench_profile.rs))**:
    * Chạy nhanh, trực quan, đo toàn diện 6 khía cạnh:
      1. Ingestion throughput vào RAM RingBuffer & RAM RSS footprint trên mỗi log.
-     2. Ma trận phân vị độ trễ (p50, p95, p99, Max, QPS) qua [7 kịch bản truy vấn](./references/query_scenarios.md).
+     2. Ma trận phân vị độ trễ (Cold Run, Warm p50, Warm p95, Max, QPS) qua [7 kịch bản truy vấn](./references/query_scenarios.md).
      3. Hệ số tăng tốc đa nhân Rayon (Speedup $S_N$ & Efficiency $E_N$ từ 1 đến 12 cores).
      4. Khả năng chịu tải đồng thời (tranh chấp Lock khi luồng nền nạp 10k - 50k logs/giây).
      5. Ngân sách khung hình Desktop UI (kiểm tra chuẩn 60 FPS / < 16.6ms).
      6. Tốc độ đọc File end-to-end từ ổ cứng (`MB/s` và `logs/s`).
-   * Tự động xuất file báo cáo Markdown chuẩn: [`BENCHMARK_REPORT.md`](file:///D:/Learn/Go/uwulog-rust/BENCHMARK_REPORT.md).
+   * Tự động xuất 2 file báo cáo Markdown chuẩn:
+     * [`BENCHMARK_REPORT.md`](file:///D:/Learn/Go/uwulog-rust/BENCHMARK_REPORT.md): Kết quả benchmark toàn diện của **code hiện tại**.
+     * [`benchmark_compare_report.md`](file:///D:/Learn/Go/uwulog-rust/benchmark_compare_report.md): Báo cáo **so sánh đối chiếu** chi tiết giữa commit trước và code hiện tại.
 
 2. **Criterion Micro & Integration Benches ([`crates/benchmarks/benches/`](file:///D:/Learn/Go/uwulog-rust/crates/benchmarks/benches))**:
    * Đo kiểm thống kê micro-benchmarks với độ chính xác nano-giây:
@@ -39,7 +41,7 @@ Dự án `uwulog-rust` sở hữu hai hệ thống đo kiểm bổ trợ cho nha
 ## 2. Các Lệnh Thực Thi Tiêu Chuẩn
 
 ### A. Chế Độ So Sánh Hiệu Năng Với Commit Trước (Khuyên Dùng / Mặc Định)
-Tự động so sánh code hiện tại với commit baseline (`HEAD~1` nếu working tree clean, hoặc `HEAD` nếu working tree dirty):
+Tự động dựng Git worktree tạm để đo tươi mới commit baseline (`HEAD~1` nếu clean, hoặc `HEAD` nếu dirty) tại cùng thời điểm, sau đó đo code hiện tại và đối chiếu:
 ```powershell
 powershell -ExecutionPolicy Bypass -File .agents/skills/uwu-benchmark/scripts/run_bench.ps1 -Mode compare
 ```
@@ -48,9 +50,9 @@ powershell -ExecutionPolicy Bypass -File .agents/skills/uwu-benchmark/scripts/ru
 powershell -ExecutionPolicy Bypass -File .agents/skills/uwu-benchmark/scripts/run_bench.ps1 -Mode compare -BaselineCommit "HEAD~2" -Logs 500000 -Queries 50
 ```
 
-*Hoặc chạy trực tiếp binary `bench_profile` với cờ `--compare`:*
+*Hoặc chạy trực tiếp binary `bench_profile` với cờ `--compare` và `--compare-md`:*
 ```bash
-cargo run --release --bin bench_profile -- --logs 500000 --queries 50 --output-md BENCHMARK_REPORT.md --compare target/baseline_report.md --baseline-label "Commit cũ" --current-label "Code mới"
+cargo run --release --bin bench_profile -- --logs 500000 --queries 50 --output-md BENCHMARK_REPORT.md --compare-md benchmark_compare_report.md --compare target/baseline_snapshot.json --baseline-label "Commit cũ" --current-label "Code mới"
 ```
 
 ### B. Chế Độ Profiler Nhanh (Quick Profile)
@@ -89,10 +91,11 @@ Chạy helper script `run_bench.ps1`:
 powershell -ExecutionPolicy Bypass -File .agents/skills/uwu-benchmark/scripts/run_bench.ps1 -Mode compare -Logs 500000 -Queries 50
 ```
 Script sẽ tự động:
-1. Xác định commit baseline (nếu có `BENCHMARK_REPORT.md` trong Git history của commit cũ thì trích xuất ngay, nếu chưa có thì dựng git worktree tạm để đo).
+1. Dựng git worktree tạm thời cho commit baseline và biên dịch/đo kiểm trực tiếp tại thời điểm chạy (bảo đảm môi trường nhiệt độ CPU và tải hệ thống là công bằng, không dùng kết quả lưu cũ).
 2. Chạy benchmark trên code hiện tại.
 3. Tính toán chênh lệch tỷ lệ phần trăm (Delta $\Delta$\%), gán nhãn trạng thái (🚀 Nhanh hơn, 📉 Tiết kiệm RAM, ⚠️ Chậm hơn, ➖ Tương đương).
-4. Xuất bảng so sánh chi tiết ra terminal và ghi vào file [`BENCHMARK_REPORT.md`](file:///D:/Learn/Go/uwulog-rust/BENCHMARK_REPORT.md).
+4. Xuất kết quả của code hiện tại vào [`BENCHMARK_REPORT.md`](file:///D:/Learn/Go/uwulog-rust/BENCHMARK_REPORT.md).
+5. Xuất báo cáo so sánh đối chiếu chi tiết vào [`benchmark_compare_report.md`](file:///D:/Learn/Go/uwulog-rust/benchmark_compare_report.md).
 
 ### Bước 2: Phân Tích Các Chỉ Số Chênh Lệch (Delta Analysis)
 Đánh giá mức độ cải thiện/suy giảm dựa trên các tiêu chí:
@@ -114,8 +117,8 @@ Báo cáo gửi người dùng cần cấu trúc như sau:
 
 ## 4. Tài Liệu Tham Khảo
 
-* Chi tiết 7 kịch bản query: [query_scenarios.md](./references/query_scenarios.md)
-* File báo cáo so sánh mẫu: [`BENCHMARK_REPORT.md`](file:///D:/Learn/Go/uwulog-rust/BENCHMARK_REPORT.md)
+* File báo cáo hiệu năng hiện tại: [`BENCHMARK_REPORT.md`](file:///D:/Learn/Go/uwulog-rust/BENCHMARK_REPORT.md)
+* File báo cáo so sánh đối chiếu: [`benchmark_compare_report.md`](file:///D:/Learn/Go/uwulog-rust/benchmark_compare_report.md)
 * File cấu hình tác vụ Zed Editor: [`.zed/tasks.json`](file:///D:/Learn/Go/uwulog-rust/.zed/tasks.json)
 * Script tự động hóa runner: [run_bench.ps1](./scripts/run_bench.ps1)
 

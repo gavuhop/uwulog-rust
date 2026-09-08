@@ -48,6 +48,10 @@ struct Args {
     #[arg(long)]
     compare: Option<PathBuf>,
 
+    /// Đường dẫn xuất báo cáo so sánh Markdown riêng biệt giữa Baseline và Current
+    #[arg(long)]
+    compare_md: Option<PathBuf>,
+
     /// Nhãn tên của baseline (mặc định: "Commit Trước (Baseline)")
     #[arg(long, default_value = "Commit Trước (Baseline)")]
     baseline_label: String,
@@ -70,6 +74,8 @@ struct BenchmarkSnapshot {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 struct QueryMetric {
+    #[serde(default)]
+    cold_ms: f64,
     p50_ms: f64,
     p95_ms: f64,
     throughput_m_logs_sec: f64,
@@ -78,6 +84,8 @@ struct QueryMetric {
 impl BenchmarkSnapshot {
     fn from_markdown(content: &str) -> Option<Self> {
         let mut snapshot = BenchmarkSnapshot::default();
+        let has_cold_col = content.contains("Chưa Warm") || content.contains("Cold");
+
         for line in content.lines() {
             let trimmed = line.trim();
             if trimmed.contains("Tốc độ Ingestion vào RAM") {
@@ -116,9 +124,18 @@ impl BenchmarkSnapshot {
                 let cols: Vec<&str> = trimmed.split('|').map(|s| s.trim()).collect();
                 if cols.len() >= 10 {
                     let q_name = cols[2].trim_matches('*');
-                    let p50 = cols[4].parse::<f64>().unwrap_or(0.0);
-                    let p95 = cols[5].parse::<f64>().unwrap_or(0.0);
-                    let tp_str = cols[9];
+                    let (cold, p50, p95) = if has_cold_col {
+                        let c = cols[4].parse::<f64>().unwrap_or(0.0);
+                        let p = cols[5].parse::<f64>().unwrap_or(0.0);
+                        let p95_val = cols[6].parse::<f64>().unwrap_or(0.0);
+                        (c, p, p95_val)
+                    } else {
+                        let p = cols[4].parse::<f64>().unwrap_or(0.0);
+                        let p95_val = cols[5].parse::<f64>().unwrap_or(0.0);
+                        (0.0, p, p95_val)
+                    };
+
+                    let tp_str = cols[cols.len() - 2];
                     let tp_clean: String = tp_str
                         .chars()
                         .take_while(|c| c.is_ascii_digit() || *c == '.')
@@ -128,6 +145,7 @@ impl BenchmarkSnapshot {
                     snapshot.queries.insert(
                         q_name.to_string(),
                         QueryMetric {
+                            cold_ms: cold,
                             p50_ms: p50,
                             p95_ms: p95,
                             throughput_m_logs_sec: tp,
@@ -210,6 +228,7 @@ fn format_mem_delta(baseline: f64, current: f64) -> (String, &'static str) {
 
 #[allow(dead_code)]
 struct LatencyStats {
+    cold_ms: f64,
     min_ms: f64,
     mean_ms: f64,
     p50_ms: f64,
@@ -222,9 +241,10 @@ struct LatencyStats {
 }
 
 impl LatencyStats {
-    fn compute(mut samples: Vec<f64>, total_logs: usize) -> Self {
+    fn compute(cold_ms: f64, mut samples: Vec<f64>, total_logs: usize) -> Self {
         if samples.is_empty() {
             return Self {
+                cold_ms,
                 min_ms: 0.0,
                 mean_ms: 0.0,
                 p50_ms: 0.0,
@@ -257,6 +277,7 @@ impl LatencyStats {
         };
 
         Self {
+            cold_ms,
             min_ms: min,
             mean_ms: mean,
             p50_ms: p50,
@@ -370,19 +391,25 @@ async fn main() {
     );
     println!("--------------------------------------------------------------------------------");
 
-    // 2. Thực thi 7 kịch bản truy vấn tĩnh
-    println!("⏳ [2/6] Running 7 Query Scenarios & Measuring Latency / Throughput...");
+    // 2. Thực thi 7 kịch bản truy vấn tĩnh (Đo riêng Chưa Warm vs Đã Warm)
+    println!("⏳ [2/6] Running 7 Query Scenarios (Cold Run & Warm Run Latency / Throughput)...");
     let mut query_results = Vec::new();
     let mut peak_cpu_observed = 0.0f32;
     let mut cpu_samples = Vec::new();
 
     for bq in BENCHMARK_QUERIES {
-        let mut latencies = Vec::with_capacity(args.queries);
+        // [A] Cold Run (Chưa warm): Lần thực thi đầu tiên sau khi nạp dữ liệu
+        let cold_start = Instant::now();
+        let _ = engine.search_limited(bq.query, 1000);
+        let cold_ms = cold_start.elapsed().as_secs_f64() * 1000.0;
 
-        for _ in 0..5 {
+        // [B] Warmup: Chạy 10 vòng lặp làm nóng CPU cache, branch predictor, rayon pool
+        for _ in 0..10 {
             let _ = engine.search_limited(bq.query, 1000);
         }
 
+        // [C] Warm Run (Đã warm): Đo liên tục steady-state
+        let mut latencies = Vec::with_capacity(args.queries);
         let query_start = Instant::now();
         for _ in 0..args.queries {
             let iter_start = Instant::now();
@@ -402,10 +429,10 @@ async fn main() {
         }
         cpu_samples.push(cur_proc_cpu);
 
-        let stats = LatencyStats::compute(latencies, args.logs);
+        let stats = LatencyStats::compute(cold_ms, latencies, args.logs);
         query_results.push((bq, stats, total_query_time, cur_proc_cpu, cur_global_cpu));
     }
-    println!("   ✓ Completed in-memory query profiling.");
+    println!("   ✓ Completed in-memory query profiling (Cold & Warm).");
     println!("--------------------------------------------------------------------------------");
 
     // 3. Rayon Multi-Core Scaling
@@ -631,22 +658,27 @@ async fn main() {
     // 1. In-Memory Search Latency
     println!("\n📌 [1. In-Memory Query Latency & Throughput Matrix]");
     println!(
-        "{:<24} | {:>8} | {:>8} | {:>8} | {:>8} | {:>10} | {:>14}",
-        "Query Scenario", "p50 (ms)", "p95 (ms)", "p99 (ms)", "Max (ms)", "QPS", "Throughput"
+        "{:<24} | {:>10} | {:>10} | {:>10} | {:>12} | {:>10} | {:>14}",
+        "Query Scenario", "Cold (ms)", "Warm p50", "Warm p95", "Warm Speedup", "QPS", "Throughput"
     );
     println!(
-        "{:-<24}-|-{:-<8}-|-{:-<8}-|-{:-<8}-|-{:-<8}-|-{:-<10}-|-{:-<14}",
+        "{:-<24}-|-{:-<10}-|-{:-<10}-|-{:-<10}-|-{:-<12}-|-{:-<10}-|-{:-<14}",
         "", "", "", "", "", "", ""
     );
 
     for (bq, stats, _, _, _) in &query_results {
+        let speedup = if stats.p50_ms > 0.0 {
+            stats.cold_ms / stats.p50_ms
+        } else {
+            1.0
+        };
         println!(
-            "{:<24} | {:>8.2} | {:>8.2} | {:>8.2} | {:>8.2} | {:>10.1} | {:>10.2} M/s",
+            "{:<24} | {:>10.2} | {:>10.2} | {:>10.2} | {:>11.2}x | {:>10.1} | {:>10.2} M/s",
             bq.name,
+            stats.cold_ms,
             stats.p50_ms,
             stats.p95_ms,
-            stats.p99_ms,
-            stats.max_ms,
+            speedup,
             stats.qps,
             stats.throughput_m_logs_sec
         );
@@ -761,6 +793,7 @@ async fn main() {
         query_map.insert(
             bq.name.to_string(),
             QueryMetric {
+                cold_ms: stats.cold_ms,
                 p50_ms: stats.p50_ms,
                 p95_ms: stats.p95_ms,
                 throughput_m_logs_sec: stats.throughput_m_logs_sec,
@@ -827,12 +860,17 @@ async fn main() {
 
         println!("\n📌 [2. So Sánh Phân Vị Độ Trễ p50 (Query Latency p50 Matrix)]");
         println!(
-            "{:<24} | {:>14} | {:>14} | {:>14} | {:>14}",
-            "Kịch Bản Query", "Baseline (ms)", "Current (ms)", "Chênh Lệch (Δ)", "Đánh Giá"
+            "{:<24} | {:>14} | {:>12} | {:>14} | {:>14} | {:>14}",
+            "Kịch Bản Query",
+            "Baseline p50",
+            "Current Cold",
+            "Current Warm",
+            "Chênh Lệch (Δ)",
+            "Đánh Giá"
         );
         println!(
-            "{:-<24}-|-{:-<14}-|-{:-<14}-|-{:-<14}-|-{:-<14}",
-            "", "", "", "", ""
+            "{:-<24}-|-{:-<14}-|-{:-<12}-|-{:-<14}-|-{:-<14}-|-{:-<14}",
+            "", "", "", "", "", ""
         );
 
         for (bq, stats, _, _, _) in &query_results {
@@ -843,8 +881,8 @@ async fn main() {
                 .unwrap_or(0.0);
             let (delta_str, eval_str) = format_delta_pct(base_p50, stats.p50_ms, true);
             println!(
-                "{:<24} | {:>14.2} | {:>14.2} | {:>14} | {:>14}",
-                bq.name, base_p50, stats.p50_ms, delta_str, eval_str
+                "{:<24} | {:>11.2} ms | {:>9.2} ms | {:>11.2} ms | {:>14} | {:>14}",
+                bq.name, base_p50, stats.cold_ms, stats.p50_ms, delta_str, eval_str
             );
         }
         println!(
@@ -852,9 +890,9 @@ async fn main() {
         );
     }
 
-    // Xuất báo cáo Markdown
+    // 1. Xuất báo cáo Markdown hiệu năng code hiện tại (Standalone Report)
     if let Some(ref md_path) = args.output_md {
-        let md_content = generate_markdown_report(
+        let md_content = generate_standalone_markdown_report(
             &cpu_brand,
             logical_cores,
             total_ram_gb,
@@ -868,21 +906,56 @@ async fn main() {
             &concurrency_results,
             &ui_results,
             &file_results,
-            baseline_snapshot.as_ref(),
-            &args.baseline_label,
-            &args.current_label,
         );
 
         if let Err(e) = fs::write(md_path, md_content) {
             eprintln!("❌ Failed to write Markdown report to {:?}: {}", md_path, e);
         } else {
-            println!("💾 Markdown report successfully saved to: {:?}", md_path);
+            println!(
+                "💾 Current benchmark report successfully saved to: {:?}",
+                md_path
+            );
+        }
+    }
+
+    // 2. Xuất báo cáo so sánh đối chiếu riêng biệt (Comparison Report) nếu có baseline và compare_md
+    if let Some(ref cmp_path) = args.compare_md {
+        if let Some(ref baseline) = baseline_snapshot {
+            let cmp_content = generate_compare_markdown_report(
+                &cpu_brand,
+                logical_cores,
+                total_ram_gb,
+                args.logs,
+                args.queries,
+                ingest_rate,
+                mem_used_mb,
+                &query_results,
+                baseline,
+                &args.baseline_label,
+                &args.current_label,
+            );
+
+            if let Err(e) = fs::write(cmp_path, cmp_content) {
+                eprintln!(
+                    "❌ Failed to write Comparison Markdown report to {:?}: {}",
+                    cmp_path, e
+                );
+            } else {
+                println!(
+                    "⚖️ Benchmark comparison report successfully saved to: {:?}",
+                    cmp_path
+                );
+            }
+        } else {
+            eprintln!(
+                "⚠️ Warning: --compare-md was specified but no valid baseline snapshot was loaded via --compare. Comparison report was skipped."
+            );
         }
     }
 }
 
 #[allow(clippy::too_many_arguments)]
-fn generate_markdown_report(
+fn generate_standalone_markdown_report(
     cpu_brand: &str,
     logical_cores: usize,
     total_ram_gb: f64,
@@ -902,9 +975,6 @@ fn generate_markdown_report(
     concurrency_results: &[ConcurrencyResult],
     ui_results: &[UiTickResult],
     file_results: &[FileIoResult],
-    baseline_snapshot: Option<&BenchmarkSnapshot>,
-    baseline_label: &str,
-    current_label: &str,
 ) -> String {
     let mut out = String::new();
     out.push_str("# 📊 Báo Cáo Hiệu Năng Toàn Diện & Thực Tế (`uwulog-rust`)\n\n");
@@ -927,72 +997,8 @@ fn generate_markdown_report(
         mem_used_mb
     ));
 
-    if let Some(baseline) = baseline_snapshot {
-        out.push_str(&format!(
-            "## 🔍 So Sánh Hiệu Năng Với Baseline (`{}` vs `{}`)\n\n",
-            baseline_label, current_label
-        ));
-        out.push_str("| Chỉ Số | Baseline (`");
-        out.push_str(baseline_label);
-        out.push_str("`) | Hiện Tại (`");
-        out.push_str(current_label);
-        out.push_str("`) | Chênh Lệch (Δ) | Đánh Giá |\n");
-        out.push_str("| :--- | :---: | :---: | :---: | :---: |\n");
-
-        let (ingest_delta, ingest_eval) =
-            format_delta_pct(baseline.ingest_rate, ingest_rate, false);
-        out.push_str(&format!(
-            "| **Tốc độ Ingestion vào RAM** | {:.2}M logs/s | **{:.2}M logs/s** | **{}** | {} |\n",
-            baseline.ingest_rate / 1_000_000.0,
-            ingest_rate / 1_000_000.0,
-            ingest_delta,
-            ingest_eval
-        ));
-
-        let current_b_per_log = if logs > 0 {
-            (mem_used_mb * 1024.0 * 1024.0) / logs as f64
-        } else {
-            0.0
-        };
-        let (mem_delta, mem_eval) = format_mem_delta(baseline.bytes_per_log, current_b_per_log);
-        out.push_str(&format!(
-            "| **RAM Footprint / log** | {:.2} bytes | **{:.2} bytes** | **{}** | {} |\n",
-            baseline.bytes_per_log, current_b_per_log, mem_delta, mem_eval
-        ));
-
-        let (rss_delta, rss_eval) = format_rss_delta(baseline.mem_used_mb, mem_used_mb);
-        out.push_str(&format!(
-            "| **RAM RSS Tổng** | {:.2} MB | **{:.2} MB** | **{}** | {} |\n\n",
-            baseline.mem_used_mb, mem_used_mb, rss_delta, rss_eval
-        ));
-
-        out.push_str("### Bảng So Sánh Độ Trễ p50 Từng Kịch Bản Query\n\n");
-        out.push_str("| STT | Kịch Bản Query | p50 Baseline (ms) | p50 Hiện Tại (ms) | Chênh Lệch p50 (Δ) | Throughput Hiện Tại | Đánh Giá |\n");
-        out.push_str("| :--- | :--- | :---: | :---: | :---: | :---: | :---: |\n");
-
-        for (i, (bq, stats, _, _, _)) in query_results.iter().enumerate() {
-            let base_p50 = baseline
-                .queries
-                .get(bq.name)
-                .map(|q| q.p50_ms)
-                .unwrap_or(0.0);
-            let (delta_str, eval_str) = format_delta_pct(base_p50, stats.p50_ms, true);
-            out.push_str(&format!(
-                "| {} | **{}** | {:.2} ms | **{:.2} ms** | **{}** | {:.2}M logs/s | {} |\n",
-                i + 1,
-                bq.name,
-                base_p50,
-                stats.p50_ms,
-                delta_str,
-                stats.throughput_m_logs_sec,
-                eval_str
-            ));
-        }
-        out.push_str("\n---\n\n");
-    }
-
-    out.push_str("## 1. Phân Phối Độ Trễ & Throughput Lọc In-Memory (7 Cấp Độ)\n\n");
-    out.push_str("| STT | Kịch Bản Query | Cú Pháp | p50 (ms) | p95 (ms) | p99 (ms) | Max (ms) | QPS | Throughput (Logs/s) |\n");
+    out.push_str("## 1. Phân Phối Độ Trễ & Throughput Lọc In-Memory (Chưa Warm & Đã Warm)\n\n");
+    out.push_str("| STT | Kịch Bản Query | Cú Pháp | Chưa Warm (ms) | Đã Warm p50 (ms) | Đã Warm p95 (ms) | Tăng Tốc (Warm/Cold) | QPS | Throughput (Logs/s) |\n");
     out.push_str("| :--- | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: |\n");
 
     for (i, (bq, stats, _, _, _)) in query_results.iter().enumerate() {
@@ -1001,15 +1007,20 @@ fn generate_markdown_report(
         } else {
             bq.query
         };
+        let speedup = if stats.p50_ms > 0.0 {
+            stats.cold_ms / stats.p50_ms
+        } else {
+            1.0
+        };
         out.push_str(&format!(
-            "| {} | **{}** | `{}` | {:.2} | {:.2} | {:.2} | {:.2} | {:.1} | {:.2}M logs/s |\n",
+            "| {} | **{}** | `{}` | {:.2} | {:.2} | {:.2} | {:.2}x | {:.1} | {:.2}M logs/s |\n",
             i + 1,
             bq.name,
             escaped_q,
+            stats.cold_ms,
             stats.p50_ms,
             stats.p95_ms,
-            stats.p99_ms,
-            stats.max_ms,
+            speedup,
             stats.qps,
             stats.throughput_m_logs_sec
         ));
@@ -1036,9 +1047,10 @@ fn generate_markdown_report(
     out.push_str("| :--- | :---: | :---: | :---: |\n");
 
     for c in concurrency_results {
+        let sign = if c.overhead_pct > 0.0 { "+" } else { "" };
         out.push_str(&format!(
-            "| **{} logs/giây** | {:.2} | {:.2} | **+{:.1}%** |\n",
-            c.stream_rate, c.idle_search_ms, c.contention_search_ms, c.overhead_pct
+            "| **{} logs/giây** | {:.2} | {:.2} | **{}{:.1}%** |\n",
+            c.stream_rate, c.idle_search_ms, c.contention_search_ms, sign, c.overhead_pct
         ));
     }
 
@@ -1080,6 +1092,143 @@ fn generate_markdown_report(
             0.0
         }
     ));
+
+    out
+}
+
+#[allow(clippy::too_many_arguments)]
+fn generate_compare_markdown_report(
+    cpu_brand: &str,
+    logical_cores: usize,
+    total_ram_gb: f64,
+    logs: usize,
+    queries: usize,
+    ingest_rate: f64,
+    mem_used_mb: f64,
+    query_results: &[(
+        &uwu_benchmarks::BenchmarkQuery,
+        LatencyStats,
+        Duration,
+        f32,
+        f32,
+    )],
+    baseline: &BenchmarkSnapshot,
+    baseline_label: &str,
+    current_label: &str,
+) -> String {
+    let mut out = String::new();
+    out.push_str("# ⚖️ Báo Cáo So Sánh Hiệu Năng (Benchmark Comparison Report)\n\n");
+    out.push_str(&format!(
+        "- **Baseline (Commit Trước)**: `{}`\n",
+        baseline_label
+    ));
+    out.push_str(&format!(
+        "- **Current (Code Hiện Tại)**: `{}`\n",
+        current_label
+    ));
+    out.push_str(&format!(
+        "- **Thời điểm kiểm thử**: {}\n",
+        chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
+    ));
+    out.push_str(&format!(
+        "- **Cấu hình CPU**: {} ({} Logical Cores)\n",
+        cpu_brand, logical_cores
+    ));
+    out.push_str(&format!(
+        "- **Tổng RAM hệ thống**: {:.2} GB\n",
+        total_ram_gb
+    ));
+    out.push_str(&format!("- **Quy mô tập log**: {} dòng\n", logs));
+    out.push_str(&format!(
+        "- **Số lượt lặp mỗi query**: {} iterations\n\n",
+        queries
+    ));
+
+    out.push_str("> [!NOTE]\n");
+    out.push_str("> Cả commit trước (Baseline) và code hiện tại đều được biên dịch và đo lường trực tiếp tại cùng một thời điểm kiểm thử để loại bỏ hoàn toàn sai số do biến thiên nhiệt độ CPU (thermal throttling) và tải nền hệ điều hành.\n\n");
+
+    out.push_str("## 📌 1. So Sánh Các Chỉ Số Cốt Lõi (Core Ingestion & Memory Footprint)\n\n");
+    out.push_str("| Chỉ Số | Baseline (`");
+    out.push_str(baseline_label);
+    out.push_str("`) | Hiện Tại (`");
+    out.push_str(current_label);
+    out.push_str("`) | Chênh Lệch (Δ) | Đánh Giá |\n");
+    out.push_str("| :--- | :---: | :---: | :---: | :---: |\n");
+
+    let (ingest_delta, ingest_eval) = format_delta_pct(baseline.ingest_rate, ingest_rate, false);
+    out.push_str(&format!(
+        "| **Tốc độ Ingestion vào RAM** | {:.2}M logs/s | **{:.2}M logs/s** | **{}** | {} |\n",
+        baseline.ingest_rate / 1_000_000.0,
+        ingest_rate / 1_000_000.0,
+        ingest_delta,
+        ingest_eval
+    ));
+
+    let current_b_per_log = if logs > 0 {
+        (mem_used_mb * 1024.0 * 1024.0) / logs as f64
+    } else {
+        0.0
+    };
+    let (mem_delta, mem_eval) = format_mem_delta(baseline.bytes_per_log, current_b_per_log);
+    out.push_str(&format!(
+        "| **RAM Footprint / log** | {:.2} bytes | **{:.2} bytes** | **{}** | {} |\n",
+        baseline.bytes_per_log, current_b_per_log, mem_delta, mem_eval
+    ));
+
+    let (rss_delta, rss_eval) = format_rss_delta(baseline.mem_used_mb, mem_used_mb);
+    out.push_str(&format!(
+        "| **RAM RSS Tổng** | {:.2} MB | **{:.2} MB** | **{}** | {} |\n\n",
+        baseline.mem_used_mb, mem_used_mb, rss_delta, rss_eval
+    ));
+
+    out.push_str("## 📌 2. So Sánh Phân Vị Độ Trễ Truy Vấn (Query Latency Comparison Matrix)\n\n");
+    out.push_str("| STT | Kịch Bản Query | Cú Pháp | Baseline p50 | Hiện Tại Cold | Hiện Tại Warm p50 | Chênh Lệch p50 (Δ) | Throughput Hiện Tại | Đánh Giá |\n");
+    out.push_str("| :--- | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: |\n");
+
+    for (i, (bq, stats, _, _, _)) in query_results.iter().enumerate() {
+        let base_p50 = baseline
+            .queries
+            .get(bq.name)
+            .map(|q| q.p50_ms)
+            .unwrap_or(0.0);
+        let (delta_str, eval_str) = format_delta_pct(base_p50, stats.p50_ms, true);
+        let escaped_q = if bq.query.is_empty() {
+            "*(rỗng)*"
+        } else {
+            bq.query
+        };
+        out.push_str(&format!(
+            "| {} | **{}** | `{}` | {:.2} ms | {:.2} ms | **{:.2} ms** | **{}** | {:.2}M logs/s | {} |\n",
+            i + 1,
+            bq.name,
+            escaped_q,
+            base_p50,
+            stats.cold_ms,
+            stats.p50_ms,
+            delta_str,
+            stats.throughput_m_logs_sec,
+            eval_str
+        ));
+    }
+
+    out.push_str("\n## 📌 3. Đánh Giá Kỹ Thuật & Nhận Xét Tổng Quan\n\n");
+    out.push_str("- **Tốc độ Ingestion & Băng thông Nạp Log**: ");
+    out.push_str(&format!(
+        "Phiên bản hiện tại đạt tốc độ nạp {:.2} triệu logs/s (so với {:.2} triệu logs/s ở baseline, chênh lệch {}).\n",
+        ingest_rate / 1_000_000.0,
+        baseline.ingest_rate / 1_000_000.0,
+        ingest_delta
+    ));
+    out.push_str("- **Mức Tiêu Thụ RAM**: ");
+    out.push_str(&format!(
+        "Chiếm dụng bộ nhớ đạt {:.2} MB ({:.2} bytes/log), so với {:.2} MB ({:.2} bytes/log) ở baseline.\n",
+        mem_used_mb,
+        current_b_per_log,
+        baseline.mem_used_mb,
+        baseline.bytes_per_log
+    ));
+    out.push_str("- **Hiệu Năng Truy Vấn Phân Vị (Latency p50)**: ");
+    out.push_str("Cả hai phiên bản đều được đo lường thực tế liên tiếp nhau trong cùng điều kiện phần cứng tức thời để phản ánh đúng thực tế tối ưu hóa mã nguồn mà không bị ảnh hưởng bởi biến thiên nhiệt độ CPU.\n");
 
     out
 }

@@ -15,7 +15,10 @@
     Number of iterations per query scenario (default: 50 for full/compare, 20 for quick)
 
 .PARAMETER OutputMd
-    Path to save Markdown report (default: 'BENCHMARK_REPORT.md')
+    Path to save Current Benchmark Markdown report (default: 'BENCHMARK_REPORT.md')
+
+.PARAMETER CompareMd
+    Path to save Comparison Markdown report between baseline and current code (default: 'benchmark_compare_report.md')
 #>
 param (
     [ValidateSet("compare", "quick", "full", "criterion", "micro")]
@@ -27,7 +30,9 @@ param (
 
     [int]$Queries = 0,
 
-    [string]$OutputMd = "BENCHMARK_REPORT.md"
+    [string]$OutputMd = "BENCHMARK_REPORT.md",
+
+    [string]$CompareMd = "benchmark_compare_report.md"
 )
 
 $ErrorActionPreference = "Stop"
@@ -77,38 +82,36 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 
         $rootPath = (Get-Location).Path
         $baselineReportPath = Join-Path $rootPath "target/baseline_report.md"
-        $baseReportContent = git show "${targetBaseline}:BENCHMARK_REPORT.md" 2>$null
+        $baselineJsonPath = Join-Path $rootPath "target/baseline_snapshot.json"
 
-        if ($baseReportContent -and ($baseReportContent | Select-String "RAM RSS Footprint")) {
-            Write-Host "Da tim thay benchmark report trong commit $baseHash, su dung lam baseline." -ForegroundColor Green
-            $baseReportContent | Set-Content -Path $baselineReportPath -Encoding utf8
-        } else {
-            Write-Host "Chua co benchmark report trong commit $baseHash. Dang chay profiler trong git worktree..." -ForegroundColor Yellow
-            $tempWorktree = "target/bench_worktree_$baseHash"
+        # LUON LUON chay lai commit truoc trong git worktree tam thoi
+        # de lay so lieu thuc te cung thoi diem (tranh sai lech do bien thien nhiet do CPU)
+        Write-Host "Dang bien dich va do kiem commit baseline $baseHash trong git worktree de lay so lieu thoi gian thuc..." -ForegroundColor Yellow
+        $tempWorktree = Join-Path $rootPath "target/bench_worktree_$baseHash"
+        if (Test-Path $tempWorktree) {
+            git worktree remove --force $tempWorktree 2>$null
+        }
+        git worktree add --detach $tempWorktree $targetBaseline | Out-Null
+        try {
+            Push-Location $tempWorktree
+            cargo run --release --bin bench_profile -- --logs $logCount --queries $queryCount --output-md $baselineReportPath --output-json $baselineJsonPath | Out-Null
+            Pop-Location
+        } finally {
             if (Test-Path $tempWorktree) {
                 git worktree remove --force $tempWorktree 2>$null
-            }
-            git worktree add --detach $tempWorktree $targetBaseline | Out-Null
-            try {
-                Push-Location $tempWorktree
-                cargo run --release --bin bench_profile -- --logs $logCount --queries $queryCount --output-md $baselineReportPath | Out-Null
-                Pop-Location
-            } finally {
-                if (Test-Path $tempWorktree) {
-                    git worktree remove --force $tempWorktree 2>$null
-                }
             }
         }
 
         # Chay profiler cho code hien tai va so sanh voi baseline
-        Write-Host "Dang chay benchmark code hien tai va doi chieu voi baseline..." -ForegroundColor Green
+        Write-Host "Dang chay benchmark code hien tai va xuat bao cao..." -ForegroundColor Green
         $cargoArgs = @(
             "run", "--release", "--bin", "bench_profile", "--",
             "--logs", "$logCount",
             "--queries", "$queryCount",
             "--output-md", "$OutputMd",
+            "--compare-md", "$CompareMd",
             "--output-json", "target/current_benchmark.json",
-            "--compare", "$baselineReportPath",
+            "--compare", "$baselineJsonPath",
             "--baseline-label", "$baseLabel",
             "--current-label", "$currentLabel"
         )
@@ -144,6 +147,10 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 if ($LASTEXITCODE -eq 0) {
     Write-Host "============================================================" -ForegroundColor Green
     Write-Host " Benchmark finished successfully!" -ForegroundColor Green
+    if ($Mode -eq "compare") {
+        Write-Host " 📄 Báo cáo hiệu năng hiện tại: $OutputMd" -ForegroundColor Cyan
+        Write-Host " ⚖️ Báo cáo so sánh đối chiếu:  $CompareMd" -ForegroundColor Cyan
+    }
     Write-Host "============================================================" -ForegroundColor Green
 } else {
     Write-Host "============================================================" -ForegroundColor Red

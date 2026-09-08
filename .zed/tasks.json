@@ -40,23 +40,23 @@
     "command": "cargo run --bin uwu-gui -- -r \"go run gen_plain_logs.go -rate 10 -json\""
   },
   {
-    "label": "Benchmark (Compare with Baseline / HEAD~1)",
+    "label": "Benchmark: Compare with Previous Commit (Realtime Baseline & Compare Report)",
     "command": "powershell -ExecutionPolicy Bypass -File .agents/skills/uwu-benchmark/scripts/run_bench.ps1 -Mode compare"
   },
   {
-    "label": "Benchmark (Profiler Summary)",
-    "command": "cargo run --release --bin bench_profile -- --logs 100000 --queries 50"
+    "label": "Benchmark: Run & Save Current Code Report (BENCHMARK_REPORT.md)",
+    "command": "powershell -ExecutionPolicy Bypass -File .agents/skills/uwu-benchmark/scripts/run_bench.ps1 -Mode full -Logs 500000 -Queries 50 -OutputMd BENCHMARK_REPORT.md"
   },
   {
-    "label": "Benchmark (Full Profiler Report)",
-    "command": "cargo run --release --bin bench_profile -- --logs 500000 --queries 100 --output-md BENCHMARK_REPORT.md"
+    "label": "Benchmark: Quick Profiler (100k logs, console only)",
+    "command": "powershell -ExecutionPolicy Bypass -File .agents/skills/uwu-benchmark/scripts/run_bench.ps1 -Mode quick"
   },
   {
-    "label": "Benchmark (Criterion All)",
-    "command": "cargo bench -p uwu-benchmarks"
-  },
-  {
-    "label": "Benchmark (Criterion Micro)",
+    "label": "Benchmark: Criterion Micro-benchmarks",
     "command": "cargo bench -p uwu-benchmarks --bench micro_benches"
+  },
+  {
+    "label": "Benchmark: Criterion All Suites",
+    "command": "cargo bench -p uwu-benchmarks"
   }
 ]
