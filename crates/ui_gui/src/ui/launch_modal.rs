@@ -301,12 +301,13 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
                                             },
                                         )
                                         .show_ui(ui, |ui| {
+                                            let active_idx = app.workspace_mgr.active_index;
+                                            let current_distro = &mut app.view_states[active_idx]
+                                                .source_config
+                                                .wsl_config
+                                                .distro;
                                             for d in &app.available_wsl_distros {
-                                                ui.selectable_value(
-                                                    &mut app.source_config.wsl_config.distro,
-                                                    d.clone(),
-                                                    d,
-                                                );
+                                                ui.selectable_value(current_distro, d.clone(), d);
                                             }
                                         });
                                 } else {

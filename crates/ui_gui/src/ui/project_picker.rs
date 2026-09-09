@@ -1,7 +1,8 @@
 use crate::app::{SourceType, UwuGuiApp};
 use crate::ui::theme;
 use eframe::egui::{self, Color32, Id, Key, Order, Pos2, Rect, Rounding, Stroke};
-use uwu_core_workspace::WorkspaceLocation;
+use std::collections::HashSet;
+use uwu_core_workspace::{Workspace, WorkspaceLocation};
 
 pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, trigger_rect: Rect) {
     if !app.project_picker_open {
@@ -15,7 +16,7 @@ pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, tri
 
     let popup_pos = Pos2::new(trigger_rect.min.x, trigger_rect.max.y + 6.0);
     let popup_width = 300.0;
-    let popup_rect = Rect::from_min_size(popup_pos, egui::vec2(popup_width, 360.0));
+    let popup_rect = Rect::from_min_size(popup_pos, egui::vec2(popup_width, 420.0));
 
     // Đóng popup nếu click ra ngoài
     if ctx.input(|i| i.pointer.any_pressed() || i.pointer.any_click()) {
@@ -27,7 +28,9 @@ pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, tri
         }
     }
 
-    let mut project_to_launch = None;
+    let mut session_to_switch = None;
+    let mut session_to_close = None;
+    let mut project_to_open = None;
     let mut project_to_delete = None;
     let mut open_local_folder_clicked = false;
     let mut open_wsl_modal_clicked = false;
@@ -73,47 +76,115 @@ pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, tri
                     );
                     ui.add_space(2.0);
 
-                    let active_name = if app.project_name_input.is_empty() {
-                        "Workspace".to_string()
-                    } else {
-                        app.project_name_input.clone()
-                    };
-
-                    let active_icon = match app.source_config.source_type {
-                        SourceType::Wsl => "🐧",
-                        _ => "🖥",
-                    };
-
-                    egui::Frame::none()
-                        .fill(theme::BG_SURFACE0)
-                        .rounding(Rounding::same(4.0))
-                        .inner_margin(egui::Margin::symmetric(6.0, 4.0))
+                    egui::ScrollArea::vertical()
+                        .id_salt("this_window_scroll")
+                        .max_height(140.0)
                         .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(egui::RichText::new(active_icon).size(13.0));
-                                ui.label(
-                                    egui::RichText::new(&active_name)
-                                        .strong()
-                                        .size(12.0)
-                                        .color(theme::TEXT_PRIMARY),
-                                );
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        ui.label(
-                                            egui::RichText::new("✓")
+                            for (ix, session) in app.workspace_mgr.sessions.iter().enumerate() {
+                                let is_active = ix == app.workspace_mgr.active_index;
+                                let name = if session.name.is_empty() {
+                                    "Workspace".to_string()
+                                } else {
+                                    session.name.clone()
+                                };
+
+                                if !search_filter.is_empty()
+                                    && !name.to_lowercase().contains(&search_filter)
+                                {
+                                    continue;
+                                }
+
+                                let (icon, tooltip_path) = match &session.location {
+                                    WorkspaceLocation::Wsl {
+                                        distro,
+                                        working_dir,
+                                    } => ("🐧", format!("{} ({})", working_dir, distro)),
+                                    WorkspaceLocation::Local { working_dir } => {
+                                        match session.source_config.source_type {
+                                            SourceType::File => ("📄", working_dir.clone()),
+                                            _ => ("🖥", working_dir.clone()),
+                                        }
+                                    }
+                                };
+                                let mut frame = egui::Frame::none()
+                                    .rounding(Rounding::same(4.0))
+                                    .inner_margin(egui::Margin::symmetric(6.0, 4.0));
+
+                                if is_active {
+                                    frame = frame.fill(theme::BG_SURFACE0);
+                                }
+
+                                frame.show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label(egui::RichText::new(icon).size(12.0));
+
+                                        let label_color = if is_active {
+                                            theme::TEXT_KEY
+                                        } else {
+                                            theme::TEXT_PRIMARY
+                                        };
+
+                                        let name_resp = ui.selectable_label(
+                                            is_active,
+                                            egui::RichText::new(&name)
                                                 .strong()
                                                 .size(12.0)
-                                                .color(theme::COLOR_INFO),
+                                                .color(label_color),
                                         );
-                                    },
-                                );
-                            });
+
+                                        if name_resp.clicked() {
+                                            session_to_switch = Some(ix);
+                                        }
+
+                                        if !tooltip_path.is_empty() {
+                                            name_resp.on_hover_text(format!(
+                                                "{}\nLocation: {}",
+                                                name, tooltip_path
+                                            ));
+                                        }
+
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                // Nút Close '✕' để đóng project khỏi window
+                                                let close_btn = egui::Button::new(
+                                                    egui::RichText::new("✕")
+                                                        .size(11.0)
+                                                        .color(theme::TEXT_MUTED),
+                                                )
+                                                .fill(Color32::TRANSPARENT)
+                                                .frame(false);
+
+                                                if ui
+                                                    .add(close_btn)
+                                                    .on_hover_text(
+                                                        "Close and stop project from this window",
+                                                    )
+                                                    .clicked()
+                                                {
+                                                    session_to_close = Some(ix);
+                                                }
+
+                                                if is_active {
+                                                    ui.label(
+                                                        egui::RichText::new("✓")
+                                                            .strong()
+                                                            .size(12.0)
+                                                            .color(theme::COLOR_INFO),
+                                                    );
+                                                }
+                                            },
+                                        );
+                                    });
+                                });
+                            }
                         });
 
                     ui.add_space(6.0);
+                    ui.separator();
+                    ui.add_space(4.0);
 
-                    // 3. Section: Recent Projects
+                    // 3. Section: Recent Projects (Chỉ hiển thị những project chưa mở trong window này)
                     ui.label(
                         egui::RichText::new("Recent Projects")
                             .size(11.0)
@@ -122,11 +193,43 @@ pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, tri
                     );
                     ui.add_space(2.0);
 
+                    let open_ids: HashSet<_> =
+                        app.workspace_mgr.sessions.iter().map(|s| s.id).collect();
+                    let open_dirs: HashSet<_> = app
+                        .workspace_mgr
+                        .sessions
+                        .iter()
+                        .map(|s| match &s.location {
+                            WorkspaceLocation::Local { working_dir } => working_dir
+                                .trim_end_matches(&['/', '\\'][..])
+                                .to_lowercase(),
+                            WorkspaceLocation::Wsl { working_dir, .. } => working_dir
+                                .trim_end_matches(&['/', '\\'][..])
+                                .to_lowercase(),
+                        })
+                        .collect();
+
                     let filtered_recent: Vec<_> = app
                         .workspace_store
                         .recent_workspaces
                         .iter()
                         .filter(|ws| {
+                            // Bỏ qua nếu đã mở trong window hiện tại
+                            if open_ids.contains(&ws.id) {
+                                return false;
+                            }
+                            let ws_dir = match &ws.location {
+                                WorkspaceLocation::Wsl { working_dir, .. } => working_dir
+                                    .trim_end_matches(&['/', '\\'][..])
+                                    .to_lowercase(),
+                                WorkspaceLocation::Local { working_dir } => working_dir
+                                    .trim_end_matches(&['/', '\\'][..])
+                                    .to_lowercase(),
+                            };
+                            if !ws_dir.is_empty() && open_dirs.contains(&ws_dir) {
+                                return false;
+                            }
+
                             if search_filter.is_empty() {
                                 true
                             } else {
@@ -134,9 +237,9 @@ pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, tri
                                     WorkspaceLocation::Wsl {
                                         distro,
                                         working_dir,
-                                    } => (&ws.name, distro.as_str(), working_dir.as_str()),
+                                    } => (ws.name.as_str(), distro.as_str(), working_dir.as_str()),
                                     WorkspaceLocation::Local { working_dir } => {
-                                        (&ws.name, "", working_dir.as_str())
+                                        (ws.name.as_str(), "", working_dir.as_str())
                                     }
                                 };
                                 name.to_lowercase().contains(&search_filter)
@@ -150,7 +253,7 @@ pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, tri
                     if filtered_recent.is_empty() {
                         ui.add_space(4.0);
                         ui.label(
-                            egui::RichText::new("No matching projects")
+                            egui::RichText::new("No other recent projects")
                                 .italics()
                                 .size(11.0)
                                 .color(theme::TEXT_MUTED),
@@ -158,10 +261,10 @@ pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, tri
                         ui.add_space(4.0);
                     } else {
                         egui::ScrollArea::vertical()
-                            .max_height(160.0)
+                            .id_salt("recent_projects_scroll")
+                            .max_height(140.0)
                             .show(ui, |ui| {
                                 for ws in &filtered_recent {
-                                    let is_current = ws.name == app.project_name_input;
                                     let (icon, label_text, tooltip_path) = match &ws.location {
                                         WorkspaceLocation::Wsl {
                                             distro,
@@ -175,36 +278,28 @@ pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, tri
                                         }
                                     };
 
-                                    let mut frame = egui::Frame::none()
+                                    let frame = egui::Frame::none()
                                         .rounding(Rounding::same(4.0))
                                         .inner_margin(egui::Margin::symmetric(6.0, 3.0));
-
-                                    if is_current {
-                                        frame = frame.fill(theme::BG_SURFACE0);
-                                    }
 
                                     frame.show(ui, |ui| {
                                         ui.horizontal(|ui| {
                                             ui.label(egui::RichText::new(icon).size(12.5));
 
                                             let name_resp = ui.selectable_label(
-                                                is_current,
-                                                egui::RichText::new(&label_text).size(12.0).color(
-                                                    if is_current {
-                                                        theme::TEXT_KEY
-                                                    } else {
-                                                        theme::TEXT_PRIMARY
-                                                    },
-                                                ),
+                                                false,
+                                                egui::RichText::new(&label_text)
+                                                    .size(12.0)
+                                                    .color(theme::TEXT_PRIMARY),
                                             );
 
                                             if name_resp.clicked() {
-                                                project_to_launch = Some(ws.clone());
+                                                project_to_open = Some(ws.clone());
                                             }
 
                                             if !tooltip_path.is_empty() {
                                                 name_resp.on_hover_text(format!(
-                                                    "Open Project in:\n{}",
+                                                    "Open Project in This Window:\n{}",
                                                     tooltip_path
                                                 ));
                                             }
@@ -212,7 +307,7 @@ pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, tri
                                             ui.with_layout(
                                                 egui::Layout::right_to_left(egui::Align::Center),
                                                 |ui| {
-                                                    // Delete button (✕)
+                                                    // Nút Delete khỏi Recent
                                                     let del_btn = egui::Button::new(
                                                         egui::RichText::new("✕")
                                                             .size(10.5)
@@ -229,7 +324,7 @@ pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, tri
                                                         project_to_delete = Some(ws.id);
                                                     }
 
-                                                    // Open button (↗)
+                                                    // Nút Open '↗'
                                                     let open_btn = egui::Button::new(
                                                         egui::RichText::new("↗")
                                                             .size(11.5)
@@ -240,12 +335,10 @@ pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, tri
 
                                                     if ui
                                                         .add(open_btn)
-                                                        .on_hover_text(
-                                                            "Switch to and launch this project",
-                                                        )
+                                                        .on_hover_text("Open in This Window")
                                                         .clicked()
                                                     {
-                                                        project_to_launch = Some(ws.clone());
+                                                        project_to_open = Some(ws.clone());
                                                     }
                                                 },
                                             );
@@ -286,14 +379,22 @@ pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, tri
                 });
         });
 
-    if let Some(id) = project_to_delete {
-        app.workspace_store.remove(id);
+    if let Some(ix) = session_to_switch {
+        app.switch_session(ix);
+        app.project_picker_open = false;
     }
 
-    if let Some(ws) = project_to_launch {
-        app.load_workspace(&ws);
-        app.save_current_workspace();
-        app.restart_current_source();
+    if let Some(ix) = session_to_close {
+        app.close_session(ix);
+    }
+
+    if let Some(id) = project_to_delete {
+        app.workspace_store.remove(id);
+        app.workspace_mgr.store = app.workspace_store.clone();
+    }
+
+    if let Some(ws) = project_to_open {
+        app.open_or_switch_workspace(&ws);
         app.project_picker_open = false;
     }
 
@@ -306,12 +407,15 @@ pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, tri
                 .file_name()
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_else(|| "Workspace".to_string());
-            app.project_name_input = folder_name;
-            app.source_config.source_type = SourceType::Process;
-            app.source_config.working_dir = path_str;
-            app.source_config.command_str.clear();
-            app.save_current_workspace();
-            app.restart_current_source();
+
+            let ws = Workspace::new(
+                folder_name,
+                WorkspaceLocation::Local {
+                    working_dir: path_str,
+                },
+                SourceType::Process,
+            );
+            app.open_or_switch_workspace(&ws);
         }
     }
 

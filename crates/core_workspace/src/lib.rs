@@ -1,5 +1,10 @@
 pub mod environment;
+pub mod manager;
+pub mod session;
+
 pub use environment::{load_workspace_environment, parse_dot_env, EnvLoadStatus};
+pub use manager::MultiWorkspaceManager;
+pub use session::{SourceConfig, SourceType, WorkspaceSession, WslConfig, WslSubMode};
 
 #[allow(unused_imports)]
 use anyhow::Context;
@@ -22,7 +27,7 @@ pub struct Workspace {
     pub id: Uuid,
     pub name: String,
     pub location: WorkspaceLocation,
-    pub source_type: String, // "process", "file", "wsl"
+    pub source_type: SourceType,
     pub command_str: String,
     pub file_path: String,
     pub last_query: String,
@@ -35,13 +40,13 @@ impl Workspace {
     pub fn new(
         name: impl Into<String>,
         location: WorkspaceLocation,
-        source_type: impl Into<String>,
+        source_type: SourceType,
     ) -> Self {
         Self {
             id: Uuid::new_v4(),
             name: name.into(),
             location,
-            source_type: source_type.into(),
+            source_type,
             command_str: String::new(),
             file_path: String::new(),
             last_query: String::new(),
@@ -185,7 +190,7 @@ mod tests {
                 distro: "Ubuntu".to_string(),
                 working_dir: "/home/user/backend".to_string(),
             },
-            "wsl",
+            SourceType::Wsl,
         );
         let id1 = ws1.id;
 
@@ -199,7 +204,7 @@ mod tests {
             WorkspaceLocation::Local {
                 working_dir: "D:\\Projects\\frontend".to_string(),
             },
-            "process",
+            SourceType::Process,
         );
         let id2 = ws2.id;
         store.add_or_update(ws2);
@@ -209,5 +214,91 @@ mod tests {
         store.remove(id2);
         assert_eq!(store.recent_workspaces.len(), 1);
         assert_eq!(store.active_workspace_id, Some(id1));
+    }
+
+    #[tokio::test]
+    async fn test_multi_workspace_manager_lifecycle() {
+        let store = WorkspaceStore::default();
+        let session1 = WorkspaceSession::new_default(100, 50);
+        let id1 = session1.id;
+        let mut mgr = MultiWorkspaceManager::new(session1, store);
+
+        assert_eq!(mgr.sessions.len(), 1);
+        assert_eq!(mgr.active_index, 0);
+        assert_eq!(mgr.active_session().id, id1);
+
+        // Add second session
+        let ws2 = Workspace::new(
+            "test-service-2",
+            WorkspaceLocation::Local {
+                working_dir: "D:\\test\\service2".to_string(),
+            },
+            SourceType::Process,
+        );
+        let rt = tokio::runtime::Handle::current();
+        let idx2 = mgr.open_or_switch_workspace(&ws2, 100, 50, &rt, false);
+        assert_eq!(idx2, 1);
+        assert_eq!(mgr.sessions.len(), 2);
+        assert_eq!(mgr.active_index, 1);
+        assert_eq!(mgr.active_session().name, "test-service-2");
+
+        // Switching between sessions
+        mgr.switch_session(0);
+        assert_eq!(mgr.active_index, 0);
+        assert_eq!(mgr.active_session().id, id1);
+
+        // Cycle sessions
+        mgr.cycle_session(true);
+        assert_eq!(mgr.active_index, 1);
+        mgr.cycle_session(false);
+        assert_eq!(mgr.active_index, 0);
+
+        // Close session 0
+        mgr.close_session(0, 100, 50);
+        assert_eq!(mgr.sessions.len(), 1);
+        assert_eq!(mgr.active_session().name, "test-service-2");
+
+        // Close last remaining session -> should auto-generate clean default session
+        mgr.close_session(0, 100, 50);
+        assert_eq!(mgr.sessions.len(), 1);
+        assert_eq!(mgr.active_index, 0);
+    }
+
+    #[test]
+    fn test_workspace_serde_json_compatibility() {
+        let ws = Workspace::new(
+            "test-app",
+            WorkspaceLocation::Local {
+                working_dir: "C:\\Projects\\app".to_string(),
+            },
+            SourceType::Process,
+        );
+
+        let json = serde_json::to_string(&ws).unwrap();
+        assert!(json.contains("\"source_type\":\"process\""));
+
+        let deserialized: Workspace = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.source_type, SourceType::Process);
+        assert_eq!(deserialized.name, "test-app");
+
+        // Backward compatibility: parsing legacy json with "wsl" and "file"
+        let legacy_json = r#"{
+            "id": "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
+            "name": "wsl-app",
+            "location": {
+                "Wsl": {
+                    "distro": "Ubuntu",
+                    "working_dir": "/home/user"
+                }
+            },
+            "source_type": "wsl",
+            "command_str": "cargo run",
+            "file_path": "",
+            "last_query": "",
+            "last_opened": "2026-09-09T12:00:00Z",
+            "env_vars": {}
+        }"#;
+        let ws_legacy: Workspace = serde_json::from_str(legacy_json).unwrap();
+        assert_eq!(ws_legacy.source_type, SourceType::Wsl);
     }
 }

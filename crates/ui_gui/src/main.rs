@@ -1,4 +1,5 @@
 mod app;
+pub mod session_view;
 mod ui;
 
 use app::UwuGuiApp;

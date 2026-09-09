@@ -29,8 +29,20 @@ impl WslSource {
     ) -> Self {
         let distro_str = distro.into();
         let source_id = match &mode {
-            WslTargetMode::Command(cmd) => format!("wsl:{}:cmd:{}", distro_str, cmd),
-            WslTargetMode::File(file) => format!("wsl:{}:file:{}", distro_str, file),
+            WslTargetMode::Command(cmd) => {
+                if distro_str.trim().is_empty() {
+                    format!("wsl:default:cmd:{}", cmd)
+                } else {
+                    format!("wsl:{}:cmd:{}", distro_str, cmd)
+                }
+            }
+            WslTargetMode::File(file) => {
+                if distro_str.trim().is_empty() {
+                    format!("wsl:default:file:{}", file)
+                } else {
+                    format!("wsl:{}:file:{}", distro_str, file)
+                }
+            }
         };
         Self {
             distro: distro_str,
@@ -49,7 +61,9 @@ impl LogSource for WslSource {
 
     async fn start_stream(&self, tx: mpsc::Sender<RawLogEntry>) -> Result<()> {
         let mut cmd = Command::new("wsl.exe");
-        cmd.arg("-d").arg(&self.distro);
+        if !self.distro.trim().is_empty() {
+            cmd.arg("-d").arg(&self.distro);
+        }
 
         if let Some(dir) = &self.working_dir {
             if !dir.trim().is_empty() {
@@ -154,5 +168,8 @@ mod tests {
 
         let src_file = WslSource::new("Ubuntu", WslTargetMode::File("/var/log/syslog".into()));
         assert_eq!(src_file.name(), "wsl:Ubuntu:file:/var/log/syslog");
+
+        let src_default = WslSource::new("", WslTargetMode::Command("python3 app.py".into()));
+        assert_eq!(src_default.name(), "wsl:default:cmd:python3 app.py");
     }
 }

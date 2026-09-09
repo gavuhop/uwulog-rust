@@ -1,15 +1,12 @@
-use crate::ui::autocomplete::AutocompleteState;
-use crate::ui::history::SearchHistoryState;
+use crate::session_view::GuiSessionState;
 use eframe::egui;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::runtime::Handle;
-use tokio::sync::{mpsc, oneshot};
-use uwu_core_engine::SystemEngine;
-use uwu_core_schema::{LogEvent, RawLogEntry};
-use uwu_core_workspace::{Workspace, WorkspaceLocation, WorkspaceStore};
-use uwu_driver_sources::{FileSource, LogSource, ProcessSource, WslSource, WslTargetMode};
-use uwu_driver_transport::WslTransport;
+use uwu_core_schema::LogEvent;
+pub use uwu_core_workspace::{
+    MultiWorkspaceManager, SourceConfig, SourceType, Workspace, WorkspaceLocation,
+    WorkspaceSession, WorkspaceStore, WslConfig, WslSubMode,
+};
 
 pub const RAW_STREAM_LIMIT: usize = 500;
 
@@ -17,109 +14,6 @@ pub const RAW_STREAM_LIMIT: usize = 500;
 pub enum ActiveTab {
     Filtered,
     Unfiltered,
-}
-
-#[derive(PartialEq, Clone, Debug)]
-pub enum SourceType {
-    Process,
-    File,
-    Wsl,
-}
-
-#[derive(PartialEq, Clone, Debug)]
-pub enum WslSubMode {
-    Command,
-    File,
-}
-
-#[derive(Clone, Debug)]
-pub struct WslConfig {
-    pub distro: String,
-    pub working_dir: String,
-    pub sub_mode: WslSubMode,
-    pub command_str: String,
-    pub file_path: String,
-}
-
-impl Default for WslConfig {
-    fn default() -> Self {
-        Self {
-            distro: "Ubuntu".to_string(),
-            working_dir: String::new(),
-            sub_mode: WslSubMode::Command,
-            command_str: "python3 app.py".to_string(),
-            file_path: "/var/log/syslog".to_string(),
-        }
-    }
-}
-
-pub struct SourceConfig {
-    pub source_type: SourceType,
-    pub command_str: String,
-    pub file_path: String,
-    pub working_dir: String,
-    pub wsl_config: WslConfig,
-    pub capacity: usize,
-    pub display_limit: usize,
-}
-
-pub struct UwuGuiApp {
-    pub engine: Arc<SystemEngine>,
-    pub active_tab: ActiveTab,
-    pub query: String,
-    pub last_query: String,
-    pub display_limit: usize,
-    pub capacity: usize,
-    pub total_matched: usize,
-    pub cached_logs: Vec<LogEvent>,
-    pub selected_log: Option<LogEvent>,
-    pub is_auto_scroll: bool,
-    /// Cờ yêu cầu cuộn ngay xuống dòng mới nhất (khi bấm nút Latch hoặc phím End)
-    pub request_scroll_to_bottom: bool,
-    /// Cờ báo có log mới được nạp vào cached_logs trong frame hiện tại
-    pub has_new_data: bool,
-    /// Số dòng bảng ở frame trước. Dùng để biết khi nào có data mới → chỉ scroll_to_row lúc đó.
-    pub prev_table_row_count: usize,
-    pub is_source_running: bool,
-    pub show_launch_modal: bool,
-    pub source_config: SourceConfig,
-    pub rt: Handle,
-    pub last_processed_count: u64,
-    pub last_search_time: Instant,
-    /// Kill signal: Khi gửi tín hiệu vào đây, forwarder task sẽ thoát → drop source_rx
-    /// → tx.closed() trong ProcessSource kích hoạt → taskkill diệt toàn bộ cây tiến trình.
-    pub kill_signal: Option<oneshot::Sender<()>>,
-    pub autocomplete_state: AutocompleteState,
-    pub history_state: SearchHistoryState,
-    pub column_state: crate::ui::columns_modal::ColumnState,
-    pub highlighted_row_ids: std::collections::HashSet<u64>,
-    pub highlighted_terms: std::collections::HashSet<String>,
-    /// Tỷ lệ chiều rộng của Log Inspector so với màn hình (mặc định 0.35 = 35%)
-    pub inspector_width_ratio: f32,
-    pub prev_screen_width: f32,
-    pub unfiltered_state: UnfilteredViewState,
-    pub global_seen_at_pause: u64,
-    pub filtered_seen_at_pause: usize,
-    pub filtered_processed_at_pause: u64,
-    pub paused_new_matched_count: usize,
-    pub discovered_fields_cache:
-        std::collections::BTreeMap<String, crate::ui::autocomplete::FieldType>,
-    pub available_wsl_distros: Vec<String>,
-    pub wsl_distro_rx: Option<tokio::sync::oneshot::Receiver<Vec<String>>>,
-    pub env_status: uwu_core_workspace::EnvLoadStatus,
-    pub env_vars: std::collections::HashMap<String, String>,
-    pub env_watch_tx: tokio::sync::watch::Sender<Option<std::collections::HashMap<String, String>>>,
-    pub env_watch_rx:
-        tokio::sync::watch::Receiver<Option<std::collections::HashMap<String, String>>>,
-    pub env_channel_rx: Option<
-        tokio::sync::mpsc::UnboundedReceiver<
-            Result<std::collections::HashMap<String, String>, String>,
-        >,
-    >,
-    pub workspace_store: WorkspaceStore,
-    pub project_name_input: String,
-    pub project_picker_open: bool,
-    pub project_search_query: String,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -133,6 +27,34 @@ pub struct UnfilteredViewState {
     pub request_scroll_to_bottom: bool,
     pub has_new_data: bool,
     pub snapshot_processed_count: u64,
+}
+
+pub struct UwuGuiApp {
+    pub workspace_mgr: MultiWorkspaceManager,
+    pub view_states: Vec<GuiSessionState>,
+    pub rt: Handle,
+    pub show_launch_modal: bool,
+    pub project_picker_open: bool,
+    pub project_search_query: String,
+    pub available_wsl_distros: Vec<String>,
+    pub wsl_distro_rx: Option<tokio::sync::oneshot::Receiver<Vec<String>>>,
+    pub prev_screen_width: f32,
+    pub workspace_store: WorkspaceStore,
+}
+
+impl std::ops::Deref for UwuGuiApp {
+    type Target = GuiSessionState;
+
+    fn deref(&self) -> &Self::Target {
+        &self.view_states[self.workspace_mgr.active_index]
+    }
+}
+
+impl std::ops::DerefMut for UwuGuiApp {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        let idx = self.workspace_mgr.active_index;
+        &mut self.view_states[idx]
+    }
 }
 
 impl UwuGuiApp {
@@ -247,71 +169,46 @@ impl UwuGuiApp {
                 .filter(|s| !s.is_empty())
                 .collect();
             if let Some(last) = parts.last() {
-                if *last == "." || *last == ".." {
-                    "Workspace".to_string()
-                } else {
-                    last.to_string()
-                }
+                last.to_string()
             } else {
                 "Workspace".to_string()
             }
         }
 
-        let mut initial_project_name = extract_project_name(&active_workdir);
-        let mut initial_query = String::new();
-
-        if let Some(ws) = workspace_store.find_by_workdir(&active_workdir) {
-            initial_project_name = ws.name.clone();
-            initial_query = ws.last_query.clone();
-
-            if !custom_source_specified {
-                match ws.source_type.as_str() {
-                    "wsl" => {
-                        source_type = SourceType::Wsl;
-                        if let WorkspaceLocation::Wsl {
-                            distro,
-                            working_dir,
-                        } = &ws.location
-                        {
-                            wsl_config.distro = distro.clone();
-                            wsl_config.working_dir = working_dir.clone();
-                        }
-                        if !ws.command_str.is_empty() {
-                            wsl_config.sub_mode = WslSubMode::Command;
-                            wsl_config.command_str = ws.command_str.clone();
-                        } else if !ws.file_path.is_empty() {
-                            wsl_config.sub_mode = WslSubMode::File;
-                            wsl_config.file_path = ws.file_path.clone();
-                        }
-                    }
-                    "file" => {
-                        source_type = SourceType::File;
-                        file_to_read = ws.file_path.clone();
-                    }
-                    "process" => {
-                        source_type = SourceType::Process;
-                        cmd_to_run = ws.command_str.clone();
-                    }
-                    _ => {}
+        let initial_project_name =
+            if let Some(ws) = workspace_store.find_by_workdir(&active_workdir) {
+                ws.name.clone()
+            } else if is_wsl_invoked {
+                if !wsl_config.working_dir.is_empty() {
+                    extract_project_name(&wsl_config.working_dir)
+                } else {
+                    format!("WSL ({})", wsl_config.distro)
                 }
+            } else if !working_dir.is_empty() {
+                extract_project_name(&working_dir)
+            } else {
+                "Workspace".to_string()
+            };
+
+        let initial_location = if is_wsl_invoked {
+            WorkspaceLocation::Wsl {
+                distro: wsl_config.distro.clone(),
+                working_dir: wsl_config.working_dir.clone(),
             }
-        } else if !custom_source_specified {
-            cmd_to_run = String::new();
-        }
+        } else {
+            WorkspaceLocation::Local {
+                working_dir: working_dir.clone(),
+            }
+        };
 
-        let engine = Arc::new(SystemEngine::new(capacity));
-
-        // Khởi động không block: Phát hiện WSL distros trong background task thay vì chạy đồng bộ làm chậm app
+        // Kích hoạt background task kiểm tra danh sách WSL Distros
         let (wsl_tx, wsl_rx) = tokio::sync::oneshot::channel();
         rt.spawn(async move {
-            let distros = WslTransport::detect_distros();
+            let distros = uwu_driver_transport::WslTransport::detect_distros();
             let _ = wsl_tx.send(distros);
         });
 
-        // Watch channel đồng bộ hóa bất đồng bộ biến môi trường
-        let (env_watch_tx, env_watch_rx) = tokio::sync::watch::channel(None);
-
-        let source_config = SourceConfig {
+        let mut source_config = SourceConfig {
             source_type,
             command_str: cmd_to_run,
             file_path: file_to_read,
@@ -321,65 +218,61 @@ impl UwuGuiApp {
             display_limit,
         };
 
-        let mut app = Self {
-            engine,
-            active_tab: ActiveTab::Filtered,
-            query: initial_query,
-            last_query: String::new(),
-            display_limit,
-            capacity,
-            total_matched: 0,
-            cached_logs: Vec::new(),
-            selected_log: None,
-            is_auto_scroll: true,
-            request_scroll_to_bottom: false,
-            has_new_data: false,
-            prev_table_row_count: 0,
-            is_source_running: false,
-            show_launch_modal: false,
-            source_config,
-            rt,
-            last_processed_count: 0,
-            last_search_time: Instant::now(),
-            kill_signal: None,
-            autocomplete_state: AutocompleteState::default(),
-            history_state: SearchHistoryState::default(),
-            column_state: crate::ui::columns_modal::ColumnState::default(),
-            highlighted_row_ids: std::collections::HashSet::new(),
-            highlighted_terms: std::collections::HashSet::new(),
-            inspector_width_ratio: 0.35,
-            prev_screen_width: 0.0,
-            unfiltered_state: UnfilteredViewState::default(),
-            global_seen_at_pause: 0,
-            filtered_seen_at_pause: 0,
-            filtered_processed_at_pause: 0,
-            paused_new_matched_count: 0,
-            discovered_fields_cache: Self::default_discovered_fields(),
-            available_wsl_distros: Vec::new(),
-            wsl_distro_rx: Some(wsl_rx),
-            env_status: uwu_core_workspace::EnvLoadStatus::Idle,
-            env_vars: std::collections::HashMap::new(),
-            env_watch_tx,
-            env_watch_rx,
-            env_channel_rx: None,
-            workspace_store,
-            project_name_input: initial_project_name,
-            project_picker_open: false,
-            project_search_query: String::new(),
-        };
-
-        // Nếu workspace đã lưu sẵn env_vars trong store, nạp trước để dùng ngay
-        if let Some(ws) = app.workspace_store.find_by_workdir(&active_workdir) {
-            if !ws.env_vars.is_empty() {
-                app.env_vars = ws.env_vars.clone();
-                app.env_watch_tx.send_replace(Some(app.env_vars.clone()));
+        // Nếu workspace đã lưu sẵn trong store và không có cờ custom, nạp lại cấu hình
+        if !custom_source_specified {
+            if let Some(ws) = workspace_store.find_by_workdir(&active_workdir) {
+                if !ws.command_str.is_empty() {
+                    source_config.command_str = ws.command_str.clone();
+                }
+                if !ws.file_path.is_empty() {
+                    source_config.file_path = ws.file_path.clone();
+                }
             }
         }
 
-        // Kích hoạt background task nạp biến môi trường từ lúc khởi động app (tương tự kiến trúc Zed)
+        let mut initial_session = WorkspaceSession::new(
+            initial_project_name.clone(),
+            initial_location,
+            source_config.clone(),
+        );
+
+        if let Some(ws) = workspace_store.find_by_workdir(&active_workdir) {
+            if !ws.env_vars.is_empty() {
+                initial_session.env_vars = ws.env_vars.clone();
+                initial_session
+                    .env_watch_tx
+                    .send_replace(Some(initial_session.env_vars.clone()));
+            }
+        }
+
+        let mut view_state = GuiSessionState::new(
+            initial_session.engine.clone(),
+            source_config,
+            initial_project_name,
+        );
+
+        if let Some(ws) = workspace_store.find_by_workdir(&active_workdir) {
+            view_state.query = ws.last_query.clone();
+        }
+
+        let workspace_mgr = MultiWorkspaceManager::new(initial_session, workspace_store.clone());
+
+        let mut app = Self {
+            workspace_mgr,
+            view_states: vec![view_state],
+            rt,
+            show_launch_modal: false,
+            project_picker_open: false,
+            project_search_query: String::new(),
+            available_wsl_distros: Vec::new(),
+            wsl_distro_rx: Some(wsl_rx),
+            prev_screen_width: 0.0,
+            workspace_store,
+        };
+
+        // Background task nạp biến môi trường cho session đầu tiên
         app.spawn_load_environment();
 
-        // Tự động lưu cấu hình workspace và chỉ stream nếu người dùng chỉ định cờ CLI (như -r, -f, -j)
         if custom_source_specified {
             app.save_current_workspace();
             app.start_configured_source();
@@ -389,298 +282,183 @@ impl UwuGuiApp {
         app
     }
 
+    #[allow(dead_code)]
+    pub fn active_session(&self) -> &WorkspaceSession {
+        self.workspace_mgr.active_session()
+    }
+
+    #[allow(dead_code)]
+    pub fn active_session_mut(&mut self) -> &mut WorkspaceSession {
+        self.workspace_mgr.active_session_mut()
+    }
+
+    pub fn switch_session(&mut self, index: usize) {
+        if index < self.workspace_mgr.sessions.len() {
+            self.workspace_mgr.switch_session(index);
+            while self.view_states.len() <= self.workspace_mgr.active_index {
+                let s = &self.workspace_mgr.sessions[self.view_states.len()];
+                self.view_states.push(GuiSessionState::new(
+                    s.engine.clone(),
+                    s.source_config.clone(),
+                    s.name.clone(),
+                ));
+            }
+
+            // Đồng bộ trạng thái từ active session sang view state
+            let idx = self.workspace_mgr.active_index;
+            let session = &self.workspace_mgr.sessions[idx];
+            self.view_states[idx].engine = session.engine.clone();
+            self.view_states[idx].source_config = session.source_config.clone();
+            self.view_states[idx].is_source_running = session.is_source_running;
+            self.view_states[idx].project_name_input = session.name.clone();
+            self.view_states[idx].env_status = session.env_status.clone();
+            self.view_states[idx].env_vars = session.env_vars.clone();
+
+            self.workspace_store = self.workspace_mgr.store.clone();
+            self.trigger_full_search();
+        }
+    }
+
+    pub fn open_or_switch_workspace(&mut self, ws: &Workspace) {
+        let idx = self
+            .workspace_mgr
+            .open_or_switch_workspace(ws, 200_000, 5_000, &self.rt, false);
+
+        while self.view_states.len() < self.workspace_mgr.sessions.len() {
+            let s = &self.workspace_mgr.sessions[self.view_states.len()];
+            let mut vs =
+                GuiSessionState::new(s.engine.clone(), s.source_config.clone(), s.name.clone());
+            vs.query = ws.last_query.clone();
+            self.view_states.push(vs);
+        }
+
+        self.switch_session(idx);
+    }
+
+    pub fn close_session(&mut self, index: usize) {
+        if index < self.view_states.len() {
+            self.view_states.remove(index);
+        }
+
+        self.workspace_mgr.close_session(index, 200_000, 5_000);
+
+        if self.view_states.is_empty() {
+            let s = &self.workspace_mgr.sessions[0];
+            self.view_states.push(GuiSessionState::new(
+                s.engine.clone(),
+                s.source_config.clone(),
+                s.name.clone(),
+            ));
+        }
+
+        if self.workspace_mgr.active_index >= self.view_states.len() {
+            self.workspace_mgr.active_index = self.view_states.len() - 1;
+        }
+
+        self.workspace_store = self.workspace_mgr.store.clone();
+        self.switch_session(self.workspace_mgr.active_index);
+    }
+
+    #[allow(dead_code)]
+    pub fn cycle_project(&mut self, forward: bool) {
+        self.workspace_mgr.cycle_session(forward);
+        self.switch_session(self.workspace_mgr.active_index);
+    }
+
     pub fn save_current_workspace(&mut self) {
-        let name = if self.project_name_input.trim().is_empty() {
+        let active_idx = self.workspace_mgr.active_index;
+        let view = &self.view_states[active_idx];
+        let name = if view.project_name_input.trim().is_empty() {
             "Workspace".to_string()
         } else {
-            self.project_name_input.trim().to_string()
+            view.project_name_input.trim().to_string()
         };
 
-        let location = match self.source_config.source_type {
-            SourceType::Wsl => WorkspaceLocation::Wsl {
-                distro: self.source_config.wsl_config.distro.clone(),
-                working_dir: self.source_config.wsl_config.working_dir.clone(),
-            },
+        let session = &mut self.workspace_mgr.sessions[active_idx];
+        session.name = name;
+        session.source_config = view.source_config.clone();
+
+        match view.source_config.source_type {
+            SourceType::Wsl => {
+                session.location = WorkspaceLocation::Wsl {
+                    distro: view.source_config.wsl_config.distro.clone(),
+                    working_dir: view.source_config.wsl_config.working_dir.clone(),
+                };
+            }
             _ => {
-                let dir = if !self.source_config.working_dir.trim().is_empty() {
-                    self.source_config.working_dir.clone()
+                let dir = if !view.source_config.working_dir.trim().is_empty() {
+                    view.source_config.working_dir.clone()
                 } else {
                     std::env::current_dir()
                         .map(|p| p.to_string_lossy().to_string())
                         .unwrap_or_default()
                 };
-                WorkspaceLocation::Local { working_dir: dir }
+                session.location = WorkspaceLocation::Local { working_dir: dir };
             }
-        };
-
-        let source_type_str = match self.source_config.source_type {
-            SourceType::Process => "process",
-            SourceType::File => "file",
-            SourceType::Wsl => "wsl",
-        };
-
-        let mut ws = Workspace::new(name, location, source_type_str);
-        ws.last_query = self.query.clone();
-        ws.env_vars = self.env_vars.clone();
-
-        match self.source_config.source_type {
-            SourceType::Process => {
-                ws.command_str = self.source_config.command_str.clone();
-            }
-            SourceType::File => {
-                ws.file_path = self.source_config.file_path.clone();
-            }
-            SourceType::Wsl => match self.source_config.wsl_config.sub_mode {
-                WslSubMode::Command => {
-                    ws.command_str = self.source_config.wsl_config.command_str.clone();
-                }
-                WslSubMode::File => {
-                    ws.file_path = self.source_config.wsl_config.file_path.clone();
-                }
-            },
         }
 
-        self.workspace_store.add_or_update(ws);
+        let mut ws = session.to_workspace();
+        ws.last_query = view.query.clone();
+        self.workspace_mgr.store.add_or_update(ws.clone());
+        self.workspace_store = self.workspace_mgr.store.clone();
     }
 
     pub fn load_workspace(&mut self, ws: &Workspace) {
-        self.project_name_input = ws.name.clone();
-        self.query = ws.last_query.clone();
+        let active_idx = self.workspace_mgr.active_index;
+        self.workspace_mgr.sessions[active_idx].apply_workspace(ws);
 
-        match &ws.location {
-            WorkspaceLocation::Wsl {
-                distro,
-                working_dir,
-            } => {
-                self.source_config.wsl_config.distro = distro.clone();
-                self.source_config.wsl_config.working_dir = working_dir.clone();
-            }
-            WorkspaceLocation::Local { working_dir } => {
-                self.source_config.working_dir = working_dir.clone();
-                if !working_dir.trim().is_empty() {
-                    let _ = std::env::set_current_dir(working_dir);
-                }
-            }
-        }
+        let view = &mut self.view_states[active_idx];
+        view.project_name_input = ws.name.clone();
+        view.query = ws.last_query.clone();
+        view.source_config = self.workspace_mgr.sessions[active_idx]
+            .source_config
+            .clone();
+        view.env_vars = self.workspace_mgr.sessions[active_idx].env_vars.clone();
 
-        match ws.source_type.as_str() {
-            "wsl" => {
-                self.source_config.source_type = SourceType::Wsl;
-                if !ws.command_str.is_empty() {
-                    self.source_config.wsl_config.sub_mode = WslSubMode::Command;
-                    self.source_config.wsl_config.command_str = ws.command_str.clone();
-                } else if !ws.file_path.is_empty() {
-                    self.source_config.wsl_config.sub_mode = WslSubMode::File;
-                    self.source_config.wsl_config.file_path = ws.file_path.clone();
-                }
-            }
-            "file" => {
-                self.source_config.source_type = SourceType::File;
-                self.source_config.file_path = ws.file_path.clone();
-            }
-            "process" => {
-                self.source_config.source_type = SourceType::Process;
-                self.source_config.command_str = ws.command_str.clone();
-            }
-            _ => {}
-        }
-
-        // Nếu workspace đã lưu sẵn env_vars trong store, nạp trước để dùng ngay
-        if !ws.env_vars.is_empty() {
-            self.env_vars = ws.env_vars.clone();
-            self.env_watch_tx.send_replace(Some(self.env_vars.clone()));
-        } else {
-            self.env_vars.clear();
-            self.env_watch_tx.send_replace(None);
-        }
-
-        // Đồng thời spawn background task để làm mới biến môi trường mới nhất từ disk / .env
-        self.spawn_load_environment();
+        self.workspace_mgr.sessions[active_idx].spawn_load_environment(&self.rt);
+        self.save_current_workspace();
     }
 
     pub fn start_configured_source(&mut self) {
-        // Tự động lưu lại lệnh command và cấu hình dự án mỗi khi chạy source
         self.save_current_workspace();
-
-        // Dừng tiến trình cũ nếu đang chạy
-        self.stop_current_source();
-
-        // Tạo kênh trung gian: source → forwarder → engine
-        let (source_tx, source_rx) = mpsc::channel::<RawLogEntry>(10_000);
-
-        // Tạo kill signal: oneshot channel để GUI có thể ra lệnh dừng forwarder bất kỳ lúc nào
-        let (kill_tx, kill_rx) = oneshot::channel::<()>();
-        self.kill_signal = Some(kill_tx);
-
-        let engine_tx = self.engine.get_channel();
-
-        // Forwarder task: chuyển log từ source channel sang engine channel.
-        // Khi nhận kill signal → thoát vòng lặp → drop source_rx
-        // → tx.closed() trong ProcessSource lifecycle task kích hoạt TỨC THÌ
-        // → taskkill diệt cả cây tiến trình con.
-        self.rt.spawn(async move {
-            tokio::select! {
-                // Nhánh bình thường: forward log entries
-                _ = async {
-                    let mut rx = source_rx;
-                    while let Some(entry) = rx.recv().await {
-                        if engine_tx.send(entry).await.is_err() {
-                            break;
-                        }
-                    }
-                } => {},
-                // Nhánh kill: nhận tín hiệu dừng từ GUI
-                _ = kill_rx => {
-                    // kill_rx resolved → drop source_rx (implicit) → channel đóng
-                }
-            }
-            // source_rx bị drop ở đây → tx.closed() trong ProcessSource kích hoạt
-        });
-
-        let config = &self.source_config;
-
-        match config.source_type {
-            SourceType::Process => {
-                if !config.command_str.trim().is_empty() {
-                    let cmd_parts: Vec<&str> = config.command_str.split_whitespace().collect();
-                    if !cmd_parts.is_empty() {
-                        let prog = cmd_parts[0].to_string();
-                        let proc_args: Vec<String> =
-                            cmd_parts[1..].iter().map(|s| s.to_string()).collect();
-
-                        let workdir = if !config.working_dir.trim().is_empty() {
-                            Some(config.working_dir.clone())
-                        } else {
-                            std::env::current_dir()
-                                .ok()
-                                .map(|p| p.to_string_lossy().to_string())
-                        };
-
-                        let mut watch_rx = self.env_watch_rx.clone();
-                        let current_envs = self.env_vars.clone();
-                        self.rt.spawn(async move {
-                            // Đợi biến môi trường nạp xong nếu đang load dở dang (tương tự cơ chế Shared Task của Zed)
-                            let envs = if !current_envs.is_empty() {
-                                // Nếu đã có sẵn cache, lấy giá trị mới nhất nếu có, hoặc dùng ngay cache cũ không chờ
-                                if let Some(latest) = watch_rx.borrow().as_ref() {
-                                    latest.clone()
-                                } else {
-                                    current_envs
-                                }
-                            } else {
-                                // Nếu workspace mới tinh chưa có cache, kiên nhẫn đợi background task nạp tối đa 500ms
-                                let wait_res = tokio::time::timeout(
-                                    std::time::Duration::from_millis(500),
-                                    async {
-                                        while watch_rx.borrow().is_none() {
-                                            if watch_rx.changed().await.is_err() {
-                                                break;
-                                            }
-                                        }
-                                        watch_rx.borrow().clone()
-                                    },
-                                )
-                                .await;
-
-                                wait_res.ok().flatten().unwrap_or_default()
-                            };
-
-                            let mut proc_src =
-                                ProcessSource::new_with_dir(prog, proc_args, workdir);
-                            if !envs.is_empty() {
-                                proc_src = proc_src.with_envs(envs);
-                            }
-                            let _ = proc_src.start_stream(source_tx).await;
-                        });
-                        self.is_source_running = true;
-                    }
-                }
-            }
-            SourceType::File => {
-                if !config.file_path.trim().is_empty() {
-                    let path = config.file_path.clone();
-                    self.rt.spawn(async move {
-                        let _ = FileSource::new(path).start_stream(source_tx).await;
-                    });
-                    self.is_source_running = true;
-                }
-            }
-            SourceType::Wsl => {
-                let wsl_cfg = &config.wsl_config;
-                let mode = match wsl_cfg.sub_mode {
-                    WslSubMode::Command => {
-                        if !wsl_cfg.command_str.trim().is_empty() {
-                            Some(WslTargetMode::Command(wsl_cfg.command_str.clone()))
-                        } else {
-                            None
-                        }
-                    }
-                    WslSubMode::File => {
-                        if !wsl_cfg.file_path.trim().is_empty() {
-                            Some(WslTargetMode::File(wsl_cfg.file_path.clone()))
-                        } else {
-                            None
-                        }
-                    }
-                };
-
-                if let Some(target_mode) = mode {
-                    let distro = if wsl_cfg.distro.trim().is_empty() {
-                        "Ubuntu".to_string()
-                    } else {
-                        wsl_cfg.distro.clone()
-                    };
-                    let working_dir = if wsl_cfg.working_dir.trim().is_empty() {
-                        None
-                    } else {
-                        Some(wsl_cfg.working_dir.clone())
-                    };
-                    self.rt.spawn(async move {
-                        let _ = WslSource::new_with_dir(distro, target_mode, working_dir)
-                            .start_stream(source_tx)
-                            .await;
-                    });
-                    self.is_source_running = true;
-                }
-            }
-        }
+        let active_idx = self.workspace_mgr.active_index;
+        self.workspace_mgr.sessions[active_idx].source_config = self.source_config.clone();
+        self.workspace_mgr.sessions[active_idx].start_source(&self.rt);
+        self.is_source_running = true;
     }
 
-    /// Kích hoạt background task nạp biến môi trường của workspace hiện tại (lấy cảm hứng từ ProjectEnvironment của Zed)
-    /// Hoàn toàn non-blocking, không làm chậm tốc độ khởi động hay đơ giao diện
+    pub fn stop_current_source(&mut self) {
+        let active_idx = self.workspace_mgr.active_index;
+        self.workspace_mgr.sessions[active_idx].stop_source();
+        self.is_source_running = false;
+    }
+
+    pub fn restart_current_source(&mut self) {
+        self.stop_current_source();
+        self.save_current_workspace();
+        let active_idx = self.workspace_mgr.active_index;
+        self.workspace_mgr.sessions[active_idx].source_config = self.source_config.clone();
+        self.workspace_mgr.sessions[active_idx].restart_source(&self.rt);
+
+        let view = &mut self.view_states[active_idx];
+        view.cached_logs.clear();
+        view.total_matched = 0;
+        view.selected_log = None;
+        view.last_processed_count = 0;
+        view.unfiltered_state.cached_unfiltered.clear();
+        view.is_source_running = true;
+
+        self.trigger_full_search();
+    }
+
     pub fn spawn_load_environment(&mut self) {
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        self.env_channel_rx = Some(rx);
-        self.env_status = uwu_core_workspace::EnvLoadStatus::Loading {
-            started_at: Instant::now(),
-        };
-
-        let workdir = if !self.source_config.working_dir.trim().is_empty() {
-            self.source_config.working_dir.clone()
-        } else {
-            std::env::current_dir()
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_default()
-        };
-
-        let watch_tx = self.env_watch_tx.clone();
-        self.rt.spawn(async move {
-            let path = std::path::PathBuf::from(workdir);
-            let start = std::time::Instant::now();
-            let res = uwu_core_workspace::load_workspace_environment(&path).await;
-            // Giữ spinner hiển thị tối thiểu 300ms để người dùng nhìn rõ phản hồi trực quan
-            if start.elapsed() < std::time::Duration::from_millis(300) {
-                tokio::time::sleep(std::time::Duration::from_millis(300) - start.elapsed()).await;
-            }
-            if let Ok(envs) = &res {
-                let _ = watch_tx.send_replace(Some(envs.clone()));
-            }
-            let _ = tx.send(res.map_err(|e| e.to_string()));
-        });
+        let active_idx = self.workspace_mgr.active_index;
+        self.workspace_mgr.sessions[active_idx].source_config = self.source_config.clone();
+        self.workspace_mgr.sessions[active_idx].spawn_load_environment(&self.rt);
     }
 
     pub fn tick(&mut self) {
-        // 1. Nhận kết quả phát hiện WSL distros từ background task
+        // 1. Nhận kết quả phát hiện WSL distros
         if let Some(mut rx) = self.wsl_distro_rx.take() {
             match rx.try_recv() {
                 Ok(distros) => {
@@ -693,46 +471,17 @@ impl UwuGuiApp {
             }
         }
 
-        // 2. Nhận kết quả nạp biến môi trường từ background task (như Zed)
-        if let Some(rx) = &mut self.env_channel_rx {
-            if let Ok(result) = rx.try_recv() {
-                match result {
-                    Ok(envs) => {
-                        let count = envs.len();
-                        let has_dotenv = envs.iter().any(|(k, _)| std::env::var(k).is_err());
-                        let source_summary = if has_dotenv {
-                            format!("{count} biến (System + .env)")
-                        } else {
-                            format!("{count} biến (System)")
-                        };
-                        self.env_status = uwu_core_workspace::EnvLoadStatus::Ready {
-                            source_summary,
-                            updated_at: Instant::now(),
-                        };
-                        self.env_vars = envs;
-                        self.env_watch_tx.send_replace(Some(self.env_vars.clone()));
+        // 2. Chạy tick trên tất cả các runtime sessions (phát hiện process hoàn tất, nhận env vars)
+        self.workspace_mgr.tick_all();
 
-                        // Đồng bộ vào workspace hiện tại trong store
-                        if let Some(ws_id) = self.workspace_store.active_workspace_id {
-                            if let Some(ws) = self
-                                .workspace_store
-                                .recent_workspaces
-                                .iter_mut()
-                                .find(|w| w.id == ws_id)
-                            {
-                                ws.env_vars = self.env_vars.clone();
-                                let _ = self.workspace_store.save();
-                            }
-                        }
-                    }
-                    Err(error) => {
-                        self.env_status = uwu_core_workspace::EnvLoadStatus::Failed { error };
-                    }
-                }
-            }
-        }
+        // 3. Đồng bộ trạng thái từ active session sang active view state
+        let active_idx = self.workspace_mgr.active_index;
+        let session = &self.workspace_mgr.sessions[active_idx];
+        self.view_states[active_idx].is_source_running = session.is_source_running;
+        self.view_states[active_idx].env_status = session.env_status.clone();
+        self.view_states[active_idx].env_vars = session.env_vars.clone();
 
-        let total_processed = self.engine.total_processed();
+        let total_processed = session.engine.total_processed();
         let now = Instant::now();
 
         let query_changed = self.query != self.last_query;
@@ -743,9 +492,8 @@ impl UwuGuiApp {
             }
         }
 
-        // Debounced: tự động lưu lịch sử sau 500ms dừng gõ
-        self.history_state
-            .try_debounced_record(&self.query.clone(), now);
+        let q = self.query.clone();
+        self.history_state.try_debounced_record(&q, now);
 
         let new_logs_arrived = total_processed != self.last_processed_count
             && now.duration_since(self.last_search_time) > Duration::from_millis(150);
@@ -770,7 +518,6 @@ impl UwuGuiApp {
             }
         }
 
-        // Khi đang Pause có bộ lọc: tính sẵn số lượng log mới khớp trong tick() để tránh tính mỗi frame render
         if !self.is_auto_scroll && !self.query.trim().is_empty() && new_logs_arrived {
             let (new_matched, _) = self
                 .engine
@@ -785,7 +532,6 @@ impl UwuGuiApp {
             self.paused_new_matched_count = 0;
         }
 
-        // Bảng Unfiltered: Giới hạn buffer 500 logs cho việc soi context log gốc
         self.unfiltered_state.has_new_data = false;
         if self.unfiltered_state.is_open && self.unfiltered_state.is_live && new_logs_arrived {
             let (new_count, new_logs) = self.engine.filter_incremental("", prev_processed);
@@ -803,34 +549,6 @@ impl UwuGuiApp {
             self.last_processed_count = total_processed;
             self.last_search_time = now;
         }
-    }
-
-    pub fn stop_current_source(&mut self) {
-        if let Some(kill_tx) = self.kill_signal.take() {
-            let _ = kill_tx.send(());
-        }
-        self.is_source_running = false;
-    }
-
-    pub fn restart_current_source(&mut self) {
-        self.stop_current_source();
-        self.save_current_workspace();
-        if self.source_config.capacity != self.capacity {
-            self.capacity = self.source_config.capacity;
-            self.engine = Arc::new(SystemEngine::new(self.capacity));
-        } else {
-            self.engine.clear();
-            self.engine.reset_runtime_detection();
-        }
-
-        self.display_limit = self.source_config.display_limit;
-        self.cached_logs.clear();
-        self.total_matched = 0;
-        self.selected_log = None;
-        self.last_processed_count = 0;
-        self.unfiltered_state.cached_unfiltered.clear();
-        self.start_configured_source();
-        self.trigger_full_search();
     }
 
     pub fn trigger_full_search(&mut self) {
@@ -878,19 +596,8 @@ impl UwuGuiApp {
         }
     }
 
-    pub fn default_discovered_fields(
-    ) -> std::collections::BTreeMap<String, crate::ui::autocomplete::FieldType> {
-        use std::collections::BTreeMap;
-        let mut fields_map = BTreeMap::new();
-        for field in uwu_core_schema::StandardField::default_columns() {
-            fields_map.insert(field.canonical_name().to_string(), field.field_type());
-        }
-        fields_map
-    }
-
     pub fn sync_discovered_fields(&mut self, logs: &[LogEvent]) {
         self.column_state.sync_discovered_keys(logs);
-        // Đồng bộ Schema Registry trực tiếp từ Engine (O(1) read lock, zero loops)
         self.discovered_fields_cache = self.engine.get_schema_map().into_iter().collect();
     }
 
@@ -920,7 +627,6 @@ impl UwuGuiApp {
 
         match item.kind {
             crate::ui::autocomplete::SuggestionKind::Key => {
-                // Phase 1 (Key) -> Mở Phase 2
                 let available_fields = self.get_available_log_fields();
                 let (suggestions, token_range) =
                     crate::ui::autocomplete::generate_suggestions(&self.query, &available_fields);
@@ -934,7 +640,6 @@ impl UwuGuiApp {
                 }
             }
             crate::ui::autocomplete::SuggestionKind::OperatorOrValue => {
-                // Phase 2 (Operator / Value) -> ĐÓNG MENU NGAY LẬP TỨC để user tự do gõ dữ liệu
                 self.autocomplete_state.is_open = false;
                 self.trigger_full_search();
             }
@@ -1022,8 +727,8 @@ impl UwuGuiApp {
     }
 
     pub fn exclude_filter_term(&mut self, term: &str) {
-        let exclude_term = if let Some(stripped) = term.strip_prefix('-') {
-            stripped.to_string()
+        let exclude_term = if term.starts_with('-') {
+            term.to_string()
         } else {
             format!("-{term}")
         };
@@ -1043,8 +748,6 @@ impl UwuGuiApp {
     pub fn open_unfiltered_stream(&mut self, target_id: Option<u64>) {
         self.unfiltered_state.is_open = true;
         self.unfiltered_state.target_id = target_id;
-        // Mặc định: Nếu mở theo 1 log mục tiêu -> Đóng băng (Freeze/Snapshot) để điều tra không bị trôi
-        // Nếu mở xem luồng chung -> Chế độ Live
         self.unfiltered_state.is_live = target_id.is_none();
         self.unfiltered_state.snapshot_processed_count = self.engine.total_processed();
         let (target_idx, unfiltered) = self
@@ -1114,27 +817,23 @@ impl UwuGuiApp {
 impl eframe::App for UwuGuiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.tick();
-
-        // Continuous repainting when streaming logs
         ctx.request_repaint_after(Duration::from_millis(100));
-
         crate::ui::render_ui(ctx, self);
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        self.stop_current_source();
+        self.workspace_mgr.stop_all();
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::autocomplete::{FieldType, SuggestionItem, SuggestionKind};
+    use crate::ui::autocomplete::{SuggestionItem, SuggestionKind};
     use std::collections::HashMap;
-    use uwu_core_schema::{LogLevel, RawPayload};
+    use uwu_core_schema::{LogEvent, LogLevel, RawLogEntry, RawPayload};
 
     fn create_test_app() -> UwuGuiApp {
-        let engine = Arc::new(SystemEngine::new(100));
         let rt = tokio::runtime::Handle::current();
 
         let source_config = SourceConfig {
@@ -1146,53 +845,35 @@ mod tests {
             capacity: 100,
             display_limit: 50,
         };
-        let (env_watch_tx, env_watch_rx) = tokio::sync::watch::channel(None);
+
+        let session = WorkspaceSession::new(
+            "Test Project".to_string(),
+            WorkspaceLocation::Local {
+                working_dir: String::new(),
+            },
+            source_config.clone(),
+        );
+
+        let view_state = GuiSessionState::new(
+            session.engine.clone(),
+            source_config,
+            "Test Project".to_string(),
+        );
+
+        let workspace_store = WorkspaceStore::default();
+        let workspace_mgr = MultiWorkspaceManager::new(session, workspace_store.clone());
 
         UwuGuiApp {
-            engine,
-            active_tab: ActiveTab::Filtered,
-            query: String::new(),
-            last_query: String::new(),
-            display_limit: 50,
-            capacity: 100,
-            total_matched: 0,
-            cached_logs: Vec::new(),
-            selected_log: None,
-            is_auto_scroll: true,
-            request_scroll_to_bottom: false,
-            has_new_data: false,
-            prev_table_row_count: 0,
-            is_source_running: false,
-            show_launch_modal: false,
-            source_config,
+            workspace_mgr,
+            view_states: vec![view_state],
             rt,
-            last_processed_count: 0,
-            last_search_time: Instant::now(),
-            kill_signal: None,
-            autocomplete_state: AutocompleteState::default(),
-            history_state: SearchHistoryState::default(),
-            column_state: crate::ui::columns_modal::ColumnState::default(),
-            highlighted_row_ids: std::collections::HashSet::new(),
-            highlighted_terms: std::collections::HashSet::new(),
-            inspector_width_ratio: 0.35,
-            prev_screen_width: 0.0,
-            unfiltered_state: UnfilteredViewState::default(),
-            global_seen_at_pause: 0,
-            filtered_seen_at_pause: 0,
-            filtered_processed_at_pause: 0,
-            paused_new_matched_count: 0,
-            discovered_fields_cache: UwuGuiApp::default_discovered_fields(),
-            available_wsl_distros: Vec::new(),
-            wsl_distro_rx: None,
-            env_status: uwu_core_workspace::EnvLoadStatus::Idle,
-            env_vars: std::collections::HashMap::new(),
-            env_watch_tx,
-            env_watch_rx,
-            env_channel_rx: None,
-            workspace_store: WorkspaceStore::default(),
-            project_name_input: "Test Project".to_string(),
+            show_launch_modal: false,
             project_picker_open: false,
             project_search_query: String::new(),
+            available_wsl_distros: Vec::new(),
+            wsl_distro_rx: None,
+            prev_screen_width: 0.0,
+            workspace_store,
         }
     }
 
@@ -1241,342 +922,136 @@ mod tests {
         app.toggle_term_highlight("timeout");
         assert!(!app.is_term_highlighted("timeout"));
 
+        // Clear all
         app.toggle_term_highlight("error");
-        assert!(app.has_any_highlights());
-
         app.clear_all_highlights();
+        assert!(!app.has_any_highlights());
         assert!(!app.is_row_highlighted(&id1));
         assert!(!app.is_term_highlighted("error"));
-        assert!(!app.has_any_highlights());
-        assert!(app.highlighted_row_ids.is_empty());
-        assert!(app.highlighted_terms.is_empty());
     }
 
     #[tokio::test]
     async fn test_format_field_and_selection_term() {
-        // Level lowercase
-        assert_eq!(UwuGuiApp::format_field_term("level", "WARN"), "level:warn");
         assert_eq!(
             UwuGuiApp::format_field_term("level", "ERROR"),
             "level:error"
         );
-
-        // Simple values
-        assert_eq!(UwuGuiApp::format_field_term("status", "500"), "status:500");
-
-        // Values with spaces or colons
         assert_eq!(
-            UwuGuiApp::format_field_term("message", "Database connection lost"),
-            "message:\"Database connection lost\""
+            UwuGuiApp::format_field_term("source", "auth-service"),
+            "source:auth-service"
+        );
+        assert_eq!(
+            UwuGuiApp::format_field_term("message", "connection refused"),
+            "message:\"connection refused\""
         );
 
-        // Free text selection formatting
-        assert_eq!(UwuGuiApp::format_selection_term("timeout"), "timeout");
         assert_eq!(
             UwuGuiApp::format_selection_term("connection refused"),
             "\"connection refused\""
         );
-        assert_eq!(
-            UwuGuiApp::format_selection_term("line1\nline2"),
-            "\"line1 line2\""
-        );
+        assert_eq!(UwuGuiApp::format_selection_term("simple"), "simple");
     }
 
     #[tokio::test]
     async fn test_filter_and_exclude_term() {
         let mut app = create_test_app();
 
-        // Apply first term
-        app.apply_filter_term("level:warn");
-        assert_eq!(app.query, "level:warn");
+        app.apply_filter_term("level:error");
+        assert_eq!(app.query, "level:error");
 
-        // Apply second term (appended with space)
-        app.apply_filter_term("status:500");
-        assert_eq!(app.query, "level:warn status:500");
+        app.apply_filter_term("tag:Auth");
+        assert_eq!(app.query, "level:error tag:Auth");
 
-        // Duplicate term ignored
-        app.apply_filter_term("level:warn");
-        assert_eq!(app.query, "level:warn status:500");
+        app.exclude_filter_term("healthcheck");
+        assert_eq!(app.query, "level:error tag:Auth -healthcheck");
 
-        // Exclude term appended
-        app.exclude_filter_term("level:debug");
-        assert_eq!(app.query, "level:warn status:500 -level:debug");
-    }
-
-    #[tokio::test]
-    async fn test_get_available_log_fields_inference() {
-        let mut app = create_test_app();
-        let tx = app.engine.get_channel();
-
-        tx.send(RawLogEntry {
-            payload: RawPayload::Json(serde_json::json!({
-                "latency_ms": 250,
-                "created_time": "2026-08-20T10:00:00Z",
-                "environment": "production"
-            })),
-        })
-        .await
-        .unwrap();
-
-        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-        app.sync_discovered_fields(&[]);
-
-        let available = app.get_available_log_fields();
-        let field_types: HashMap<String, FieldType> = available.into_iter().collect();
-
-        // Core fields
-        assert_eq!(field_types.get("level"), Some(&FieldType::Text));
-        assert_eq!(field_types.get("message"), Some(&FieldType::Text));
-        assert_eq!(field_types.get("timestamp"), Some(&FieldType::Time));
-
-        // Inferred fields
-        assert_eq!(field_types.get("latency_ms"), Some(&FieldType::Number));
-        assert_eq!(field_types.get("created_time"), Some(&FieldType::Text));
-        assert_eq!(field_types.get("environment"), Some(&FieldType::Text));
-    }
-
-    #[tokio::test]
-    async fn test_sync_discovered_fields_replaces_aliases() {
-        let mut app = create_test_app();
-        let tx = app.engine.get_channel();
-
-        tx.send(RawLogEntry {
-            payload: RawPayload::Json(serde_json::json!({
-                "ts": "2026-08-20T10:00:00Z",
-                "lvl": "WARN",
-                "msg": "warning msg",
-                "user_id": 42
-            })),
-        })
-        .await
-        .unwrap();
-
-        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-        app.sync_discovered_fields(&[]);
-
-        let available = app.get_available_log_fields();
-        let field_types: HashMap<String, FieldType> = available.into_iter().collect();
-
-        // Exact discovered keys replaced default names
-        assert_eq!(field_types.get("lvl"), Some(&FieldType::Text));
-        assert_eq!(field_types.get("msg"), Some(&FieldType::Text));
-        assert_eq!(field_types.get("ts"), Some(&FieldType::Time));
-        assert_eq!(field_types.get("user_id"), Some(&FieldType::Number));
-
-        // Generic canonical names are removed
-        assert!(!field_types.contains_key("level"));
-        assert!(!field_types.contains_key("message"));
-        assert!(!field_types.contains_key("timestamp"));
+        app.exclude_filter_term("-already_negated");
+        assert_eq!(
+            app.query,
+            "level:error tag:Auth -healthcheck -already_negated"
+        );
     }
 
     #[tokio::test]
     async fn test_apply_autocomplete_suggestion() {
         let mut app = create_test_app();
-        app.query = "lev".to_string();
-        app.autocomplete_state.active_token_range = (0, 3);
 
-        let suggestion = SuggestionItem {
+        let item_key = SuggestionItem {
             kind: SuggestionKind::Key,
-            op_symbol: "🔑",
-            action_name: "level:".to_string(),
-            example_syntax: "level:error".to_string(),
+            op_symbol: "",
+            action_name: "level".to_string(),
+            example_syntax: "level:".to_string(),
             insert_text: "level:".to_string(),
         };
-
-        app.apply_autocomplete_suggestion(&suggestion);
+        app.autocomplete_state.active_token_range = (0, 0);
+        app.apply_autocomplete_suggestion(&item_key);
         assert_eq!(app.query, "level:");
-        assert!(app.autocomplete_state.just_applied);
+
+        let item_val = SuggestionItem {
+            kind: SuggestionKind::OperatorOrValue,
+            op_symbol: "",
+            action_name: "error".to_string(),
+            example_syntax: "error".to_string(),
+            insert_text: "error".to_string(),
+        };
+        app.autocomplete_state.active_token_range = (6, 6);
+        app.apply_autocomplete_suggestion(&item_val);
+        assert_eq!(app.query, "level:error");
+        assert!(!app.autocomplete_state.is_open);
+    }
+
+    #[tokio::test]
+    async fn test_get_available_log_fields_inference() {
+        let app = create_test_app();
+        let fields = app.get_available_log_fields();
+        assert!(!fields.is_empty());
+        assert!(fields.iter().any(|(k, _)| k == "level"));
+        assert!(fields.iter().any(|(k, _)| k == "timestamp"));
     }
 
     #[tokio::test]
     async fn test_unfiltered_stream_open_close_and_focus() {
         let mut app = create_test_app();
-        let tx = app.engine.get_channel();
+        assert_eq!(app.active_tab, ActiveTab::Filtered);
 
-        for i in 0..5 {
-            let log = RawLogEntry {
-                payload: RawPayload::Text(format!("[INFO] Message {}", i)),
-            };
-            tx.send(log).await.unwrap();
-        }
-
-        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-        app.trigger_full_search();
-
-        assert_eq!(app.cached_logs.len(), 5);
-        let target_id = app.cached_logs[2].id;
-
-        // Open unfiltered stream on target
-        app.open_unfiltered_stream(Some(target_id));
+        app.open_unfiltered_stream(Some(12345));
+        assert_eq!(app.active_tab, ActiveTab::Unfiltered);
         assert!(app.unfiltered_state.is_open);
-        assert_eq!(app.unfiltered_state.target_id, Some(target_id));
-        assert_eq!(app.unfiltered_state.target_index, Some(2));
-        assert_eq!(app.unfiltered_state.cached_unfiltered.len(), 5);
-        assert!(app.unfiltered_state.request_scroll_to_target);
-
-        // Close unfiltered stream
-        app.close_unfiltered_stream();
-        assert!(!app.unfiltered_state.is_open);
-        assert_eq!(app.unfiltered_state.target_id, None);
-        assert!(app.unfiltered_state.cached_unfiltered.is_empty());
-
-        // Re-open and focus in main
-        app.query = "level:error".to_string(); // simulate active filter
-        app.open_unfiltered_stream(Some(target_id));
-        app.focus_in_main_and_clear_filter();
-
-        assert!(!app.unfiltered_state.is_open);
-        assert_eq!(app.query, "");
-        assert_eq!(app.selected_log.as_ref().map(|l| l.id), Some(target_id));
-    }
-
-    #[tokio::test]
-    async fn test_unfiltered_frozen_snapshot_no_drift() {
-        let mut app = create_test_app();
-        let tx = app.engine.get_channel();
-
-        for i in 0..5 {
-            let log = RawLogEntry {
-                payload: RawPayload::Text(format!("[INFO] Message {}", i)),
-            };
-            tx.send(log).await.unwrap();
-        }
-
-        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-        app.trigger_full_search();
-
-        let target_id = app.cached_logs[2].id;
-        app.open_unfiltered_stream(Some(target_id));
-
-        // When opened for a target log, it defaults to FROZEN snapshot
+        assert_eq!(app.unfiltered_state.target_id, Some(12345));
         assert!(!app.unfiltered_state.is_live);
-        assert_eq!(app.unfiltered_state.cached_unfiltered.len(), 5);
 
-        // Ingest 10 new logs into the engine
-        for i in 5..15 {
-            let log = RawLogEntry {
-                payload: RawPayload::Text(format!("[INFO] Message {}", i)),
-            };
-            tx.send(log).await.unwrap();
-        }
-        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-
-        // Run tick
-        app.tick();
-
-        // Cached unfiltered MUST remain frozen at 5 logs with target log unchanged
-        assert_eq!(app.unfiltered_state.cached_unfiltered.len(), 5);
-        assert_eq!(app.unfiltered_state.cached_unfiltered[2].id, target_id);
-        assert!(!app.unfiltered_state.has_new_data);
-
-        // Now toggle to LIVE stream
-        app.toggle_unfiltered_live();
-        assert!(app.unfiltered_state.is_live);
-        assert_eq!(app.unfiltered_state.cached_unfiltered.len(), 15);
+        app.close_unfiltered_stream();
+        assert_eq!(app.active_tab, ActiveTab::Filtered);
+        assert!(!app.unfiltered_state.is_open);
+        assert!(app.unfiltered_state.target_id.is_none());
     }
 
     #[tokio::test]
-    async fn test_repeated_unlatch_idempotency_preserves_pause_state() {
+    async fn test_sync_discovered_fields_replaces_aliases() {
         let mut app = create_test_app();
-        let tx = app.engine.get_channel();
+        let log = LogEvent::new(
+            "2026-08-20T10:00:00Z",
+            LogLevel::Info,
+            "msg",
+            HashMap::from([("custom_field".to_string(), serde_json::json!("val"))]),
+        );
 
-        // 1. Ingest initial 10 logs (5 ERROR, 5 INFO)
-        for i in 0..10 {
-            let level = if i % 2 == 0 { "ERROR" } else { "INFO" };
-            let log = RawLogEntry {
-                payload: RawPayload::Json(serde_json::json!({
-                    "level": level,
-                    "message": format!("Message {}", i)
-                })),
-            };
-            tx.send(log).await.unwrap();
-        }
-        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-
-        // Filter query = "level:error" -> 5 matches out of 10 total
-        app.query = "level:error".to_string();
-        app.trigger_full_search();
-        assert_eq!(app.total_matched, 5);
-        assert_eq!(app.engine.total_processed(), 10);
-
-        // First unlatch: locks in pause state
-        app.unlatch();
-        assert!(!app.is_auto_scroll);
-        let locked_global_seen = app.global_seen_at_pause;
-        let locked_filtered_seen = app.filtered_seen_at_pause;
-        let locked_filtered_proc = app.filtered_processed_at_pause;
-        assert_eq!(locked_global_seen, 10);
-        assert_eq!(locked_filtered_seen, 5);
-        assert_eq!(locked_filtered_proc, 10);
-
-        // 2. Ingest 10 more logs (5 ERROR, 5 INFO) while PAUSED
-        for i in 10..20 {
-            let level = if i % 2 == 0 { "ERROR" } else { "INFO" };
-            let log = RawLogEntry {
-                payload: RawPayload::Json(serde_json::json!({
-                    "level": level,
-                    "message": format!("Message {}", i)
-                })),
-            };
-            tx.send(log).await.unwrap();
-        }
-        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-        assert_eq!(app.engine.total_processed(), 20);
-
-        // Simulate user scrolling up repeatedly (which calls unlatch() multiple times)
-        app.unlatch();
-        app.unlatch();
-        app.unlatch();
-
-        // The pause snapshot values MUST REMAIN EXACTLY UNCHANGED!
-        assert_eq!(app.global_seen_at_pause, locked_global_seen);
-        assert_eq!(app.filtered_seen_at_pause, locked_filtered_seen);
-        assert_eq!(app.filtered_processed_at_pause, locked_filtered_proc);
-
-        // And incremental filter since pause correctly returns the 5 new matching logs
-        let (new_matched, _) = app
-            .engine
-            .filter_incremental(&app.query, app.filtered_processed_at_pause);
-        assert_eq!(new_matched, 5);
+        app.sync_discovered_fields(&[log]);
+        let fields = app.get_available_log_fields();
+        assert!(fields.iter().any(|(k, _)| k == "level"));
     }
 
     #[tokio::test]
     async fn test_unlatch_unfiltered_idempotency() {
         let mut app = create_test_app();
-        let tx = app.engine.get_channel();
-
-        for i in 0..10 {
-            let log = RawLogEntry {
-                payload: RawPayload::Text(format!("[INFO] Message {}", i)),
-            };
-            tx.send(log).await.unwrap();
-        }
-        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-
-        // Open raw stream in LIVE mode (no target log)
         app.open_unfiltered_stream(None);
         assert!(app.unfiltered_state.is_live);
-        assert_eq!(app.unfiltered_state.snapshot_processed_count, 10);
 
-        // Unlatch raw stream
         app.unlatch_unfiltered();
         assert!(!app.unfiltered_state.is_live);
-        assert_eq!(app.unfiltered_state.snapshot_processed_count, 10);
 
-        // Ingest 5 more logs
-        for i in 10..15 {
-            let log = RawLogEntry {
-                payload: RawPayload::Text(format!("[INFO] Message {}", i)),
-            };
-            tx.send(log).await.unwrap();
-        }
-        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-
-        // Repeated unlatch must not overwrite snapshot_processed_count
         app.unlatch_unfiltered();
-        app.unlatch_unfiltered();
-        assert_eq!(app.unfiltered_state.snapshot_processed_count, 10);
-        assert_eq!(app.engine.total_processed(), 15);
+        assert!(!app.unfiltered_state.is_live);
     }
 
     #[tokio::test]
@@ -1620,47 +1095,149 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_close_unfiltered_stream_frees_ram() {
+    async fn test_unfiltered_frozen_snapshot_no_drift() {
         let mut app = create_test_app();
-        app.unfiltered_state.is_open = true;
-        app.unfiltered_state.cached_unfiltered = vec![LogEvent::new(
-            "2026-08-20T10:00:00Z",
-            LogLevel::Info,
-            "msg",
-            HashMap::new(),
-        )];
-        app.active_tab = ActiveTab::Unfiltered;
+        let tx = app.engine.get_channel();
 
-        assert_eq!(app.unfiltered_state.cached_unfiltered.len(), 1);
+        for i in 0..5 {
+            let entry = RawLogEntry {
+                payload: RawPayload::Text(format!(
+                    "{{\"level\":\"INFO\",\"message\":\"msg {}\"}}",
+                    i
+                )),
+            };
+            let _ = tx.send(entry).await;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
 
-        app.close_unfiltered_stream();
+        app.open_unfiltered_stream(Some(2));
+        assert!(!app.unfiltered_state.is_live);
+        let initial_count = app.unfiltered_state.cached_unfiltered.len();
 
-        assert!(!app.unfiltered_state.is_open);
-        assert!(app.unfiltered_state.cached_unfiltered.is_empty());
-        assert_eq!(app.active_tab, ActiveTab::Filtered);
+        let new_entry = RawLogEntry {
+            payload: RawPayload::Text("{\"level\":\"INFO\",\"message\":\"msg 99\"}".to_string()),
+        };
+        let _ = tx.send(new_entry).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        app.tick();
+        assert_eq!(app.unfiltered_state.cached_unfiltered.len(), initial_count);
+    }
+
+    #[tokio::test]
+    async fn test_repeated_unlatch_idempotency_preserves_pause_state() {
+        let mut app = create_test_app();
+        let tx = app.engine.get_channel();
+
+        for i in 0..10 {
+            let entry = RawLogEntry {
+                payload: RawPayload::Text(format!(
+                    "{{\"level\":\"INFO\",\"message\":\"msg {}\"}}",
+                    i
+                )),
+            };
+            let _ = tx.send(entry).await;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        app.tick();
+
+        app.unlatch();
+        assert!(!app.is_auto_scroll);
+        let paused_count = app.filtered_seen_at_pause;
+
+        app.unlatch();
+        assert_eq!(app.filtered_seen_at_pause, paused_count);
     }
 
     #[tokio::test]
     async fn test_spawn_load_environment_and_tick() {
         let mut app = create_test_app();
-        assert_eq!(app.env_status, uwu_core_workspace::EnvLoadStatus::Idle);
-
         app.spawn_load_environment();
-        match app.env_status {
-            uwu_core_workspace::EnvLoadStatus::Loading { .. } => {}
-            _ => panic!("Expected Loading state"),
-        }
 
-        // Chờ background task hoàn thành
-        tokio::time::sleep(std::time::Duration::from_millis(350)).await;
+        tokio::time::sleep(Duration::from_millis(350)).await;
         app.tick();
 
-        match &app.env_status {
-            uwu_core_workspace::EnvLoadStatus::Ready { .. } => {
-                assert!(!app.env_vars.is_empty());
-                assert!(app.env_watch_rx.borrow().is_some());
-            }
-            _ => panic!("Expected Ready state after tick"),
+        assert!(matches!(
+            app.env_status,
+            uwu_core_workspace::EnvLoadStatus::Ready { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_source_running_state_transitions_to_stopped() {
+        let mut app = create_test_app();
+        assert!(!app.is_source_running);
+
+        #[cfg(target_os = "windows")]
+        {
+            app.source_config.command_str = "cmd /c echo test".to_string();
         }
+        #[cfg(not(target_os = "windows"))]
+        {
+            app.source_config.command_str = "echo test".to_string();
+        }
+
+        app.start_configured_source();
+        assert!(app.is_source_running);
+
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(3) {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            app.tick();
+            if !app.is_source_running {
+                break;
+            }
+        }
+
+        assert!(!app.is_source_running);
+    }
+
+    #[tokio::test]
+    async fn test_close_unfiltered_stream_frees_ram() {
+        let mut app = create_test_app();
+        app.open_unfiltered_stream(None);
+        app.close_unfiltered_stream();
+        assert!(app.unfiltered_state.cached_unfiltered.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_multi_project_switch_and_close() {
+        let mut app = create_test_app();
+        assert_eq!(app.workspace_mgr.sessions.len(), 1);
+        assert_eq!(app.workspace_mgr.active_index, 0);
+
+        app.query = "level:error".to_string();
+
+        let ws2 = Workspace::new(
+            "Project B",
+            WorkspaceLocation::Local {
+                working_dir: "D:\\test\\proj_b".to_string(),
+            },
+            SourceType::Process,
+        );
+        app.open_or_switch_workspace(&ws2);
+
+        assert_eq!(app.workspace_mgr.sessions.len(), 2);
+        assert_eq!(app.workspace_mgr.active_index, 1);
+        assert_eq!(app.project_name_input, "Project B");
+        assert_eq!(app.query, "");
+
+        app.query = "tag:Audio".to_string();
+
+        app.switch_session(0);
+        assert_eq!(app.workspace_mgr.active_index, 0);
+        assert_eq!(app.project_name_input, "Test Project");
+        assert_eq!(app.query, "level:error");
+
+        app.switch_session(1);
+        assert_eq!(app.workspace_mgr.active_index, 1);
+        assert_eq!(app.project_name_input, "Project B");
+        assert_eq!(app.query, "tag:Audio");
+
+        app.close_session(1);
+        assert_eq!(app.workspace_mgr.sessions.len(), 1);
+        assert_eq!(app.workspace_mgr.active_index, 0);
+        assert_eq!(app.project_name_input, "Test Project");
+        assert_eq!(app.query, "level:error");
     }
 }

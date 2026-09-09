@@ -311,6 +311,7 @@ pub fn render_autocomplete_popup(ctx: &egui::Context, app: &mut UwuGuiApp, input
                 .show(ui, |ui| {
                     ui.set_width(dropdown_width);
 
+                    let mut hovered_index = None;
                     for (idx, item) in app.autocomplete_state.suggestions.iter().enumerate() {
                         let is_selected = idx == app.autocomplete_state.selected_index;
 
@@ -320,7 +321,7 @@ pub fn render_autocomplete_popup(ctx: &egui::Context, app: &mut UwuGuiApp, input
 
                         if resp.hovered() {
                             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                            app.autocomplete_state.selected_index = idx;
+                            hovered_index = Some(idx);
                         }
 
                         if resp.clicked() {
@@ -369,6 +370,9 @@ pub fn render_autocomplete_popup(ctx: &egui::Context, app: &mut UwuGuiApp, input
                             FontId::monospace(11.5),
                             theme::TEXT_MUTED,
                         );
+                    }
+                    if let Some(hover_idx) = hovered_index {
+                        app.autocomplete_state.selected_index = hover_idx;
                     }
                 });
         });

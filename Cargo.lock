@@ -4335,6 +4335,10 @@ dependencies = [
  "serde_json",
  "tokio",
  "uuid",
+ "uwu-core-engine",
+ "uwu-core-schema",
+ "uwu-driver-sources",
+ "uwu-driver-transport",
 ]
 
 [[package]]

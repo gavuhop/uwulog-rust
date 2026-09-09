@@ -33,6 +33,21 @@ pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
         }
     }
 
+    // Phím tắt mở Project Picker (Alt+P hoặc Ctrl+Alt+O)
+    if ctx.input(|i| i.modifiers.alt && i.key_pressed(egui::Key::P))
+        || ctx.input(|i| i.modifiers.command && i.modifiers.alt && i.key_pressed(egui::Key::O))
+    {
+        app.project_picker_open = !app.project_picker_open;
+    }
+
+    // Phím tắt chuyển project trong This Window (Ctrl+PageUp / Ctrl+PageDown)
+    if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::PageUp)) {
+        app.cycle_project(false);
+    }
+    if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::PageDown)) {
+        app.cycle_project(true);
+    }
+
     // Top Panel: Unified 1-Tier Modern Custom Title & Header Bar
     egui::TopBottomPanel::top("header_panel")
         .frame(

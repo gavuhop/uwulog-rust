@@ -93,7 +93,7 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
             let proj_resp = ui.add(proj_btn);
             proj_btn_rect = Some(proj_resp.rect);
             if proj_resp
-                .on_hover_text("Switch or manage workspace projects")
+                .on_hover_text("Switch or manage workspace projects (Alt+P)")
                 .clicked()
             {
                 app.project_picker_open = !app.project_picker_open;
@@ -434,7 +434,8 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 if (search_response.lost_focus() || search_response.has_focus())
                     && ui.ctx().input(|i| i.key_pressed(egui::Key::Enter))
                 {
-                    app.history_state.record(&app.query.clone());
+                    let q = app.query.clone();
+                    app.history_state.record(&q);
                     app.history_state.mark_recorded();
                 }
 
