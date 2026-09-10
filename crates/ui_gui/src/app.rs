@@ -1,4 +1,5 @@
 use crate::session_view::GuiSession;
+use clap::Parser;
 use eframe::egui;
 use std::time::{Duration, Instant};
 use tokio::runtime::Handle;
@@ -109,97 +110,127 @@ pub(crate) fn extract_project_name(path_str: &str) -> String {
     uwu_core_workspace::extract_project_name(path_str)
 }
 
+/// Tham số dòng lệnh khi khởi chạy uwu-gui
+#[derive(Parser, Debug, Clone)]
+#[command(
+    name = "uwu-gui",
+    about = "High-performance log viewer & workspace monitor",
+    version = env!("CARGO_PKG_VERSION")
+)]
+pub struct CliArgs {
+    /// Đường dẫn file log hoặc thư mục workspace cần mở
+    #[arg(value_name = "PATH", value_hint = clap::ValueHint::AnyPath)]
+    pub path: Option<String>,
+
+    /// Lệnh thực thi để thu thập log stdout/stderr (ví dụ: -c "cargo run")
+    #[arg(
+        short = 'c',
+        short_alias = 'r',
+        long = "cmd",
+        visible_aliases = ["run", "command", "exec", "remote-cmd", "wsl-cmd"]
+    )]
+    pub cmd: Option<String>,
+
+    /// Đường dẫn file log cần theo dõi (file tailer)
+    #[arg(
+        short = 'f',
+        long = "file",
+        visible_aliases = ["remote-file", "wsl-file"],
+        value_hint = clap::ValueHint::FilePath
+    )]
+    pub file: Option<String>,
+
+    /// Thư mục làm việc (working directory)
+    #[arg(
+        short = 'd',
+        long = "dir",
+        visible_aliases = ["cwd", "working-dir", "remote-dir", "wsl-dir", "wsl-cwd"],
+        value_hint = clap::ValueHint::DirPath
+    )]
+    pub working_dir: Option<String>,
+
+    /// Kết nối môi trường Remote (ví dụ: "Ubuntu", "wsl:Ubuntu")
+    #[arg(
+        long = "remote",
+        visible_aliases = ["wsl", "remote-wsl", "wsl-distro"]
+    )]
+    pub remote: Option<String>,
+
+    /// Truy vấn lọc log ban đầu (ví dụ: -q "level:error")
+    #[arg(
+        short = 'q',
+        long = "query",
+        visible_aliases = ["filter"]
+    )]
+    pub query: Option<String>,
+
+    /// Số dòng log hiển thị tối đa trong viewport
+    #[arg(short = 'n', long = "limit", default_value_t = 5000)]
+    pub display_limit: usize,
+
+    /// Dung lượng bộ đệm RingBuffer (số dòng log tối đa trong RAM)
+    #[arg(
+        short = 'C',
+        long = "capacity",
+        visible_alias = "cap",
+        default_value_t = 200_000
+    )]
+    pub capacity: usize,
+
+    /// Command arguments truyền sau `--` (ví dụ: `uwu-gui -- cargo run --bin server`)
+    #[arg(last = true)]
+    pub trailing_cmd: Vec<String>,
+}
+
 impl UwuGuiApp {
     pub fn new(cc: &eframe::CreationContext<'_>, rt: Handle) -> Self {
         crate::ui::theme::apply_theme(&cc.egui_ctx);
         #[cfg(target_os = "windows")]
         crate::ui::theme::apply_windows_titlebar_theme(cc);
 
-        let args: Vec<String> = std::env::args().collect();
-        let mut display_limit: usize = 5_000;
-        let mut capacity: usize = 200_000;
+        let cli = CliArgs::parse();
+        let display_limit = cli.display_limit;
+        let capacity = cli.capacity;
 
-        let mut cmd_to_run = String::new();
-        let mut file_to_read = String::new();
-        let mut working_dir = String::new();
+        let mut cmd_to_run = cli.cmd.unwrap_or_default();
+        if cmd_to_run.is_empty() && !cli.trailing_cmd.is_empty() {
+            cmd_to_run = cli.trailing_cmd.join(" ");
+        }
+
+        let mut file_to_read = cli.file.unwrap_or_default();
+        let mut working_dir = cli.working_dir.unwrap_or_default();
         let mut source_type = SourceType::Process;
         let mut custom_cmd_or_file_specified = false;
 
-        let mut remote_distro = String::new();
-        let mut remote_dir = String::new();
-
-        let mut i = 1;
-        while i < args.len() {
-            if (args[i] == "-n" || args[i] == "--limit") && i + 1 < args.len() {
-                if let Ok(val) = args[i + 1].parse::<usize>() {
-                    display_limit = val;
-                }
-                i += 1;
-            } else if (args[i] == "-cap" || args[i] == "--capacity") && i + 1 < args.len() {
-                if let Ok(val) = args[i + 1].parse::<usize>() {
-                    capacity = val;
-                }
-                i += 1;
-            } else if (args[i] == "--remote-wsl" || args[i] == "--wsl-distro") && i + 1 < args.len()
-            {
-                remote_distro = args[i + 1].clone();
-                i += 1;
-            } else if (args[i] == "--remote-dir"
-                || args[i] == "--wsl-dir"
-                || args[i] == "--wsl-cwd")
-                && i + 1 < args.len()
-            {
-                remote_dir = args[i + 1].clone();
-                i += 1;
-            } else if (args[i] == "--remote-cmd" || args[i] == "--wsl-cmd") && i + 1 < args.len() {
-                cmd_to_run = args[i + 1].clone();
-                source_type = SourceType::Process;
-                custom_cmd_or_file_specified = true;
-                i += 1;
-            } else if (args[i] == "--remote-file" || args[i] == "--wsl-file") && i + 1 < args.len()
-            {
-                file_to_read = args[i + 1].clone();
-                source_type = SourceType::File;
-                custom_cmd_or_file_specified = true;
-                i += 1;
-            } else if (args[i] == "-r"
-                || args[i] == "--run"
-                || args[i] == "-c"
-                || args[i] == "--cmd")
-                && i + 1 < args.len()
-            {
-                cmd_to_run = args[i + 1].clone();
-                source_type = SourceType::Process;
-                custom_cmd_or_file_specified = true;
-                i += 1;
-            } else if (args[i] == "-f" || args[i] == "--file") && i + 1 < args.len() {
-                file_to_read = args[i + 1].clone();
-                source_type = SourceType::File;
-                custom_cmd_or_file_specified = true;
-                i += 1;
-            } else if (args[i] == "-d" || args[i] == "--dir" || args[i] == "--cwd")
-                && i + 1 < args.len()
-            {
-                working_dir = args[i + 1].clone();
-                i += 1;
-            } else if !args[i].starts_with('-') {
-                let candidate = std::path::Path::new(&args[i]);
-                if candidate.is_dir() {
-                    let canon = candidate
-                        .canonicalize()
-                        .map(|p| uwu_core_workspace::clean_path(&p.to_string_lossy()))
-                        .unwrap_or_else(|_| uwu_core_workspace::clean_path(&args[i]));
-                    working_dir = canon;
+        if !cmd_to_run.is_empty() {
+            source_type = SourceType::Process;
+            custom_cmd_or_file_specified = true;
+        } else if !file_to_read.is_empty() {
+            source_type = SourceType::File;
+            custom_cmd_or_file_specified = true;
+        } else if let Some(ref path_str) = cli.path {
+            if cli.remote.is_some() {
+                let p = std::path::Path::new(path_str);
+                if p.extension().is_some() {
+                    file_to_read = path_str.clone();
+                    source_type = SourceType::File;
+                    custom_cmd_or_file_specified = true;
                 } else {
-                    file_to_read = args[i].clone();
+                    working_dir = path_str.clone();
+                }
+            } else {
+                let candidate = std::path::Path::new(path_str);
+                if candidate.is_dir() {
+                    working_dir = path_str.clone();
+                } else {
+                    file_to_read = path_str.clone();
                     source_type = SourceType::File;
                     custom_cmd_or_file_specified = true;
                 }
             }
-            i += 1;
         }
 
-        if !working_dir.is_empty() {
+        if !working_dir.is_empty() && cli.remote.is_none() {
             let p = std::path::Path::new(&working_dir);
             if let Ok(canon) = p.canonicalize() {
                 working_dir = uwu_core_workspace::clean_path(&canon.to_string_lossy());
@@ -208,15 +239,14 @@ impl UwuGuiApp {
             }
         }
 
-        let remote_location = if !remote_distro.is_empty() || !remote_dir.is_empty() {
-            let dir = if !remote_dir.is_empty() {
-                remote_dir
+        let remote_location = if let Some(ref rem) = cli.remote {
+            let dir = if !working_dir.is_empty() {
+                working_dir.clone()
             } else {
                 "/home".to_string()
             };
-            Some(WorkspaceLocation::remote(RemoteConnectionOptions::wsl(
-                remote_distro,
-                dir,
+            Some(WorkspaceLocation::remote(RemoteConnectionOptions::parse(
+                rem, dir,
             )))
         } else {
             None
@@ -274,7 +304,9 @@ impl UwuGuiApp {
             display_limit,
         };
 
-        let initial_query = if !custom_cmd_or_file_specified {
+        let initial_query = if let Some(ref q) = cli.query {
+            q.clone()
+        } else if !custom_cmd_or_file_specified {
             saved_ws
                 .as_ref()
                 .map(|ws| ws.last_query.clone())
@@ -1700,5 +1732,98 @@ mod tests {
 
         // Pop 6: Nothing left to pop
         assert!(!app.dismiss_top_layer());
+    }
+
+    #[test]
+    fn test_cli_args_parsing() {
+        // 1. Test default arguments
+        let defaults = CliArgs::try_parse_from(["uwu-gui"]).unwrap();
+        assert_eq!(defaults.display_limit, 5000);
+        assert_eq!(defaults.capacity, 200_000);
+        assert_eq!(defaults.cmd, None);
+        assert_eq!(defaults.file, None);
+        assert_eq!(defaults.working_dir, None);
+        assert_eq!(defaults.remote, None);
+        assert_eq!(defaults.query, None);
+        assert_eq!(defaults.path, None);
+        assert!(defaults.trailing_cmd.is_empty());
+
+        // 2. Test standard short flags, query and positional path
+        let parsed = CliArgs::try_parse_from([
+            "uwu-gui",
+            "-n",
+            "1234",
+            "-C",
+            "50000",
+            "-c",
+            "cargo run",
+            "-d",
+            "C:/my_project",
+            "-q",
+            "level:error",
+            "server.log",
+        ])
+        .unwrap();
+        assert_eq!(parsed.display_limit, 1234);
+        assert_eq!(parsed.capacity, 50000);
+        assert_eq!(parsed.cmd.as_deref(), Some("cargo run"));
+        assert_eq!(parsed.working_dir.as_deref(), Some("C:/my_project"));
+        assert_eq!(parsed.query.as_deref(), Some("level:error"));
+        assert_eq!(parsed.path.as_deref(), Some("server.log"));
+
+        // 3. Test short_alias -r for command
+        let r_flag = CliArgs::try_parse_from(["uwu-gui", "-r", "python app.py"]).unwrap();
+        assert_eq!(r_flag.cmd.as_deref(), Some("python app.py"));
+
+        // 4. Test trailing command after `--`
+        let trailing = CliArgs::try_parse_from([
+            "uwu-gui",
+            "-d",
+            "/repo",
+            "--",
+            "cargo",
+            "test",
+            "--workspace",
+        ])
+        .unwrap();
+        assert_eq!(trailing.working_dir.as_deref(), Some("/repo"));
+        assert_eq!(
+            trailing.trailing_cmd,
+            vec![
+                "cargo".to_string(),
+                "test".to_string(),
+                "--workspace".to_string()
+            ]
+        );
+
+        // 5. Test standard remote flag
+        let remote_clean = CliArgs::try_parse_from([
+            "uwu-gui",
+            "--cmd",
+            "htop",
+            "--remote",
+            "Debian",
+            "--dir",
+            "/home/user",
+        ])
+        .unwrap();
+        assert_eq!(remote_clean.cmd.as_deref(), Some("htop"));
+        assert_eq!(remote_clean.remote.as_deref(), Some("Debian"));
+        assert_eq!(remote_clean.working_dir.as_deref(), Some("/home/user"));
+
+        // 6. Test backward compatibility aliases (wsl legacy)
+        let wsl_legacy = CliArgs::try_parse_from([
+            "uwu-gui",
+            "--wsl-cmd",
+            "tail -f log",
+            "--wsl-distro",
+            "Ubuntu-22.04",
+            "--wsl-cwd",
+            "/var/log",
+        ])
+        .unwrap();
+        assert_eq!(wsl_legacy.cmd.as_deref(), Some("tail -f log"));
+        assert_eq!(wsl_legacy.remote.as_deref(), Some("Ubuntu-22.04"));
+        assert_eq!(wsl_legacy.working_dir.as_deref(), Some("/var/log"));
     }
 }

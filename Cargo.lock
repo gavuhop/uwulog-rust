@@ -4379,6 +4379,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "clap",
  "eframe",
  "egui",
  "egui_extras",

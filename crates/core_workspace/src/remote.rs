@@ -15,6 +15,12 @@ impl RemoteConnectionOptions {
         Self::Wsl(WslConnectionOptions::new(distro, working_dir))
     }
 
+    /// Khởi tạo cấu hình Remote từ chuỗi target (ví dụ: "wsl:Ubuntu", "Ubuntu") cùng thư mục làm việc
+    pub fn parse(target: &str, working_dir: impl Into<String>) -> Self {
+        let distro = target.strip_prefix("wsl:").unwrap_or(target);
+        Self::wsl(distro, working_dir)
+    }
+
     /// Tên hiển thị định danh cho remote (ví dụ tên Distro đối với WSL, hoặc Host đối với SSH)
     pub fn display_name(&self) -> &str {
         match self {
