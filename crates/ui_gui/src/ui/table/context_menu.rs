@@ -1,7 +1,5 @@
-use crate::app::UwuGuiApp;
-use crate::ui::table::actions::{
-    truncate_label, FilterAction, HighlightAction, TableRenderContext, UnfilteredAction,
-};
+use crate::app::{AppAction, UwuGuiApp};
+use crate::ui::actions::{truncate_label, ActionContext};
 use eframe::egui;
 
 /// Parameters for rendering the right-click context menu of a table cell
@@ -16,7 +14,7 @@ pub struct CellMenuContext<'a> {
 pub fn render_cell_context_menu(
     ui: &mut egui::Ui,
     menu_ctx: CellMenuContext<'_>,
-    render_ctx: &mut TableRenderContext<'_>,
+    render_ctx: &mut ActionContext<'_>,
 ) {
     ui.set_min_width(180.0);
 
@@ -26,13 +24,13 @@ pub fn render_cell_context_menu(
 
         if ui.button(format!("Filter \"{}\"", display_sel)).clicked() {
             let term = UwuGuiApp::format_field_term(menu_ctx.col_name, sel);
-            *render_ctx.filter_action = Some(FilterAction::Apply(term));
+            *render_ctx.action = Some(AppAction::ApplyFilterTerm(term));
             ui.close_menu();
         }
 
         if ui.button(format!("Exclude \"{}\"", display_sel)).clicked() {
             let term = UwuGuiApp::format_field_term(menu_ctx.col_name, sel);
-            *render_ctx.filter_action = Some(FilterAction::Exclude(term));
+            *render_ctx.action = Some(AppAction::ExcludeFilterTerm(term));
             ui.close_menu();
         }
 
@@ -44,7 +42,7 @@ pub fn render_cell_context_menu(
             format!("Highlight \"{}\"", display_sel)
         };
         if ui.button(hl_term_text).clicked() {
-            *render_ctx.highlight_action = Some(HighlightAction::ToggleTerm(sel.to_string()));
+            *render_ctx.action = Some(AppAction::ToggleTermHighlight(sel.to_string()));
             ui.close_menu();
         }
 
@@ -56,13 +54,13 @@ pub fn render_cell_context_menu(
 
     if ui.button(format!("Filter \"{}\"", display_val)).clicked() {
         let term = UwuGuiApp::format_field_term(menu_ctx.col_name, menu_ctx.raw_cell_val);
-        *render_ctx.filter_action = Some(FilterAction::Apply(term));
+        *render_ctx.action = Some(AppAction::ApplyFilterTerm(term));
         ui.close_menu();
     }
 
     if ui.button(format!("Exclude \"{}\"", display_val)).clicked() {
         let term = UwuGuiApp::format_field_term(menu_ctx.col_name, menu_ctx.raw_cell_val);
-        *render_ctx.filter_action = Some(FilterAction::Exclude(term));
+        *render_ctx.action = Some(AppAction::ExcludeFilterTerm(term));
         ui.close_menu();
     }
 
@@ -74,7 +72,7 @@ pub fn render_cell_context_menu(
         format!("Highlight \"{}\"", display_val)
     };
     if ui.button(hl_cell_text).clicked() {
-        *render_ctx.highlight_action = Some(HighlightAction::ToggleTerm(
+        *render_ctx.action = Some(AppAction::ToggleTermHighlight(
             menu_ctx.raw_cell_val.to_string(),
         ));
         ui.close_menu();
@@ -84,22 +82,22 @@ pub fn render_cell_context_menu(
 
     // 3. Nhóm thao tác Dòng & Toàn cục
     if ui.button("🔍 View in unfiltered stream").clicked() {
-        *render_ctx.unfiltered_action = Some(UnfilteredAction::Open(menu_ctx.event_id));
+        *render_ctx.action = Some(AppAction::OpenUnfilteredStream(Some(menu_ctx.event_id)));
         ui.close_menu();
     }
 
     if menu_ctx.is_row_highlighted {
         if ui.button("Unhighlight row").clicked() {
-            *render_ctx.highlight_action = Some(HighlightAction::ToggleRow(menu_ctx.event_id));
+            *render_ctx.action = Some(AppAction::ToggleRowHighlight(menu_ctx.event_id));
             ui.close_menu();
         }
     } else if ui.button("Highlight row").clicked() {
-        *render_ctx.highlight_action = Some(HighlightAction::ToggleRow(menu_ctx.event_id));
+        *render_ctx.action = Some(AppAction::ToggleRowHighlight(menu_ctx.event_id));
         ui.close_menu();
     }
 
     if render_ctx.has_any_highlights && ui.button("Unhighlight all").clicked() {
-        *render_ctx.highlight_action = Some(HighlightAction::ClearAll);
+        *render_ctx.action = Some(AppAction::ClearAllHighlights);
         ui.close_menu();
     }
 

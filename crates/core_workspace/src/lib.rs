@@ -93,6 +93,58 @@ impl Workspace {
             env_vars: HashMap::new(),
         }
     }
+
+    /// Icon đại diện cho loại workspace (WSL, File, hoặc Process)
+    pub fn icon(&self) -> &'static str {
+        match &self.location {
+            WorkspaceLocation::Wsl { .. } => "🐧",
+            WorkspaceLocation::Local { .. } => match self.source_type {
+                SourceType::Wsl => "🐧",
+                SourceType::File => "📄",
+                SourceType::Process => "🖥",
+            },
+        }
+    }
+
+    /// Tên hiển thị kèm distro nếu là WSL (dùng cho title/label)
+    pub fn display_label(&self) -> String {
+        let name = if self.name.is_empty() {
+            "Workspace"
+        } else {
+            &self.name
+        };
+        match &self.location {
+            WorkspaceLocation::Wsl { distro, .. } => format!("{} ({})", name, distro),
+            WorkspaceLocation::Local { .. } => name.to_string(),
+        }
+    }
+
+    /// Đường dẫn tóm tắt mục tiêu (dùng cho tooltip hoặc subtitle)
+    pub fn target_summary(&self) -> String {
+        match &self.location {
+            WorkspaceLocation::Wsl {
+                distro,
+                working_dir,
+            } => {
+                if !working_dir.is_empty() {
+                    format!("{} ({})", working_dir, distro)
+                } else {
+                    format!("🐧 WSL ({})", distro)
+                }
+            }
+            WorkspaceLocation::Local { working_dir } => {
+                if !working_dir.is_empty() {
+                    working_dir.clone()
+                } else if !self.file_path.is_empty() {
+                    self.file_path.clone()
+                } else if !self.command_str.is_empty() {
+                    self.command_str.clone()
+                } else {
+                    "Local Workspace".to_string()
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -392,5 +444,51 @@ mod tests {
         }"#;
         let ws_legacy: Workspace = serde_json::from_str(legacy_json).unwrap();
         assert_eq!(ws_legacy.source_type, SourceType::Wsl);
+    }
+
+    #[tokio::test]
+    async fn test_workspace_domain_methods() {
+        let local_ws = Workspace::new(
+            "my-app",
+            WorkspaceLocation::Local {
+                working_dir: "C:\\Projects\\app".to_string(),
+            },
+            SourceType::Process,
+        );
+        assert_eq!(local_ws.icon(), "🖥");
+        assert_eq!(local_ws.display_label(), "my-app");
+        assert_eq!(local_ws.target_summary(), "C:\\Projects\\app");
+
+        let wsl_ws = Workspace::new(
+            "ubuntu-service",
+            WorkspaceLocation::Wsl {
+                distro: "Ubuntu-22.04".to_string(),
+                working_dir: "/home/user/service".to_string(),
+            },
+            SourceType::Wsl,
+        );
+        assert_eq!(wsl_ws.icon(), "🐧");
+        assert_eq!(wsl_ws.display_label(), "ubuntu-service (Ubuntu-22.04)");
+        assert_eq!(wsl_ws.target_summary(), "/home/user/service (Ubuntu-22.04)");
+
+        let file_ws = Workspace::new(
+            "syslog",
+            WorkspaceLocation::Local {
+                working_dir: "C:\\Logs".to_string(),
+            },
+            SourceType::File,
+        );
+        assert_eq!(file_ws.icon(), "📄");
+
+        let session = WorkspaceSession::from_workspace(&wsl_ws, 100, 50);
+        assert_eq!(session.icon(), "🐧");
+        assert_eq!(
+            session.detected_wsl_distro(),
+            Some("Ubuntu-22.04".to_string())
+        );
+        assert_eq!(
+            session.target_summary(),
+            "/home/user/service (Ubuntu-22.04)"
+        );
     }
 }

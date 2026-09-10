@@ -1,12 +1,18 @@
-use crate::app::{SourceType, UwuGuiApp, WslSubMode};
+use crate::app::{AppAction, SourceType, UwuGuiApp, WslSubMode};
 use crate::ui::theme;
 use eframe::egui::{self, Rounding, Stroke};
-use uwu_core_workspace::{Workspace, WorkspaceLocation};
 
 pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
     if !app.show_launch_modal {
         return;
     }
+
+    if app.launch_modal_draft.is_none() {
+        app.launch_modal_draft = Some(app.session.source_config.clone());
+    }
+
+    let mut action_to_dispatch: Option<AppAction> = None;
+    let available_distros = app.available_wsl_distros.clone();
 
     egui::Window::new("⚙️ Launch & Source Parameters")
         .frame(
@@ -39,10 +45,6 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
             );
             ui.add_space(3.0);
 
-            let mut project_to_launch: Option<Workspace> = None;
-            let mut project_to_delete: Option<uuid::Uuid> = None;
-            let mut project_to_load: Option<Workspace> = None;
-
             egui::Frame::none()
                 .fill(theme::BG_BASE)
                 .stroke(Stroke::new(1.0, theme::BG_SURFACE0))
@@ -72,27 +74,9 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
                                         egui::Color32::TRANSPARENT
                                     };
 
-                                    let (icon, label_text, subtitle) = match &ws.location {
-                                        WorkspaceLocation::Wsl {
-                                            distro,
-                                            working_dir,
-                                        } => {
-                                            let sub = if !working_dir.is_empty() {
-                                                working_dir.clone()
-                                            } else {
-                                                format!("🐧 WSL ({})", distro)
-                                            };
-                                            ("🐧", format!("{} ({})", ws.name, distro), sub)
-                                        }
-                                        WorkspaceLocation::Local { working_dir } => {
-                                            let sub = if !working_dir.is_empty() {
-                                                working_dir.clone()
-                                            } else {
-                                                "🪟 Windows Local".to_string()
-                                            };
-                                            ("🪟", ws.name.clone(), sub)
-                                        }
-                                    };
+                                    let icon = ws.icon();
+                                    let label_text = ws.display_label();
+                                    let subtitle = ws.target_summary();
 
                                     egui::Frame::none()
                                         .fill(bg_color)
@@ -115,7 +99,8 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
                                                 );
 
                                                 if name_resp.clicked() {
-                                                    project_to_load = Some(ws.clone());
+                                                    action_to_dispatch =
+                                                        Some(AppAction::LoadWorkspace(ws.clone()));
                                                 }
                                                 if !subtitle.is_empty() {
                                                     name_resp.on_hover_text(format!(
@@ -145,7 +130,9 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
                                                             )
                                                             .clicked()
                                                         {
-                                                            project_to_delete = Some(ws.id);
+                                                            action_to_dispatch = Some(
+                                                                AppAction::DeleteWorkspace(ws.id),
+                                                            );
                                                         }
 
                                                         // Open button (↗)
@@ -164,7 +151,10 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
                                                             )
                                                             .clicked()
                                                         {
-                                                            project_to_launch = Some(ws.clone());
+                                                            action_to_dispatch =
+                                                                Some(AppAction::OpenWorkspace(
+                                                                    ws.clone(),
+                                                                ));
                                                         }
                                                     },
                                                 );
@@ -175,23 +165,11 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
                     }
                 });
 
-            if let Some(id) = project_to_delete {
-                app.store.remove(id);
-            }
-            if let Some(ws) = project_to_load {
-                app.load_workspace(&ws);
-            }
-            if let Some(ws) = project_to_launch {
-                app.load_workspace(&ws);
-                app.save_current_workspace();
-                app.restart_current_source();
-                app.show_launch_modal = false;
-                return;
-            }
-
             ui.add_space(8.0);
             ui.separator();
             ui.add_space(6.0);
+
+            let draft = app.launch_modal_draft.as_mut().unwrap();
 
             // Engine Performance Card
             render_modal_card(ui, "System Engine Performance", |ui| {
@@ -204,7 +182,7 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
                                 .color(theme::TEXT_MUTED),
                         );
                         ui.add(
-                            egui::DragValue::new(&mut app.session.source_config.capacity)
+                            egui::DragValue::new(&mut draft.capacity)
                                 .range(1_000..=1_000_000)
                                 .speed(5000),
                         );
@@ -214,7 +192,7 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
                             egui::RichText::new("Display Limit (-n):").color(theme::TEXT_MUTED),
                         );
                         ui.add(
-                            egui::DragValue::new(&mut app.session.source_config.display_limit)
+                            egui::DragValue::new(&mut draft.display_limit)
                                 .range(100..=50_000)
                                 .speed(500),
                         );
@@ -227,15 +205,15 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
             // Log Source Selection Card
             render_modal_card(ui, "Log Source Selection", |ui| {
                 ui.radio_value(
-                    &mut app.session.source_config.source_type,
+                    &mut draft.source_type,
                     SourceType::Process,
                     egui::RichText::new("🚀 Command / Process Output").color(theme::TEXT_PRIMARY),
                 );
-                if app.session.source_config.source_type == SourceType::Process {
+                if draft.source_type == SourceType::Process {
                     ui.horizontal(|ui| {
                         ui.label(egui::RichText::new("Command:").color(theme::TEXT_MUTED));
                         ui.add(
-                            egui::TextEdit::singleline(&mut app.session.source_config.command_str)
+                            egui::TextEdit::singleline(&mut draft.command_str)
                                 .hint_text("e.g. go run gen_logs.go")
                                 .font(egui::TextStyle::Monospace)
                                 .desired_width(320.0)
@@ -247,15 +225,15 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
                 ui.add_space(6.0);
 
                 ui.radio_value(
-                    &mut app.session.source_config.source_type,
+                    &mut draft.source_type,
                     SourceType::File,
                     egui::RichText::new("📁 Log File (File Tailer)").color(theme::TEXT_PRIMARY),
                 );
-                if app.session.source_config.source_type == SourceType::File {
+                if draft.source_type == SourceType::File {
                     ui.horizontal(|ui| {
                         ui.label(egui::RichText::new("File Path:").color(theme::TEXT_MUTED));
                         ui.add(
-                            egui::TextEdit::singleline(&mut app.session.source_config.file_path)
+                            egui::TextEdit::singleline(&mut draft.file_path)
                                 .desired_width(260.0)
                                 .margin(egui::Margin::symmetric(8.0, 4.0)),
                         );
@@ -269,7 +247,7 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
 
                         if ui.add(browse_btn).clicked() {
                             if let Some(path) = rfd::FileDialog::new().pick_file() {
-                                app.session.source_config.file_path = path.display().to_string();
+                                draft.file_path = path.display().to_string();
                             }
                         }
                     });
@@ -278,12 +256,12 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
                 ui.add_space(6.0);
 
                 ui.radio_value(
-                    &mut app.session.source_config.source_type,
+                    &mut draft.source_type,
                     SourceType::Wsl,
                     egui::RichText::new("🐧 WSL (Windows Subsystem for Linux)")
                         .color(theme::TEXT_PRIMARY),
                 );
-                if app.session.source_config.source_type == SourceType::Wsl {
+                if draft.source_type == SourceType::Wsl {
                     egui::Frame::none()
                         .fill(theme::BG_CRUST)
                         .rounding(Rounding::same(4.0))
@@ -291,39 +269,27 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 ui.label(egui::RichText::new("Distro:").color(theme::TEXT_MUTED));
-                                if !app.available_wsl_distros.is_empty() {
+                                if !available_distros.is_empty() {
                                     egui::ComboBox::from_id_salt("wsl_distro_combo")
-                                        .selected_text(
-                                            if app
-                                                .session
-                                                .source_config
-                                                .wsl_config
-                                                .distro
-                                                .is_empty()
-                                            {
-                                                "Select Distro"
-                                            } else {
-                                                &app.session.source_config.wsl_config.distro
-                                            },
-                                        )
+                                        .selected_text(if draft.wsl_config.distro.is_empty() {
+                                            "Select Distro"
+                                        } else {
+                                            &draft.wsl_config.distro
+                                        })
                                         .show_ui(ui, |ui| {
-                                            let active_idx = app.active_index;
-                                            let current_distro = &mut app.sessions[active_idx]
-                                                .session
-                                                .source_config
-                                                .wsl_config
-                                                .distro;
-                                            for d in &app.available_wsl_distros {
-                                                ui.selectable_value(current_distro, d.clone(), d);
+                                            for d in &available_distros {
+                                                ui.selectable_value(
+                                                    &mut draft.wsl_config.distro,
+                                                    d.clone(),
+                                                    d,
+                                                );
                                             }
                                         });
                                 } else {
                                     ui.add(
-                                        egui::TextEdit::singleline(
-                                            &mut app.session.source_config.wsl_config.distro,
-                                        )
-                                        .hint_text("Ubuntu")
-                                        .desired_width(120.0),
+                                        egui::TextEdit::singleline(&mut draft.wsl_config.distro)
+                                            .hint_text("Ubuntu")
+                                            .desired_width(120.0),
                                     );
                                 }
                             });
@@ -333,12 +299,10 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
                             ui.horizontal(|ui| {
                                 ui.label(egui::RichText::new("Workdir:").color(theme::TEXT_MUTED));
                                 ui.add(
-                                    egui::TextEdit::singleline(
-                                        &mut app.session.source_config.wsl_config.working_dir,
-                                    )
-                                    .hint_text("e.g. /home/user/project (Optional)")
-                                    .font(egui::TextStyle::Monospace)
-                                    .desired_width(280.0),
+                                    egui::TextEdit::singleline(&mut draft.wsl_config.working_dir)
+                                        .hint_text("e.g. /home/user/project (Optional)")
+                                        .font(egui::TextStyle::Monospace)
+                                        .desired_width(280.0),
                                 );
                             });
 
@@ -346,14 +310,14 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
 
                             ui.horizontal(|ui| {
                                 ui.radio_value(
-                                    &mut app.session.source_config.wsl_config.sub_mode,
+                                    &mut draft.wsl_config.sub_mode,
                                     WslSubMode::Command,
                                     egui::RichText::new("🚀 Cmd")
                                         .size(11.5)
                                         .color(theme::TEXT_PRIMARY),
                                 );
                                 ui.radio_value(
-                                    &mut app.session.source_config.wsl_config.sub_mode,
+                                    &mut draft.wsl_config.sub_mode,
                                     WslSubMode::File,
                                     egui::RichText::new("📁 File")
                                         .size(11.5)
@@ -363,7 +327,7 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
 
                             ui.add_space(4.0);
 
-                            match app.session.source_config.wsl_config.sub_mode {
+                            match draft.wsl_config.sub_mode {
                                 WslSubMode::Command => {
                                     ui.horizontal(|ui| {
                                         ui.label(
@@ -372,11 +336,7 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
                                         );
                                         ui.add(
                                             egui::TextEdit::singleline(
-                                                &mut app
-                                                    .session
-                                                    .source_config
-                                                    .wsl_config
-                                                    .command_str,
+                                                &mut draft.wsl_config.command_str,
                                             )
                                             .hint_text("e.g. python3 app.py or cargo run")
                                             .font(egui::TextStyle::Monospace)
@@ -392,7 +352,7 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
                                         );
                                         ui.add(
                                             egui::TextEdit::singleline(
-                                                &mut app.session.source_config.wsl_config.file_path,
+                                                &mut draft.wsl_config.file_path,
                                             )
                                             .hint_text("/var/log/app.log")
                                             .font(egui::TextStyle::Monospace)
@@ -421,9 +381,7 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
                 .rounding(Rounding::same(4.0));
 
                 if ui.add(apply_btn).clicked() {
-                    app.save_current_workspace();
-                    app.restart_current_source();
-                    app.show_launch_modal = false;
+                    action_to_dispatch = Some(AppAction::ApplyLaunchModal);
                 }
 
                 let cancel_btn =
@@ -433,10 +391,14 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
                         .rounding(Rounding::same(4.0));
 
                 if ui.add(cancel_btn).clicked() {
-                    app.show_launch_modal = false;
+                    action_to_dispatch = Some(AppAction::CloseLaunchModal);
                 }
             });
         });
+
+    if let Some(action) = action_to_dispatch {
+        app.dispatch_action(action);
+    }
 }
 
 fn render_modal_card<R>(

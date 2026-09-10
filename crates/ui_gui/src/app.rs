@@ -29,12 +29,63 @@ pub struct UnfilteredViewState {
     pub snapshot_processed_count: u64,
 }
 
+/// Unified Action enum for high-level application & session state mutations (Zed-style Command Pattern)
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub enum AppAction {
+    SwitchSession(usize),
+    CloseSession(usize),
+    CycleSession(bool),
+    OpenWorkspace(Workspace),
+    LoadWorkspace(Workspace),
+    DeleteWorkspace(uuid::Uuid),
+    StartSource,
+    StopSource,
+    RestartSource,
+    OpenLaunchModal,
+    OpenLaunchModalForWsl,
+    CloseLaunchModal,
+    ApplyLaunchModal,
+    ApplyAndRestartSource(SourceConfig),
+    OpenColumnsModal,
+    CloseColumnsModal,
+    ApplyColumnsModal,
+    SelectLog(Option<LogEvent>),
+    SwitchTab(ActiveTab),
+
+    // Search Query & Filtering
+    ApplyFilterTerm(String),
+    ExcludeFilterTerm(String),
+    ClearQuery,
+
+    // Highlights
+    ToggleRowHighlight(u64),
+    ToggleTermHighlight(String),
+    ClearAllHighlights,
+
+    // Stream & Latch Controls
+    ToggleLatch,
+    ToggleUnfilteredLive,
+    RefreshUnfilteredSnapshot,
+    OpenUnfilteredStream(Option<u64>),
+    CloseUnfilteredStream,
+    FocusInMainAndClearFilter,
+
+    // Project Picker
+    ToggleProjectPicker,
+    CloseProjectPicker,
+
+    // Global Dismiss / Stack Pop
+    DismissTopLayer,
+}
+
 pub struct UwuGuiApp {
     pub sessions: Vec<GuiSession>,
     pub active_index: usize,
     pub store: WorkspaceStore,
     pub rt: Handle,
     pub show_launch_modal: bool,
+    pub launch_modal_draft: Option<SourceConfig>,
     pub project_picker_open: bool,
     pub project_search_query: String,
     pub available_wsl_distros: Vec<String>,
@@ -312,6 +363,7 @@ impl UwuGuiApp {
             store,
             rt,
             show_launch_modal: false,
+            launch_modal_draft: None,
             project_picker_open: false,
             project_search_query: String::new(),
             available_wsl_distros: Vec::new(),
@@ -416,6 +468,165 @@ impl UwuGuiApp {
             (self.active_index + n - 1) % n
         };
         self.switch_session(new_idx);
+    }
+
+    /// Điều phối và thực thi các hành động cấp ứng dụng (Zed-style Command Dispatcher)
+    pub fn dispatch_action(&mut self, action: AppAction) {
+        match action {
+            AppAction::SwitchSession(idx) => {
+                self.switch_session(idx);
+                self.close_project_picker();
+            }
+            AppAction::CloseSession(idx) => self.close_session(idx),
+            AppAction::CycleSession(forward) => self.cycle_project(forward),
+            AppAction::OpenWorkspace(ws) => {
+                self.open_or_switch_workspace(&ws);
+                self.close_project_picker();
+            }
+            AppAction::LoadWorkspace(ws) => {
+                self.load_workspace(&ws);
+                if self.launch_modal_draft.is_some() {
+                    self.launch_modal_draft = Some(self.session.source_config.clone());
+                }
+            }
+            AppAction::DeleteWorkspace(id) => {
+                self.store.remove(id);
+            }
+            AppAction::StartSource => self.start_configured_source(),
+            AppAction::StopSource => self.stop_current_source(),
+            AppAction::RestartSource => self.restart_current_source(),
+            AppAction::OpenLaunchModal => {
+                self.launch_modal_draft = Some(self.session.source_config.clone());
+                self.show_launch_modal = true;
+            }
+            AppAction::OpenLaunchModalForWsl => {
+                let mut draft = self.session.source_config.clone();
+                draft.source_type = SourceType::Wsl;
+                if draft.wsl_config.command_str.is_empty() && draft.wsl_config.file_path.is_empty()
+                {
+                    let recent_wsl = self
+                        .store
+                        .recent_workspaces
+                        .iter()
+                        .find(|w| w.source_type == SourceType::Wsl)
+                        .cloned();
+
+                    if let Some(recent_wsl) = recent_wsl {
+                        if let WorkspaceLocation::Wsl {
+                            distro,
+                            working_dir,
+                        } = &recent_wsl.location
+                        {
+                            if draft.wsl_config.distro.is_empty() {
+                                draft.wsl_config.distro = distro.clone();
+                            }
+                            if draft.wsl_config.working_dir.is_empty() {
+                                draft.wsl_config.working_dir = working_dir.clone();
+                            }
+                        }
+                        if !recent_wsl.command_str.is_empty() {
+                            draft.wsl_config.sub_mode = WslSubMode::Command;
+                            draft.wsl_config.command_str = recent_wsl.command_str.clone();
+                        } else if !recent_wsl.file_path.is_empty() {
+                            draft.wsl_config.sub_mode = WslSubMode::File;
+                            draft.wsl_config.file_path = recent_wsl.file_path.clone();
+                        }
+                    }
+                }
+                self.launch_modal_draft = Some(draft);
+                self.show_launch_modal = true;
+            }
+            AppAction::CloseLaunchModal => {
+                self.show_launch_modal = false;
+                self.launch_modal_draft = None;
+            }
+            AppAction::ApplyLaunchModal => {
+                if let Some(draft) = self.launch_modal_draft.take() {
+                    self.session.source_config = draft;
+                    self.save_current_workspace();
+                    self.restart_current_source();
+                }
+                self.show_launch_modal = false;
+            }
+            AppAction::ApplyAndRestartSource(new_config) => {
+                self.session.source_config = new_config;
+                self.save_current_workspace();
+                self.restart_current_source();
+                self.show_launch_modal = false;
+                self.launch_modal_draft = None;
+            }
+            AppAction::OpenColumnsModal => self.column_state.open_modal(),
+            AppAction::CloseColumnsModal => self.column_state.close_modal(),
+            AppAction::ApplyColumnsModal => self.column_state.apply_modal(),
+            AppAction::SelectLog(log) => self.selected_log = log,
+            AppAction::SwitchTab(tab) => {
+                if tab == ActiveTab::Unfiltered && !self.unfiltered_state.is_open {
+                    self.open_unfiltered_stream(None);
+                }
+                self.active_tab = tab;
+            }
+            AppAction::ApplyFilterTerm(term) => self.apply_filter_term(&term),
+            AppAction::ExcludeFilterTerm(term) => self.exclude_filter_term(&term),
+            AppAction::ClearQuery => {
+                self.query.clear();
+                self.autocomplete_state.is_open = false;
+                self.history_state.close_popup();
+                self.trigger_full_search();
+            }
+            AppAction::ToggleRowHighlight(id) => self.toggle_row_highlight(id),
+            AppAction::ToggleTermHighlight(term) => self.toggle_term_highlight(&term),
+            AppAction::ClearAllHighlights => self.clear_all_highlights(),
+            AppAction::ToggleLatch => self.toggle_latch(),
+            AppAction::ToggleUnfilteredLive => self.toggle_unfiltered_live(),
+            AppAction::RefreshUnfilteredSnapshot => self.refresh_unfiltered_snapshot(),
+            AppAction::OpenUnfilteredStream(id) => self.open_unfiltered_stream(id),
+            AppAction::CloseUnfilteredStream => self.close_unfiltered_stream(),
+            AppAction::FocusInMainAndClearFilter => self.focus_in_main_and_clear_filter(),
+            AppAction::ToggleProjectPicker => {
+                self.project_picker_open = !self.project_picker_open;
+                if !self.project_picker_open {
+                    self.project_search_query.clear();
+                }
+            }
+            AppAction::CloseProjectPicker => self.close_project_picker(),
+            AppAction::DismissTopLayer => {
+                self.dismiss_top_layer();
+            }
+        }
+    }
+
+    /// Đóng lớp giao diện trên cùng theo thứ tự ngăn xếp (Chain of Responsibility / Pop Stack)
+    pub fn dismiss_top_layer(&mut self) -> bool {
+        if self.autocomplete_state.is_open {
+            self.autocomplete_state.is_open = false;
+            true
+        } else if self.history_state.is_open {
+            self.history_state.close_popup();
+            true
+        } else if self.project_picker_open {
+            self.close_project_picker();
+            true
+        } else if self.column_state.is_modal_open {
+            self.column_state.close_modal();
+            true
+        } else if self.show_launch_modal {
+            self.show_launch_modal = false;
+            self.launch_modal_draft = None;
+            true
+        } else if self.active_tab == ActiveTab::Unfiltered {
+            self.close_unfiltered_stream();
+            true
+        } else if self.selected_log.is_some() {
+            self.selected_log = None;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn close_project_picker(&mut self) {
+        self.project_picker_open = false;
+        self.project_search_query.clear();
     }
 
     pub fn save_current_workspace(&mut self) {
@@ -777,31 +988,14 @@ impl UwuGuiApp {
         } else {
             format!("-{term}")
         };
-
-        let current = self.query.trim();
-        if current.is_empty() {
-            self.query = exclude_term;
-        } else {
-            let tokens: Vec<&str> = current.split_whitespace().collect();
-            if !tokens.contains(&exclude_term.as_str()) {
-                self.query = format!("{current} {exclude_term}");
-            }
-        }
-        self.trigger_full_search();
+        self.apply_filter_term(&exclude_term);
     }
 
     pub fn open_unfiltered_stream(&mut self, target_id: Option<u64>) {
         self.unfiltered_state.is_open = true;
         self.unfiltered_state.target_id = target_id;
         self.unfiltered_state.is_live = target_id.is_none();
-        self.unfiltered_state.snapshot_processed_count = self.session.engine.total_processed();
-        let (target_idx, unfiltered) = self
-            .session
-            .engine
-            .get_unfiltered_events(target_id, RAW_STREAM_LIMIT);
-        self.unfiltered_state.cached_unfiltered = unfiltered;
-        self.unfiltered_state.target_index = target_idx;
-        self.unfiltered_state.request_scroll_to_target = true;
+        self.refresh_unfiltered_snapshot();
         self.unfiltered_state.has_new_data = false;
         self.active_tab = ActiveTab::Unfiltered;
     }
@@ -912,6 +1106,7 @@ mod tests {
             store,
             rt,
             show_launch_modal: false,
+            launch_modal_draft: None,
             project_picker_open: false,
             project_search_query: String::new(),
             available_wsl_distros: Vec::new(),
@@ -1380,5 +1575,293 @@ mod tests {
         );
         assert_eq!(extract_project_name("/home/user/backend"), "backend");
         assert_eq!(extract_project_name(""), "Workspace");
+    }
+
+    #[tokio::test]
+    async fn test_zed_style_draft_isolation_and_cancel() {
+        let mut app = create_test_app();
+        app.session.source_config.source_type = SourceType::Process;
+        app.session.source_config.command_str = "cargo run".to_string();
+
+        // Open launch modal creates draft from live session
+        app.dispatch_action(AppAction::OpenLaunchModal);
+        assert!(app.show_launch_modal);
+        assert!(app.launch_modal_draft.is_some());
+
+        // Modify draft in form (e.g. user toggles to File source and types a path)
+        if let Some(ref mut draft) = app.launch_modal_draft {
+            draft.source_type = SourceType::File;
+            draft.file_path = "/var/log/test.log".to_string();
+        }
+
+        // Live session must remain completely untouched while modal is uncommitted
+        assert_eq!(app.session.source_config.source_type, SourceType::Process);
+        assert_eq!(app.session.source_config.command_str, "cargo run");
+        assert_eq!(app.session.source_config.file_path, "");
+
+        // User cancels modal
+        app.dispatch_action(AppAction::CloseLaunchModal);
+        assert!(!app.show_launch_modal);
+        assert!(app.launch_modal_draft.is_none());
+
+        // Live session remains intact
+        assert_eq!(app.session.source_config.source_type, SourceType::Process);
+        assert_eq!(app.session.source_config.command_str, "cargo run");
+    }
+
+    #[tokio::test]
+    async fn test_zed_style_draft_apply() {
+        let mut app = create_test_app();
+        app.session.source_config.source_type = SourceType::Process;
+        app.session.source_config.command_str = "cargo run".to_string();
+
+        // Open modal
+        app.dispatch_action(AppAction::OpenLaunchModal);
+        if let Some(ref mut draft) = app.launch_modal_draft {
+            draft.source_type = SourceType::File;
+            draft.file_path = "C:\\logs\\app.log".to_string();
+            draft.capacity = 50_000;
+        }
+
+        // Apply
+        app.dispatch_action(AppAction::ApplyLaunchModal);
+        assert!(!app.show_launch_modal);
+        assert!(app.launch_modal_draft.is_none());
+
+        // Live session has received the new config
+        assert_eq!(app.session.source_config.source_type, SourceType::File);
+        assert_eq!(app.session.source_config.file_path, "C:\\logs\\app.log");
+        assert_eq!(app.session.source_config.capacity, 50_000);
+    }
+
+    #[tokio::test]
+    async fn test_zed_style_app_action_dispatch() {
+        let mut app = create_test_app();
+        let ws1 = Workspace::new(
+            "Service A",
+            WorkspaceLocation::Local {
+                working_dir: "C:\\projects\\service_a".to_string(),
+            },
+            SourceType::Process,
+        );
+        let ws2 = Workspace::new(
+            "Service B",
+            WorkspaceLocation::Local {
+                working_dir: "C:\\projects\\service_b".to_string(),
+            },
+            SourceType::Process,
+        );
+
+        app.dispatch_action(AppAction::OpenWorkspace(ws1));
+        assert_eq!(app.sessions.len(), 2);
+        assert_eq!(app.active_index, 1);
+
+        app.dispatch_action(AppAction::OpenWorkspace(ws2));
+        assert_eq!(app.sessions.len(), 3);
+        assert_eq!(app.active_index, 2);
+
+        // Cycle backwards
+        app.dispatch_action(AppAction::CycleSession(false));
+        assert_eq!(app.active_index, 1);
+
+        // Cycle forwards
+        app.dispatch_action(AppAction::CycleSession(true));
+        assert_eq!(app.active_index, 2);
+
+        // Switch directly
+        app.dispatch_action(AppAction::SwitchSession(0));
+        assert_eq!(app.active_index, 0);
+
+        // Close session
+        app.dispatch_action(AppAction::CloseSession(1));
+        assert_eq!(app.sessions.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_app_action_columns_modal_flow() {
+        let mut app = create_test_app();
+        let initial_cols = app.column_state.columns.clone();
+
+        // 1. Open columns modal
+        app.dispatch_action(AppAction::OpenColumnsModal);
+        assert!(app.column_state.is_modal_open);
+        assert!(app.column_state.draft_columns.is_some());
+
+        // 2. Modify draft
+        if let Some(ref mut draft) = app.column_state.draft_columns {
+            draft[0].visible = false;
+        }
+
+        // Live columns should still be unchanged (Live vs Draft separation)
+        assert_eq!(app.column_state.columns, initial_cols);
+        assert!(app.column_state.columns[0].visible);
+
+        // 3. Cancel / Close modal
+        app.dispatch_action(AppAction::CloseColumnsModal);
+        assert!(!app.column_state.is_modal_open);
+        assert!(app.column_state.draft_columns.is_none());
+        assert_eq!(app.column_state.columns, initial_cols);
+
+        // 4. Open again, modify and Apply
+        app.dispatch_action(AppAction::OpenColumnsModal);
+        if let Some(ref mut draft) = app.column_state.draft_columns {
+            draft[0].visible = false;
+        }
+        app.dispatch_action(AppAction::ApplyColumnsModal);
+        assert!(!app.column_state.is_modal_open);
+        assert!(!app.column_state.columns[0].visible);
+    }
+
+    #[tokio::test]
+    async fn test_app_action_select_log_and_switch_tab() {
+        let mut app = create_test_app();
+
+        let event = LogEvent::new(
+            "2026-08-20T10:00:00Z",
+            uwu_core_schema::LogLevel::Info,
+            "test message",
+            std::collections::HashMap::new(),
+        );
+
+        app.dispatch_action(AppAction::SelectLog(Some(event.clone())));
+        assert!(app.selected_log.is_some());
+        assert_eq!(app.selected_log.as_ref().unwrap().message, "test message");
+
+        app.dispatch_action(AppAction::SelectLog(None));
+        assert!(app.selected_log.is_none());
+
+        app.dispatch_action(AppAction::SwitchTab(ActiveTab::Unfiltered));
+        assert_eq!(app.active_tab, ActiveTab::Unfiltered);
+
+        app.dispatch_action(AppAction::SwitchTab(ActiveTab::Filtered));
+        assert_eq!(app.active_tab, ActiveTab::Filtered);
+    }
+
+    #[tokio::test]
+    async fn test_app_action_query_filter_and_clear() {
+        let mut app = create_test_app();
+
+        app.dispatch_action(AppAction::ApplyFilterTerm("level:error".to_string()));
+        assert_eq!(app.query, "level:error");
+
+        app.dispatch_action(AppAction::ExcludeFilterTerm("user_id:42".to_string()));
+        assert_eq!(app.query, "level:error -user_id:42");
+
+        app.dispatch_action(AppAction::ClearQuery);
+        assert!(app.query.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_app_action_highlights() {
+        let mut app = create_test_app();
+
+        app.dispatch_action(AppAction::ToggleRowHighlight(100));
+        assert!(app.is_row_highlighted(&100));
+
+        app.dispatch_action(AppAction::ToggleTermHighlight("error".to_string()));
+        assert!(app.highlighted_terms.contains("error"));
+
+        app.dispatch_action(AppAction::ClearAllHighlights);
+        assert!(!app.is_row_highlighted(&100));
+        assert!(app.highlighted_terms.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_app_action_latch_and_unfiltered() {
+        let mut app = create_test_app();
+
+        // Latch toggle
+        assert!(app.is_auto_scroll);
+        app.dispatch_action(AppAction::ToggleLatch);
+        assert!(!app.is_auto_scroll);
+        app.dispatch_action(AppAction::ToggleLatch);
+        assert!(app.is_auto_scroll);
+
+        // Open & close unfiltered stream
+        app.dispatch_action(AppAction::OpenUnfilteredStream(Some(42)));
+        assert!(app.unfiltered_state.is_open);
+        assert_eq!(app.active_tab, ActiveTab::Unfiltered);
+
+        // Unfiltered live toggle
+        assert!(!app.unfiltered_state.is_live);
+        app.dispatch_action(AppAction::ToggleUnfilteredLive);
+        assert!(app.unfiltered_state.is_live);
+
+        app.dispatch_action(AppAction::RefreshUnfilteredSnapshot);
+
+        app.dispatch_action(AppAction::FocusInMainAndClearFilter);
+        assert!(!app.unfiltered_state.is_open);
+        assert_eq!(app.active_tab, ActiveTab::Filtered);
+
+        app.dispatch_action(AppAction::OpenUnfilteredStream(None));
+        assert!(app.unfiltered_state.is_open);
+        app.dispatch_action(AppAction::CloseUnfilteredStream);
+        assert!(!app.unfiltered_state.is_open);
+    }
+
+    #[tokio::test]
+    async fn test_app_action_project_picker() {
+        let mut app = create_test_app();
+
+        assert!(!app.project_picker_open);
+        app.dispatch_action(AppAction::ToggleProjectPicker);
+        assert!(app.project_picker_open);
+
+        app.project_search_query = "search_test".to_string();
+        app.dispatch_action(AppAction::CloseProjectPicker);
+        assert!(!app.project_picker_open);
+        assert!(app.project_search_query.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_app_action_dismiss_top_layer() {
+        let mut app = create_test_app();
+
+        // 1. When selected_log is present
+        let test_log = LogEvent::new("2026-09-10 12:00:00", LogLevel::Info, "msg", HashMap::new())
+            .with_id(123);
+        app.selected_log = Some(test_log);
+        assert!(app.selected_log.is_some());
+
+        // 2. Add unfiltered stream on top
+        app.open_unfiltered_stream(None);
+        assert_eq!(app.active_tab, ActiveTab::Unfiltered);
+
+        // 3. Add launch modal on top
+        app.show_launch_modal = true;
+
+        // 4. Add columns modal on top
+        app.column_state.is_modal_open = true;
+
+        // 5. Add project picker on top
+        app.project_picker_open = true;
+
+        // Popping order verification:
+        // Pop 1: Project picker
+        app.dispatch_action(AppAction::DismissTopLayer);
+        assert!(!app.project_picker_open);
+        assert!(app.column_state.is_modal_open);
+
+        // Pop 2: Columns modal
+        app.dispatch_action(AppAction::DismissTopLayer);
+        assert!(!app.column_state.is_modal_open);
+        assert!(app.show_launch_modal);
+
+        // Pop 3: Launch modal
+        app.dispatch_action(AppAction::DismissTopLayer);
+        assert!(!app.show_launch_modal);
+        assert_eq!(app.active_tab, ActiveTab::Unfiltered);
+
+        // Pop 4: Unfiltered stream tab
+        app.dispatch_action(AppAction::DismissTopLayer);
+        assert_eq!(app.active_tab, ActiveTab::Filtered);
+        assert!(app.selected_log.is_some());
+
+        // Pop 5: Selected log inspector
+        app.dispatch_action(AppAction::DismissTopLayer);
+        assert!(app.selected_log.is_none());
+
+        // Pop 6: Nothing left to pop
+        assert!(!app.dismiss_top_layer());
     }
 }

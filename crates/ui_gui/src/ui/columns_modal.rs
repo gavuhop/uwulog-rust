@@ -1,4 +1,4 @@
-use crate::app::UwuGuiApp;
+use crate::app::{AppAction, UwuGuiApp};
 use crate::ui::theme;
 use eframe::egui::{self, Color32, FontId, Pos2, Rect, Rounding, Stroke};
 use uwu_core_schema::LogEvent;
@@ -18,6 +18,7 @@ pub struct ColumnState {
     pub is_modal_open: bool,
     pub filter_query: String,
     pub columns: Vec<ColumnItem>,
+    pub draft_columns: Option<Vec<ColumnItem>>,
     pub dragged_index: Option<usize>,
     pub header_dragged_name: Option<String>,
     pub header_drop_target: Option<String>,
@@ -32,6 +33,7 @@ impl Default for ColumnState {
             is_modal_open: false,
             filter_query: String::new(),
             columns,
+            draft_columns: None,
             dragged_index: None,
             header_dragged_name: None,
             header_drop_target: None,
@@ -40,7 +42,32 @@ impl Default for ColumnState {
     }
 }
 
+fn reorder_vec(list: &mut Vec<ColumnItem>, from_idx: usize, to_idx: usize) {
+    if from_idx < list.len() && to_idx < list.len() && from_idx != to_idx {
+        let item = list.remove(from_idx);
+        list.insert(to_idx, item);
+    }
+}
+
 impl ColumnState {
+    pub fn open_modal(&mut self) {
+        self.draft_columns = Some(self.columns.clone());
+        self.is_modal_open = true;
+    }
+
+    pub fn close_modal(&mut self) {
+        self.is_modal_open = false;
+        self.draft_columns = None;
+    }
+
+    pub fn apply_modal(&mut self) {
+        if let Some(draft) = self.draft_columns.take() {
+            self.columns = draft;
+            self.known_keys = self.columns.iter().map(|c| c.name.clone()).collect();
+        }
+        self.is_modal_open = false;
+    }
+
     pub fn default_columns() -> Vec<ColumnItem> {
         uwu_core_schema::StandardField::default_columns()
             .iter()
@@ -61,10 +88,9 @@ impl ColumnState {
             .collect()
     }
 
-    pub fn reset_to_defaults(&mut self) {
-        let defaults = Self::default_columns();
-        let mut new_cols = defaults;
-        for existing in &self.columns {
+    pub fn merge_with_defaults(source_cols: &[ColumnItem]) -> Vec<ColumnItem> {
+        let mut new_cols = Self::default_columns();
+        for existing in source_cols {
             if !new_cols.iter().any(|c| c.name == existing.name) {
                 new_cols.push(ColumnItem {
                     name: existing.name.clone(),
@@ -73,17 +99,30 @@ impl ColumnState {
                 });
             }
         }
-        self.columns = new_cols;
+        new_cols
+    }
+
+    pub fn reset_to_defaults(&mut self) {
+        self.columns = Self::merge_with_defaults(&self.columns);
         self.dragged_index = None;
         self.header_dragged_name = None;
         self.header_drop_target = None;
         self.known_keys = self.columns.iter().map(|c| c.name.clone()).collect();
     }
 
+    pub fn reset_draft_to_defaults(&mut self) {
+        let source = self.draft_columns.as_deref().unwrap_or(&self.columns);
+        self.draft_columns = Some(Self::merge_with_defaults(source));
+        self.dragged_index = None;
+    }
+
     pub fn reorder(&mut self, from_idx: usize, to_idx: usize) {
-        if from_idx < self.columns.len() && to_idx < self.columns.len() && from_idx != to_idx {
-            let item = self.columns.remove(from_idx);
-            self.columns.insert(to_idx, item);
+        reorder_vec(&mut self.columns, from_idx, to_idx);
+    }
+
+    pub fn reorder_draft(&mut self, from_idx: usize, to_idx: usize) {
+        if let Some(draft) = &mut self.draft_columns {
+            reorder_vec(draft, from_idx, to_idx);
         }
     }
 
@@ -119,6 +158,12 @@ pub fn render_columns_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
     if !app.column_state.is_modal_open {
         return;
     }
+
+    if app.column_state.draft_columns.is_none() {
+        app.column_state.draft_columns = Some(app.column_state.columns.clone());
+    }
+
+    let mut action_to_dispatch: Option<AppAction> = None;
 
     egui::Window::new("📊 Table Columns & Ordering")
         .frame(
@@ -174,7 +219,7 @@ pub fn render_columns_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
             // Columns Drag & Drop List Card
             render_columns_card(ui, "Columns List (Drag to Reorder)", |ui| {
                 let filter_lower = app.column_state.filter_query.trim().to_lowercase();
-                let total_cols = app.column_state.columns.len();
+                let total_cols = app.column_state.draft_columns.as_ref().map_or(0, |c| c.len());
 
                 let pointer_pos = ui.ctx().pointer_latest_pos();
                 let pointer_released = ui.input(|i| i.pointer.any_released());
@@ -193,8 +238,10 @@ pub fn render_columns_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
                         let mut toggle_vis = None;
 
                         for idx in 0..total_cols {
-                            let col_name = app.column_state.columns[idx].name.clone();
-                            let col_visible = app.column_state.columns[idx].visible;
+                            let (col_name, col_visible) = {
+                                let item = &app.column_state.draft_columns.as_ref().unwrap()[idx];
+                                (item.name.clone(), item.visible)
+                            };
 
                             if !filter_lower.is_empty()
                                 && !col_name.to_lowercase().contains(&filter_lower)
@@ -371,13 +418,15 @@ pub fn render_columns_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
                         }
 
                         if let Some((from, to)) = target_drop {
-                            app.column_state.reorder(from, to);
+                            app.column_state.reorder_draft(from, to);
                             app.column_state.dragged_index = Some(to);
                             ui.ctx().request_repaint();
                         }
 
                         if let Some((idx, new_vis)) = toggle_vis {
-                            app.column_state.columns[idx].visible = new_vis;
+                            if let Some(draft) = &mut app.column_state.draft_columns {
+                                draft[idx].visible = new_vis;
+                            }
                         }
                     });
             });
@@ -397,15 +446,15 @@ pub fn render_columns_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
 
                 if ui
                     .add(reset_btn)
-                    .on_hover_text("Reset column order and visibility to default")
+                    .on_hover_text("Reset draft column order and visibility to default")
                     .clicked()
                 {
-                    app.column_state.reset_to_defaults();
+                    app.column_state.reset_draft_to_defaults();
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let done_btn = egui::Button::new(
-                        egui::RichText::new("✔ Done")
+                        egui::RichText::new("✔ Apply & Done")
                             .strong()
                             .color(theme::TEXT_PRIMARY),
                     )
@@ -414,11 +463,28 @@ pub fn render_columns_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
                     .rounding(Rounding::same(4.0));
 
                     if ui.add(done_btn).clicked() {
-                        app.column_state.is_modal_open = false;
+                        action_to_dispatch = Some(AppAction::ApplyColumnsModal);
+                    }
+
+                    ui.add_space(6.0);
+
+                    let cancel_btn = egui::Button::new(
+                        egui::RichText::new("Cancel").color(theme::TEXT_MUTED),
+                    )
+                    .fill(theme::BG_SURFACE0)
+                    .stroke(Stroke::new(1.0, theme::BG_SURFACE1))
+                    .rounding(Rounding::same(4.0));
+
+                    if ui.add(cancel_btn).clicked() {
+                        action_to_dispatch = Some(AppAction::CloseColumnsModal);
                     }
                 });
             });
         });
+
+    if let Some(action) = action_to_dispatch {
+        app.dispatch_action(action);
+    }
 }
 
 fn render_columns_card<R>(
@@ -539,5 +605,57 @@ mod tests {
         assert!(state.columns[1].visible);
         assert_eq!(state.columns[2].name, "message");
         assert!(state.columns[2].visible);
+    }
+
+    #[test]
+    fn test_column_draft_isolation_and_commit() {
+        let mut state = ColumnState::default();
+        let original_cols = state.columns.clone();
+
+        // Initialize draft
+        state.draft_columns = Some(state.columns.clone());
+        state.reorder_draft(1, 0); // Swap level & timestamp in draft
+
+        // Original columns should remain untouched (Live vs Draft isolation)
+        assert_eq!(state.columns, original_cols);
+
+        // Commit draft
+        state.columns = state.draft_columns.take().unwrap();
+        assert_eq!(state.columns[0].name, "level");
+        assert_eq!(state.columns[1].name, "timestamp");
+    }
+
+    #[test]
+    fn test_column_draft_cancel_discards_changes() {
+        let mut state = ColumnState::default();
+        let original_cols = state.columns.clone();
+
+        state.draft_columns = Some(state.columns.clone());
+        state.draft_columns.as_mut().unwrap()[0].visible = false;
+        state.reorder_draft(2, 0);
+
+        // Discard draft (Cancel action)
+        state.draft_columns = None;
+
+        assert_eq!(state.columns, original_cols);
+        assert!(state.columns[0].visible);
+        assert_eq!(state.columns[0].name, "timestamp");
+    }
+
+    #[test]
+    fn test_reset_draft_to_defaults() {
+        let mut state = ColumnState::default();
+        state.draft_columns = Some(state.columns.clone());
+        state.reorder_draft(1, 0);
+        state.draft_columns.as_mut().unwrap()[2].visible = false;
+
+        state.reset_draft_to_defaults();
+        let draft = state.draft_columns.unwrap();
+        assert_eq!(draft[0].name, "timestamp");
+        assert!(draft[0].visible);
+        assert_eq!(draft[1].name, "level");
+        assert!(draft[1].visible);
+        assert_eq!(draft[2].name, "message");
+        assert!(draft[2].visible);
     }
 }

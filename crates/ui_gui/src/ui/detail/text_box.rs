@@ -1,5 +1,5 @@
-use crate::app::UwuGuiApp;
-use crate::ui::detail::actions::{truncate_label, DetailContext, FilterAction, HighlightAction};
+use crate::app::{AppAction, UwuGuiApp};
+use crate::ui::actions::{truncate_label, ActionContext};
 use crate::ui::theme;
 use eframe::egui::{self, Id};
 
@@ -11,7 +11,7 @@ pub fn render_text_box(
     text_color: egui::Color32,
     desired_rows: usize,
     field_name: Option<&str>,
-    ctx: &mut DetailContext<'_>,
+    ctx: &mut ActionContext<'_>,
 ) {
     let mut val = text.to_string();
     let highlighted_terms_ref = ctx.highlighted_terms;
@@ -26,46 +26,30 @@ pub fn render_text_box(
         ui.fonts(|f| f.layout_job(job))
     };
 
-    let resp = ui.add(
-        egui::TextEdit::multiline(&mut val)
-            .id(box_id)
-            .font(egui::TextStyle::Monospace)
-            .text_color(text_color)
-            .desired_width(f32::INFINITY)
-            .frame(false)
-            .desired_rows(desired_rows)
-            .layouter(&mut layouter),
-    );
+    let edit = egui::TextEdit::multiline(&mut val)
+        .id(box_id)
+        .font(egui::FontId::monospace(11.5))
+        .text_color(text_color)
+        .frame(false)
+        .desired_width(f32::INFINITY)
+        .desired_rows(desired_rows)
+        .layouter(&mut layouter);
+
+    let resp = ui.add(edit);
 
     let is_secondary_down = ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary));
 
-    let mut selected_text = None;
-    if let Some(state) = egui::text_edit::TextEditState::load(ui.ctx(), box_id) {
-        if let Some(range) = state.cursor.char_range() {
-            let [min_c, max_c] = range.sorted();
-            if min_c.index < max_c.index {
-                let s = min_c.index;
-                let e = max_c.index;
-                let txt: String = val.chars().skip(s).take(e.saturating_sub(s)).collect();
-                let trimmed = txt.trim().to_string();
-                if !trimmed.is_empty() {
-                    selected_text = Some(trimmed.clone());
-                    ui.ctx().data_mut(|d| d.insert_temp(box_id, trimmed));
-                }
-            } else if resp.clicked() && !is_secondary_down {
-                ui.ctx().data_mut(|d| d.remove_temp::<String>(box_id));
-            }
-        }
-    }
-
-    if selected_text.is_none() {
-        selected_text = ui.ctx().data(|d| d.get_temp::<String>(box_id));
-    }
+    let selected_text = crate::ui::actions::extract_selected_text(
+        ui.ctx(),
+        box_id,
+        &val,
+        resp.clicked() && !is_secondary_down,
+    );
 
     resp.context_menu(|ui| {
-        ui.set_min_width(160.0);
+        ui.set_min_width(180.0);
 
-        // 1. Nhóm từ được bôi đen trong hộp văn bản
+        // 1. Nhóm từ bôi đen trong ô (nếu có lựa chọn bôi đen)
         if let Some(ref sel) = selected_text {
             let display_sel = truncate_label(sel, 25);
 
@@ -75,7 +59,7 @@ pub fn render_text_box(
                 } else {
                     UwuGuiApp::format_selection_term(sel)
                 };
-                *ctx.filter_action = Some(FilterAction::Apply(term));
+                *ctx.action = Some(AppAction::ApplyFilterTerm(term));
                 ui.close_menu();
             }
 
@@ -85,7 +69,7 @@ pub fn render_text_box(
                 } else {
                     UwuGuiApp::format_selection_term(sel)
                 };
-                *ctx.filter_action = Some(FilterAction::Exclude(term));
+                *ctx.action = Some(AppAction::ExcludeFilterTerm(term));
                 ui.close_menu();
             }
 
@@ -97,7 +81,7 @@ pub fn render_text_box(
                 format!("Highlight \"{}\"", display_sel)
             };
             if ui.button(hl_term_text).clicked() {
-                *ctx.highlight_action = Some(HighlightAction::ToggleTerm(sel.clone()));
+                *ctx.action = Some(AppAction::ToggleTermHighlight(sel.clone()));
                 ui.close_menu();
             }
 
@@ -110,13 +94,13 @@ pub fn render_text_box(
 
             if ui.button(format!("Filter \"{}\"", display_msg)).clicked() {
                 let term = UwuGuiApp::format_field_term(f_name, &val);
-                *ctx.filter_action = Some(FilterAction::Apply(term));
+                *ctx.action = Some(AppAction::ApplyFilterTerm(term));
                 ui.close_menu();
             }
 
             if ui.button(format!("Exclude \"{}\"", display_msg)).clicked() {
                 let term = UwuGuiApp::format_field_term(f_name, &val);
-                *ctx.filter_action = Some(FilterAction::Exclude(term));
+                *ctx.action = Some(AppAction::ExcludeFilterTerm(term));
                 ui.close_menu();
             }
 
@@ -128,7 +112,7 @@ pub fn render_text_box(
                 format!("Highlight \"{}\"", display_msg)
             };
             if ui.button(hl_msg_text).clicked() {
-                *ctx.highlight_action = Some(HighlightAction::ToggleTerm(val.clone()));
+                *ctx.action = Some(AppAction::ToggleTermHighlight(val.clone()));
                 ui.close_menu();
             }
 

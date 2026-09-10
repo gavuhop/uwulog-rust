@@ -480,6 +480,111 @@ impl WorkspaceSession {
             }
         }
     }
+
+    /// Nhận diện WSL distro từ config hoặc command/path nếu có
+    pub fn detected_wsl_distro(&self) -> Option<String> {
+        match self.source_config.source_type {
+            SourceType::Wsl => {
+                if !self.source_config.wsl_config.distro.is_empty() {
+                    Some(self.source_config.wsl_config.distro.clone())
+                } else if let WorkspaceLocation::Wsl { distro, .. } = &self.location {
+                    if !distro.is_empty() {
+                        Some(distro.clone())
+                    } else {
+                        Some("WSL".to_string())
+                    }
+                } else {
+                    Some("WSL".to_string())
+                }
+            }
+            _ => {
+                if let WorkspaceLocation::Wsl { distro, .. } = &self.location {
+                    return Some(if distro.is_empty() {
+                        "WSL".to_string()
+                    } else {
+                        distro.clone()
+                    });
+                }
+                let cmd = &self.source_config.command_str;
+                let cmd_lower = cmd.to_lowercase();
+                if cmd_lower.contains("wsl.exe") || cmd_lower.starts_with("wsl ") {
+                    if let Some(idx) = cmd.find("-d ") {
+                        let after = &cmd[idx + 3..];
+                        let distro = after.split_whitespace().next().unwrap_or("WSL");
+                        Some(distro.to_string())
+                    } else {
+                        Some("WSL".to_string())
+                    }
+                } else if self.source_config.file_path.contains(r"\\wsl.localhost\")
+                    || self.source_config.file_path.contains(r"\\wsl$\")
+                {
+                    let p = &self.source_config.file_path;
+                    let after = if let Some(idx) = p.find(r"\\wsl.localhost\") {
+                        &p[idx + 16..]
+                    } else if let Some(idx) = p.find(r"\\wsl$\") {
+                        &p[idx + 8..]
+                    } else {
+                        ""
+                    };
+                    let distro = after.split('\\').next().unwrap_or("WSL");
+                    Some(distro.to_string())
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    /// Icon đại diện cho nguồn log của session (WSL, File, Command)
+    pub fn icon(&self) -> &'static str {
+        if self.source_config.source_type == SourceType::Wsl
+            || matches!(self.location, WorkspaceLocation::Wsl { .. })
+            || self.detected_wsl_distro().is_some()
+        {
+            "🐧"
+        } else {
+            match self.source_config.source_type {
+                SourceType::File => "📄",
+                _ => "🖥",
+            }
+        }
+    }
+
+    /// Thư mục làm việc hiệu lực của session
+    pub fn effective_working_dir(&self) -> &str {
+        if self.source_config.source_type == SourceType::Wsl
+            && !self.source_config.wsl_config.working_dir.trim().is_empty()
+        {
+            &self.source_config.wsl_config.working_dir
+        } else if !self.source_config.working_dir.trim().is_empty() {
+            &self.source_config.working_dir
+        } else {
+            self.location.working_dir()
+        }
+    }
+
+    /// Chuỗi tóm tắt vị trí/nguồn log dùng cho tooltip và picker
+    pub fn target_summary(&self) -> String {
+        if let Some(distro) = self.detected_wsl_distro() {
+            let dir = self.effective_working_dir();
+            if !dir.is_empty() {
+                format!("{} ({})", dir, distro)
+            } else {
+                format!("🐧 WSL ({})", distro)
+            }
+        } else {
+            let dir = self.effective_working_dir();
+            if !dir.is_empty() {
+                dir.to_string()
+            } else if !self.source_config.file_path.is_empty() {
+                self.source_config.file_path.clone()
+            } else if !self.source_config.command_str.is_empty() {
+                self.source_config.command_str.clone()
+            } else {
+                String::new()
+            }
+        }
+    }
 }
 
 impl Drop for WorkspaceSession {

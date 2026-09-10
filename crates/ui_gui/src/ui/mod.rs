@@ -16,36 +16,24 @@ use eframe::egui;
 pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
     ctx.set_visuals(theme::create_visuals());
 
-    // Phím Escape: Đóng project picker / history popup trước, rồi đến modal Params/Columns, rồi đến Tab Unfiltered (trở về Filtered), rồi đến Log Inspector
+    // Phím Escape: Đóng lớp giao diện trên cùng theo thứ tự ngăn xếp (Chain of Responsibility / Pop Stack)
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-        if app.project_picker_open {
-            app.project_picker_open = false;
-        } else if app.history_state.is_open {
-            app.history_state.close_popup();
-        } else if app.column_state.is_modal_open {
-            app.column_state.is_modal_open = false;
-        } else if app.show_launch_modal {
-            app.show_launch_modal = false;
-        } else if app.active_tab == crate::app::ActiveTab::Unfiltered {
-            app.close_unfiltered_stream();
-        } else if app.selected_log.is_some() {
-            app.selected_log = None;
-        }
+        app.dispatch_action(crate::app::AppAction::DismissTopLayer);
     }
 
     // Phím tắt mở Project Picker (Alt+P hoặc Ctrl+Alt+O)
     if ctx.input(|i| i.modifiers.alt && i.key_pressed(egui::Key::P))
         || ctx.input(|i| i.modifiers.command && i.modifiers.alt && i.key_pressed(egui::Key::O))
     {
-        app.project_picker_open = !app.project_picker_open;
+        app.dispatch_action(crate::app::AppAction::ToggleProjectPicker);
     }
 
     // Phím tắt chuyển project trong This Window (Ctrl+PageUp / Ctrl+PageDown)
     if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::PageUp)) {
-        app.cycle_project(false);
+        app.dispatch_action(crate::app::AppAction::CycleSession(false));
     }
     if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::PageDown)) {
-        app.cycle_project(true);
+        app.dispatch_action(crate::app::AppAction::CycleSession(true));
     }
 
     // Top Panel: Unified 1-Tier Modern Custom Title & Header Bar

@@ -1,4 +1,4 @@
-use crate::ui::table::actions::TableRenderContext;
+use crate::ui::actions::ActionContext;
 use crate::ui::table::context_menu::{render_cell_context_menu, CellMenuContext};
 use crate::ui::theme;
 use eframe::egui;
@@ -19,45 +19,6 @@ fn extract_cell_content<'a>(event: &'a LogEvent, col_name: &str) -> (Cow<'a, str
     }
 }
 
-/// Reads the currently selected text range in the cell's TextEdit, or recovers it from temp storage on right click.
-fn extract_selected_text(
-    ui: &mut egui::Ui,
-    cell_id: egui::Id,
-    cell_text: &str,
-    is_left_clicked: bool,
-) -> Option<String> {
-    let mut selected_text = None;
-
-    if let Some(state) = egui::text_edit::TextEditState::load(ui.ctx(), cell_id) {
-        if let Some(range) = state.cursor.char_range() {
-            let [min_c, max_c] = range.sorted();
-            if min_c.index < max_c.index {
-                let s = min_c.index;
-                let e = max_c.index;
-                let txt: String = cell_text
-                    .chars()
-                    .skip(s)
-                    .take(e.saturating_sub(s))
-                    .collect();
-                let clean_txt = uwu_core_util::strip_ansi(&txt).replace(" ↵ ", " ");
-                let trimmed = clean_txt.trim().to_string();
-                if !trimmed.is_empty() {
-                    selected_text = Some(trimmed.clone());
-                    ui.ctx().data_mut(|d| d.insert_temp(cell_id, trimmed));
-                }
-            } else if is_left_clicked {
-                ui.ctx().data_mut(|d| d.remove_temp::<String>(cell_id));
-            }
-        }
-    }
-
-    if selected_text.is_none() {
-        selected_text = ui.ctx().data(|d| d.get_temp::<String>(cell_id));
-    }
-
-    selected_text
-}
-
 pub fn render_cell(
     ui: &mut egui::Ui,
     event: &LogEvent,
@@ -65,7 +26,7 @@ pub fn render_cell(
     row_color: egui::Color32,
     is_selected: bool,
     is_row_highlighted: bool,
-    ctx: &mut TableRenderContext<'_>,
+    ctx: &mut ActionContext<'_>,
 ) -> bool {
     let cell_rect = ui.max_rect();
     if is_row_highlighted {
@@ -105,8 +66,8 @@ pub fn render_cell(
     let is_secondary_down = ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary));
     let clicked = resp.clicked() && !is_secondary_down;
 
-    let selected_text = extract_selected_text(
-        ui,
+    let selected_text = crate::ui::actions::extract_selected_text(
+        ui.ctx(),
         cell_id,
         &cell_text,
         resp.clicked() && !is_secondary_down,

@@ -1,11 +1,10 @@
-pub mod actions;
 pub mod card;
 pub mod fields;
 pub mod text_box;
 
-use crate::app::UwuGuiApp;
+use crate::app::{AppAction, UwuGuiApp};
+use crate::ui::actions::ActionContext;
 use crate::ui::theme;
-use actions::{dispatch_actions, DetailContext, FilterAction, HighlightAction};
 use card::render_card;
 use eframe::egui::{self, Id, Rounding, Stroke};
 use fields::{render_kv_field, render_meta_field};
@@ -14,10 +13,7 @@ use text_box::render_text_box;
 use uwu_core_schema::{LogLevel, StandardField};
 
 pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
-    let mut filter_action: Option<FilterAction> = None;
-    let mut highlight_action: Option<HighlightAction> = None;
-    let mut unfiltered_action: Option<crate::ui::actions::UnfilteredAction> = None;
-    let mut close_requested = false;
+    let mut action_to_dispatch: Option<AppAction> = None;
 
     if let Some(event) = &app.selected_log {
         let is_highlighted = app.is_row_highlighted(&event.id);
@@ -43,7 +39,7 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 .rounding(Rounding::same(4.0));
 
                 if ui.add(close_btn).clicked() {
-                    close_requested = true;
+                    action_to_dispatch = Some(AppAction::SelectLog(None));
                 }
 
                 ui.add_space(4.0);
@@ -62,7 +58,7 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                     .on_hover_text("View surrounding logs in full unfiltered stream")
                     .clicked()
                 {
-                    unfiltered_action = Some(crate::ui::actions::UnfilteredAction::Open(event_id));
+                    action_to_dispatch = Some(AppAction::OpenUnfilteredStream(Some(event_id)));
                 }
 
                 ui.add_space(4.0);
@@ -78,7 +74,7 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                     .rounding(Rounding::same(4.0));
 
                     if ui.add(unhl_all_btn).clicked() {
-                        highlight_action = Some(HighlightAction::ClearAll);
+                        action_to_dispatch = Some(AppAction::ClearAllHighlights);
                     }
 
                     ui.add_space(4.0);
@@ -104,7 +100,7 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 .rounding(Rounding::same(4.0));
 
                 if ui.add(hl_btn).clicked() {
-                    highlight_action = Some(HighlightAction::ToggleRow(event_id));
+                    action_to_dispatch = Some(AppAction::ToggleRowHighlight(event_id));
                 }
             });
         });
@@ -120,16 +116,18 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
             _ => (theme::TEXT_MUTED, false),
         };
 
+        let has_any_highlights = app.has_any_highlights();
+
         egui::ScrollArea::vertical()
             .id_salt("detail_inspector_scroll_area")
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 // Metadata Card
                 render_card(ui, "Metadata", |ui| {
-                    let mut ctx = DetailContext {
+                    let mut ctx = ActionContext {
                         highlighted_terms: &app.highlighted_terms,
-                        filter_action: &mut filter_action,
-                        highlight_action: &mut highlight_action,
+                        has_any_highlights,
+                        action: &mut action_to_dispatch,
                     };
 
                     let ts_key = event.semantic_key(StandardField::Timestamp);
@@ -166,10 +164,10 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                         theme::TEXT_PRIMARY
                     };
 
-                    let mut ctx = DetailContext {
+                    let mut ctx = ActionContext {
                         highlighted_terms: &app.highlighted_terms,
-                        filter_action: &mut filter_action,
-                        highlight_action: &mut highlight_action,
+                        has_any_highlights,
+                        action: &mut action_to_dispatch,
                     };
 
                     render_text_box(
@@ -199,10 +197,10 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
 
                 if !custom_fields.is_empty() {
                     render_card(ui, "Parsed Fields", |ui| {
-                        let mut ctx = DetailContext {
+                        let mut ctx = ActionContext {
                             highlighted_terms: &app.highlighted_terms,
-                            filter_action: &mut filter_action,
-                            highlight_action: &mut highlight_action,
+                            has_any_highlights,
+                            action: &mut action_to_dispatch,
                         };
 
                         for (i, (key, val)) in custom_fields.iter().enumerate() {
@@ -345,10 +343,10 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                     });
                     ui.add_space(4.0);
 
-                    let mut ctx = DetailContext {
+                    let mut ctx = ActionContext {
                         highlighted_terms: &app.highlighted_terms,
-                        filter_action: &mut filter_action,
-                        highlight_action: &mut highlight_action,
+                        has_any_highlights,
+                        action: &mut action_to_dispatch,
                     };
 
                     let display_str = if is_beauty {
@@ -370,10 +368,8 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
             });
     }
 
-    dispatch_actions(app, filter_action, highlight_action, unfiltered_action);
-
-    if close_requested {
-        app.selected_log = None;
+    if let Some(action) = action_to_dispatch {
+        app.dispatch_action(action);
     }
 }
 

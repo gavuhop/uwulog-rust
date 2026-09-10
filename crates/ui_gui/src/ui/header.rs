@@ -25,38 +25,7 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
         }
 
         // Nhận diện nguồn log WSL để hiển thị badge
-        let wsl_distro = match app.session.source_config.source_type {
-            crate::app::SourceType::Wsl => Some(app.session.source_config.wsl_config.distro.clone()),
-            _ => {
-                if app.session.source_config.command_str.to_lowercase().contains("wsl.exe")
-                    || app.session.source_config.command_str.to_lowercase().starts_with("wsl ")
-                {
-                    let cmd = &app.session.source_config.command_str;
-                    if let Some(idx) = cmd.find("-d ") {
-                        let after = &cmd[idx + 3..];
-                        let distro = after.split_whitespace().next().unwrap_or("WSL");
-                        Some(distro.to_string())
-                    } else {
-                        Some("WSL".to_string())
-                    }
-                } else if app.session.source_config.file_path.contains(r"\\wsl.localhost\")
-                    || app.session.source_config.file_path.contains(r"\\wsl$\")
-                {
-                    let p = &app.session.source_config.file_path;
-                    let after = if let Some(idx) = p.find(r"\\wsl.localhost\") {
-                        &p[idx + 16..]
-                    } else if let Some(idx) = p.find(r"\\wsl$\") {
-                        &p[idx + 8..]
-                    } else {
-                        ""
-                    };
-                    let distro = after.split('\\').next().unwrap_or("WSL");
-                    Some(distro.to_string())
-                } else {
-                    None
-                }
-            }
-        };
+        let wsl_distro = app.session.detected_wsl_distro();
 
         if let Some(distro) = wsl_distro {
             ui.add_space(2.0);
@@ -93,8 +62,8 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
             let proj_resp = ui.add(proj_btn);
             proj_btn_rect = Some(proj_resp.rect);
 
-            let workdir_str = app.session.location.working_dir();
-            let tooltip = if workdir_str.is_empty() {
+            let summary = app.session.target_summary();
+            let tooltip = if summary.is_empty() {
                 format!(
                     "Project: {}\nSwitch or manage workspace projects (Alt+P)",
                     app.session.name
@@ -102,12 +71,12 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
             } else {
                 format!(
                     "Project: {}\nPath: {}\nSwitch or manage workspace projects (Alt+P)",
-                    app.session.name, workdir_str
+                    app.session.name, summary
                 )
             };
 
             if proj_resp.on_hover_text(tooltip).clicked() {
-                app.project_picker_open = !app.project_picker_open;
+                app.dispatch_action(crate::app::AppAction::ToggleProjectPicker);
             }
         }
 
@@ -159,7 +128,9 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
             .on_hover_text("Switch to Filtered Logs view")
             .clicked()
         {
-            app.active_tab = crate::app::ActiveTab::Filtered;
+            app.dispatch_action(crate::app::AppAction::SwitchTab(
+                crate::app::ActiveTab::Filtered,
+            ));
         }
 
         // Tab 2: Raw Stream (Chỉ xuất hiện khi người dùng đang có bộ lọc tìm kiếm hoặc đang mở tab Raw!)
@@ -196,10 +167,9 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 .on_hover_text("Switch to Raw Stream view (500 logs buffer)")
                 .clicked()
             {
-                if !app.unfiltered_state.is_open {
-                    app.open_unfiltered_stream(None);
-                }
-                app.active_tab = crate::app::ActiveTab::Unfiltered;
+                app.dispatch_action(crate::app::AppAction::SwitchTab(
+                    crate::app::ActiveTab::Unfiltered,
+                ));
             }
         }
 
@@ -233,7 +203,7 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 .on_hover_text("Configure visible columns and adjust their display order")
                 .clicked()
             {
-                app.column_state.is_modal_open = true;
+                app.dispatch_action(crate::app::AppAction::OpenColumnsModal);
             }
 
             ui.add_space(2.0);
@@ -254,7 +224,7 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 .on_hover_text("Configure engine buffer, display limits & sources")
                 .clicked()
             {
-                app.show_launch_modal = true;
+                app.dispatch_action(crate::app::AppAction::OpenLaunchModal);
             }
 
             ui.add_space(2.0);
@@ -276,7 +246,7 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                     .on_hover_text("Stop running process source")
                     .clicked()
                 {
-                    app.stop_current_source();
+                    app.dispatch_action(crate::app::AppAction::StopSource);
                 }
             } else {
                 let restart_btn = egui::Button::new(
@@ -294,7 +264,7 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                     .on_hover_text("Clear logs and restart source")
                     .clicked()
                 {
-                    app.restart_current_source();
+                    app.dispatch_action(crate::app::AppAction::RestartSource);
                 }
             }
 
@@ -320,9 +290,9 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
 
                 if ui.add(snapshot_btn).on_hover_text(snapshot_tooltip).clicked() {
                     if app.unfiltered_state.is_live {
-                        app.toggle_unfiltered_live();
+                        app.dispatch_action(crate::app::AppAction::ToggleUnfilteredLive);
                     } else {
-                        app.refresh_unfiltered_snapshot();
+                        app.dispatch_action(crate::app::AppAction::RefreshUnfilteredSnapshot);
                     }
                 }
 
@@ -377,8 +347,12 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
 
             if ui.add(latch_btn).on_hover_text(toggle_tooltip).clicked() {
                 match app.active_tab {
-                    crate::app::ActiveTab::Filtered => app.toggle_latch(),
-                    crate::app::ActiveTab::Unfiltered => app.toggle_unfiltered_live(),
+                    crate::app::ActiveTab::Filtered => {
+                        app.dispatch_action(crate::app::AppAction::ToggleLatch);
+                    }
+                    crate::app::ActiveTab::Unfiltered => {
+                        app.dispatch_action(crate::app::AppAction::ToggleUnfilteredLive);
+                    }
                 }
             }
 
@@ -461,10 +435,7 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                         .on_hover_text("Clear filter")
                         .clicked()
                 {
-                    app.query.clear();
-                    app.autocomplete_state.is_open = false;
-                    app.history_state.close_popup();
-                    app.trigger_full_search();
+                    app.dispatch_action(crate::app::AppAction::ClearQuery);
                 }
 
                 // Search History Toggle Button (⏱)

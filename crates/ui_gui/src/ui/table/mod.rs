@@ -1,20 +1,32 @@
-pub mod actions;
 pub mod cell;
 pub mod context_menu;
 pub mod header;
 
-use crate::app::UwuGuiApp;
+use crate::app::{AppAction, UwuGuiApp};
+use crate::ui::actions::ActionContext;
 use crate::ui::columns_modal::ColumnItem;
 use crate::ui::theme;
-use actions::{dispatch_actions, FilterAction, HighlightAction, TableRenderContext};
 use cell::render_cell;
 use eframe::egui::{self, Pos2};
 use egui_extras::{Column, TableBuilder};
 use header::{render_drag_ghost, render_table_headers};
 use uwu_core_schema::LogLevel;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum TableMode {
+    Filtered,
+    Unfiltered,
+}
+
 pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
-    let row_count = app.cached_logs.len();
+    render_log_table(ui, app, TableMode::Filtered);
+}
+
+pub fn render_log_table(ui: &mut egui::Ui, app: &mut UwuGuiApp, mode: TableMode) {
+    let row_count = match mode {
+        TableMode::Filtered => app.cached_logs.len(),
+        TableMode::Unfiltered => app.unfiltered_state.cached_unfiltered.len(),
+    };
     let text_height = egui::TextStyle::Monospace.resolve(ui.style()).size;
 
     let mut newly_selected_event = None;
@@ -29,7 +41,10 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
         }
     });
     if scroll_delta_y > 0.0 {
-        app.unlatch();
+        match mode {
+            TableMode::Filtered => app.unlatch(),
+            TableMode::Unfiltered => app.unlatch_unfiltered(),
+        }
     }
 
     let mut new_header_drag = None;
@@ -44,8 +59,14 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
         .cloned()
         .collect();
 
+    let salt_prefix = match mode {
+        TableMode::Filtered => "main",
+        TableMode::Unfiltered => "unfiltered",
+    };
+
     let table_salt = format!(
-        "log_tbl_{}",
+        "{}_tbl_{}",
+        salt_prefix,
         visible_cols
             .iter()
             .map(|c| c.name.as_str())
@@ -53,18 +74,28 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
             .join(",")
     );
 
-    let mut filter_action: Option<FilterAction> = None;
-    let mut highlight_action: Option<HighlightAction> = None;
-    let mut unfiltered_action: Option<actions::UnfilteredAction> = None;
+    let mut action_to_dispatch: Option<AppAction> = None;
     let has_any_highlights = app.has_any_highlights();
 
-    let sample_ts = app
-        .cached_logs
-        .iter()
-        .take(50)
-        .map(|e| e.timestamp.as_str())
-        .max_by_key(|s| s.chars().count())
-        .unwrap_or("2026-08-21 23:29:07");
+    let default_ts = "2026-08-21 23:29:07";
+    let sample_ts = match mode {
+        TableMode::Filtered => app
+            .cached_logs
+            .iter()
+            .take(50)
+            .map(|e| e.timestamp.as_str())
+            .max_by_key(|s| s.chars().count())
+            .unwrap_or(default_ts),
+        TableMode::Unfiltered => app
+            .unfiltered_state
+            .cached_unfiltered
+            .iter()
+            .take(50)
+            .map(|e| e.timestamp.as_str())
+            .max_by_key(|s| s.chars().count())
+            .unwrap_or(default_ts),
+    };
+
     let ts_text_width = ui.fonts(|f| {
         let job = egui::text::LayoutJob::simple_singleline(
             sample_ts.to_string(),
@@ -76,12 +107,17 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     let ts_needed_width = (ts_text_width + 8.0).max(80.0);
     let level_needed_width = 56.0;
 
+    let hscroll_id = match mode {
+        TableMode::Filtered => "main_table_hscroll",
+        TableMode::Unfiltered => "unfiltered_table_hscroll",
+    };
+
     egui::ScrollArea::horizontal()
-        .id_salt("main_table_hscroll")
+        .id_salt(hscroll_id)
         .auto_shrink([false, false])
         .show(ui, |ui| {
             let mut builder = TableBuilder::new(ui)
-                .id_salt(format!("main_{}", table_salt))
+                .id_salt(format!("{}_{}", salt_prefix, table_salt))
                 .striped(true)
                 .resizable(true)
                 .auto_shrink([false, false]);
@@ -103,13 +139,32 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 builder = builder.column(Column::initial(initial_w).at_least(min_w).clip(true));
             }
 
-            let has_new_data = app.has_new_data;
-            let force_scroll = app.request_scroll_to_bottom;
-            if (force_scroll || (app.is_auto_scroll && has_new_data)) && row_count > 0 {
-                builder = builder.scroll_to_row(row_count - 1, Some(egui::Align::Max));
-                app.request_scroll_to_bottom = false;
+            match mode {
+                TableMode::Filtered => {
+                    let has_new_data = app.has_new_data;
+                    let force_scroll = app.request_scroll_to_bottom;
+                    if (force_scroll || (app.is_auto_scroll && has_new_data)) && row_count > 0 {
+                        builder = builder.scroll_to_row(row_count - 1, Some(egui::Align::Max));
+                        app.request_scroll_to_bottom = false;
+                    }
+                    app.prev_table_row_count = row_count;
+                }
+                TableMode::Unfiltered => {
+                    if app.unfiltered_state.request_scroll_to_target && row_count > 0 {
+                        if let Some(target_idx) = app.unfiltered_state.target_index {
+                            builder = builder.scroll_to_row(target_idx, Some(egui::Align::Center));
+                        }
+                        app.unfiltered_state.request_scroll_to_target = false;
+                    } else if app.unfiltered_state.is_live
+                        && (app.unfiltered_state.request_scroll_to_bottom
+                            || app.unfiltered_state.has_new_data)
+                        && row_count > 0
+                    {
+                        builder = builder.scroll_to_row(row_count - 1, Some(egui::Align::Max));
+                        app.unfiltered_state.request_scroll_to_bottom = false;
+                    }
+                }
             }
-            app.prev_table_row_count = row_count;
 
             builder
                 .header(26.0, |mut tbl_header| {
@@ -122,12 +177,16 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                     );
                 })
                 .body(|body| {
-                    let mut render_ctx = TableRenderContext {
+                    let mut render_ctx = ActionContext {
                         highlighted_terms: &app.highlighted_terms,
                         has_any_highlights,
-                        filter_action: &mut filter_action,
-                        highlight_action: &mut highlight_action,
-                        unfiltered_action: &mut unfiltered_action,
+                        action: &mut action_to_dispatch,
+                    };
+
+                    let target_id = if mode == TableMode::Unfiltered {
+                        app.unfiltered_state.target_id
+                    } else {
+                        None
                     };
 
                     body.rows(text_height + 8.0, row_count, |mut row| {
@@ -137,9 +196,17 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                             last_row_visible = true;
                         }
 
-                        if let Some(event) = app.cached_logs.get(row_index) {
-                            let is_selected =
-                                app.selected_log.as_ref().is_some_and(|s| s.id == event.id);
+                        let maybe_event = match mode {
+                            TableMode::Filtered => app.cached_logs.get(row_index),
+                            TableMode::Unfiltered => {
+                                app.unfiltered_state.cached_unfiltered.get(row_index)
+                            }
+                        };
+
+                        if let Some(event) = maybe_event {
+                            let is_target = target_id.is_some_and(|id| id == event.id);
+                            let is_selected = is_target
+                                || app.selected_log.as_ref().is_some_and(|s| s.id == event.id);
 
                             let is_highlighted = app.is_row_highlighted(&event.id);
                             let row_color = match event.level {
@@ -170,7 +237,9 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 });
         });
 
-    dispatch_actions(app, filter_action, highlight_action, unfiltered_action);
+    if let Some(action) = action_to_dispatch {
+        app.dispatch_action(action);
+    }
 
     if let Some(name) = new_header_drag {
         app.column_state.header_dragged_name = Some(name);
@@ -200,11 +269,17 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     }
 
     if let Some(event) = newly_selected_event {
-        app.selected_log = Some(event);
-        app.unlatch();
+        app.dispatch_action(crate::app::AppAction::SelectLog(Some(event)));
+        match mode {
+            TableMode::Filtered => app.unlatch(),
+            TableMode::Unfiltered => app.unlatch_unfiltered(),
+        }
     }
 
     if last_row_visible && scroll_delta_y < 0.0 {
-        app.is_auto_scroll = true;
+        match mode {
+            TableMode::Filtered => app.is_auto_scroll = true,
+            TableMode::Unfiltered => app.unfiltered_state.is_live = true,
+        }
     }
 }

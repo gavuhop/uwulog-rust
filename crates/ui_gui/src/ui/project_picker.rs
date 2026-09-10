@@ -1,8 +1,8 @@
-use crate::app::{SourceType, UwuGuiApp};
+use crate::app::{AppAction, SourceType, UwuGuiApp};
 use crate::ui::theme;
 use eframe::egui::{self, Color32, Id, Key, Order, Pos2, Rect, Rounding, Stroke};
 use std::collections::HashSet;
-use uwu_core_workspace::{Workspace, WorkspaceLocation, WslSubMode};
+use uwu_core_workspace::{Workspace, WorkspaceLocation};
 
 pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, trigger_rect: Rect) {
     if !app.project_picker_open {
@@ -10,7 +10,7 @@ pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, tri
     }
 
     if ctx.input(|i| i.key_pressed(Key::Escape)) {
-        app.project_picker_open = false;
+        app.dispatch_action(AppAction::CloseProjectPicker);
         return;
     }
 
@@ -22,7 +22,7 @@ pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, tri
     if ctx.input(|i| i.pointer.any_pressed() || i.pointer.any_click()) {
         if let Some(pos) = ctx.input(|i| i.pointer.interact_pos()) {
             if !trigger_rect.contains(pos) && !popup_rect.contains(pos) {
-                app.project_picker_open = false;
+                app.dispatch_action(AppAction::CloseProjectPicker);
                 return;
             }
         }
@@ -94,18 +94,8 @@ pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, tri
                                     continue;
                                 }
 
-                                let (icon, tooltip_path) = match &session.session.location {
-                                    WorkspaceLocation::Wsl {
-                                        distro,
-                                        working_dir,
-                                    } => ("🐧", format!("{} ({})", working_dir, distro)),
-                                    WorkspaceLocation::Local { working_dir } => {
-                                        match session.session.source_config.source_type {
-                                            SourceType::File => ("📄", working_dir.clone()),
-                                            _ => ("🖥", working_dir.clone()),
-                                        }
-                                    }
-                                };
+                                let icon = session.session.icon();
+                                let tooltip_path = session.session.target_summary();
                                 let mut frame = egui::Frame::none()
                                     .rounding(Rounding::same(4.0))
                                     .inner_margin(egui::Margin::symmetric(6.0, 4.0));
@@ -249,18 +239,9 @@ pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, tri
                             .max_height(140.0)
                             .show(ui, |ui| {
                                 for ws in &filtered_recent {
-                                    let (icon, label_text, tooltip_path) = match &ws.location {
-                                        WorkspaceLocation::Wsl {
-                                            distro,
-                                            working_dir,
-                                        } => {
-                                            let full = format!("{} ({})", working_dir, distro);
-                                            ("🐧", format!("{} ({})", ws.name, distro), full)
-                                        }
-                                        WorkspaceLocation::Local { working_dir } => {
-                                            ("🖥", ws.name.clone(), working_dir.clone())
-                                        }
-                                    };
+                                    let icon = ws.icon();
+                                    let label_text = ws.display_label();
+                                    let tooltip_path = ws.target_summary();
 
                                     let frame = egui::Frame::none()
                                         .rounding(Rounding::same(4.0))
@@ -364,25 +345,23 @@ pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, tri
         });
 
     if let Some(ix) = session_to_switch {
-        app.switch_session(ix);
-        app.project_picker_open = false;
+        app.dispatch_action(AppAction::SwitchSession(ix));
     }
 
     if let Some(ix) = session_to_close {
-        app.close_session(ix);
+        app.dispatch_action(AppAction::CloseSession(ix));
     }
 
     if let Some(id) = project_to_delete {
-        app.store.remove(id);
+        app.dispatch_action(AppAction::DeleteWorkspace(id));
     }
 
     if let Some(ws) = project_to_open {
-        app.open_or_switch_workspace(&ws);
-        app.project_picker_open = false;
+        app.dispatch_action(AppAction::OpenWorkspace(ws));
     }
 
     if open_local_folder_clicked {
-        app.project_picker_open = false;
+        app.dispatch_action(AppAction::CloseProjectPicker);
         if let Some(folder) = rfd::FileDialog::new().pick_folder() {
             let path_str = uwu_core_workspace::clean_path(&folder.to_string_lossy());
             let _ = std::env::set_current_dir(&folder);
@@ -395,46 +374,12 @@ pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, tri
                 },
                 SourceType::Process,
             );
-            app.open_or_switch_workspace(&ws);
+            app.dispatch_action(AppAction::OpenWorkspace(ws));
         }
     }
 
     if open_wsl_modal_clicked {
-        app.project_picker_open = false;
-        app.session.source_config.source_type = SourceType::Wsl;
-        if app.session.source_config.wsl_config.command_str.is_empty()
-            && app.session.source_config.wsl_config.file_path.is_empty()
-        {
-            let recent_wsl = app
-                .store
-                .recent_workspaces
-                .iter()
-                .find(|w| w.source_type == SourceType::Wsl)
-                .cloned();
-
-            if let Some(recent_wsl) = recent_wsl {
-                if let WorkspaceLocation::Wsl {
-                    distro,
-                    working_dir,
-                } = &recent_wsl.location
-                {
-                    if app.session.source_config.wsl_config.distro.is_empty() {
-                        app.session.source_config.wsl_config.distro = distro.clone();
-                    }
-                    if app.session.source_config.wsl_config.working_dir.is_empty() {
-                        app.session.source_config.wsl_config.working_dir = working_dir.clone();
-                    }
-                }
-                if !recent_wsl.command_str.is_empty() {
-                    app.session.source_config.wsl_config.sub_mode = WslSubMode::Command;
-                    app.session.source_config.wsl_config.command_str =
-                        recent_wsl.command_str.clone();
-                } else if !recent_wsl.file_path.is_empty() {
-                    app.session.source_config.wsl_config.sub_mode = WslSubMode::File;
-                    app.session.source_config.wsl_config.file_path = recent_wsl.file_path.clone();
-                }
-            }
-        }
-        app.show_launch_modal = true;
+        app.dispatch_action(AppAction::CloseProjectPicker);
+        app.dispatch_action(AppAction::OpenLaunchModalForWsl);
     }
 }
