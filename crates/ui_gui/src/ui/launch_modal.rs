@@ -37,139 +37,6 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
             ui.separator();
             ui.add_space(6.0);
 
-            // Zed-Style Recent Projects Section
-            ui.label(
-                egui::RichText::new("Recent Projects")
-                    .size(12.0)
-                    .strong()
-                    .color(theme::TEXT_MUTED),
-            );
-            ui.add_space(3.0);
-
-            egui::Frame::none()
-                .fill(theme::BG_BASE)
-                .stroke(Stroke::new(1.0, theme::BG_SURFACE0))
-                .rounding(Rounding::same(6.0))
-                .inner_margin(egui::Margin::symmetric(6.0, 4.0))
-                .show(ui, |ui| {
-                    if app.store.recent_workspaces.is_empty() {
-                        ui.add_space(6.0);
-                        ui.label(
-                            egui::RichText::new(
-                                "No recent projects yet. Configure below and save.",
-                            )
-                            .italics()
-                            .size(11.5)
-                            .color(theme::TEXT_MUTED),
-                        );
-                        ui.add_space(6.0);
-                    } else {
-                        egui::ScrollArea::vertical()
-                            .max_height(140.0)
-                            .show(ui, |ui| {
-                                for ws in &app.store.recent_workspaces {
-                                    let is_active = ws.name == app.session.name;
-                                    let bg_color = if is_active {
-                                        theme::BG_SURFACE0
-                                    } else {
-                                        egui::Color32::TRANSPARENT
-                                    };
-
-                                    let icon = ws.icon();
-                                    let label_text = ws.display_label();
-                                    let subtitle = ws.target_summary();
-
-                                    egui::Frame::none()
-                                        .fill(bg_color)
-                                        .rounding(Rounding::same(4.0))
-                                        .inner_margin(egui::Margin::symmetric(6.0, 3.0))
-                                        .show(ui, |ui| {
-                                            ui.horizontal(|ui| {
-                                                ui.label(egui::RichText::new(icon).size(13.0));
-
-                                                let name_resp = ui.selectable_label(
-                                                    is_active,
-                                                    egui::RichText::new(&label_text)
-                                                        .size(12.5)
-                                                        .strong()
-                                                        .color(if is_active {
-                                                            theme::TEXT_KEY
-                                                        } else {
-                                                            theme::TEXT_PRIMARY
-                                                        }),
-                                                );
-
-                                                if name_resp.clicked() {
-                                                    action_to_dispatch =
-                                                        Some(AppAction::LoadWorkspace(ws.clone()));
-                                                }
-                                                if !subtitle.is_empty() {
-                                                    name_resp.on_hover_text(format!(
-                                                        "Path: {}",
-                                                        subtitle
-                                                    ));
-                                                }
-
-                                                ui.with_layout(
-                                                    egui::Layout::right_to_left(
-                                                        egui::Align::Center,
-                                                    ),
-                                                    |ui| {
-                                                        // Delete button (✕)
-                                                        let del_btn = egui::Button::new(
-                                                            egui::RichText::new("✕")
-                                                                .size(11.0)
-                                                                .color(theme::TEXT_MUTED),
-                                                        )
-                                                        .fill(egui::Color32::TRANSPARENT)
-                                                        .frame(false);
-
-                                                        if ui
-                                                            .add(del_btn)
-                                                            .on_hover_text(
-                                                                "Remove from recent list",
-                                                            )
-                                                            .clicked()
-                                                        {
-                                                            action_to_dispatch = Some(
-                                                                AppAction::DeleteWorkspace(ws.id),
-                                                            );
-                                                        }
-
-                                                        // Open button (↗)
-                                                        let open_btn = egui::Button::new(
-                                                            egui::RichText::new("↗")
-                                                                .size(12.0)
-                                                                .color(theme::TEXT_PRIMARY),
-                                                        )
-                                                        .fill(egui::Color32::TRANSPARENT)
-                                                        .frame(false);
-
-                                                        if ui
-                                                            .add(open_btn)
-                                                            .on_hover_text(
-                                                                "Open and launch this project",
-                                                            )
-                                                            .clicked()
-                                                        {
-                                                            action_to_dispatch =
-                                                                Some(AppAction::OpenWorkspace(
-                                                                    ws.clone(),
-                                                                ));
-                                                        }
-                                                    },
-                                                );
-                                            });
-                                        });
-                                }
-                            });
-                    }
-                });
-
-            ui.add_space(8.0);
-            ui.separator();
-            ui.add_space(6.0);
-
             let draft = app.launch_modal_draft.as_mut().unwrap();
 
             // Engine Performance Card
@@ -178,9 +45,12 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
                     .num_columns(2)
                     .spacing([16.0, 8.0])
                     .show(ui, |ui| {
-                        ui.label(
-                            egui::RichText::new("RingBuffer Capacity (-cap):")
-                                .color(theme::TEXT_MUTED),
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new("RingBuffer Capacity (-cap):")
+                                    .color(theme::TEXT_MUTED),
+                            )
+                            .wrap_mode(egui::TextWrapMode::Extend),
                         );
                         ui.add(
                             egui::DragValue::new(&mut draft.capacity)
@@ -189,8 +59,11 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
                         );
                         ui.end_row();
 
-                        ui.label(
-                            egui::RichText::new("Display Limit (-n):").color(theme::TEXT_MUTED),
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new("Display Limit (-n):").color(theme::TEXT_MUTED),
+                            )
+                            .wrap_mode(egui::TextWrapMode::Extend),
                         );
                         ui.add(
                             egui::DragValue::new(&mut draft.display_limit)
@@ -208,7 +81,7 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
                 ui.radio_value(
                     &mut draft.source_type,
                     SourceType::Process,
-                    egui::RichText::new("🚀 Command / Process Output").color(theme::TEXT_PRIMARY),
+                    egui::RichText::new("🚀 Command").color(theme::TEXT_PRIMARY),
                 );
                 if draft.source_type == SourceType::Process {
                     ui.horizontal(|ui| {
