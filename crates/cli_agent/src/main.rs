@@ -88,23 +88,17 @@ async fn run_rpc_proxy_mode() -> Result<()> {
                     handle.abort();
                 }
 
-                let source: Box<dyn LogSource> = match spec {
-                    RemoteLogSourceSpec::Command(cmd_str) => {
-                        let parts: Vec<&str> = cmd_str.split_whitespace().collect();
-                        if parts.is_empty() {
-                            let mut guard = writer.lock().await;
-                            let _ = guard
-                                .send(&ServerEnvelope::Error {
-                                    message: "Command cannot be empty".to_string(),
-                                })
-                                .await;
-                            continue;
-                        }
-                        let prog = parts[0].to_string();
-                        let args = parts[1..].iter().map(|s| s.to_string()).collect();
-                        Box::new(ProcessSource::new(prog, args))
+                let source = match create_source_from_spec(&spec) {
+                    Ok(s) => s,
+                    Err(err) => {
+                        let mut guard = writer.lock().await;
+                        let _ = guard
+                            .send(&ServerEnvelope::Error {
+                                message: err.to_string(),
+                            })
+                            .await;
+                        continue;
                     }
-                    RemoteLogSourceSpec::File(path) => Box::new(FileSource::new(path)),
                 };
 
                 let (tx, mut rx) = mpsc::channel::<RawLogEntry>(10_000);
@@ -190,19 +184,15 @@ async fn run_rpc_proxy_mode() -> Result<()> {
 
 /// Standalone CLI Mode: Dùng để test trực tiếp dòng lệnh trên remote
 async fn run_standalone_mode(cli: Cli) -> Result<()> {
-    let source: Box<dyn LogSource> = if let Some(cmd_str) = cli.cmd {
-        let parts: Vec<&str> = cmd_str.split_whitespace().collect();
-        if parts.is_empty() {
-            anyhow::bail!("Command string cannot be empty");
-        }
-        let prog = parts[0].to_string();
-        let args = parts[1..].iter().map(|s| s.to_string()).collect();
-        Box::new(ProcessSource::new(prog, args))
+    let spec = if let Some(cmd_str) = cli.cmd {
+        RemoteLogSourceSpec::Command(cmd_str)
     } else if let Some(file_path) = cli.file.or(cli.file_pos) {
-        Box::new(FileSource::new(file_path))
+        RemoteLogSourceSpec::File(file_path)
     } else {
         anyhow::bail!("Please specify a log file (-f <path>) or command (-r '<cmd>')");
     };
+
+    let source = create_source_from_spec(&spec)?;
 
     let (tx, mut rx) = mpsc::channel::<RawLogEntry>(10_000);
     source
@@ -215,4 +205,19 @@ async fn run_standalone_mode(cli: Cli) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn create_source_from_spec(spec: &RemoteLogSourceSpec) -> Result<Box<dyn LogSource>> {
+    match spec {
+        RemoteLogSourceSpec::Command(cmd_str) => {
+            let parts: Vec<&str> = cmd_str.split_whitespace().collect();
+            if parts.is_empty() {
+                anyhow::bail!("Command cannot be empty");
+            }
+            let prog = parts[0].to_string();
+            let args = parts[1..].iter().map(|s| s.to_string()).collect();
+            Ok(Box::new(ProcessSource::new(prog, args)))
+        }
+        RemoteLogSourceSpec::File(path) => Ok(Box::new(FileSource::new(path))),
+    }
 }

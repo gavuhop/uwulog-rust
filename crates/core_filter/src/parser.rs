@@ -250,16 +250,22 @@ fn unescape_value(s: &str) -> String {
     out
 }
 
+#[inline]
+fn strip_quotes(s: &str) -> Option<&str> {
+    if s.len() >= 2
+        && ((s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')))
+    {
+        Some(&s[1..s.len() - 1])
+    } else {
+        None
+    }
+}
+
 fn parse_atom(s: &str, now: f64) -> Expr {
     let s_trim = s.trim();
 
     // Nếu toàn bộ token được bọc trong dấu ngoặc kép -> tìm kiếm chuỗi tự do (Text search), bảo toàn nguyên vẹn dấu '-' bên trong
-    let is_entirely_quoted = ((s_trim.starts_with('"') && s_trim.ends_with('"'))
-        || (s_trim.starts_with('\'') && s_trim.ends_with('\'')))
-        && s_trim.len() >= 2;
-
-    if is_entirely_quoted {
-        let unquoted = &s_trim[1..s_trim.len() - 1];
+    if let Some(unquoted) = strip_quotes(s_trim) {
         let unescaped = unescape_value(unquoted);
         let lower = unescaped.to_lowercase();
         return Expr::Text(vec![lower]);
@@ -279,11 +285,7 @@ fn parse_atom(s: &str, now: f64) -> Expr {
     };
 
     // Nếu sau khi strip '-' là chuỗi ngoặc kép (ví dụ `-"error"`)
-    let is_rest_quoted = ((rest.starts_with('"') && rest.ends_with('"'))
-        || (rest.starts_with('\'') && rest.ends_with('\'')))
-        && rest.len() >= 2;
-    if is_rest_quoted {
-        let unquoted = &rest[1..rest.len() - 1];
+    if let Some(unquoted) = strip_quotes(rest) {
         let unescaped = unescape_value(unquoted);
         let lower = unescaped.to_lowercase();
         return wrap(Expr::Text(vec![lower]));
@@ -374,11 +376,7 @@ fn parse_atom(s: &str, now: f64) -> Expr {
                     }
                 }
             }
-            let values: Vec<String> = if ((v_str.starts_with('"') && v_str.ends_with('"'))
-                || (v_str.starts_with('\'') && v_str.ends_with('\'')))
-                && v_str.len() >= 2
-            {
-                let unquoted = &v_str[1..v_str.len() - 1];
+            let values: Vec<String> = if let Some(unquoted) = strip_quotes(v_str) {
                 let unescaped = unescape_value(unquoted);
                 let lower = unescaped.to_lowercase();
                 if lower.is_empty() {
@@ -390,14 +388,9 @@ fn parse_atom(s: &str, now: f64) -> Expr {
                 v_str
                     .split('|')
                     .map(|v| {
-                        let mut trimmed = v.trim();
-                        if ((trimmed.starts_with('"') && trimmed.ends_with('"'))
-                            || (trimmed.starts_with('\'') && trimmed.ends_with('\'')))
-                            && trimmed.len() >= 2
-                        {
-                            trimmed = &trimmed[1..trimmed.len() - 1];
-                        }
-                        let unescaped = unescape_value(trimmed);
+                        let trimmed = v.trim();
+                        let unquoted = strip_quotes(trimmed).unwrap_or(trimmed);
+                        let unescaped = unescape_value(unquoted);
                         unescaped.to_lowercase()
                     })
                     .filter(|v| !v.is_empty())
@@ -413,15 +406,10 @@ fn parse_atom(s: &str, now: f64) -> Expr {
     }
     if let Some(idx) = rest.find('=') {
         let field = &rest[..idx];
-        let mut value = &rest[idx + 1..];
+        let value = &rest[idx + 1..];
         if !field.is_empty() && is_valid_field_name(field) && !value.is_empty() {
-            if ((value.starts_with('"') && value.ends_with('"'))
-                || (value.starts_with('\'') && value.ends_with('\'')))
-                && value.len() >= 2
-            {
-                value = &value[1..value.len() - 1];
-            }
-            let unescaped = unescape_value(value);
+            let unquoted = strip_quotes(value).unwrap_or(value);
+            let unescaped = unescape_value(unquoted);
             return wrap(Expr::FieldExact {
                 field: field.into(),
                 value: unescaped,

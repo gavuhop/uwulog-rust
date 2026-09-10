@@ -2,7 +2,6 @@ use super::{BoxedRead, BoxedWrite, RemoteTransport};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use std::process::Stdio;
-use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
 pub struct SshTransport {
@@ -63,26 +62,10 @@ impl RemoteTransport for SshTransport {
         cmd.stderr(Stdio::piped());
         cmd.kill_on_drop(true);
 
-        let mut child = cmd
+        let child = cmd
             .spawn()
             .with_context(|| format!("Failed to spawn SSH proxy to {}", self.host))?;
 
-        let stdout = child.stdout.take().context("Failed to open SSH stdout")?;
-        let stdin = child.stdin.take().context("Failed to open SSH stdin")?;
-
-        if let Some(stderr) = child.stderr.take() {
-            tokio::spawn(async move {
-                let mut reader = BufReader::new(stderr).lines();
-                while let Ok(Some(line)) = reader.next_line().await {
-                    log::warn!("[SSH Agent STDERR] {}", line);
-                }
-            });
-        }
-
-        tokio::spawn(async move {
-            let _ = child.wait().await;
-        });
-
-        Ok((Box::new(stdout), Box::new(stdin)))
+        super::wrap_child_stdio(child, "SSH Agent")
     }
 }

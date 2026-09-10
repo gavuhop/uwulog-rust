@@ -1,5 +1,6 @@
 pub mod actions;
 pub mod autocomplete;
+pub mod card;
 pub mod columns_modal;
 pub mod detail;
 pub mod header;

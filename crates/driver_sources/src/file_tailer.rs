@@ -50,17 +50,8 @@ async fn run_file_tailer(path: PathBuf, tx: mpsc::Sender<RawLogEntry>) -> Result
     let mut line = String::new();
 
     // 1. Đọc tất cả các dòng log có sẵn hiện tại
-    while reader.read_line(&mut line).await? > 0 {
-        let trimmed = line.trim_end().to_string();
-        line.clear();
-        if !trimmed.is_empty() {
-            let entry = RawLogEntry {
-                payload: RawPayload::Text(trimmed),
-            };
-            if tx.send(entry).await.is_err() {
-                return Ok(()); // Channel closed
-            }
-        }
+    if !drain_file_lines(&mut reader, &mut line, &tx).await? {
+        return Ok(());
     }
 
     // 2. Lắng nghe sự kiện file thay đổi (notify watcher) với bộ lọc đường dẫn chính xác
@@ -117,21 +108,32 @@ async fn run_file_tailer(path: PathBuf, tx: mpsc::Sender<RawLogEntry>) -> Result
             }
         }
 
-        while reader.read_line(&mut line).await? > 0 {
-            let trimmed = line.trim_end().to_string();
-            line.clear();
-            if !trimmed.is_empty() {
-                let entry = RawLogEntry {
-                    payload: RawPayload::Text(trimmed),
-                };
-                if tx.send(entry).await.is_err() {
-                    return Ok(());
-                }
-            }
+        if !drain_file_lines(&mut reader, &mut line, &tx).await? {
+            return Ok(());
         }
     }
 
     Ok(())
+}
+
+async fn drain_file_lines(
+    reader: &mut BufReader<File>,
+    line: &mut String,
+    tx: &mpsc::Sender<RawLogEntry>,
+) -> Result<bool> {
+    while reader.read_line(line).await? > 0 {
+        let trimmed = line.trim_end().to_string();
+        line.clear();
+        if !trimmed.is_empty() {
+            let entry = RawLogEntry {
+                payload: RawPayload::Text(trimmed),
+            };
+            if tx.send(entry).await.is_err() {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(true)
 }
 
 #[cfg(test)]

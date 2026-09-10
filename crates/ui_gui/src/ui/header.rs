@@ -98,30 +98,7 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
             "🔍 Main".to_string()
         };
 
-        let tab_filtered_btn = egui::Button::new(
-            egui::RichText::new(filtered_tab_text)
-                .size(11.5)
-                .strong()
-                .color(if is_filtered_tab {
-                    theme::TEXT_PRIMARY
-                } else {
-                    theme::TEXT_MUTED
-                }),
-        )
-        .fill(if is_filtered_tab {
-            theme::BG_SURFACE1
-        } else {
-            egui::Color32::TRANSPARENT
-        })
-        .stroke(Stroke::new(
-            1.0,
-            if is_filtered_tab {
-                theme::TEXT_KEY
-            } else {
-                theme::BG_SURFACE0
-            },
-        ))
-        .rounding(Rounding::same(4.0));
+        let tab_filtered_btn = stream_tab_button(filtered_tab_text, is_filtered_tab);
 
         if ui
             .add(tab_filtered_btn)
@@ -137,30 +114,7 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
         if is_filtering || is_unfiltered_tab {
             ui.add_space(2.0);
 
-            let tab_unfil_btn = egui::Button::new(
-                egui::RichText::new("📄 Raw")
-                    .size(11.5)
-                    .strong()
-                    .color(if is_unfiltered_tab {
-                        theme::TEXT_PRIMARY
-                    } else {
-                        theme::TEXT_MUTED
-                    }),
-            )
-            .fill(if is_unfiltered_tab {
-                theme::BG_SURFACE1
-            } else {
-                egui::Color32::TRANSPARENT
-            })
-            .stroke(Stroke::new(
-                1.0,
-                if is_unfiltered_tab {
-                    theme::TEXT_KEY
-                } else {
-                    theme::BG_SURFACE0
-                },
-            ))
-            .rounding(Rounding::same(4.0));
+            let tab_unfil_btn = stream_tab_button("📄 Raw", is_unfiltered_tab);
 
             if ui
                 .add(tab_unfil_btn)
@@ -617,16 +571,11 @@ pub fn render_log_counter(ui: &mut egui::Ui, app: &UwuGuiApp) {
                 (text, theme::TEXT_MUTED, tooltip)
             } else {
                 // Pause: số log mới đến / số log tại pause
-                let seen_at_pause = app.unfiltered_state.snapshot_processed_count as usize;
-                let new_incoming = total_now.saturating_sub(seen_at_pause);
-                let text = format_fraction(new_incoming, seen_at_pause);
-                let tooltip = format!(
-                    "Raw Stream (Paused / Frozen Snapshot)\n• New Logs Since Pause: {}\n• Total Logs at Pause: {}\n• Total Ingested: {}",
-                    theme::format_number(new_incoming),
-                    theme::format_number(seen_at_pause),
-                    theme::format_number(total_now),
-                );
-                (text, theme::TEXT_MUTED, tooltip)
+                format_paused_stream_counter(
+                    "Raw Stream",
+                    app.unfiltered_state.snapshot_processed_count as usize,
+                    total_now,
+                )
             }
         }
         crate::app::ActiveTab::Filtered => {
@@ -680,16 +629,11 @@ pub fn render_log_counter(ui: &mut egui::Ui, app: &UwuGuiApp) {
                     (text, theme::TEXT_MUTED, tooltip)
                 } else {
                     // Pause: số log mới đến / số log tại pause
-                    let seen_at_pause = app.global_seen_at_pause as usize;
-                    let new_incoming = total_now.saturating_sub(seen_at_pause);
-                    let text = format_fraction(new_incoming, seen_at_pause);
-                    let tooltip = format!(
-                        "Main Stream (Paused)\n• New Logs Since Pause: {}\n• Total Logs at Pause: {}\n• Total Ingested: {}",
-                        theme::format_number(new_incoming),
-                        theme::format_number(seen_at_pause),
-                        theme::format_number(total_now),
-                    );
-                    (text, theme::TEXT_MUTED, tooltip)
+                    format_paused_stream_counter(
+                        "Main Stream",
+                        app.global_seen_at_pause as usize,
+                        total_now,
+                    )
                 }
             }
         }
@@ -710,6 +654,22 @@ fn format_fraction(numerator: usize, denominator: usize) -> String {
         theme::format_number(numerator),
         theme::format_number(denominator)
     )
+}
+
+fn format_paused_stream_counter(
+    stream_name: &str,
+    seen_at_pause: usize,
+    total_now: usize,
+) -> (String, egui::Color32, String) {
+    let new_incoming = total_now.saturating_sub(seen_at_pause);
+    let text = format_fraction(new_incoming, seen_at_pause);
+    let tooltip = format!(
+        "{stream_name} (Paused)\n• New Logs Since Pause: {}\n• Total Logs at Pause: {}\n• Total Ingested: {}",
+        theme::format_number(new_incoming),
+        theme::format_number(seen_at_pause),
+        theme::format_number(total_now),
+    );
+    (text, theme::TEXT_MUTED, tooltip)
 }
 
 /// Hiển thị chỉ báo trạng thái nạp biến môi trường của Workspace
@@ -757,4 +717,31 @@ fn render_environment_status(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
             }
         }
     }
+}
+
+fn stream_tab_button(text: impl Into<String>, is_active: bool) -> egui::Button<'static> {
+    egui::Button::new(
+        egui::RichText::new(text)
+            .size(11.5)
+            .strong()
+            .color(if is_active {
+                theme::TEXT_PRIMARY
+            } else {
+                theme::TEXT_MUTED
+            }),
+    )
+    .fill(if is_active {
+        theme::BG_SURFACE1
+    } else {
+        egui::Color32::TRANSPARENT
+    })
+    .stroke(Stroke::new(
+        1.0,
+        if is_active {
+            theme::TEXT_KEY
+        } else {
+            theme::BG_SURFACE0
+        },
+    ))
+    .rounding(Rounding::same(4.0))
 }

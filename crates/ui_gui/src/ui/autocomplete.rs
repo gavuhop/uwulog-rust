@@ -35,6 +35,19 @@ pub fn classify_field(key: &str) -> FieldType {
         .unwrap_or(FieldType::Text)
 }
 
+fn key_suggestions(available_fields: &[(String, FieldType)]) -> Vec<SuggestionItem> {
+    available_fields
+        .iter()
+        .map(|(k, _)| SuggestionItem {
+            kind: SuggestionKind::Key,
+            op_symbol: "",
+            action_name: k.clone(),
+            example_syntax: format!("{k}:"),
+            insert_text: format!("{k}:"),
+        })
+        .collect()
+}
+
 /// Phân tích query và sinh danh sách gợi ý CHỈ DỰA TRÊN các trường thực sự có trong log
 pub fn generate_suggestions(
     query: &str,
@@ -42,18 +55,7 @@ pub fn generate_suggestions(
 ) -> (Vec<SuggestionItem>, (usize, usize)) {
     if query.trim().is_empty() {
         // Query rỗng: Phase 1 - gợi ý các key thực sự xuất hiện trong log
-        let mut suggestions = Vec::new();
-        for (k, _) in available_fields {
-            suggestions.push(SuggestionItem {
-                kind: SuggestionKind::Key,
-                op_symbol: "",
-                action_name: k.clone(),
-                example_syntax: format!("{k}:"),
-                insert_text: format!("{k}:"),
-            });
-        }
-
-        return (suggestions, (0, 0));
+        return (key_suggestions(available_fields), (0, 0));
     }
 
     // Tìm token cuối cùng đang được gõ (tính từ khoảng trắng cuối cùng)
@@ -63,17 +65,7 @@ pub fn generate_suggestions(
 
     if active_token.is_empty() {
         // Sau khoảng trắng: Phase 1 - gợi ý danh sách các key thực sự có trong log
-        let mut suggestions = Vec::new();
-        for (k, _) in available_fields {
-            suggestions.push(SuggestionItem {
-                kind: SuggestionKind::Key,
-                op_symbol: "",
-                action_name: k.clone(),
-                example_syntax: format!("{k}:"),
-                insert_text: format!("{k}:"),
-            });
-        }
-        return (suggestions, token_range);
+        return (key_suggestions(available_fields), token_range);
     }
 
     // 1. Phase 2: Trường hợp token đã có dấu ':' hoặc '=' (ví dụ `msg:`, `level:`, `latency:`, `timestamp:`)

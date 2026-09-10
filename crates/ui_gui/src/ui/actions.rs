@@ -58,6 +58,54 @@ pub fn extract_selected_text(
     selected_text
 }
 
+/// Renders standard context menu buttons: Filter, Exclude, and Toggle Keyword Highlight.
+pub fn render_filter_actions_menu(
+    ui: &mut eframe::egui::Ui,
+    field_name: Option<&str>,
+    text: &str,
+    ctx: &mut ActionContext<'_>,
+) {
+    let display_text = truncate_label(text, 25);
+
+    if ui.button(format!("Filter \"{}\"", display_text)).clicked() {
+        let term = match field_name {
+            Some(f) => crate::app::UwuGuiApp::format_field_term(f, text),
+            None => crate::app::UwuGuiApp::format_selection_term(text),
+        };
+        *ctx.action = Some(AppAction::ApplyFilterTerm(term));
+        ui.close_menu();
+    }
+
+    if ui.button(format!("Exclude \"{}\"", display_text)).clicked() {
+        let term = match field_name {
+            Some(f) => crate::app::UwuGuiApp::format_field_term(f, text),
+            None => crate::app::UwuGuiApp::format_selection_term(text),
+        };
+        *ctx.action = Some(AppAction::ExcludeFilterTerm(term));
+        ui.close_menu();
+    }
+
+    let text_clean = text.trim().to_lowercase();
+    let is_hl = !text_clean.is_empty() && ctx.highlighted_terms.contains(&text_clean);
+    let hl_text = if is_hl {
+        format!("Unhighlight \"{}\"", display_text)
+    } else {
+        format!("Highlight \"{}\"", display_text)
+    };
+    if ui.button(hl_text).clicked() {
+        *ctx.action = Some(AppAction::ToggleTermHighlight(text.to_string()));
+        ui.close_menu();
+    }
+}
+
+/// Copies text to clipboard and closes current context menu.
+pub fn copy_and_close(ui: &mut eframe::egui::Ui, text: &str) {
+    if ui.button("Copy value").clicked() {
+        ui.ctx().output_mut(|o| o.copied_text = text.to_string());
+        ui.close_menu();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

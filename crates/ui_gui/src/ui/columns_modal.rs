@@ -1,4 +1,5 @@
 use crate::app::{AppAction, UwuGuiApp};
+use crate::ui::card::render_card;
 use crate::ui::theme;
 use eframe::egui::{self, Color32, FontId, Pos2, Rect, Rounding, Stroke};
 use uwu_core_schema::LogEvent;
@@ -217,7 +218,7 @@ pub fn render_columns_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
             ui.add_space(8.0);
 
             // Columns Drag & Drop List Card
-            render_columns_card(ui, "Columns List (Drag to Reorder)", |ui| {
+            render_card(ui, "Columns List (Drag to Reorder)", |ui| {
                 let filter_lower = app.column_state.filter_query.trim().to_lowercase();
                 let total_cols = app.column_state.draft_columns.as_ref().map_or(0, |c| c.len());
 
@@ -485,31 +486,6 @@ pub fn render_columns_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
     if let Some(action) = action_to_dispatch {
         app.dispatch_action(action);
     }
-}
-
-fn render_columns_card<R>(
-    ui: &mut egui::Ui,
-    title: &str,
-    add_contents: impl FnOnce(&mut egui::Ui) -> R,
-) -> egui::Response {
-    let frame = egui::Frame::default()
-        .fill(theme::BG_BASE)
-        .rounding(Rounding::same(4.0))
-        .inner_margin(egui::Margin::same(10.0))
-        .stroke(Stroke::new(1.0, theme::BG_SURFACE0));
-
-    frame
-        .show(ui, |ui| {
-            ui.label(
-                egui::RichText::new(title)
-                    .size(12.0)
-                    .strong()
-                    .color(theme::TEXT_KEY),
-            );
-            ui.add_space(4.0);
-            add_contents(ui);
-        })
-        .response
 }
 
 #[cfg(test)]

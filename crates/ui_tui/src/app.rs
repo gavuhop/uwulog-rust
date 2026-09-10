@@ -49,6 +49,20 @@ impl App {
         }
     }
 
+    pub fn refresh_search(&mut self) {
+        let (matched, logs) = self
+            .engine
+            .search_with_count(&self.query, self.display_limit);
+        self.total_matched = matched;
+        self.cached_logs = logs;
+        self.last_processed_count = self.engine.total_processed();
+        self.last_search_time = Instant::now();
+
+        if self.is_auto_scroll && !self.cached_logs.is_empty() {
+            self.list_state.select(Some(self.cached_logs.len() - 1));
+        }
+    }
+
     pub fn tick(&mut self) {
         let total_processed = self.engine.total_processed();
         let now = Instant::now();
@@ -59,18 +73,8 @@ impl App {
 
         if query_changed {
             // 1. Khi từ khóa thay đổi (đang gõ): Chạy Full Search 1 lần trên dữ liệu RingBuffer
-            let (matched, logs) = self
-                .engine
-                .search_with_count(&self.query, self.display_limit);
-            self.total_matched = matched;
-            self.cached_logs = logs;
             self.last_query = self.query.clone();
-            self.last_processed_count = total_processed;
-            self.last_search_time = now;
-
-            if self.is_auto_scroll && !self.cached_logs.is_empty() {
-                self.list_state.select(Some(self.cached_logs.len() - 1));
-            }
+            self.refresh_search();
             self.should_redraw = true;
         } else if self.is_auto_scroll && new_logs_arrived {
             // 2. Khi log mới streaming về (từ khóa không đổi): Lọc TĂNG TIẾN (Incremental) CHỈ trên log mới về!
@@ -111,14 +115,7 @@ impl App {
                 KeyCode::Char(' ') | KeyCode::Char('p') => {
                     self.is_auto_scroll = !self.is_auto_scroll;
                     if self.is_auto_scroll && !self.cached_logs.is_empty() {
-                        let (matched, logs) = self
-                            .engine
-                            .search_with_count(&self.query, self.display_limit);
-                        self.total_matched = matched;
-                        self.cached_logs = logs;
-                        self.last_processed_count = self.engine.total_processed();
-                        self.last_search_time = Instant::now();
-                        self.list_state.select(Some(self.cached_logs.len() - 1));
+                        self.refresh_search();
                     }
                 }
                 KeyCode::Up => {
@@ -142,14 +139,7 @@ impl App {
                 }
                 KeyCode::End | KeyCode::Char('G') if displayed_count > 0 => {
                     self.is_auto_scroll = true;
-                    let (matched, logs) = self
-                        .engine
-                        .search_with_count(&self.query, self.display_limit);
-                    self.total_matched = matched;
-                    self.cached_logs = logs;
-                    self.last_processed_count = self.engine.total_processed();
-                    self.last_search_time = Instant::now();
-                    self.list_state.select(Some(self.cached_logs.len() - 1));
+                    self.refresh_search();
                 }
                 KeyCode::PageUp => {
                     let current_idx = self.list_state.selected().unwrap_or(0);

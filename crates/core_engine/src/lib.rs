@@ -258,6 +258,16 @@ impl SystemEngine {
         source.start_stream(tx).await
     }
 
+    #[inline]
+    fn current_data_now(&self) -> f64 {
+        if let Ok(max_ts) = self.max_timestamp.read() {
+            if *max_ts > 0.0 {
+                return *max_ts;
+            }
+        }
+        now_secs()
+    }
+
     pub fn search(&self, query: &str) -> Vec<LogEvent> {
         self.search_limited(query, usize::MAX)
     }
@@ -282,15 +292,7 @@ impl SystemEngine {
                 return (total_logs, events);
             }
 
-            let data_now = if let Ok(max_ts) = self.max_timestamp.read() {
-                if *max_ts > 0.0 {
-                    *max_ts
-                } else {
-                    now_secs()
-                }
-            } else {
-                now_secs()
-            };
+            let data_now = self.current_data_now();
 
             let tokens = tokenize(trimmed);
             let mut parser = Parser::new(tokens, data_now);
@@ -349,15 +351,7 @@ impl SystemEngine {
                 return (matched_len, events);
             }
 
-            let data_now = if let Ok(max_ts) = self.max_timestamp.read() {
-                if *max_ts > 0.0 {
-                    *max_ts
-                } else {
-                    now_secs()
-                }
-            } else {
-                now_secs()
-            };
+            let data_now = self.current_data_now();
 
             let tokens = tokenize(trimmed);
             let mut parser = Parser::new(tokens, data_now);

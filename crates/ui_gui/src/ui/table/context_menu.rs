@@ -1,5 +1,5 @@
-use crate::app::{AppAction, UwuGuiApp};
-use crate::ui::actions::{truncate_label, ActionContext};
+use crate::app::AppAction;
+use crate::ui::actions::{copy_and_close, render_filter_actions_menu, ActionContext};
 use eframe::egui;
 
 /// Parameters for rendering the right-click context menu of a table cell
@@ -20,64 +20,17 @@ pub fn render_cell_context_menu(
 
     // 1. Nhóm từ bôi đen trong ô (nếu có lựa chọn bôi đen)
     if let Some(sel) = menu_ctx.selected_text {
-        let display_sel = truncate_label(sel, 25);
-
-        if ui.button(format!("Filter \"{}\"", display_sel)).clicked() {
-            let term = UwuGuiApp::format_field_term(menu_ctx.col_name, sel);
-            *render_ctx.action = Some(AppAction::ApplyFilterTerm(term));
-            ui.close_menu();
-        }
-
-        if ui.button(format!("Exclude \"{}\"", display_sel)).clicked() {
-            let term = UwuGuiApp::format_field_term(menu_ctx.col_name, sel);
-            *render_ctx.action = Some(AppAction::ExcludeFilterTerm(term));
-            ui.close_menu();
-        }
-
-        let sel_clean = sel.trim().to_lowercase();
-        let is_term_hl = !sel_clean.is_empty() && render_ctx.highlighted_terms.contains(&sel_clean);
-        let hl_term_text = if is_term_hl {
-            format!("Unhighlight \"{}\"", display_sel)
-        } else {
-            format!("Highlight \"{}\"", display_sel)
-        };
-        if ui.button(hl_term_text).clicked() {
-            *render_ctx.action = Some(AppAction::ToggleTermHighlight(sel.to_string()));
-            ui.close_menu();
-        }
-
+        render_filter_actions_menu(ui, Some(menu_ctx.col_name), sel, render_ctx);
         ui.separator();
     }
 
     // 2. Nhóm thao tác với toàn bộ giá trị ô
-    let display_val = truncate_label(menu_ctx.raw_cell_val, 25);
-
-    if ui.button(format!("Filter \"{}\"", display_val)).clicked() {
-        let term = UwuGuiApp::format_field_term(menu_ctx.col_name, menu_ctx.raw_cell_val);
-        *render_ctx.action = Some(AppAction::ApplyFilterTerm(term));
-        ui.close_menu();
-    }
-
-    if ui.button(format!("Exclude \"{}\"", display_val)).clicked() {
-        let term = UwuGuiApp::format_field_term(menu_ctx.col_name, menu_ctx.raw_cell_val);
-        *render_ctx.action = Some(AppAction::ExcludeFilterTerm(term));
-        ui.close_menu();
-    }
-
-    let val_clean = menu_ctx.raw_cell_val.trim().to_lowercase();
-    let is_cell_val_hl = !val_clean.is_empty() && render_ctx.highlighted_terms.contains(&val_clean);
-    let hl_cell_text = if is_cell_val_hl {
-        format!("Unhighlight \"{}\"", display_val)
-    } else {
-        format!("Highlight \"{}\"", display_val)
-    };
-    if ui.button(hl_cell_text).clicked() {
-        *render_ctx.action = Some(AppAction::ToggleTermHighlight(
-            menu_ctx.raw_cell_val.to_string(),
-        ));
-        ui.close_menu();
-    }
-
+    render_filter_actions_menu(
+        ui,
+        Some(menu_ctx.col_name),
+        menu_ctx.raw_cell_val,
+        render_ctx,
+    );
     ui.separator();
 
     // 3. Nhóm thao tác Dòng & Toàn cục
@@ -86,12 +39,12 @@ pub fn render_cell_context_menu(
         ui.close_menu();
     }
 
-    if menu_ctx.is_row_highlighted {
-        if ui.button("Unhighlight row").clicked() {
-            *render_ctx.action = Some(AppAction::ToggleRowHighlight(menu_ctx.event_id));
-            ui.close_menu();
-        }
-    } else if ui.button("Highlight row").clicked() {
+    let highlight_label = if menu_ctx.is_row_highlighted {
+        "Unhighlight row"
+    } else {
+        "Highlight row"
+    };
+    if ui.button(highlight_label).clicked() {
         *render_ctx.action = Some(AppAction::ToggleRowHighlight(menu_ctx.event_id));
         ui.close_menu();
     }
@@ -104,10 +57,5 @@ pub fn render_cell_context_menu(
     ui.separator();
 
     // 4. Copy giá trị vào Clipboard
-    if ui.button("Copy value").clicked() {
-        ui.ctx().output_mut(|o| {
-            o.copied_text = menu_ctx.raw_cell_val.to_string();
-        });
-        ui.close_menu();
-    }
+    copy_and_close(ui, menu_ctx.raw_cell_val);
 }

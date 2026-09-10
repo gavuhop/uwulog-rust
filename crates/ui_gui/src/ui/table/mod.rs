@@ -78,23 +78,16 @@ pub fn render_log_table(ui: &mut egui::Ui, app: &mut UwuGuiApp, mode: TableMode)
     let has_any_highlights = app.has_any_highlights();
 
     let default_ts = "2026-08-21 23:29:07";
-    let sample_ts = match mode {
-        TableMode::Filtered => app
-            .cached_logs
-            .iter()
-            .take(50)
-            .map(|e| e.timestamp.as_str())
-            .max_by_key(|s| s.chars().count())
-            .unwrap_or(default_ts),
-        TableMode::Unfiltered => app
-            .unfiltered_state
-            .cached_unfiltered
-            .iter()
-            .take(50)
-            .map(|e| e.timestamp.as_str())
-            .max_by_key(|s| s.chars().count())
-            .unwrap_or(default_ts),
+    let logs = match mode {
+        TableMode::Filtered => &app.cached_logs[..],
+        TableMode::Unfiltered => &app.unfiltered_state.cached_unfiltered[..],
     };
+    let sample_ts = logs
+        .iter()
+        .take(50)
+        .map(|e| e.timestamp.as_str())
+        .max_by_key(|s| s.chars().count())
+        .unwrap_or(default_ts);
 
     let ts_text_width = ui.fonts(|f| {
         let job = egui::text::LayoutJob::simple_singleline(

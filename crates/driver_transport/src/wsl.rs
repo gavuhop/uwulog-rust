@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
 pub struct WslTransport {
@@ -273,15 +273,12 @@ impl RemoteTransport for WslTransport {
 
         let mut cmd = Command::new("wsl.exe");
         cmd.arg("-d").arg(&self.distro);
-        if let Some(dir) = &self.working_dir {
-            if !dir.trim().is_empty() {
-                cmd.arg("--cd").arg(dir);
-            } else {
-                cmd.arg("--cd").arg("~");
-            }
-        } else {
-            cmd.arg("--cd").arg("~");
-        }
+        let cd_dir = self
+            .working_dir
+            .as_deref()
+            .filter(|d| !d.trim().is_empty())
+            .unwrap_or("~");
+        cmd.arg("--cd").arg(cd_dir);
         cmd.arg("--")
             .arg("sh")
             .arg("-c")
@@ -292,29 +289,13 @@ impl RemoteTransport for WslTransport {
         cmd.stderr(Stdio::piped());
         cmd.kill_on_drop(true);
 
-        let mut child = cmd.spawn().with_context(|| {
+        let child = cmd.spawn().with_context(|| {
             format!(
                 "Failed to spawn WSL proxy process (Distro: {}, Agent: {})",
                 self.distro, remote_binary
             )
         })?;
 
-        let stdout = child.stdout.take().context("Failed to open child stdout")?;
-        let stdin = child.stdin.take().context("Failed to open child stdin")?;
-
-        if let Some(stderr) = child.stderr.take() {
-            tokio::spawn(async move {
-                let mut reader = BufReader::new(stderr).lines();
-                while let Ok(Some(line)) = reader.next_line().await {
-                    log::warn!("[WSL Agent STDERR] {}", line);
-                }
-            });
-        }
-
-        tokio::spawn(async move {
-            let _ = child.wait().await;
-        });
-
-        Ok((Box::new(stdout), Box::new(stdin)))
+        super::wrap_child_stdio(child, "WSL Agent")
     }
 }

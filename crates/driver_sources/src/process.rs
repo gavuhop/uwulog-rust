@@ -2,10 +2,9 @@ use super::traits::LogSource;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use std::process::Stdio;
-use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::mpsc;
-use uwu_core_schema::{RawLogEntry, RawPayload};
+use uwu_core_schema::RawLogEntry;
 
 pub struct ProcessSource {
     command: String,
@@ -79,44 +78,15 @@ impl LogSource for ProcessSource {
 
         let child_pid = child.id();
 
-        let tx_out = tx.clone();
-        let stdout_handle = if let Some(stdout) = child.stdout.take() {
-            tokio::spawn(async move {
-                let mut reader = BufReader::new(stdout).lines();
-                while let Ok(Some(line)) = reader.next_line().await {
-                    let entry = RawLogEntry {
-                        payload: RawPayload::Text(line),
-                    };
-                    if tx_out.send(entry).await.is_err() {
-                        break;
-                    }
+        let stdout_handle = crate::spawn_line_reader(child.stdout.take(), tx.clone());
+        let stderr_handle =
+            crate::spawn_line_reader_mapped(child.stderr.take(), tx.clone(), |line| {
+                if line.to_uppercase().contains("ERROR") {
+                    line
+                } else {
+                    format!("[ERROR] {}", line)
                 }
-            })
-        } else {
-            tokio::spawn(async {})
-        };
-
-        let tx_err = tx.clone();
-        let stderr_handle = if let Some(stderr) = child.stderr.take() {
-            tokio::spawn(async move {
-                let mut reader = BufReader::new(stderr).lines();
-                while let Ok(Some(line)) = reader.next_line().await {
-                    let formatted_err = if line.to_uppercase().contains("ERROR") {
-                        line
-                    } else {
-                        format!("[ERROR] {}", line)
-                    };
-                    let entry = RawLogEntry {
-                        payload: RawPayload::Text(formatted_err),
-                    };
-                    if tx_err.send(entry).await.is_err() {
-                        break;
-                    }
-                }
-            })
-        } else {
-            tokio::spawn(async {})
-        };
+            });
 
         // Task giám sát lifecycle: khi channel đóng (Stop/Restart hoặc thoát app), diệt TỨC THÌ Cây Tiến Trình (Process Tree).
         // Khi tiến trình kết thúc tự nhiên, đợi stdout/stderr drain hết pipe trước khi shutdown.
@@ -200,6 +170,7 @@ fn setup_windows_job_object(child: &tokio::process::Child) -> Option<AutoJobHand
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uwu_core_schema::RawPayload;
 
     #[tokio::test]
     async fn test_process_source_echo() {

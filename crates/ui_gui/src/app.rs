@@ -273,7 +273,7 @@ impl UwuGuiApp {
             let _ = wsl_tx.send(distros);
         });
 
-        let mut source_config = SourceConfig {
+        let source_config = SourceConfig {
             source_type,
             command_str: cmd_to_run,
             file_path: file_to_read,
@@ -283,76 +283,32 @@ impl UwuGuiApp {
             display_limit,
         };
 
-        let mut initial_query = String::new();
-
-        // Nếu có saved_ws và không có cờ custom ghi đè command/file, nạp đầy đủ cấu hình (bao gồm cả WSL)
-        if !custom_cmd_or_file_specified {
-            if let Some(ref ws) = saved_ws {
-                initial_query = ws.last_query.clone();
-                match ws.source_type {
-                    SourceType::Wsl => {
-                        source_config.source_type = SourceType::Wsl;
-                        if !ws.command_str.is_empty() {
-                            source_config.wsl_config.sub_mode = WslSubMode::Command;
-                            source_config.wsl_config.command_str = ws.command_str.clone();
-                        } else if !ws.file_path.is_empty() {
-                            source_config.wsl_config.sub_mode = WslSubMode::File;
-                            source_config.wsl_config.file_path = ws.file_path.clone();
-                        }
-                        if let WorkspaceLocation::Wsl {
-                            distro,
-                            working_dir,
-                        } = &ws.location
-                        {
-                            source_config.wsl_config.distro = distro.clone();
-                            source_config.wsl_config.working_dir = working_dir.clone();
-                        }
-                    }
-                    SourceType::File => {
-                        source_config.source_type = SourceType::File;
-                        source_config.file_path = ws.file_path.clone();
-                    }
-                    SourceType::Process => {
-                        source_config.source_type = SourceType::Process;
-                        source_config.command_str = ws.command_str.clone();
-                        if let WorkspaceLocation::Local { working_dir } = &ws.location {
-                            source_config.working_dir = working_dir.clone();
-                        }
-                    }
-                }
-            }
-        }
-
-        let mut initial_session = if let Some(ref ws) = saved_ws {
-            if !custom_cmd_or_file_specified {
-                let mut s = WorkspaceSession::from_workspace(ws, capacity, display_limit);
-                if !source_config.wsl_config.distro.is_empty() {
-                    s.source_config.wsl_config.distro = source_config.wsl_config.distro.clone();
-                }
-                s
-            } else {
-                WorkspaceSession::new(
-                    initial_project_name.clone(),
-                    initial_location,
-                    source_config.clone(),
-                )
-            }
+        let initial_query = if !custom_cmd_or_file_specified {
+            saved_ws
+                .as_ref()
+                .map(|ws| ws.last_query.clone())
+                .unwrap_or_default()
         } else {
-            WorkspaceSession::new(
-                initial_project_name.clone(),
-                initial_location,
-                source_config.clone(),
-            )
+            String::new()
         };
 
-        if let Some(ref ws) = saved_ws {
-            if !ws.env_vars.is_empty() {
-                initial_session.env_vars = ws.env_vars.clone();
-                initial_session
-                    .env_watch_tx
-                    .send_replace(Some(initial_session.env_vars.clone()));
+        let initial_session = if let (Some(ws), false) = (&saved_ws, custom_cmd_or_file_specified) {
+            let mut s = WorkspaceSession::from_workspace(ws, capacity, display_limit);
+            if !source_config.wsl_config.distro.is_empty() {
+                s.source_config.wsl_config.distro = source_config.wsl_config.distro.clone();
             }
-        }
+            s
+        } else {
+            let mut s =
+                WorkspaceSession::new(initial_project_name, initial_location, source_config);
+            if let Some(ref ws) = saved_ws {
+                if !ws.env_vars.is_empty() {
+                    s.env_vars = ws.env_vars.clone();
+                    s.env_watch_tx.send_replace(Some(s.env_vars.clone()));
+                }
+            }
+            s
+        };
 
         let mut initial_gui_session = GuiSession::new(initial_session);
         initial_gui_session.view.query = initial_query;
@@ -435,15 +391,7 @@ impl UwuGuiApp {
         removed.session.stop_source();
 
         if self.sessions.is_empty() {
-            let default_session = WorkspaceSession::new(
-                "Workspace",
-                WorkspaceLocation::Local {
-                    working_dir: std::env::current_dir()
-                        .map(|p| uwu_core_workspace::clean_path(&p.to_string_lossy()))
-                        .unwrap_or_default(),
-                },
-                SourceConfig::default(),
-            );
+            let default_session = WorkspaceSession::new_default(200_000, 5_000);
             self.sessions.push(GuiSession::new(default_session));
         }
 
@@ -636,35 +584,7 @@ impl UwuGuiApp {
             gui_session.session.name = "Workspace".to_string();
         }
 
-        match gui_session.session.source_config.source_type {
-            SourceType::Wsl => {
-                gui_session.session.location = WorkspaceLocation::Wsl {
-                    distro: gui_session.session.source_config.wsl_config.distro.clone(),
-                    working_dir: gui_session
-                        .session
-                        .source_config
-                        .wsl_config
-                        .working_dir
-                        .clone(),
-                };
-            }
-            _ => {
-                let dir = if !gui_session
-                    .session
-                    .source_config
-                    .working_dir
-                    .trim()
-                    .is_empty()
-                {
-                    gui_session.session.source_config.working_dir.clone()
-                } else {
-                    std::env::current_dir()
-                        .map(|p| uwu_core_workspace::clean_path(&p.to_string_lossy()))
-                        .unwrap_or_default()
-                };
-                gui_session.session.location = WorkspaceLocation::Local { working_dir: dir };
-            }
-        }
+        gui_session.session.sync_location();
 
         let mut ws = gui_session.session.to_workspace();
         ws.last_query = gui_session.view.query.clone();
@@ -949,10 +869,8 @@ impl UwuGuiApp {
         let clean_val = val.trim();
         if field.eq_ignore_ascii_case("level") {
             format!("level:{}", clean_val.to_lowercase())
-        } else if clean_val.contains(' ') || clean_val.contains('"') || clean_val.contains(':') {
-            format!("{}:\"{}\"", field, clean_val.replace('"', "\\\""))
         } else {
-            format!("{}:{}", field, clean_val)
+            format!("{}:{}", field, Self::format_selection_term(clean_val))
         }
     }
 

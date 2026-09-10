@@ -147,57 +147,37 @@ impl WorkspaceSession {
     }
 
     pub fn from_workspace(ws: &Workspace, capacity: usize, display_limit: usize) -> Self {
-        let mut source_config = SourceConfig {
+        let source_config = SourceConfig {
             capacity,
             display_limit,
             ..Default::default()
         };
-
-        match ws.source_type {
-            SourceType::Wsl => {
-                source_config.source_type = SourceType::Wsl;
-                if !ws.command_str.is_empty() {
-                    source_config.wsl_config.sub_mode = WslSubMode::Command;
-                    source_config.wsl_config.command_str = ws.command_str.clone();
-                } else if !ws.file_path.is_empty() {
-                    source_config.wsl_config.sub_mode = WslSubMode::File;
-                    source_config.wsl_config.file_path = ws.file_path.clone();
-                }
-            }
-            SourceType::File => {
-                source_config.source_type = SourceType::File;
-                source_config.file_path = ws.file_path.clone();
-            }
-            SourceType::Process => {
-                source_config.source_type = SourceType::Process;
-                source_config.command_str = ws.command_str.clone();
-            }
-        }
-
-        match &ws.location {
-            WorkspaceLocation::Wsl {
-                distro,
-                working_dir,
-            } => {
-                source_config.wsl_config.distro = distro.clone();
-                source_config.wsl_config.working_dir = working_dir.clone();
-            }
-            WorkspaceLocation::Local { working_dir } => {
-                source_config.working_dir = working_dir.clone();
-            }
-        }
-
         let mut session = Self::new(ws.name.clone(), ws.location.clone(), source_config);
         session.id = ws.id;
-
-        if !ws.env_vars.is_empty() {
-            session.env_vars = ws.env_vars.clone();
-            session
-                .env_watch_tx
-                .send_replace(Some(session.env_vars.clone()));
-        }
-
+        session.apply_workspace(ws);
         session
+    }
+
+    /// Đồng bộ WorkspaceLocation từ SourceConfig hiện tại
+    pub fn sync_location(&mut self) {
+        match self.source_config.source_type {
+            SourceType::Wsl => {
+                self.location = WorkspaceLocation::Wsl {
+                    distro: self.source_config.wsl_config.distro.clone(),
+                    working_dir: self.source_config.wsl_config.working_dir.clone(),
+                };
+            }
+            _ => {
+                let dir = if !self.source_config.working_dir.trim().is_empty() {
+                    self.source_config.working_dir.clone()
+                } else {
+                    std::env::current_dir()
+                        .map(|p| crate::clean_path(&p.to_string_lossy()))
+                        .unwrap_or_default()
+                };
+                self.location = WorkspaceLocation::Local { working_dir: dir };
+            }
+        }
     }
 
     pub fn to_workspace(&self) -> Workspace {

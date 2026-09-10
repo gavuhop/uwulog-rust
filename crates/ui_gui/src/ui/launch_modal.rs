@@ -1,4 +1,5 @@
 use crate::app::{AppAction, SourceType, UwuGuiApp, WslSubMode};
+use crate::ui::card::render_card;
 use crate::ui::theme;
 use eframe::egui::{self, Rounding, Stroke};
 
@@ -172,7 +173,7 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
             let draft = app.launch_modal_draft.as_mut().unwrap();
 
             // Engine Performance Card
-            render_modal_card(ui, "System Engine Performance", |ui| {
+            render_card(ui, "System Engine Performance", |ui| {
                 egui::Grid::new("engine_params_grid")
                     .num_columns(2)
                     .spacing([16.0, 8.0])
@@ -203,7 +204,7 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
             ui.add_space(8.0);
 
             // Log Source Selection Card
-            render_modal_card(ui, "Log Source Selection", |ui| {
+            render_card(ui, "Log Source Selection", |ui| {
                 ui.radio_value(
                     &mut draft.source_type,
                     SourceType::Process,
@@ -399,29 +400,4 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
     if let Some(action) = action_to_dispatch {
         app.dispatch_action(action);
     }
-}
-
-fn render_modal_card<R>(
-    ui: &mut egui::Ui,
-    title: &str,
-    add_contents: impl FnOnce(&mut egui::Ui) -> R,
-) -> egui::Response {
-    let frame = egui::Frame::default()
-        .fill(theme::BG_BASE)
-        .rounding(Rounding::same(4.0))
-        .inner_margin(egui::Margin::same(10.0))
-        .stroke(Stroke::new(1.0, theme::BG_SURFACE0));
-
-    frame
-        .show(ui, |ui| {
-            ui.label(
-                egui::RichText::new(title)
-                    .size(12.0)
-                    .strong()
-                    .color(theme::TEXT_KEY),
-            );
-            ui.add_space(4.0);
-            add_contents(ui);
-        })
-        .response
 }

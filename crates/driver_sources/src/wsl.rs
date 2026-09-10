@@ -2,11 +2,10 @@ use super::traits::LogSource;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use std::process::Stdio;
-use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::mpsc;
 use uwu_core_protocol::RemoteLogSourceSpec;
-use uwu_core_schema::{RawLogEntry, RawPayload};
+use uwu_core_schema::RawLogEntry;
 
 pub type WslTargetMode = RemoteLogSourceSpec;
 
@@ -65,15 +64,12 @@ impl LogSource for WslSource {
             cmd.arg("-d").arg(&self.distro);
         }
 
-        if let Some(dir) = &self.working_dir {
-            if !dir.trim().is_empty() {
-                cmd.arg("--cd").arg(dir);
-            } else {
-                cmd.arg("--cd").arg("~");
-            }
-        } else {
-            cmd.arg("--cd").arg("~");
-        }
+        let cd_dir = self
+            .working_dir
+            .as_deref()
+            .filter(|d| !d.trim().is_empty())
+            .unwrap_or("~");
+        cmd.arg("--cd").arg(cd_dir);
 
         cmd.arg("--");
 
@@ -110,39 +106,8 @@ impl LogSource for WslSource {
             .spawn()
             .with_context(|| format!("Failed to spawn WSL process on distro '{}'", self.distro))?;
 
-        let tx_out = tx.clone();
-        let stdout_handle = if let Some(stdout) = child.stdout.take() {
-            tokio::spawn(async move {
-                let mut reader = BufReader::new(stdout).lines();
-                while let Ok(Some(line)) = reader.next_line().await {
-                    let entry = RawLogEntry {
-                        payload: RawPayload::Text(line),
-                    };
-                    if tx_out.send(entry).await.is_err() {
-                        break;
-                    }
-                }
-            })
-        } else {
-            tokio::spawn(async {})
-        };
-
-        let tx_err = tx.clone();
-        let stderr_handle = if let Some(stderr) = child.stderr.take() {
-            tokio::spawn(async move {
-                let mut reader = BufReader::new(stderr).lines();
-                while let Ok(Some(line)) = reader.next_line().await {
-                    let entry = RawLogEntry {
-                        payload: RawPayload::Text(line),
-                    };
-                    if tx_err.send(entry).await.is_err() {
-                        break;
-                    }
-                }
-            })
-        } else {
-            tokio::spawn(async {})
-        };
+        let stdout_handle = crate::spawn_line_reader(child.stdout.take(), tx.clone());
+        let stderr_handle = crate::spawn_line_reader(child.stderr.take(), tx.clone());
 
         tokio::select! {
             _ = stdout_handle => {},
