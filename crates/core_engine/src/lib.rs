@@ -546,7 +546,6 @@ impl SystemEngine {
             for field in StandardField::default_columns() {
                 schema_write.insert(field.canonical_name().to_string(), field.field_type());
             }
-            schema_write.insert("id".to_string(), FieldType::Text);
         }
     }
 }
