@@ -24,19 +24,20 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!is_maximized));
         }
 
-        // Nhận diện nguồn log WSL để hiển thị badge
-        let wsl_distro = app.session.detected_wsl_distro();
-
-        if let Some(distro) = wsl_distro {
+        // Nhận diện môi trường remote để hiển thị badge
+        if let Some(remote) = app.session.location.as_remote() {
             ui.add_space(2.0);
-            let wsl_badge = egui::Label::new(
-                egui::RichText::new(format!("🐧 {}", distro))
+            let badge = egui::Label::new(
+                egui::RichText::new(format!("{} {}", remote.icon(), remote.display_name()))
                     .size(11.0)
                     .strong()
                     .color(theme::COLOR_INFO),
             );
-            ui.add(wsl_badge)
-                .on_hover_text(format!("Connected to WSL Distro: {}", distro));
+            ui.add(badge).on_hover_text(format!(
+                "Connected to {}: {}",
+                remote.connection_type().to_uppercase(),
+                remote.display_name()
+            ));
         }
 
         if !app.session.name.is_empty() {

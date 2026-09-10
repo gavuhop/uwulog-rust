@@ -4,8 +4,8 @@ use std::time::{Duration, Instant};
 use tokio::runtime::Handle;
 use uwu_core_schema::LogEvent;
 pub use uwu_core_workspace::{
-    SourceConfig, SourceType, Workspace, WorkspaceLocation, WorkspaceSession, WorkspaceStore,
-    WslConfig, WslSubMode,
+    RemoteConnectionOptions, SourceConfig, SourceType, Workspace, WorkspaceLocation,
+    WorkspaceSession, WorkspaceStore,
 };
 
 pub const RAW_STREAM_LIMIT: usize = 500;
@@ -43,7 +43,6 @@ pub enum AppAction {
     StopSource,
     RestartSource,
     OpenLaunchModal,
-    OpenLaunchModalForWsl,
     CloseLaunchModal,
     ApplyLaunchModal,
     ApplyAndRestartSource(SourceConfig),
@@ -88,8 +87,6 @@ pub struct UwuGuiApp {
     pub launch_modal_draft: Option<SourceConfig>,
     pub project_picker_open: bool,
     pub project_search_query: String,
-    pub available_wsl_distros: Vec<String>,
-    pub wsl_distro_rx: Option<tokio::sync::oneshot::Receiver<Vec<String>>>,
     pub prev_screen_width: f32,
 }
 
@@ -126,8 +123,10 @@ impl UwuGuiApp {
         let mut file_to_read = String::new();
         let mut working_dir = String::new();
         let mut source_type = SourceType::Process;
-        let mut wsl_config = WslConfig::default();
         let mut custom_cmd_or_file_specified = false;
+
+        let mut remote_distro = String::new();
+        let mut remote_dir = String::new();
 
         let mut i = 1;
         while i < args.len() {
@@ -141,22 +140,24 @@ impl UwuGuiApp {
                     capacity = val;
                 }
                 i += 1;
-            } else if (args[i] == "--wsl-distro") && i + 1 < args.len() {
-                wsl_config.distro = args[i + 1].clone();
+            } else if (args[i] == "--remote-wsl" || args[i] == "--wsl-distro") && i + 1 < args.len()
+            {
+                remote_distro = args[i + 1].clone();
                 i += 1;
-            } else if (args[i] == "--wsl-dir" || args[i] == "--wsl-cwd") && i + 1 < args.len() {
-                wsl_config.working_dir = args[i + 1].clone();
+            } else if (args[i] == "--remote-dir"
+                || args[i] == "--wsl-dir"
+                || args[i] == "--wsl-cwd")
+                && i + 1 < args.len()
+            {
+                remote_dir = args[i + 1].clone();
                 i += 1;
-            } else if (args[i] == "--wsl-cmd") && i + 1 < args.len() {
-                wsl_config.command_str = args[i + 1].clone();
-                wsl_config.sub_mode = WslSubMode::Command;
+            } else if (args[i] == "--remote-cmd" || args[i] == "--wsl-cmd") && i + 1 < args.len() {
                 cmd_to_run = args[i + 1].clone();
                 source_type = SourceType::Process;
                 custom_cmd_or_file_specified = true;
                 i += 1;
-            } else if (args[i] == "--wsl-file") && i + 1 < args.len() {
-                wsl_config.file_path = args[i + 1].clone();
-                wsl_config.sub_mode = WslSubMode::File;
+            } else if (args[i] == "--remote-file" || args[i] == "--wsl-file") && i + 1 < args.len()
+            {
                 file_to_read = args[i + 1].clone();
                 source_type = SourceType::File;
                 custom_cmd_or_file_specified = true;
@@ -207,28 +208,24 @@ impl UwuGuiApp {
             }
         }
 
-        let store = WorkspaceStore::load();
-
-        let is_wsl_invoked = args.contains(&"--wsl-distro".to_string())
-            || args.contains(&"--wsl-cmd".to_string())
-            || args.contains(&"--wsl-file".to_string())
-            || args.contains(&"--wsl-dir".to_string())
-            || source_type == SourceType::Wsl;
-
-        if source_type == SourceType::Wsl {
-            source_type = if !file_to_read.is_empty() {
-                SourceType::File
-            } else {
-                SourceType::Process
-            };
-        }
-
-        let active_workdir = if is_wsl_invoked {
-            if !wsl_config.working_dir.is_empty() {
-                wsl_config.working_dir.clone()
+        let remote_location = if !remote_distro.is_empty() || !remote_dir.is_empty() {
+            let dir = if !remote_dir.is_empty() {
+                remote_dir
             } else {
                 "/home".to_string()
-            }
+            };
+            Some(WorkspaceLocation::remote(RemoteConnectionOptions::wsl(
+                remote_distro,
+                dir,
+            )))
+        } else {
+            None
+        };
+
+        let store = WorkspaceStore::load();
+
+        let active_workdir = if let Some(ref loc) = remote_location {
+            loc.working_dir().to_string()
         } else if !working_dir.is_empty() {
             working_dir.clone()
         } else if let Ok(cwd) = std::env::current_dir() {
@@ -237,9 +234,7 @@ impl UwuGuiApp {
             String::new()
         };
 
-        if is_wsl_invoked && wsl_config.working_dir.is_empty() {
-            wsl_config.working_dir = active_workdir.clone();
-        } else if working_dir.is_empty() {
+        if remote_location.is_none() && working_dir.is_empty() {
             working_dir = active_workdir.clone();
         }
 
@@ -247,11 +242,12 @@ impl UwuGuiApp {
 
         let initial_project_name = if let Some(ref ws) = saved_ws {
             ws.name.clone()
-        } else if is_wsl_invoked {
-            if !wsl_config.working_dir.is_empty() {
-                extract_project_name(&wsl_config.working_dir)
+        } else if let Some(ref loc) = remote_location {
+            let dir = loc.working_dir();
+            if !dir.is_empty() {
+                extract_project_name(dir)
             } else {
-                format!("WSL ({})", wsl_config.distro)
+                loc.display_name().to_string()
             }
         } else if !working_dir.is_empty() {
             extract_project_name(&working_dir)
@@ -261,30 +257,19 @@ impl UwuGuiApp {
 
         let initial_location = if let Some(ref ws) = saved_ws {
             ws.location.clone()
-        } else if is_wsl_invoked {
-            WorkspaceLocation::Wsl {
-                distro: wsl_config.distro.clone(),
-                working_dir: wsl_config.working_dir.clone(),
-            }
+        } else if let Some(loc) = remote_location {
+            loc
         } else {
             WorkspaceLocation::Local {
                 working_dir: working_dir.clone(),
             }
         };
 
-        // Kích hoạt background task kiểm tra danh sách WSL Distros
-        let (wsl_tx, wsl_rx) = tokio::sync::oneshot::channel();
-        rt.spawn(async move {
-            let distros = uwu_driver_transport::WslTransport::detect_distros();
-            let _ = wsl_tx.send(distros);
-        });
-
         let source_config = SourceConfig {
             source_type,
             command_str: cmd_to_run,
             file_path: file_to_read,
             working_dir,
-            wsl_config,
             capacity,
             display_limit,
         };
@@ -299,11 +284,7 @@ impl UwuGuiApp {
         };
 
         let initial_session = if let (Some(ws), false) = (&saved_ws, custom_cmd_or_file_specified) {
-            let mut s = WorkspaceSession::from_workspace(ws, capacity, display_limit);
-            if !source_config.wsl_config.distro.is_empty() {
-                s.source_config.wsl_config.distro = source_config.wsl_config.distro.clone();
-            }
-            s
+            WorkspaceSession::from_workspace(ws, capacity, display_limit)
         } else {
             let mut s =
                 WorkspaceSession::new(initial_project_name, initial_location, source_config);
@@ -328,8 +309,6 @@ impl UwuGuiApp {
             launch_modal_draft: None,
             project_picker_open: false,
             project_search_query: String::new(),
-            available_wsl_distros: Vec::new(),
-            wsl_distro_rx: Some(wsl_rx),
             prev_screen_width: 0.0,
         };
 
@@ -450,27 +429,7 @@ impl UwuGuiApp {
             AppAction::StopSource => self.stop_current_source(),
             AppAction::RestartSource => self.restart_current_source(),
             AppAction::OpenLaunchModal => {
-                let mut draft = self.session.source_config.clone();
-                if draft.source_type == SourceType::Wsl {
-                    if !draft.wsl_config.command_str.is_empty() {
-                        draft.command_str = draft.wsl_config.command_str.clone();
-                        draft.source_type = SourceType::Process;
-                    } else if !draft.wsl_config.file_path.is_empty() {
-                        draft.file_path = draft.wsl_config.file_path.clone();
-                        draft.source_type = SourceType::File;
-                    } else {
-                        draft.source_type = SourceType::Process;
-                    }
-                }
-                self.launch_modal_draft = Some(draft);
-                self.show_launch_modal = true;
-            }
-            AppAction::OpenLaunchModalForWsl => {
-                let mut draft = self.session.source_config.clone();
-                if draft.source_type == SourceType::Wsl {
-                    draft.source_type = SourceType::Process;
-                }
-                self.launch_modal_draft = Some(draft);
+                self.launch_modal_draft = Some(self.session.source_config.clone());
                 self.show_launch_modal = true;
             }
             AppAction::CloseLaunchModal => {
@@ -624,20 +583,7 @@ impl UwuGuiApp {
     }
 
     pub fn tick(&mut self) {
-        // 1. Nhận kết quả phát hiện WSL distros
-        if let Some(mut rx) = self.wsl_distro_rx.take() {
-            match rx.try_recv() {
-                Ok(distros) => {
-                    self.available_wsl_distros = distros;
-                }
-                Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {
-                    self.wsl_distro_rx = Some(rx);
-                }
-                Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {}
-            }
-        }
-
-        // 2. Chạy tick trên tất cả các runtime sessions (phát hiện process hoàn tất, nhận env vars)
+        // Chạy tick trên tất cả các runtime sessions (phát hiện process hoàn tất, nhận env vars)
         for s in &mut self.sessions {
             s.session.tick();
         }
@@ -991,7 +937,6 @@ mod tests {
             command_str: String::new(),
             file_path: String::new(),
             working_dir: String::new(),
-            wsl_config: WslConfig::default(),
             capacity: 100,
             display_limit: 50,
         };
@@ -1016,8 +961,6 @@ mod tests {
             launch_modal_draft: None,
             project_picker_open: false,
             project_search_query: String::new(),
-            available_wsl_distros: Vec::new(),
-            wsl_distro_rx: None,
             prev_screen_width: 0.0,
         }
     }
@@ -1387,17 +1330,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_wsl_workspace_save_and_reload() {
+    async fn test_remote_workspace_save_and_reload() {
         let mut app = create_test_app();
 
-        // 1. Cấu hình WSL workspace trong session hiện tại
-        app.session.location = WorkspaceLocation::Wsl {
-            distro: "Ubuntu".to_string(),
-            working_dir: "/home/user/backend".to_string(),
-        };
+        // 1. Cấu hình Remote workspace trong session hiện tại
+        app.session.location =
+            WorkspaceLocation::remote(RemoteConnectionOptions::wsl("Ubuntu", "/home/user/backend"));
         app.session.source_config.source_type = SourceType::Process;
         app.session.source_config.command_str = "python3 app.py".to_string();
-        app.session.name = "WSL-Backend".to_string();
+        app.session.name = "Remote-Backend".to_string();
 
         // 2. Lưu workspace hiện tại
         app.save_current_workspace();
@@ -1407,37 +1348,27 @@ mod tests {
             .store
             .recent_workspaces
             .iter()
-            .find(|w| w.name == "WSL-Backend")
+            .find(|w| w.name == "Remote-Backend")
             .cloned()
-            .expect("WSL-Backend must be saved in store");
+            .expect("Remote-Backend must be saved in store");
 
         assert_eq!(ws.source_type, SourceType::Process);
         assert_eq!(ws.command_str, "python3 app.py");
-        match &ws.location {
-            WorkspaceLocation::Wsl {
-                distro,
-                working_dir,
-            } => {
-                assert_eq!(distro, "Ubuntu");
-                assert_eq!(working_dir, "/home/user/backend");
-            }
-            _ => panic!("Expected WSL location"),
-        }
+        let remote = ws.location.as_remote().expect("Expected remote location");
+        assert_eq!(remote.display_name(), "Ubuntu");
+        assert_eq!(remote.working_dir(), "/home/user/backend");
 
-        // 4. Mở lại workspace WSL qua open_or_switch_workspace
+        // 4. Mở lại workspace Remote qua open_or_switch_workspace
         app.open_or_switch_workspace(&ws);
         assert_eq!(app.session.source_config.source_type, SourceType::Process);
         assert_eq!(app.session.source_config.command_str, "python3 app.py");
-        match &app.session.location {
-            WorkspaceLocation::Wsl {
-                distro,
-                working_dir,
-            } => {
-                assert_eq!(distro, "Ubuntu");
-                assert_eq!(working_dir, "/home/user/backend");
-            }
-            _ => panic!("Expected WSL location"),
-        }
+        let remote = app
+            .session
+            .location
+            .as_remote()
+            .expect("Expected remote location");
+        assert_eq!(remote.display_name(), "Ubuntu");
+        assert_eq!(remote.working_dir(), "/home/user/backend");
     }
 
     #[tokio::test]

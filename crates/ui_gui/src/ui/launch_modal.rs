@@ -2,7 +2,6 @@ use crate::app::{AppAction, SourceType, UwuGuiApp};
 use crate::ui::card::render_card;
 use crate::ui::theme;
 use eframe::egui::{self, Rounding, Stroke};
-use uwu_core_workspace::WorkspaceLocation;
 
 pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
     if !app.show_launch_modal {
@@ -10,19 +9,7 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
     }
 
     if app.launch_modal_draft.is_none() {
-        let mut draft = app.session.source_config.clone();
-        if draft.source_type == SourceType::Wsl {
-            if !draft.wsl_config.command_str.is_empty() {
-                draft.command_str = draft.wsl_config.command_str.clone();
-                draft.source_type = SourceType::Process;
-            } else if !draft.wsl_config.file_path.is_empty() {
-                draft.file_path = draft.wsl_config.file_path.clone();
-                draft.source_type = SourceType::File;
-            } else {
-                draft.source_type = SourceType::Process;
-            }
-        }
-        app.launch_modal_draft = Some(draft);
+        app.launch_modal_draft = Some(app.session.source_config.clone());
     }
 
     let mut action_to_dispatch: Option<AppAction> = None;
@@ -49,7 +36,6 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
             ui.separator();
             ui.add_space(6.0);
 
-            let is_wsl = matches!(app.session.location, WorkspaceLocation::Wsl { .. });
             let draft = app.launch_modal_draft.as_mut().unwrap();
 
             // Engine Performance Card
@@ -101,11 +87,7 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
                         ui.label(egui::RichText::new("Command:").color(theme::TEXT_MUTED));
                         ui.add(
                             egui::TextEdit::singleline(&mut draft.command_str)
-                                .hint_text(if is_wsl {
-                                    "e.g. python3 app.py or cargo run"
-                                } else {
-                                    "e.g. go run gen_logs.go"
-                                })
+                                .hint_text("e.g. go run gen_logs.go")
                                 .font(egui::TextStyle::Monospace)
                                 .desired_width(320.0)
                                 .margin(egui::Margin::symmetric(8.0, 4.0)),

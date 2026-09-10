@@ -206,17 +206,18 @@ pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, tri
                             if search_filter.is_empty() {
                                 true
                             } else {
-                                let (name, distro, dir) = match &ws.location {
-                                    WorkspaceLocation::Wsl {
-                                        distro,
-                                        working_dir,
-                                    } => (ws.name.as_str(), distro.as_str(), working_dir.as_str()),
+                                let (name, remote_info, dir) = match &ws.location {
+                                    WorkspaceLocation::Remote(remote) => (
+                                        ws.name.as_str(),
+                                        remote.display_name(),
+                                        remote.working_dir(),
+                                    ),
                                     WorkspaceLocation::Local { working_dir } => {
                                         (ws.name.as_str(), "", working_dir.as_str())
                                     }
                                 };
                                 name.to_lowercase().contains(&search_filter)
-                                    || distro.to_lowercase().contains(&search_filter)
+                                    || remote_info.to_lowercase().contains(&search_filter)
                                     || dir.to_lowercase().contains(&search_filter)
                             }
                         })

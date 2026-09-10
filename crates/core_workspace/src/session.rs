@@ -1,4 +1,5 @@
 use crate::environment::EnvLoadStatus;
+use crate::remote::RemoteConnectionOptions;
 use crate::{Workspace, WorkspaceLocation};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -17,34 +18,6 @@ pub enum SourceType {
     #[default]
     Process,
     File,
-    Wsl,
-}
-
-#[derive(PartialEq, Eq, Clone, Copy, Debug)]
-pub enum WslSubMode {
-    Command,
-    File,
-}
-
-#[derive(Clone, Debug)]
-pub struct WslConfig {
-    pub distro: String,
-    pub working_dir: String,
-    pub sub_mode: WslSubMode,
-    pub command_str: String,
-    pub file_path: String,
-}
-
-impl Default for WslConfig {
-    fn default() -> Self {
-        Self {
-            distro: String::new(),
-            working_dir: String::new(),
-            sub_mode: WslSubMode::Command,
-            command_str: String::new(),
-            file_path: String::new(),
-        }
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -53,7 +26,6 @@ pub struct SourceConfig {
     pub command_str: String,
     pub file_path: String,
     pub working_dir: String,
-    pub wsl_config: WslConfig,
     pub capacity: usize,
     pub display_limit: usize,
 }
@@ -65,7 +37,6 @@ impl Default for SourceConfig {
             command_str: String::new(),
             file_path: String::new(),
             working_dir: String::new(),
-            wsl_config: WslConfig::default(),
             capacity: 200_000,
             display_limit: 5_000,
         }
@@ -161,35 +132,22 @@ impl WorkspaceSession {
     /// Đồng bộ WorkspaceLocation từ SourceConfig hiện tại
     pub fn sync_location(&mut self) {
         match &mut self.location {
-            WorkspaceLocation::Wsl {
-                distro,
-                working_dir,
-            } => {
-                if distro.is_empty() && !self.source_config.wsl_config.distro.is_empty() {
-                    *distro = self.source_config.wsl_config.distro.clone();
-                }
+            WorkspaceLocation::Remote(remote) => {
                 if !self.source_config.working_dir.trim().is_empty() {
-                    *working_dir = self.source_config.working_dir.clone();
+                    remote.set_working_dir(self.source_config.working_dir.clone());
                 }
             }
             WorkspaceLocation::Local { working_dir } => {
-                if self.source_config.source_type == SourceType::Wsl {
-                    self.location = WorkspaceLocation::Wsl {
-                        distro: self.source_config.wsl_config.distro.clone(),
-                        working_dir: self.source_config.wsl_config.working_dir.clone(),
-                    };
+                let dir = if !self.source_config.working_dir.trim().is_empty() {
+                    self.source_config.working_dir.clone()
+                } else if !working_dir.trim().is_empty() {
+                    working_dir.clone()
                 } else {
-                    let dir = if !self.source_config.working_dir.trim().is_empty() {
-                        self.source_config.working_dir.clone()
-                    } else if !working_dir.trim().is_empty() {
-                        working_dir.clone()
-                    } else {
-                        std::env::current_dir()
-                            .map(|p| crate::clean_path(&p.to_string_lossy()))
-                            .unwrap_or_default()
-                    };
-                    *working_dir = dir;
-                }
+                    std::env::current_dir()
+                        .map(|p| crate::clean_path(&p.to_string_lossy()))
+                        .unwrap_or_default()
+                };
+                *working_dir = dir;
             }
         }
     }
@@ -210,22 +168,6 @@ impl WorkspaceSession {
             SourceType::File => {
                 ws.file_path = self.source_config.file_path.clone();
             }
-            SourceType::Wsl => match self.source_config.wsl_config.sub_mode {
-                WslSubMode::Command => {
-                    ws.command_str = if !self.source_config.wsl_config.command_str.is_empty() {
-                        self.source_config.wsl_config.command_str.clone()
-                    } else {
-                        self.source_config.command_str.clone()
-                    };
-                }
-                WslSubMode::File => {
-                    ws.file_path = if !self.source_config.wsl_config.file_path.is_empty() {
-                        self.source_config.wsl_config.file_path.clone()
-                    } else {
-                        self.source_config.file_path.clone()
-                    };
-                }
-            },
         }
 
         ws
@@ -234,42 +176,10 @@ impl WorkspaceSession {
     pub fn apply_workspace(&mut self, ws: &Workspace) {
         self.name = ws.name.clone();
         self.location = ws.location.clone();
-
-        match &ws.location {
-            WorkspaceLocation::Wsl {
-                distro,
-                working_dir,
-            } => {
-                self.source_config.wsl_config.distro = distro.clone();
-                self.source_config.wsl_config.working_dir = working_dir.clone();
-                self.source_config.working_dir = working_dir.clone();
-            }
-            WorkspaceLocation::Local { working_dir } => {
-                self.source_config.working_dir = working_dir.clone();
-            }
-        }
-
-        match ws.source_type {
-            SourceType::Wsl => {
-                if !ws.command_str.is_empty() {
-                    self.source_config.source_type = SourceType::Process;
-                    self.source_config.command_str = ws.command_str.clone();
-                } else if !ws.file_path.is_empty() {
-                    self.source_config.source_type = SourceType::File;
-                    self.source_config.file_path = ws.file_path.clone();
-                } else {
-                    self.source_config.source_type = SourceType::Process;
-                }
-            }
-            SourceType::File => {
-                self.source_config.source_type = SourceType::File;
-                self.source_config.file_path = ws.file_path.clone();
-            }
-            SourceType::Process => {
-                self.source_config.source_type = SourceType::Process;
-                self.source_config.command_str = ws.command_str.clone();
-            }
-        }
+        self.source_config.source_type = ws.source_type;
+        self.source_config.command_str = ws.command_str.clone();
+        self.source_config.file_path = ws.file_path.clone();
+        self.source_config.working_dir = ws.location.working_dir().to_string();
 
         if !ws.env_vars.is_empty() {
             self.env_vars = ws.env_vars.clone();
@@ -309,14 +219,11 @@ impl WorkspaceSession {
             SourceType::Process => {
                 if !config.command_str.trim().is_empty() {
                     match &self.location {
-                        WorkspaceLocation::Wsl {
-                            distro,
-                            working_dir,
-                        } => {
-                            let distro = distro.clone();
+                        WorkspaceLocation::Remote(RemoteConnectionOptions::Wsl(wsl_opts)) => {
+                            let distro = wsl_opts.distro.clone();
                             let target_mode = WslTargetMode::Command(config.command_str.clone());
-                            let workdir = if !working_dir.trim().is_empty() {
-                                Some(working_dir.clone())
+                            let workdir = if !wsl_opts.working_dir.trim().is_empty() {
+                                Some(wsl_opts.working_dir.clone())
                             } else if !config.working_dir.trim().is_empty() {
                                 Some(config.working_dir.clone())
                             } else {
@@ -397,14 +304,11 @@ impl WorkspaceSession {
             SourceType::File => {
                 if !config.file_path.trim().is_empty() {
                     match &self.location {
-                        WorkspaceLocation::Wsl {
-                            distro,
-                            working_dir,
-                        } => {
-                            let distro = distro.clone();
+                        WorkspaceLocation::Remote(RemoteConnectionOptions::Wsl(wsl_opts)) => {
+                            let distro = wsl_opts.distro.clone();
                             let target_mode = WslTargetMode::File(config.file_path.clone());
-                            let workdir = if !working_dir.trim().is_empty() {
-                                Some(working_dir.clone())
+                            let workdir = if !wsl_opts.working_dir.trim().is_empty() {
+                                Some(wsl_opts.working_dir.clone())
                             } else {
                                 None
                             };
@@ -423,56 +327,6 @@ impl WorkspaceSession {
                             self.is_source_running = true;
                         }
                     }
-                }
-            }
-            SourceType::Wsl => {
-                let wsl_cfg = &config.wsl_config;
-                let mode = match wsl_cfg.sub_mode {
-                    WslSubMode::Command => {
-                        if !wsl_cfg.command_str.trim().is_empty() {
-                            Some(WslTargetMode::Command(wsl_cfg.command_str.clone()))
-                        } else if !config.command_str.trim().is_empty() {
-                            Some(WslTargetMode::Command(config.command_str.clone()))
-                        } else {
-                            None
-                        }
-                    }
-                    WslSubMode::File => {
-                        if !wsl_cfg.file_path.trim().is_empty() {
-                            Some(WslTargetMode::File(wsl_cfg.file_path.clone()))
-                        } else if !config.file_path.trim().is_empty() {
-                            Some(WslTargetMode::File(config.file_path.clone()))
-                        } else {
-                            None
-                        }
-                    }
-                };
-
-                if let Some(target_mode) = mode {
-                    let distro = if !wsl_cfg.distro.is_empty() {
-                        wsl_cfg.distro.clone()
-                    } else if let WorkspaceLocation::Wsl { distro, .. } = &self.location {
-                        distro.clone()
-                    } else {
-                        String::new()
-                    };
-                    let working_dir = if !wsl_cfg.working_dir.trim().is_empty() {
-                        Some(wsl_cfg.working_dir.clone())
-                    } else if let WorkspaceLocation::Wsl { working_dir, .. } = &self.location {
-                        if !working_dir.trim().is_empty() {
-                            Some(working_dir.clone())
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    };
-                    rt.spawn(async move {
-                        let _ = WslSource::new_with_dir(distro, target_mode, working_dir)
-                            .start_stream(source_tx)
-                            .await;
-                    });
-                    self.is_source_running = true;
                 }
             }
         }
@@ -558,82 +412,20 @@ impl WorkspaceSession {
         }
     }
 
-    /// Nhận diện WSL distro từ config hoặc command/path nếu có
-    pub fn detected_wsl_distro(&self) -> Option<String> {
-        match self.source_config.source_type {
-            SourceType::Wsl => {
-                if !self.source_config.wsl_config.distro.is_empty() {
-                    Some(self.source_config.wsl_config.distro.clone())
-                } else if let WorkspaceLocation::Wsl { distro, .. } = &self.location {
-                    if !distro.is_empty() {
-                        Some(distro.clone())
-                    } else {
-                        Some("WSL".to_string())
-                    }
-                } else {
-                    Some("WSL".to_string())
-                }
-            }
-            _ => {
-                if let WorkspaceLocation::Wsl { distro, .. } = &self.location {
-                    return Some(if distro.is_empty() {
-                        "WSL".to_string()
-                    } else {
-                        distro.clone()
-                    });
-                }
-                let cmd = &self.source_config.command_str;
-                let cmd_lower = cmd.to_lowercase();
-                if cmd_lower.contains("wsl.exe") || cmd_lower.starts_with("wsl ") {
-                    if let Some(idx) = cmd.find("-d ") {
-                        let after = &cmd[idx + 3..];
-                        let distro = after.split_whitespace().next().unwrap_or("WSL");
-                        Some(distro.to_string())
-                    } else {
-                        Some("WSL".to_string())
-                    }
-                } else if self.source_config.file_path.contains(r"\\wsl.localhost\")
-                    || self.source_config.file_path.contains(r"\\wsl$\")
-                {
-                    let p = &self.source_config.file_path;
-                    let after = if let Some(idx) = p.find(r"\\wsl.localhost\") {
-                        &p[idx + 16..]
-                    } else if let Some(idx) = p.find(r"\\wsl$\") {
-                        &p[idx + 8..]
-                    } else {
-                        ""
-                    };
-                    let distro = after.split('\\').next().unwrap_or("WSL");
-                    Some(distro.to_string())
-                } else {
-                    None
-                }
-            }
-        }
-    }
-
-    /// Icon đại diện cho nguồn log của session (WSL, File, Command)
+    /// Icon đại diện cho nguồn log của session (Remote, File, Command)
     pub fn icon(&self) -> &'static str {
-        if self.source_config.source_type == SourceType::Wsl
-            || matches!(self.location, WorkspaceLocation::Wsl { .. })
-            || self.detected_wsl_distro().is_some()
-        {
-            "🐧"
-        } else {
-            match self.source_config.source_type {
+        match &self.location {
+            WorkspaceLocation::Remote(remote) => remote.icon(),
+            WorkspaceLocation::Local { .. } => match self.source_config.source_type {
                 SourceType::File => "📄",
-                _ => "🖥",
-            }
+                SourceType::Process => "🖥",
+            },
         }
     }
 
     /// Thư mục làm việc hiệu lực của session
     pub fn effective_working_dir(&self) -> &str {
-        if self.source_config.source_type == SourceType::Wsl
-            && !self.source_config.wsl_config.working_dir.trim().is_empty()
-        {
-            &self.source_config.wsl_config.working_dir
-        } else if !self.source_config.working_dir.trim().is_empty() {
+        if !self.source_config.working_dir.trim().is_empty() {
             &self.source_config.working_dir
         } else {
             self.location.working_dir()
@@ -642,23 +434,19 @@ impl WorkspaceSession {
 
     /// Chuỗi tóm tắt vị trí/nguồn log dùng cho tooltip và picker
     pub fn target_summary(&self) -> String {
-        if let Some(distro) = self.detected_wsl_distro() {
-            let dir = self.effective_working_dir();
-            if !dir.is_empty() {
-                format!("{} ({})", dir, distro)
-            } else {
-                format!("🐧 WSL ({})", distro)
-            }
-        } else {
-            let dir = self.effective_working_dir();
-            if !dir.is_empty() {
-                dir.to_string()
-            } else if !self.source_config.file_path.is_empty() {
-                self.source_config.file_path.clone()
-            } else if !self.source_config.command_str.is_empty() {
-                self.source_config.command_str.clone()
-            } else {
-                String::new()
+        match &self.location {
+            WorkspaceLocation::Remote(remote) => remote.summary(),
+            WorkspaceLocation::Local { .. } => {
+                let dir = self.effective_working_dir();
+                if !dir.is_empty() {
+                    dir.to_string()
+                } else if !self.source_config.file_path.is_empty() {
+                    self.source_config.file_path.clone()
+                } else if !self.source_config.command_str.is_empty() {
+                    self.source_config.command_str.clone()
+                } else {
+                    String::new()
+                }
             }
         }
     }

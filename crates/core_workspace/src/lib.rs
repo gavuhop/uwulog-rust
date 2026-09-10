@@ -1,10 +1,12 @@
 pub mod environment;
 pub mod manager;
+pub mod remote;
 pub mod session;
 
 pub use environment::{load_workspace_environment, parse_dot_env, EnvLoadStatus};
 pub use manager::MultiWorkspaceManager;
-pub use session::{SourceConfig, SourceType, WorkspaceSession, WslConfig, WslSubMode};
+pub use remote::{RemoteConnectionOptions, WslConnectionOptions};
+pub use session::{SourceConfig, SourceType, WorkspaceSession};
 
 #[allow(unused_imports)]
 use anyhow::Context;
@@ -19,15 +21,50 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum WorkspaceLocation {
     Local { working_dir: String },
-    Wsl { distro: String, working_dir: String },
+    Remote(RemoteConnectionOptions),
 }
 
 impl WorkspaceLocation {
+    pub fn local(working_dir: impl Into<String>) -> Self {
+        Self::Local {
+            working_dir: working_dir.into(),
+        }
+    }
+
+    pub fn remote(options: impl Into<RemoteConnectionOptions>) -> Self {
+        Self::Remote(options.into())
+    }
+
     /// Lấy working directory dưới dạng tham chiếu chuỗi
     pub fn working_dir(&self) -> &str {
         match self {
             WorkspaceLocation::Local { working_dir } => working_dir,
-            WorkspaceLocation::Wsl { working_dir, .. } => working_dir,
+            WorkspaceLocation::Remote(remote) => remote.working_dir(),
+        }
+    }
+
+    pub fn is_remote(&self) -> bool {
+        matches!(self, WorkspaceLocation::Remote(_))
+    }
+
+    pub fn as_remote(&self) -> Option<&RemoteConnectionOptions> {
+        match self {
+            WorkspaceLocation::Remote(remote) => Some(remote),
+            WorkspaceLocation::Local { .. } => None,
+        }
+    }
+
+    pub fn display_name(&self) -> &str {
+        match self {
+            WorkspaceLocation::Local { working_dir } => working_dir,
+            WorkspaceLocation::Remote(remote) => remote.display_name(),
+        }
+    }
+
+    pub fn icon(&self) -> &'static str {
+        match self {
+            WorkspaceLocation::Local { .. } => "🖥",
+            WorkspaceLocation::Remote(remote) => remote.icon(),
         }
     }
 
@@ -43,19 +80,7 @@ impl WorkspaceLocation {
                 WorkspaceLocation::Local { working_dir: d1 },
                 WorkspaceLocation::Local { working_dir: d2 },
             ) => normalize_workdir(d1) == normalize_workdir(d2),
-            (
-                WorkspaceLocation::Wsl {
-                    distro: dist1,
-                    working_dir: dir1,
-                },
-                WorkspaceLocation::Wsl {
-                    distro: dist2,
-                    working_dir: dir2,
-                },
-            ) => {
-                dist1.eq_ignore_ascii_case(dist2)
-                    && normalize_workdir(dir1) == normalize_workdir(dir2)
-            }
+            (WorkspaceLocation::Remote(r1), WorkspaceLocation::Remote(r2)) => r1.is_same(r2),
             _ => false,
         }
     }
@@ -94,19 +119,18 @@ impl Workspace {
         }
     }
 
-    /// Icon đại diện cho loại workspace (WSL, File, hoặc Process)
+    /// Icon đại diện cho loại workspace (Remote, File, hoặc Process)
     pub fn icon(&self) -> &'static str {
         match &self.location {
-            WorkspaceLocation::Wsl { .. } => "🐧",
+            WorkspaceLocation::Remote(remote) => remote.icon(),
             WorkspaceLocation::Local { .. } => match self.source_type {
-                SourceType::Wsl => "🐧",
                 SourceType::File => "📄",
                 SourceType::Process => "🖥",
             },
         }
     }
 
-    /// Tên hiển thị kèm distro nếu là WSL (dùng cho title/label)
+    /// Tên hiển thị kèm distro/remote nếu có (dùng cho title/label)
     pub fn display_label(&self) -> String {
         let name = if self.name.is_empty() {
             "Workspace"
@@ -114,7 +138,7 @@ impl Workspace {
             &self.name
         };
         match &self.location {
-            WorkspaceLocation::Wsl { distro, .. } => format!("{} ({})", name, distro),
+            WorkspaceLocation::Remote(remote) => format!("{} ({})", name, remote.display_name()),
             WorkspaceLocation::Local { .. } => name.to_string(),
         }
     }
@@ -122,16 +146,7 @@ impl Workspace {
     /// Đường dẫn tóm tắt mục tiêu (dùng cho tooltip hoặc subtitle)
     pub fn target_summary(&self) -> String {
         match &self.location {
-            WorkspaceLocation::Wsl {
-                distro,
-                working_dir,
-            } => {
-                if !working_dir.is_empty() {
-                    format!("{} ({})", working_dir, distro)
-                } else {
-                    format!("🐧 WSL ({})", distro)
-                }
-            }
+            WorkspaceLocation::Remote(remote) => remote.summary(),
             WorkspaceLocation::Local { working_dir } => {
                 if !working_dir.is_empty() {
                     working_dir.clone()
@@ -297,11 +312,8 @@ mod tests {
 
         let ws1 = Workspace::new(
             "backend-service",
-            WorkspaceLocation::Wsl {
-                distro: "Ubuntu".to_string(),
-                working_dir: "/home/user/backend".to_string(),
-            },
-            SourceType::Wsl,
+            WorkspaceLocation::remote(RemoteConnectionOptions::wsl("Ubuntu", "/home/user/backend")),
+            SourceType::Process,
         );
         let id1 = ws1.id;
 
@@ -425,25 +437,18 @@ mod tests {
         assert_eq!(deserialized.source_type, SourceType::Process);
         assert_eq!(deserialized.name, "test-app");
 
-        // Backward compatibility: parsing legacy json with "wsl" and "file"
-        let legacy_json = r#"{
-            "id": "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
-            "name": "wsl-app",
-            "location": {
-                "Wsl": {
-                    "distro": "Ubuntu",
-                    "working_dir": "/home/user"
-                }
-            },
-            "source_type": "wsl",
-            "command_str": "cargo run",
-            "file_path": "",
-            "last_query": "",
-            "last_opened": "2026-09-09T12:00:00Z",
-            "env_vars": {}
-        }"#;
-        let ws_legacy: Workspace = serde_json::from_str(legacy_json).unwrap();
-        assert_eq!(ws_legacy.source_type, SourceType::Wsl);
+        let wsl_ws = Workspace::new(
+            "wsl-app",
+            WorkspaceLocation::remote(RemoteConnectionOptions::wsl("Ubuntu", "/home/user")),
+            SourceType::Process,
+        );
+        let wsl_json = serde_json::to_string(&wsl_ws).unwrap();
+        let deserialized_wsl: Workspace = serde_json::from_str(&wsl_json).unwrap();
+        assert_eq!(deserialized_wsl.source_type, SourceType::Process);
+        assert!(deserialized_wsl.location.is_remote());
+        assert_eq!(deserialized_wsl.location.display_name(), "Ubuntu");
+        assert_eq!(deserialized_wsl.location.icon(), "🐧");
+        assert_eq!(deserialized_wsl.location.working_dir(), "/home/user");
     }
 
     #[tokio::test]
@@ -461,11 +466,11 @@ mod tests {
 
         let wsl_ws = Workspace::new(
             "ubuntu-service",
-            WorkspaceLocation::Wsl {
-                distro: "Ubuntu-22.04".to_string(),
-                working_dir: "/home/user/service".to_string(),
-            },
-            SourceType::Wsl,
+            WorkspaceLocation::remote(RemoteConnectionOptions::wsl(
+                "Ubuntu-22.04",
+                "/home/user/service",
+            )),
+            SourceType::Process,
         );
         assert_eq!(wsl_ws.icon(), "🐧");
         assert_eq!(wsl_ws.display_label(), "ubuntu-service (Ubuntu-22.04)");
@@ -483,8 +488,8 @@ mod tests {
         let session = WorkspaceSession::from_workspace(&wsl_ws, 100, 50);
         assert_eq!(session.icon(), "🐧");
         assert_eq!(
-            session.detected_wsl_distro(),
-            Some("Ubuntu-22.04".to_string())
+            session.location.as_remote().map(|r| r.display_name()),
+            Some("Ubuntu-22.04")
         );
         assert_eq!(
             session.target_summary(),
