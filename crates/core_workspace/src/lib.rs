@@ -22,6 +22,45 @@ pub enum WorkspaceLocation {
     Wsl { distro: String, working_dir: String },
 }
 
+impl WorkspaceLocation {
+    /// Lấy working directory dưới dạng tham chiếu chuỗi
+    pub fn working_dir(&self) -> &str {
+        match self {
+            WorkspaceLocation::Local { working_dir } => working_dir,
+            WorkspaceLocation::Wsl { working_dir, .. } => working_dir,
+        }
+    }
+
+    /// Lấy working directory đã được chuẩn hóa để so sánh
+    pub fn normalized_dir(&self) -> String {
+        normalize_workdir(self.working_dir())
+    }
+
+    /// So sánh xem 2 location có cùng trỏ tới một vị trí hay không
+    pub fn is_same(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                WorkspaceLocation::Local { working_dir: d1 },
+                WorkspaceLocation::Local { working_dir: d2 },
+            ) => normalize_workdir(d1) == normalize_workdir(d2),
+            (
+                WorkspaceLocation::Wsl {
+                    distro: dist1,
+                    working_dir: dir1,
+                },
+                WorkspaceLocation::Wsl {
+                    distro: dist2,
+                    working_dir: dir2,
+                },
+            ) => {
+                dist1.eq_ignore_ascii_case(dist2)
+                    && normalize_workdir(dir1) == normalize_workdir(dir2)
+            }
+            _ => false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Workspace {
     pub id: Uuid,
@@ -151,18 +190,10 @@ impl WorkspaceStore {
         if dir.trim().is_empty() {
             return None;
         }
-        let clean_dir = dir.trim_end_matches(&['/', '\\'][..]);
-        self.recent_workspaces.iter().find(|w| {
-            let ws_dir = match &w.location {
-                WorkspaceLocation::Local { working_dir } => {
-                    working_dir.trim_end_matches(&['/', '\\'][..])
-                }
-                WorkspaceLocation::Wsl { working_dir, .. } => {
-                    working_dir.trim_end_matches(&['/', '\\'][..])
-                }
-            };
-            ws_dir.eq_ignore_ascii_case(clean_dir)
-        })
+        let clean_dir = normalize_workdir(dir);
+        self.recent_workspaces
+            .iter()
+            .find(|w| w.location.normalized_dir() == clean_dir)
     }
 
     /// Lấy workspace đang được kích hoạt
@@ -172,6 +203,34 @@ impl WorkspaceStore {
         } else {
             self.recent_workspaces.first()
         }
+    }
+}
+
+/// Làm sạch đường dẫn (bỏ khoảng trắng thừa, dấu gạch chéo ở cuối, và tiền tố verbatim Windows `\\?\`)
+pub fn clean_path(path: &str) -> String {
+    let trimmed = path.trim().trim_end_matches(&['/', '\\'][..]);
+    trimmed.strip_prefix(r"\\?\").unwrap_or(trimmed).to_string()
+}
+
+/// Chuẩn hóa đường dẫn thư mục để so sánh (bỏ dấu gạch chéo thừa, chuẩn hóa / và \, strip tiền tố Windows verbatim \\?\, chuyển về chữ thường)
+pub fn normalize_workdir(path: &str) -> String {
+    clean_path(path).replace('\\', "/").to_lowercase()
+}
+
+/// Trích xuất tên project từ đường dẫn thư mục (e.g. "D:\Projects\my-app" -> "my-app")
+pub fn extract_project_name(path_str: &str) -> String {
+    let clean = clean_path(path_str);
+    if clean.is_empty() {
+        return "Workspace".to_string();
+    }
+    let parts: Vec<&str> = clean
+        .split(&['/', '\\'][..])
+        .filter(|s| !s.is_empty())
+        .collect();
+    if let Some(last) = parts.last() {
+        last.to_string()
+    } else {
+        "Workspace".to_string()
     }
 }
 
@@ -214,6 +273,39 @@ mod tests {
         store.remove(id2);
         assert_eq!(store.recent_workspaces.len(), 1);
         assert_eq!(store.active_workspace_id, Some(id1));
+    }
+
+    #[test]
+    fn test_find_by_workdir_normalization() {
+        let mut store = WorkspaceStore::default();
+        let ws = Workspace::new(
+            "uwulog-rust",
+            WorkspaceLocation::Local {
+                working_dir: "D:\\Learn\\Go\\uwulog-rust".to_string(),
+            },
+            SourceType::Process,
+        );
+        store.add_or_update(ws);
+
+        // Exact match
+        assert!(store
+            .find_by_workdir("D:\\Learn\\Go\\uwulog-rust")
+            .is_some());
+        // Forward slash match
+        assert!(store.find_by_workdir("D:/Learn/Go/uwulog-rust").is_some());
+        // Trailing slash
+        assert!(store.find_by_workdir("D:/Learn/Go/uwulog-rust/").is_some());
+        assert!(store
+            .find_by_workdir("D:\\Learn\\Go\\uwulog-rust\\")
+            .is_some());
+        // Windows verbatim prefix
+        assert!(store
+            .find_by_workdir(r"\\?\D:\Learn\Go\uwulog-rust")
+            .is_some());
+        // Case insensitivity
+        assert!(store.find_by_workdir("d:/learn/go/uwulog-rust").is_some());
+        // Non-matching dir
+        assert!(store.find_by_workdir("D:/Other/Path").is_none());
     }
 
     #[tokio::test]

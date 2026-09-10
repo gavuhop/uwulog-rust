@@ -2,24 +2,16 @@ use crate::app::{ActiveTab, UnfilteredViewState};
 use crate::ui::autocomplete::{AutocompleteState, FieldType};
 use crate::ui::columns_modal::ColumnState;
 use crate::ui::history::SearchHistoryState;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 use uwu_core_engine::SystemEngine;
 use uwu_core_schema::LogEvent;
-use uwu_core_workspace::{EnvLoadStatus, SourceConfig};
+use uwu_core_workspace::{Workspace, WorkspaceSession};
 
-/// Lưu trữ trạng thái hiển thị giao diện (View State) của từng workspace session trong GUI.
-pub struct GuiSessionState {
-    pub engine: Arc<SystemEngine>,
-    pub source_config: SourceConfig,
-    pub is_source_running: bool,
-    pub project_name_input: String,
-    pub env_status: EnvLoadStatus,
-    pub env_vars: HashMap<String, String>,
-
-    pub capacity: usize,
-    pub display_limit: usize,
+/// Lưu trữ trạng thái hiển thị giao diện (View State) thuần túy của từng workspace session.
+/// Không chứa các trường runtime trùng lặp (như engine, source_config, name, env_vars...).
+pub struct GuiViewState {
     pub query: String,
     pub last_query: String,
     pub active_tab: ActiveTab,
@@ -46,21 +38,9 @@ pub struct GuiSessionState {
     pub discovered_fields_cache: BTreeMap<String, FieldType>,
 }
 
-impl GuiSessionState {
-    pub fn new(engine: Arc<SystemEngine>, source_config: SourceConfig, name: String) -> Self {
-        let capacity = source_config.capacity;
-        let display_limit = source_config.display_limit;
-        let discovered_fields_cache = engine.get_schema_map().into_iter().collect();
-
+impl GuiViewState {
+    pub fn new(engine: &Arc<SystemEngine>) -> Self {
         Self {
-            engine,
-            source_config,
-            is_source_running: false,
-            project_name_input: name,
-            env_status: EnvLoadStatus::Idle,
-            env_vars: HashMap::new(),
-            capacity,
-            display_limit,
             query: String::new(),
             last_query: String::new(),
             active_tab: ActiveTab::Filtered,
@@ -84,7 +64,42 @@ impl GuiSessionState {
             filtered_seen_at_pause: 0,
             filtered_processed_at_pause: 0,
             paused_new_matched_count: 0,
-            discovered_fields_cache,
+            discovered_fields_cache: engine.get_schema_map().into_iter().collect(),
         }
+    }
+}
+
+/// Thực thể đại diện cho một Workspace đang mở trong GUI.
+/// Hợp nhất: `session` (SSOT cho Runtime/Engine/Process/Store) + `view` (Trạng thái UI thuần túy).
+pub struct GuiSession {
+    pub session: WorkspaceSession,
+    pub view: GuiViewState,
+}
+
+impl GuiSession {
+    pub fn new(session: WorkspaceSession) -> Self {
+        let view = GuiViewState::new(&session.engine);
+        Self { session, view }
+    }
+
+    pub fn from_workspace(ws: &Workspace, capacity: usize, display_limit: usize) -> Self {
+        let session = WorkspaceSession::from_workspace(ws, capacity, display_limit);
+        let mut view = GuiViewState::new(&session.engine);
+        view.query = ws.last_query.clone();
+        Self { session, view }
+    }
+}
+
+impl std::ops::Deref for GuiSession {
+    type Target = GuiViewState;
+
+    fn deref(&self) -> &Self::Target {
+        &self.view
+    }
+}
+
+impl std::ops::DerefMut for GuiSession {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.view
     }
 }

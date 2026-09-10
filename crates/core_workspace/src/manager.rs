@@ -1,5 +1,5 @@
 use crate::session::WorkspaceSession;
-use crate::{Workspace, WorkspaceLocation, WorkspaceStore};
+use crate::{Workspace, WorkspaceStore};
 use tokio::runtime::Handle;
 use uuid::Uuid;
 
@@ -46,18 +46,10 @@ impl MultiWorkspaceManager {
         if dir.trim().is_empty() {
             return None;
         }
-        let clean_dir = dir.trim_end_matches(&['/', '\\'][..]);
-        self.sessions.iter().position(|s| {
-            let session_dir = match &s.location {
-                WorkspaceLocation::Local { working_dir } => {
-                    working_dir.trim_end_matches(&['/', '\\'][..])
-                }
-                WorkspaceLocation::Wsl { working_dir, .. } => {
-                    working_dir.trim_end_matches(&['/', '\\'][..])
-                }
-            };
-            session_dir.eq_ignore_ascii_case(clean_dir)
-        })
+        let clean_dir = crate::normalize_workdir(dir);
+        self.sessions
+            .iter()
+            .position(|s| s.location.normalized_dir() == clean_dir)
     }
 
     pub fn add_session(&mut self, session: WorkspaceSession, activate: bool) -> usize {
@@ -85,17 +77,12 @@ impl MultiWorkspaceManager {
         rt: &Handle,
         auto_start: bool,
     ) -> usize {
-        // 1. Kiểm tra xem workspace này đã mở trong window chưa
-        if let Some(existing_idx) = self.find_session_by_id(ws.id) {
-            self.switch_session(existing_idx);
-            return existing_idx;
-        }
-
-        let dir = match &ws.location {
-            WorkspaceLocation::Local { working_dir } => working_dir.as_str(),
-            WorkspaceLocation::Wsl { working_dir, .. } => working_dir.as_str(),
-        };
-        if let Some(existing_idx) = self.find_session_by_workdir(dir) {
+        // 1. Kiểm tra xem workspace này đã mở trong window chưa (theo ID hoặc Location)
+        if let Some(existing_idx) = self
+            .sessions
+            .iter()
+            .position(|s| s.id == ws.id || s.location.is_same(&ws.location))
+        {
             self.switch_session(existing_idx);
             return existing_idx;
         }

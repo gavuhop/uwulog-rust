@@ -1,11 +1,11 @@
-use crate::session_view::GuiSessionState;
+use crate::session_view::GuiSession;
 use eframe::egui;
 use std::time::{Duration, Instant};
 use tokio::runtime::Handle;
 use uwu_core_schema::LogEvent;
 pub use uwu_core_workspace::{
-    MultiWorkspaceManager, SourceConfig, SourceType, Workspace, WorkspaceLocation,
-    WorkspaceSession, WorkspaceStore, WslConfig, WslSubMode,
+    SourceConfig, SourceType, Workspace, WorkspaceLocation, WorkspaceSession, WorkspaceStore,
+    WslConfig, WslSubMode,
 };
 
 pub const RAW_STREAM_LIMIT: usize = 500;
@@ -30,8 +30,9 @@ pub struct UnfilteredViewState {
 }
 
 pub struct UwuGuiApp {
-    pub workspace_mgr: MultiWorkspaceManager,
-    pub view_states: Vec<GuiSessionState>,
+    pub sessions: Vec<GuiSession>,
+    pub active_index: usize,
+    pub store: WorkspaceStore,
     pub rt: Handle,
     pub show_launch_modal: bool,
     pub project_picker_open: bool,
@@ -39,22 +40,25 @@ pub struct UwuGuiApp {
     pub available_wsl_distros: Vec<String>,
     pub wsl_distro_rx: Option<tokio::sync::oneshot::Receiver<Vec<String>>>,
     pub prev_screen_width: f32,
-    pub workspace_store: WorkspaceStore,
 }
 
 impl std::ops::Deref for UwuGuiApp {
-    type Target = GuiSessionState;
+    type Target = GuiSession;
 
     fn deref(&self) -> &Self::Target {
-        &self.view_states[self.workspace_mgr.active_index]
+        &self.sessions[self.active_index]
     }
 }
 
 impl std::ops::DerefMut for UwuGuiApp {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        let idx = self.workspace_mgr.active_index;
-        &mut self.view_states[idx]
+        let idx = self.active_index;
+        &mut self.sessions[idx]
     }
+}
+
+pub(crate) fn extract_project_name(path_str: &str) -> String {
+    uwu_core_workspace::extract_project_name(path_str)
 }
 
 impl UwuGuiApp {
@@ -72,7 +76,7 @@ impl UwuGuiApp {
         let mut working_dir = String::new();
         let mut source_type = SourceType::Process;
         let mut wsl_config = WslConfig::default();
-        let mut custom_source_specified = false;
+        let mut custom_cmd_or_file_specified = false;
 
         let mut i = 1;
         while i < args.len() {
@@ -96,13 +100,13 @@ impl UwuGuiApp {
                 wsl_config.command_str = args[i + 1].clone();
                 wsl_config.sub_mode = WslSubMode::Command;
                 source_type = SourceType::Wsl;
-                custom_source_specified = true;
+                custom_cmd_or_file_specified = true;
                 i += 1;
             } else if (args[i] == "--wsl-file") && i + 1 < args.len() {
                 wsl_config.file_path = args[i + 1].clone();
                 wsl_config.sub_mode = WslSubMode::File;
                 source_type = SourceType::Wsl;
-                custom_source_specified = true;
+                custom_cmd_or_file_specified = true;
                 i += 1;
             } else if (args[i] == "-r"
                 || args[i] == "--run"
@@ -112,22 +116,45 @@ impl UwuGuiApp {
             {
                 cmd_to_run = args[i + 1].clone();
                 source_type = SourceType::Process;
-                custom_source_specified = true;
+                custom_cmd_or_file_specified = true;
                 i += 1;
             } else if (args[i] == "-f" || args[i] == "--file") && i + 1 < args.len() {
                 file_to_read = args[i + 1].clone();
                 source_type = SourceType::File;
-                custom_source_specified = true;
+                custom_cmd_or_file_specified = true;
+                i += 1;
+            } else if (args[i] == "-d" || args[i] == "--dir" || args[i] == "--cwd")
+                && i + 1 < args.len()
+            {
+                working_dir = args[i + 1].clone();
                 i += 1;
             } else if !args[i].starts_with('-') {
-                file_to_read = args[i].clone();
-                source_type = SourceType::File;
-                custom_source_specified = true;
+                let candidate = std::path::Path::new(&args[i]);
+                if candidate.is_dir() {
+                    let canon = candidate
+                        .canonicalize()
+                        .map(|p| uwu_core_workspace::clean_path(&p.to_string_lossy()))
+                        .unwrap_or_else(|_| uwu_core_workspace::clean_path(&args[i]));
+                    working_dir = canon;
+                } else {
+                    file_to_read = args[i].clone();
+                    source_type = SourceType::File;
+                    custom_cmd_or_file_specified = true;
+                }
             }
             i += 1;
         }
 
-        let workspace_store = WorkspaceStore::load();
+        if !working_dir.is_empty() {
+            let p = std::path::Path::new(&working_dir);
+            if let Ok(canon) = p.canonicalize() {
+                working_dir = uwu_core_workspace::clean_path(&canon.to_string_lossy());
+            } else {
+                working_dir = uwu_core_workspace::clean_path(&working_dir);
+            }
+        }
+
+        let store = WorkspaceStore::load();
 
         let is_wsl_invoked = args.contains(&"--wsl-distro".to_string())
             || args.contains(&"--wsl-cmd".to_string())
@@ -148,7 +175,7 @@ impl UwuGuiApp {
         } else if !working_dir.is_empty() {
             working_dir.clone()
         } else if let Ok(cwd) = std::env::current_dir() {
-            cwd.to_string_lossy().to_string()
+            uwu_core_workspace::clean_path(&cwd.to_string_lossy())
         } else {
             String::new()
         };
@@ -159,34 +186,7 @@ impl UwuGuiApp {
             working_dir = active_workdir.clone();
         }
 
-        fn extract_project_name(path_str: &str) -> String {
-            let clean = path_str.trim().trim_end_matches(&['/', '\\'][..]);
-            if clean.is_empty() {
-                return "Workspace".to_string();
-            }
-            let parts: Vec<&str> = clean
-                .split(&['/', '\\'][..])
-                .filter(|s| !s.is_empty())
-                .collect();
-            if let Some(last) = parts.last() {
-                last.to_string()
-            } else {
-                "Workspace".to_string()
-            }
-        }
-
-        let args_specified_target = custom_source_specified || is_wsl_invoked;
-
-        // Nếu người dùng không chỉ định tham số CLI cụ thể, ưu tiên mở lại active workspace gần nhất (nếu có),
-        // hoặc tìm theo active_workdir
-        let saved_ws = if !args_specified_target {
-            workspace_store
-                .get_active()
-                .cloned()
-                .or_else(|| workspace_store.find_by_workdir(&active_workdir).cloned())
-        } else {
-            workspace_store.find_by_workdir(&active_workdir).cloned()
-        };
+        let saved_ws = store.find_by_workdir(&active_workdir).cloned();
 
         let initial_project_name = if let Some(ref ws) = saved_ws {
             ws.name.clone()
@@ -234,8 +234,8 @@ impl UwuGuiApp {
 
         let mut initial_query = String::new();
 
-        // Nếu có saved_ws và không có cờ custom ghi đè, nạp đầy đủ cấu hình (bao gồm cả WSL)
-        if !custom_source_specified {
+        // Nếu có saved_ws và không có cờ custom ghi đè command/file, nạp đầy đủ cấu hình (bao gồm cả WSL)
+        if !custom_cmd_or_file_specified {
             if let Some(ref ws) = saved_ws {
                 initial_query = ws.last_query.clone();
                 match ws.source_type {
@@ -264,13 +264,16 @@ impl UwuGuiApp {
                     SourceType::Process => {
                         source_config.source_type = SourceType::Process;
                         source_config.command_str = ws.command_str.clone();
+                        if let WorkspaceLocation::Local { working_dir } = &ws.location {
+                            source_config.working_dir = working_dir.clone();
+                        }
                     }
                 }
             }
         }
 
         let mut initial_session = if let Some(ref ws) = saved_ws {
-            if !custom_source_specified {
+            if !custom_cmd_or_file_specified {
                 let mut s = WorkspaceSession::from_workspace(ws, capacity, display_limit);
                 if !source_config.wsl_config.distro.is_empty() {
                     s.source_config.wsl_config.distro = source_config.wsl_config.distro.clone();
@@ -300,18 +303,13 @@ impl UwuGuiApp {
             }
         }
 
-        let mut view_state = GuiSessionState::new(
-            initial_session.engine.clone(),
-            initial_session.source_config.clone(),
-            initial_session.name.clone(),
-        );
-        view_state.query = initial_query;
-
-        let workspace_mgr = MultiWorkspaceManager::new(initial_session, workspace_store.clone());
+        let mut initial_gui_session = GuiSession::new(initial_session);
+        initial_gui_session.view.query = initial_query;
 
         let mut app = Self {
-            workspace_mgr,
-            view_states: vec![view_state],
+            sessions: vec![initial_gui_session],
+            active_index: 0,
+            store,
             rt,
             show_launch_modal: false,
             project_picker_open: false,
@@ -319,13 +317,20 @@ impl UwuGuiApp {
             available_wsl_distros: Vec::new(),
             wsl_distro_rx: Some(wsl_rx),
             prev_screen_width: 0.0,
-            workspace_store,
         };
 
         // Background task nạp biến môi trường cho session đầu tiên
         app.spawn_load_environment();
 
-        if custom_source_specified {
+        if let Some(ref ws) = saved_ws {
+            app.store.active_workspace_id = Some(ws.id);
+            let _ = app.store.save();
+        } else {
+            // Tự động lưu workspace mới này vào store để lần sau nhớ
+            app.save_current_workspace();
+        }
+
+        if custom_cmd_or_file_specified {
             app.save_current_workspace();
             app.start_configured_source();
         }
@@ -336,177 +341,166 @@ impl UwuGuiApp {
 
     #[allow(dead_code)]
     pub fn active_session(&self) -> &WorkspaceSession {
-        self.workspace_mgr.active_session()
+        &self.sessions[self.active_index].session
     }
 
     #[allow(dead_code)]
     pub fn active_session_mut(&mut self) -> &mut WorkspaceSession {
-        self.workspace_mgr.active_session_mut()
+        &mut self.sessions[self.active_index].session
     }
 
     pub fn switch_session(&mut self, index: usize) {
-        if index < self.workspace_mgr.sessions.len() {
-            self.workspace_mgr.switch_session(index);
-            while self.view_states.len() <= self.workspace_mgr.active_index {
-                let s = &self.workspace_mgr.sessions[self.view_states.len()];
-                self.view_states.push(GuiSessionState::new(
-                    s.engine.clone(),
-                    s.source_config.clone(),
-                    s.name.clone(),
-                ));
-            }
-
-            // Đồng bộ trạng thái từ active session sang view state
-            let idx = self.workspace_mgr.active_index;
-            let session = &self.workspace_mgr.sessions[idx];
-            self.view_states[idx].engine = session.engine.clone();
-            self.view_states[idx].source_config = session.source_config.clone();
-            self.view_states[idx].is_source_running = session.is_source_running;
-            self.view_states[idx].project_name_input = session.name.clone();
-            self.view_states[idx].env_status = session.env_status.clone();
-            self.view_states[idx].env_vars = session.env_vars.clone();
-
-            self.workspace_store = self.workspace_mgr.store.clone();
+        if index < self.sessions.len() {
+            self.active_index = index;
+            self.store.active_workspace_id = Some(self.sessions[index].session.id);
+            let _ = self.store.save();
             self.trigger_full_search();
         }
     }
 
     pub fn open_or_switch_workspace(&mut self, ws: &Workspace) {
-        let idx = self
-            .workspace_mgr
-            .open_or_switch_workspace(ws, 200_000, 5_000, &self.rt, false);
-
-        while self.view_states.len() < self.workspace_mgr.sessions.len() {
-            let s = &self.workspace_mgr.sessions[self.view_states.len()];
-            let mut vs =
-                GuiSessionState::new(s.engine.clone(), s.source_config.clone(), s.name.clone());
-            vs.query = ws.last_query.clone();
-            self.view_states.push(vs);
+        if let Some(pos) = self
+            .sessions
+            .iter()
+            .position(|s| s.session.id == ws.id || s.session.location.is_same(&ws.location))
+        {
+            self.switch_session(pos);
+            return;
         }
 
-        self.switch_session(idx);
+        let mut gui_session = GuiSession::from_workspace(ws, 200_000, 5_000);
+        gui_session.session.spawn_load_environment(&self.rt);
+        self.sessions.push(gui_session);
+        self.switch_session(self.sessions.len() - 1);
     }
 
     pub fn close_session(&mut self, index: usize) {
-        if index < self.view_states.len() {
-            self.view_states.remove(index);
+        if index >= self.sessions.len() {
+            return;
         }
 
-        self.workspace_mgr.close_session(index, 200_000, 5_000);
+        let mut removed = self.sessions.remove(index);
+        removed.session.stop_source();
 
-        if self.view_states.is_empty() {
-            let s = &self.workspace_mgr.sessions[0];
-            self.view_states.push(GuiSessionState::new(
-                s.engine.clone(),
-                s.source_config.clone(),
-                s.name.clone(),
-            ));
+        if self.sessions.is_empty() {
+            let default_session = WorkspaceSession::new(
+                "Workspace",
+                WorkspaceLocation::Local {
+                    working_dir: std::env::current_dir()
+                        .map(|p| uwu_core_workspace::clean_path(&p.to_string_lossy()))
+                        .unwrap_or_default(),
+                },
+                SourceConfig::default(),
+            );
+            self.sessions.push(GuiSession::new(default_session));
         }
 
-        if self.workspace_mgr.active_index >= self.view_states.len() {
-            self.workspace_mgr.active_index = self.view_states.len() - 1;
+        if self.active_index >= self.sessions.len() {
+            self.active_index = self.sessions.len() - 1;
         }
 
-        self.workspace_store = self.workspace_mgr.store.clone();
-        self.switch_session(self.workspace_mgr.active_index);
+        self.store.active_workspace_id = Some(self.sessions[self.active_index].session.id);
+        let _ = self.store.save();
+        self.trigger_full_search();
     }
 
     #[allow(dead_code)]
     pub fn cycle_project(&mut self, forward: bool) {
-        self.workspace_mgr.cycle_session(forward);
-        self.switch_session(self.workspace_mgr.active_index);
+        if self.sessions.is_empty() {
+            return;
+        }
+        let n = self.sessions.len();
+        let new_idx = if forward {
+            (self.active_index + 1) % n
+        } else {
+            (self.active_index + n - 1) % n
+        };
+        self.switch_session(new_idx);
     }
 
     pub fn save_current_workspace(&mut self) {
-        let active_idx = self.workspace_mgr.active_index;
-        let view = &self.view_states[active_idx];
-        let name = if view.project_name_input.trim().is_empty() {
-            "Workspace".to_string()
-        } else {
-            view.project_name_input.trim().to_string()
-        };
+        let active_idx = self.active_index;
+        let gui_session = &mut self.sessions[active_idx];
+        if gui_session.session.name.trim().is_empty() {
+            gui_session.session.name = "Workspace".to_string();
+        }
 
-        let session = &mut self.workspace_mgr.sessions[active_idx];
-        session.name = name;
-        session.source_config = view.source_config.clone();
-
-        match view.source_config.source_type {
+        match gui_session.session.source_config.source_type {
             SourceType::Wsl => {
-                session.location = WorkspaceLocation::Wsl {
-                    distro: view.source_config.wsl_config.distro.clone(),
-                    working_dir: view.source_config.wsl_config.working_dir.clone(),
+                gui_session.session.location = WorkspaceLocation::Wsl {
+                    distro: gui_session.session.source_config.wsl_config.distro.clone(),
+                    working_dir: gui_session
+                        .session
+                        .source_config
+                        .wsl_config
+                        .working_dir
+                        .clone(),
                 };
             }
             _ => {
-                let dir = if !view.source_config.working_dir.trim().is_empty() {
-                    view.source_config.working_dir.clone()
+                let dir = if !gui_session
+                    .session
+                    .source_config
+                    .working_dir
+                    .trim()
+                    .is_empty()
+                {
+                    gui_session.session.source_config.working_dir.clone()
                 } else {
                     std::env::current_dir()
-                        .map(|p| p.to_string_lossy().to_string())
+                        .map(|p| uwu_core_workspace::clean_path(&p.to_string_lossy()))
                         .unwrap_or_default()
                 };
-                session.location = WorkspaceLocation::Local { working_dir: dir };
+                gui_session.session.location = WorkspaceLocation::Local { working_dir: dir };
             }
         }
 
-        let mut ws = session.to_workspace();
-        ws.last_query = view.query.clone();
-        self.workspace_mgr.store.add_or_update(ws.clone());
-        self.workspace_store = self.workspace_mgr.store.clone();
+        let mut ws = gui_session.session.to_workspace();
+        ws.last_query = gui_session.view.query.clone();
+        self.store.add_or_update(ws);
     }
 
     pub fn load_workspace(&mut self, ws: &Workspace) {
-        let active_idx = self.workspace_mgr.active_index;
-        self.workspace_mgr.sessions[active_idx].apply_workspace(ws);
-
-        let view = &mut self.view_states[active_idx];
-        view.project_name_input = ws.name.clone();
-        view.query = ws.last_query.clone();
-        view.source_config = self.workspace_mgr.sessions[active_idx]
-            .source_config
-            .clone();
-        view.env_vars = self.workspace_mgr.sessions[active_idx].env_vars.clone();
-
-        self.workspace_mgr.sessions[active_idx].spawn_load_environment(&self.rt);
+        let active_idx = self.active_index;
+        let gui_session = &mut self.sessions[active_idx];
+        gui_session.session.apply_workspace(ws);
+        gui_session.view.query = ws.last_query.clone();
+        gui_session.session.spawn_load_environment(&self.rt);
         self.save_current_workspace();
     }
 
     pub fn start_configured_source(&mut self) {
         self.save_current_workspace();
-        let active_idx = self.workspace_mgr.active_index;
-        self.workspace_mgr.sessions[active_idx].source_config = self.source_config.clone();
-        self.workspace_mgr.sessions[active_idx].start_source(&self.rt);
-        self.is_source_running = true;
+        let active_idx = self.active_index;
+        self.sessions[active_idx].session.start_source(&self.rt);
     }
 
     pub fn stop_current_source(&mut self) {
-        let active_idx = self.workspace_mgr.active_index;
-        self.workspace_mgr.sessions[active_idx].stop_source();
-        self.is_source_running = false;
+        let active_idx = self.active_index;
+        self.sessions[active_idx].session.stop_source();
     }
 
     pub fn restart_current_source(&mut self) {
         self.stop_current_source();
         self.save_current_workspace();
-        let active_idx = self.workspace_mgr.active_index;
-        self.workspace_mgr.sessions[active_idx].source_config = self.source_config.clone();
-        self.workspace_mgr.sessions[active_idx].restart_source(&self.rt);
+        let active_idx = self.active_index;
+        self.sessions[active_idx].session.restart_source(&self.rt);
 
-        let view = &mut self.view_states[active_idx];
+        let view = &mut self.sessions[active_idx].view;
         view.cached_logs.clear();
         view.total_matched = 0;
         view.selected_log = None;
         view.last_processed_count = 0;
         view.unfiltered_state.cached_unfiltered.clear();
-        view.is_source_running = true;
 
         self.trigger_full_search();
     }
 
     pub fn spawn_load_environment(&mut self) {
-        let active_idx = self.workspace_mgr.active_index;
-        self.workspace_mgr.sessions[active_idx].source_config = self.source_config.clone();
-        self.workspace_mgr.sessions[active_idx].spawn_load_environment(&self.rt);
+        let active_idx = self.active_index;
+        self.sessions[active_idx]
+            .session
+            .spawn_load_environment(&self.rt);
     }
 
     pub fn tick(&mut self) {
@@ -524,16 +518,11 @@ impl UwuGuiApp {
         }
 
         // 2. Chạy tick trên tất cả các runtime sessions (phát hiện process hoàn tất, nhận env vars)
-        self.workspace_mgr.tick_all();
+        for s in &mut self.sessions {
+            s.session.tick();
+        }
 
-        // 3. Đồng bộ trạng thái từ active session sang active view state
-        let active_idx = self.workspace_mgr.active_index;
-        let session = &self.workspace_mgr.sessions[active_idx];
-        self.view_states[active_idx].is_source_running = session.is_source_running;
-        self.view_states[active_idx].env_status = session.env_status.clone();
-        self.view_states[active_idx].env_vars = session.env_vars.clone();
-
-        let total_processed = session.engine.total_processed();
+        let total_processed = self.session.engine.total_processed();
         let now = Instant::now();
 
         let query_changed = self.query != self.last_query;
@@ -554,16 +543,18 @@ impl UwuGuiApp {
         let prev_processed = self.last_processed_count;
 
         if self.is_auto_scroll && new_logs_arrived && !query_changed {
-            let (new_matched_count, new_matching_logs) =
-                self.engine.filter_incremental(&self.query, prev_processed);
+            let (new_matched_count, new_matching_logs) = self
+                .session
+                .engine
+                .filter_incremental(&self.query, prev_processed);
 
             if new_matched_count > 0 {
                 self.total_matched += new_matched_count;
                 self.sync_discovered_fields(&new_matching_logs);
                 self.cached_logs.extend(new_matching_logs);
 
-                if self.cached_logs.len() > self.display_limit {
-                    let overflow = self.cached_logs.len() - self.display_limit;
+                if self.cached_logs.len() > self.session.display_limit {
+                    let overflow = self.cached_logs.len() - self.session.display_limit;
                     self.cached_logs.drain(0..overflow);
                 }
                 self.has_new_data = true;
@@ -572,6 +563,7 @@ impl UwuGuiApp {
 
         if !self.is_auto_scroll && !self.query.trim().is_empty() && new_logs_arrived {
             let (new_matched, _) = self
+                .session
                 .engine
                 .filter_incremental(&self.query, self.filtered_processed_at_pause);
             self.paused_new_matched_count = new_matched;
@@ -586,7 +578,7 @@ impl UwuGuiApp {
 
         self.unfiltered_state.has_new_data = false;
         if self.unfiltered_state.is_open && self.unfiltered_state.is_live && new_logs_arrived {
-            let (new_count, new_logs) = self.engine.filter_incremental("", prev_processed);
+            let (new_count, new_logs) = self.session.engine.filter_incremental("", prev_processed);
             if new_count > 0 {
                 self.unfiltered_state.cached_unfiltered.extend(new_logs);
                 if self.unfiltered_state.cached_unfiltered.len() > RAW_STREAM_LIMIT {
@@ -605,13 +597,14 @@ impl UwuGuiApp {
 
     pub fn trigger_full_search(&mut self) {
         let (matched, logs) = self
+            .session
             .engine
-            .search_with_count(&self.query, self.display_limit);
+            .search_with_count(&self.query, self.session.display_limit);
         self.total_matched = matched;
         self.sync_discovered_fields(&logs);
         self.cached_logs = logs;
         self.last_query = self.query.clone();
-        self.last_processed_count = self.engine.total_processed();
+        self.last_processed_count = self.session.engine.total_processed();
         self.last_search_time = Instant::now();
         self.global_seen_at_pause = self.last_processed_count;
         self.filtered_seen_at_pause = self.total_matched;
@@ -633,7 +626,7 @@ impl UwuGuiApp {
             return;
         }
         self.is_auto_scroll = false;
-        let total = self.engine.total_processed();
+        let total = self.session.engine.total_processed();
         self.global_seen_at_pause = total;
         self.filtered_seen_at_pause = self.total_matched;
         self.filtered_processed_at_pause = total;
@@ -650,7 +643,7 @@ impl UwuGuiApp {
 
     pub fn sync_discovered_fields(&mut self, logs: &[LogEvent]) {
         self.column_state.sync_discovered_keys(logs);
-        self.discovered_fields_cache = self.engine.get_schema_map().into_iter().collect();
+        self.discovered_fields_cache = self.session.engine.get_schema_map().into_iter().collect();
     }
 
     pub fn get_available_log_fields(&self) -> Vec<(String, crate::ui::autocomplete::FieldType)> {
@@ -801,8 +794,9 @@ impl UwuGuiApp {
         self.unfiltered_state.is_open = true;
         self.unfiltered_state.target_id = target_id;
         self.unfiltered_state.is_live = target_id.is_none();
-        self.unfiltered_state.snapshot_processed_count = self.engine.total_processed();
+        self.unfiltered_state.snapshot_processed_count = self.session.engine.total_processed();
         let (target_idx, unfiltered) = self
+            .session
             .engine
             .get_unfiltered_events(target_id, RAW_STREAM_LIMIT);
         self.unfiltered_state.cached_unfiltered = unfiltered;
@@ -813,8 +807,9 @@ impl UwuGuiApp {
     }
 
     pub fn refresh_unfiltered_snapshot(&mut self) {
-        self.unfiltered_state.snapshot_processed_count = self.engine.total_processed();
+        self.unfiltered_state.snapshot_processed_count = self.session.engine.total_processed();
         let (target_idx, unfiltered) = self
+            .session
             .engine
             .get_unfiltered_events(self.unfiltered_state.target_id, RAW_STREAM_LIMIT);
         self.unfiltered_state.cached_unfiltered = unfiltered;
@@ -828,7 +823,7 @@ impl UwuGuiApp {
             self.refresh_unfiltered_snapshot();
             self.unfiltered_state.request_scroll_to_bottom = true;
         } else {
-            self.unfiltered_state.snapshot_processed_count = self.engine.total_processed();
+            self.unfiltered_state.snapshot_processed_count = self.session.engine.total_processed();
         }
     }
 
@@ -837,7 +832,7 @@ impl UwuGuiApp {
             return;
         }
         self.unfiltered_state.is_live = false;
-        self.unfiltered_state.snapshot_processed_count = self.engine.total_processed();
+        self.unfiltered_state.snapshot_processed_count = self.session.engine.total_processed();
     }
 
     pub fn close_unfiltered_stream(&mut self) {
@@ -874,7 +869,9 @@ impl eframe::App for UwuGuiApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        self.workspace_mgr.stop_all();
+        for s in &mut self.sessions {
+            s.session.stop_source();
+        }
     }
 }
 
@@ -903,21 +900,16 @@ mod tests {
             WorkspaceLocation::Local {
                 working_dir: String::new(),
             },
-            source_config.clone(),
-        );
-
-        let view_state = GuiSessionState::new(
-            session.engine.clone(),
             source_config,
-            "Test Project".to_string(),
         );
 
-        let workspace_store = WorkspaceStore::default();
-        let workspace_mgr = MultiWorkspaceManager::new(session, workspace_store.clone());
+        let gui_session = GuiSession::new(session);
+        let store = WorkspaceStore::default();
 
         UwuGuiApp {
-            workspace_mgr,
-            view_states: vec![view_state],
+            sessions: vec![gui_session],
+            active_index: 0,
+            store,
             rt,
             show_launch_modal: false,
             project_picker_open: false,
@@ -925,7 +917,6 @@ mod tests {
             available_wsl_distros: Vec::new(),
             wsl_distro_rx: None,
             prev_screen_width: 0.0,
-            workspace_store,
         }
     }
 
@@ -1109,7 +1100,7 @@ mod tests {
     #[tokio::test]
     async fn test_unfiltered_live_tick_sync_both_branches() {
         let mut app = create_test_app();
-        let tx = app.engine.get_channel();
+        let tx = app.session.engine.get_channel();
 
         // 1. Initial 5 logs
         for i in 0..5 {
@@ -1149,7 +1140,7 @@ mod tests {
     #[tokio::test]
     async fn test_unfiltered_frozen_snapshot_no_drift() {
         let mut app = create_test_app();
-        let tx = app.engine.get_channel();
+        let tx = app.session.engine.get_channel();
 
         for i in 0..5 {
             let entry = RawLogEntry {
@@ -1179,7 +1170,7 @@ mod tests {
     #[tokio::test]
     async fn test_repeated_unlatch_idempotency_preserves_pause_state() {
         let mut app = create_test_app();
-        let tx = app.engine.get_channel();
+        let tx = app.session.engine.get_channel();
 
         for i in 0..10 {
             let entry = RawLogEntry {
@@ -1210,7 +1201,7 @@ mod tests {
         app.tick();
 
         assert!(matches!(
-            app.env_status,
+            app.session.env_status,
             uwu_core_workspace::EnvLoadStatus::Ready { .. }
         ));
     }
@@ -1218,30 +1209,30 @@ mod tests {
     #[tokio::test]
     async fn test_source_running_state_transitions_to_stopped() {
         let mut app = create_test_app();
-        assert!(!app.is_source_running);
+        assert!(!app.session.is_source_running);
 
         #[cfg(target_os = "windows")]
         {
-            app.source_config.command_str = "cmd /c echo test".to_string();
+            app.session.source_config.command_str = "cmd /c echo test".to_string();
         }
         #[cfg(not(target_os = "windows"))]
         {
-            app.source_config.command_str = "echo test".to_string();
+            app.session.source_config.command_str = "echo test".to_string();
         }
 
         app.start_configured_source();
-        assert!(app.is_source_running);
+        assert!(app.session.is_source_running);
 
         let start = Instant::now();
         while start.elapsed() < Duration::from_secs(3) {
             tokio::time::sleep(Duration::from_millis(50)).await;
             app.tick();
-            if !app.is_source_running {
+            if !app.session.is_source_running {
                 break;
             }
         }
 
-        assert!(!app.is_source_running);
+        assert!(!app.session.is_source_running);
     }
 
     #[tokio::test]
@@ -1255,8 +1246,8 @@ mod tests {
     #[tokio::test]
     async fn test_multi_project_switch_and_close() {
         let mut app = create_test_app();
-        assert_eq!(app.workspace_mgr.sessions.len(), 1);
-        assert_eq!(app.workspace_mgr.active_index, 0);
+        assert_eq!(app.sessions.len(), 1);
+        assert_eq!(app.active_index, 0);
 
         app.query = "level:error".to_string();
 
@@ -1269,27 +1260,27 @@ mod tests {
         );
         app.open_or_switch_workspace(&ws2);
 
-        assert_eq!(app.workspace_mgr.sessions.len(), 2);
-        assert_eq!(app.workspace_mgr.active_index, 1);
-        assert_eq!(app.project_name_input, "Project B");
+        assert_eq!(app.sessions.len(), 2);
+        assert_eq!(app.active_index, 1);
+        assert_eq!(app.session.name, "Project B");
         assert_eq!(app.query, "");
 
         app.query = "tag:Audio".to_string();
 
         app.switch_session(0);
-        assert_eq!(app.workspace_mgr.active_index, 0);
-        assert_eq!(app.project_name_input, "Test Project");
+        assert_eq!(app.active_index, 0);
+        assert_eq!(app.session.name, "Test Project");
         assert_eq!(app.query, "level:error");
 
         app.switch_session(1);
-        assert_eq!(app.workspace_mgr.active_index, 1);
-        assert_eq!(app.project_name_input, "Project B");
+        assert_eq!(app.active_index, 1);
+        assert_eq!(app.session.name, "Project B");
         assert_eq!(app.query, "tag:Audio");
 
         app.close_session(1);
-        assert_eq!(app.workspace_mgr.sessions.len(), 1);
-        assert_eq!(app.workspace_mgr.active_index, 0);
-        assert_eq!(app.project_name_input, "Test Project");
+        assert_eq!(app.sessions.len(), 1);
+        assert_eq!(app.active_index, 0);
+        assert_eq!(app.session.name, "Test Project");
         assert_eq!(app.query, "level:error");
     }
 
@@ -1298,19 +1289,19 @@ mod tests {
         let mut app = create_test_app();
 
         // 1. Cấu hình WSL source trong session hiện tại
-        app.source_config.source_type = SourceType::Wsl;
-        app.source_config.wsl_config.distro = "Ubuntu".to_string();
-        app.source_config.wsl_config.working_dir = "/home/user/backend".to_string();
-        app.source_config.wsl_config.sub_mode = WslSubMode::Command;
-        app.source_config.wsl_config.command_str = "python3 app.py".to_string();
-        app.project_name_input = "WSL-Backend".to_string();
+        app.session.source_config.source_type = SourceType::Wsl;
+        app.session.source_config.wsl_config.distro = "Ubuntu".to_string();
+        app.session.source_config.wsl_config.working_dir = "/home/user/backend".to_string();
+        app.session.source_config.wsl_config.sub_mode = WslSubMode::Command;
+        app.session.source_config.wsl_config.command_str = "python3 app.py".to_string();
+        app.session.name = "WSL-Backend".to_string();
 
         // 2. Lưu workspace hiện tại
         app.save_current_workspace();
 
         // 3. Kiểm tra xem workspace được lưu vào store đúng chưa
         let ws = app
-            .workspace_store
+            .store
             .recent_workspaces
             .iter()
             .find(|w| w.name == "WSL-Backend")
@@ -1332,13 +1323,62 @@ mod tests {
 
         // 4. Mở lại workspace WSL qua open_or_switch_workspace
         app.open_or_switch_workspace(&ws);
-        assert_eq!(app.source_config.source_type, SourceType::Wsl);
-        assert_eq!(app.source_config.wsl_config.distro, "Ubuntu");
+        assert_eq!(app.session.source_config.source_type, SourceType::Wsl);
+        assert_eq!(app.session.source_config.wsl_config.distro, "Ubuntu");
         assert_eq!(
-            app.source_config.wsl_config.working_dir,
+            app.session.source_config.wsl_config.working_dir,
             "/home/user/backend"
         );
-        assert_eq!(app.source_config.wsl_config.sub_mode, WslSubMode::Command);
-        assert_eq!(app.source_config.wsl_config.command_str, "python3 app.py");
+        assert_eq!(
+            app.session.source_config.wsl_config.sub_mode,
+            WslSubMode::Command
+        );
+        assert_eq!(
+            app.session.source_config.wsl_config.command_str,
+            "python3 app.py"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_open_or_switch_workspace_slash_normalization() {
+        let mut app = create_test_app();
+        let ws_forward = Workspace::new(
+            "test-slash",
+            WorkspaceLocation::Local {
+                working_dir: "D:/Learn/Go/uwulog-rust".to_string(),
+            },
+            SourceType::Process,
+        );
+        app.open_or_switch_workspace(&ws_forward);
+        assert_eq!(app.sessions.len(), 2);
+        assert_eq!(app.active_index, 1);
+
+        // Try opening the same folder with backslashes
+        let ws_backward = Workspace::new(
+            "test-slash-alt",
+            WorkspaceLocation::Local {
+                working_dir: "D:\\Learn\\Go\\uwulog-rust\\".to_string(),
+            },
+            SourceType::Process,
+        );
+        app.open_or_switch_workspace(&ws_backward);
+
+        // Should NOT create a duplicate session, should switch to session index 1
+        assert_eq!(app.sessions.len(), 2);
+        assert_eq!(app.active_index, 1);
+    }
+
+    #[test]
+    fn test_extract_project_name() {
+        assert_eq!(
+            extract_project_name("D:\\Learn\\Go\\uwulog-rust"),
+            "uwulog-rust"
+        );
+        assert_eq!(
+            extract_project_name("D:/Learn/Go/uwulog-rust/"),
+            "uwulog-rust"
+        );
+        assert_eq!(extract_project_name("/home/user/backend"), "backend");
+        assert_eq!(extract_project_name(""), "Workspace");
     }
 }

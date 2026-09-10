@@ -127,15 +127,10 @@ impl WorkspaceSession {
     pub fn new_default(capacity: usize, display_limit: usize) -> Self {
         let working_dir = std::env::current_dir()
             .ok()
-            .map(|p| p.to_string_lossy().to_string())
+            .map(|p| crate::clean_path(&p.to_string_lossy()))
             .unwrap_or_default();
 
-        let name = if let Some(last) = working_dir.split(&['/', '\\'][..]).rfind(|s| !s.is_empty())
-        {
-            last.to_string()
-        } else {
-            "Workspace".to_string()
-        };
+        let name = crate::extract_project_name(&working_dir);
 
         let source_config = SourceConfig {
             capacity,

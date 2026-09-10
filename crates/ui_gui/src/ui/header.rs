@@ -25,13 +25,13 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
         }
 
         // Nhận diện nguồn log WSL để hiển thị badge
-        let wsl_distro = match app.source_config.source_type {
-            crate::app::SourceType::Wsl => Some(app.source_config.wsl_config.distro.clone()),
+        let wsl_distro = match app.session.source_config.source_type {
+            crate::app::SourceType::Wsl => Some(app.session.source_config.wsl_config.distro.clone()),
             _ => {
-                if app.source_config.command_str.to_lowercase().contains("wsl.exe")
-                    || app.source_config.command_str.to_lowercase().starts_with("wsl ")
+                if app.session.source_config.command_str.to_lowercase().contains("wsl.exe")
+                    || app.session.source_config.command_str.to_lowercase().starts_with("wsl ")
                 {
-                    let cmd = &app.source_config.command_str;
+                    let cmd = &app.session.source_config.command_str;
                     if let Some(idx) = cmd.find("-d ") {
                         let after = &cmd[idx + 3..];
                         let distro = after.split_whitespace().next().unwrap_or("WSL");
@@ -39,10 +39,10 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                     } else {
                         Some("WSL".to_string())
                     }
-                } else if app.source_config.file_path.contains(r"\\wsl.localhost\")
-                    || app.source_config.file_path.contains(r"\\wsl$\")
+                } else if app.session.source_config.file_path.contains(r"\\wsl.localhost\")
+                    || app.session.source_config.file_path.contains(r"\\wsl$\")
                 {
-                    let p = &app.source_config.file_path;
+                    let p = &app.session.source_config.file_path;
                     let after = if let Some(idx) = p.find(r"\\wsl.localhost\") {
                         &p[idx + 16..]
                     } else if let Some(idx) = p.find(r"\\wsl$\") {
@@ -70,10 +70,10 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 .on_hover_text(format!("Connected to WSL Distro: {}", distro));
         }
 
-        if !app.project_name_input.is_empty() {
+        if !app.session.name.is_empty() {
             ui.add_space(2.0);
             let proj_btn = egui::Button::new(
-                egui::RichText::new(format!("📁 {} ▾", app.project_name_input))
+                egui::RichText::new(format!("📁 {} ▾", app.session.name))
                     .size(11.0)
                     .strong()
                     .color(if app.project_picker_open {
@@ -92,10 +92,21 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
 
             let proj_resp = ui.add(proj_btn);
             proj_btn_rect = Some(proj_resp.rect);
-            if proj_resp
-                .on_hover_text("Switch or manage workspace projects (Alt+P)")
-                .clicked()
-            {
+
+            let workdir_str = app.session.location.working_dir();
+            let tooltip = if workdir_str.is_empty() {
+                format!(
+                    "Project: {}\nSwitch or manage workspace projects (Alt+P)",
+                    app.session.name
+                )
+            } else {
+                format!(
+                    "Project: {}\nPath: {}\nSwitch or manage workspace projects (Alt+P)",
+                    app.session.name, workdir_str
+                )
+            };
+
+            if proj_resp.on_hover_text(tooltip).clicked() {
                 app.project_picker_open = !app.project_picker_open;
             }
         }
@@ -249,7 +260,7 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
             ui.add_space(2.0);
 
             // Stop / Restart Source Button
-            if app.is_source_running {
+            if app.session.is_source_running {
                 let stop_btn = egui::Button::new(
                     egui::RichText::new("⏹")
                         .size(11.5)
@@ -621,7 +632,7 @@ pub fn render_log_counter(ui: &mut egui::Ui, app: &UwuGuiApp) {
 
     let (count_text, count_color, count_tooltip) = match app.active_tab {
         crate::app::ActiveTab::Unfiltered => {
-            let total_now = app.engine.total_processed() as usize;
+            let total_now = app.session.engine.total_processed() as usize;
 
             if app.unfiltered_state.is_live {
                 // Live: số log hiện tại
@@ -629,8 +640,8 @@ pub fn render_log_counter(ui: &mut egui::Ui, app: &UwuGuiApp) {
                 let tooltip = format!(
                     "Raw Stream (Live)\n• Total Ingested / Seen: {}\n• In-Memory Buffer: {} / {}\n• Buffer Limit: 500",
                     theme::format_number(total_now),
-                    theme::format_number(app.engine.total_logs()),
-                    theme::format_number(app.engine.max_capacity()),
+                    theme::format_number(app.session.engine.total_logs()),
+                    theme::format_number(app.session.engine.max_capacity()),
                 );
                 (text, theme::TEXT_MUTED, tooltip)
             } else {
@@ -665,7 +676,7 @@ pub fn render_log_counter(ui: &mut egui::Ui, app: &UwuGuiApp) {
                         app.query.trim(),
                         theme::format_number(app.total_matched),
                         theme::format_number(app.cached_logs.len()),
-                        theme::format_number(app.display_limit),
+                        theme::format_number(app.session.display_limit),
                     );
                     (text, theme::TEXT_KEY, tooltip)
                 } else {
@@ -683,7 +694,7 @@ pub fn render_log_counter(ui: &mut egui::Ui, app: &UwuGuiApp) {
                     (text, theme::TEXT_KEY, tooltip)
                 }
             } else {
-                let total_now = app.engine.total_processed() as usize;
+                let total_now = app.session.engine.total_processed() as usize;
 
                 if app.is_auto_scroll {
                     // Live: số log hiện tại
@@ -691,8 +702,8 @@ pub fn render_log_counter(ui: &mut egui::Ui, app: &UwuGuiApp) {
                     let tooltip = format!(
                         "Main Stream (Live)\n• Total Ingested: {}\n• In-Memory Buffer: {} / {}\n• Displayed: {}",
                         theme::format_number(total_now),
-                        theme::format_number(app.engine.total_logs()),
-                        theme::format_number(app.engine.max_capacity()),
+                        theme::format_number(app.session.engine.total_logs()),
+                        theme::format_number(app.session.engine.max_capacity()),
                         theme::format_number(app.cached_logs.len()),
                     );
                     (text, theme::TEXT_MUTED, tooltip)
@@ -732,7 +743,7 @@ fn format_fraction(numerator: usize, denominator: usize) -> String {
 
 /// Hiển thị chỉ báo trạng thái nạp biến môi trường của Workspace
 fn render_environment_status(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
-    match &app.env_status {
+    match &app.session.env_status {
         uwu_core_workspace::EnvLoadStatus::Loading { .. } => {
             ui.add_space(2.0);
             let spinner_frames = ['◐', '◓', '◑', '◒'];
