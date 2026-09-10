@@ -33,7 +33,6 @@ pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, tri
     let mut project_to_open = None;
     let mut project_to_delete = None;
     let mut open_local_folder_clicked = false;
-    let mut open_wsl_modal_clicked = false;
 
     egui::Area::new(Id::new("zed_project_picker_popup_area"))
         .order(Order::Foreground)
@@ -319,7 +318,7 @@ pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, tri
 
                     // 4. Quick Actions
                     let local_btn = egui::Button::new(
-                        egui::RichText::new("📂 Open Local Folder...")
+                        egui::RichText::new("📂 Open Local Folder")
                             .size(11.5)
                             .color(theme::TEXT_PRIMARY),
                     )
@@ -330,17 +329,15 @@ pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, tri
                         open_local_folder_clicked = true;
                     }
 
-                    let wsl_btn = egui::Button::new(
-                        egui::RichText::new("🐧 Open WSL Folder / Config...")
+                    let remote_btn = egui::Button::new(
+                        egui::RichText::new("🌐 Open Remote Folder")
                             .size(11.5)
                             .color(theme::TEXT_PRIMARY),
                     )
                     .fill(Color32::TRANSPARENT)
                     .frame(false);
 
-                    if ui.add(wsl_btn).clicked() {
-                        open_wsl_modal_clicked = true;
-                    }
+                    ui.add_enabled(false, remote_btn);
                 });
         });
 
@@ -376,10 +373,5 @@ pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, tri
             );
             app.dispatch_action(AppAction::OpenWorkspace(ws));
         }
-    }
-
-    if open_wsl_modal_clicked {
-        app.dispatch_action(AppAction::CloseProjectPicker);
-        app.dispatch_action(AppAction::OpenLaunchModalForWsl);
     }
 }
