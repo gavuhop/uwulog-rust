@@ -175,22 +175,36 @@ impl UwuGuiApp {
             }
         }
 
-        let initial_project_name =
-            if let Some(ws) = workspace_store.find_by_workdir(&active_workdir) {
-                ws.name.clone()
-            } else if is_wsl_invoked {
-                if !wsl_config.working_dir.is_empty() {
-                    extract_project_name(&wsl_config.working_dir)
-                } else {
-                    format!("WSL ({})", wsl_config.distro)
-                }
-            } else if !working_dir.is_empty() {
-                extract_project_name(&working_dir)
-            } else {
-                "Workspace".to_string()
-            };
+        let args_specified_target = custom_source_specified || is_wsl_invoked;
 
-        let initial_location = if is_wsl_invoked {
+        // Nếu người dùng không chỉ định tham số CLI cụ thể, ưu tiên mở lại active workspace gần nhất (nếu có),
+        // hoặc tìm theo active_workdir
+        let saved_ws = if !args_specified_target {
+            workspace_store
+                .get_active()
+                .cloned()
+                .or_else(|| workspace_store.find_by_workdir(&active_workdir).cloned())
+        } else {
+            workspace_store.find_by_workdir(&active_workdir).cloned()
+        };
+
+        let initial_project_name = if let Some(ref ws) = saved_ws {
+            ws.name.clone()
+        } else if is_wsl_invoked {
+            if !wsl_config.working_dir.is_empty() {
+                extract_project_name(&wsl_config.working_dir)
+            } else {
+                format!("WSL ({})", wsl_config.distro)
+            }
+        } else if !working_dir.is_empty() {
+            extract_project_name(&working_dir)
+        } else {
+            "Workspace".to_string()
+        };
+
+        let initial_location = if let Some(ref ws) = saved_ws {
+            ws.location.clone()
+        } else if is_wsl_invoked {
             WorkspaceLocation::Wsl {
                 distro: wsl_config.distro.clone(),
                 working_dir: wsl_config.working_dir.clone(),
@@ -218,25 +232,66 @@ impl UwuGuiApp {
             display_limit,
         };
 
-        // Nếu workspace đã lưu sẵn trong store và không có cờ custom, nạp lại cấu hình
+        let mut initial_query = String::new();
+
+        // Nếu có saved_ws và không có cờ custom ghi đè, nạp đầy đủ cấu hình (bao gồm cả WSL)
         if !custom_source_specified {
-            if let Some(ws) = workspace_store.find_by_workdir(&active_workdir) {
-                if !ws.command_str.is_empty() {
-                    source_config.command_str = ws.command_str.clone();
-                }
-                if !ws.file_path.is_empty() {
-                    source_config.file_path = ws.file_path.clone();
+            if let Some(ref ws) = saved_ws {
+                initial_query = ws.last_query.clone();
+                match ws.source_type {
+                    SourceType::Wsl => {
+                        source_config.source_type = SourceType::Wsl;
+                        if !ws.command_str.is_empty() {
+                            source_config.wsl_config.sub_mode = WslSubMode::Command;
+                            source_config.wsl_config.command_str = ws.command_str.clone();
+                        } else if !ws.file_path.is_empty() {
+                            source_config.wsl_config.sub_mode = WslSubMode::File;
+                            source_config.wsl_config.file_path = ws.file_path.clone();
+                        }
+                        if let WorkspaceLocation::Wsl {
+                            distro,
+                            working_dir,
+                        } = &ws.location
+                        {
+                            source_config.wsl_config.distro = distro.clone();
+                            source_config.wsl_config.working_dir = working_dir.clone();
+                        }
+                    }
+                    SourceType::File => {
+                        source_config.source_type = SourceType::File;
+                        source_config.file_path = ws.file_path.clone();
+                    }
+                    SourceType::Process => {
+                        source_config.source_type = SourceType::Process;
+                        source_config.command_str = ws.command_str.clone();
+                    }
                 }
             }
         }
 
-        let mut initial_session = WorkspaceSession::new(
-            initial_project_name.clone(),
-            initial_location,
-            source_config.clone(),
-        );
+        let mut initial_session = if let Some(ref ws) = saved_ws {
+            if !custom_source_specified {
+                let mut s = WorkspaceSession::from_workspace(ws, capacity, display_limit);
+                if !source_config.wsl_config.distro.is_empty() {
+                    s.source_config.wsl_config.distro = source_config.wsl_config.distro.clone();
+                }
+                s
+            } else {
+                WorkspaceSession::new(
+                    initial_project_name.clone(),
+                    initial_location,
+                    source_config.clone(),
+                )
+            }
+        } else {
+            WorkspaceSession::new(
+                initial_project_name.clone(),
+                initial_location,
+                source_config.clone(),
+            )
+        };
 
-        if let Some(ws) = workspace_store.find_by_workdir(&active_workdir) {
+        if let Some(ref ws) = saved_ws {
             if !ws.env_vars.is_empty() {
                 initial_session.env_vars = ws.env_vars.clone();
                 initial_session
@@ -247,13 +302,10 @@ impl UwuGuiApp {
 
         let mut view_state = GuiSessionState::new(
             initial_session.engine.clone(),
-            source_config,
-            initial_project_name,
+            initial_session.source_config.clone(),
+            initial_session.name.clone(),
         );
-
-        if let Some(ws) = workspace_store.find_by_workdir(&active_workdir) {
-            view_state.query = ws.last_query.clone();
-        }
+        view_state.query = initial_query;
 
         let workspace_mgr = MultiWorkspaceManager::new(initial_session, workspace_store.clone());
 
@@ -1239,5 +1291,54 @@ mod tests {
         assert_eq!(app.workspace_mgr.active_index, 0);
         assert_eq!(app.project_name_input, "Test Project");
         assert_eq!(app.query, "level:error");
+    }
+
+    #[tokio::test]
+    async fn test_wsl_workspace_save_and_reload() {
+        let mut app = create_test_app();
+
+        // 1. Cấu hình WSL source trong session hiện tại
+        app.source_config.source_type = SourceType::Wsl;
+        app.source_config.wsl_config.distro = "Ubuntu".to_string();
+        app.source_config.wsl_config.working_dir = "/home/user/backend".to_string();
+        app.source_config.wsl_config.sub_mode = WslSubMode::Command;
+        app.source_config.wsl_config.command_str = "python3 app.py".to_string();
+        app.project_name_input = "WSL-Backend".to_string();
+
+        // 2. Lưu workspace hiện tại
+        app.save_current_workspace();
+
+        // 3. Kiểm tra xem workspace được lưu vào store đúng chưa
+        let ws = app
+            .workspace_store
+            .recent_workspaces
+            .iter()
+            .find(|w| w.name == "WSL-Backend")
+            .cloned()
+            .expect("WSL-Backend must be saved in store");
+
+        assert_eq!(ws.source_type, SourceType::Wsl);
+        assert_eq!(ws.command_str, "python3 app.py");
+        match &ws.location {
+            WorkspaceLocation::Wsl {
+                distro,
+                working_dir,
+            } => {
+                assert_eq!(distro, "Ubuntu");
+                assert_eq!(working_dir, "/home/user/backend");
+            }
+            _ => panic!("Expected WSL location"),
+        }
+
+        // 4. Mở lại workspace WSL qua open_or_switch_workspace
+        app.open_or_switch_workspace(&ws);
+        assert_eq!(app.source_config.source_type, SourceType::Wsl);
+        assert_eq!(app.source_config.wsl_config.distro, "Ubuntu");
+        assert_eq!(
+            app.source_config.wsl_config.working_dir,
+            "/home/user/backend"
+        );
+        assert_eq!(app.source_config.wsl_config.sub_mode, WslSubMode::Command);
+        assert_eq!(app.source_config.wsl_config.command_str, "python3 app.py");
     }
 }

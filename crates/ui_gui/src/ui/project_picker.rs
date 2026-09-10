@@ -2,7 +2,7 @@ use crate::app::{SourceType, UwuGuiApp};
 use crate::ui::theme;
 use eframe::egui::{self, Color32, Id, Key, Order, Pos2, Rect, Rounding, Stroke};
 use std::collections::HashSet;
-use uwu_core_workspace::{Workspace, WorkspaceLocation};
+use uwu_core_workspace::{Workspace, WorkspaceLocation, WslSubMode};
 
 pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, trigger_rect: Rect) {
     if !app.project_picker_open {
@@ -422,6 +422,38 @@ pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, tri
     if open_wsl_modal_clicked {
         app.project_picker_open = false;
         app.source_config.source_type = SourceType::Wsl;
+        if app.source_config.wsl_config.command_str.is_empty()
+            && app.source_config.wsl_config.file_path.is_empty()
+        {
+            let recent_wsl = app
+                .workspace_store
+                .recent_workspaces
+                .iter()
+                .find(|w| w.source_type == SourceType::Wsl)
+                .cloned();
+
+            if let Some(recent_wsl) = recent_wsl {
+                if let WorkspaceLocation::Wsl {
+                    distro,
+                    working_dir,
+                } = &recent_wsl.location
+                {
+                    if app.source_config.wsl_config.distro.is_empty() {
+                        app.source_config.wsl_config.distro = distro.clone();
+                    }
+                    if app.source_config.wsl_config.working_dir.is_empty() {
+                        app.source_config.wsl_config.working_dir = working_dir.clone();
+                    }
+                }
+                if !recent_wsl.command_str.is_empty() {
+                    app.source_config.wsl_config.sub_mode = WslSubMode::Command;
+                    app.source_config.wsl_config.command_str = recent_wsl.command_str.clone();
+                } else if !recent_wsl.file_path.is_empty() {
+                    app.source_config.wsl_config.sub_mode = WslSubMode::File;
+                    app.source_config.wsl_config.file_path = recent_wsl.file_path.clone();
+                }
+            }
+        }
         app.show_launch_modal = true;
     }
 }
