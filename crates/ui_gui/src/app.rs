@@ -150,13 +150,15 @@ impl UwuGuiApp {
             } else if (args[i] == "--wsl-cmd") && i + 1 < args.len() {
                 wsl_config.command_str = args[i + 1].clone();
                 wsl_config.sub_mode = WslSubMode::Command;
-                source_type = SourceType::Wsl;
+                cmd_to_run = args[i + 1].clone();
+                source_type = SourceType::Process;
                 custom_cmd_or_file_specified = true;
                 i += 1;
             } else if (args[i] == "--wsl-file") && i + 1 < args.len() {
                 wsl_config.file_path = args[i + 1].clone();
                 wsl_config.sub_mode = WslSubMode::File;
-                source_type = SourceType::Wsl;
+                file_to_read = args[i + 1].clone();
+                source_type = SourceType::File;
                 custom_cmd_or_file_specified = true;
                 i += 1;
             } else if (args[i] == "-r"
@@ -213,8 +215,12 @@ impl UwuGuiApp {
             || args.contains(&"--wsl-dir".to_string())
             || source_type == SourceType::Wsl;
 
-        if is_wsl_invoked && source_type != SourceType::Wsl {
-            source_type = SourceType::Wsl;
+        if source_type == SourceType::Wsl {
+            source_type = if !file_to_read.is_empty() {
+                SourceType::File
+            } else {
+                SourceType::Process
+            };
         }
 
         let active_workdir = if is_wsl_invoked {
@@ -444,42 +450,25 @@ impl UwuGuiApp {
             AppAction::StopSource => self.stop_current_source(),
             AppAction::RestartSource => self.restart_current_source(),
             AppAction::OpenLaunchModal => {
-                self.launch_modal_draft = Some(self.session.source_config.clone());
+                let mut draft = self.session.source_config.clone();
+                if draft.source_type == SourceType::Wsl {
+                    if !draft.wsl_config.command_str.is_empty() {
+                        draft.command_str = draft.wsl_config.command_str.clone();
+                        draft.source_type = SourceType::Process;
+                    } else if !draft.wsl_config.file_path.is_empty() {
+                        draft.file_path = draft.wsl_config.file_path.clone();
+                        draft.source_type = SourceType::File;
+                    } else {
+                        draft.source_type = SourceType::Process;
+                    }
+                }
+                self.launch_modal_draft = Some(draft);
                 self.show_launch_modal = true;
             }
             AppAction::OpenLaunchModalForWsl => {
                 let mut draft = self.session.source_config.clone();
-                draft.source_type = SourceType::Wsl;
-                if draft.wsl_config.command_str.is_empty() && draft.wsl_config.file_path.is_empty()
-                {
-                    let recent_wsl = self
-                        .store
-                        .recent_workspaces
-                        .iter()
-                        .find(|w| w.source_type == SourceType::Wsl)
-                        .cloned();
-
-                    if let Some(recent_wsl) = recent_wsl {
-                        if let WorkspaceLocation::Wsl {
-                            distro,
-                            working_dir,
-                        } = &recent_wsl.location
-                        {
-                            if draft.wsl_config.distro.is_empty() {
-                                draft.wsl_config.distro = distro.clone();
-                            }
-                            if draft.wsl_config.working_dir.is_empty() {
-                                draft.wsl_config.working_dir = working_dir.clone();
-                            }
-                        }
-                        if !recent_wsl.command_str.is_empty() {
-                            draft.wsl_config.sub_mode = WslSubMode::Command;
-                            draft.wsl_config.command_str = recent_wsl.command_str.clone();
-                        } else if !recent_wsl.file_path.is_empty() {
-                            draft.wsl_config.sub_mode = WslSubMode::File;
-                            draft.wsl_config.file_path = recent_wsl.file_path.clone();
-                        }
-                    }
+                if draft.source_type == SourceType::Wsl {
+                    draft.source_type = SourceType::Process;
                 }
                 self.launch_modal_draft = Some(draft);
                 self.show_launch_modal = true;
@@ -1401,12 +1390,13 @@ mod tests {
     async fn test_wsl_workspace_save_and_reload() {
         let mut app = create_test_app();
 
-        // 1. Cấu hình WSL source trong session hiện tại
-        app.session.source_config.source_type = SourceType::Wsl;
-        app.session.source_config.wsl_config.distro = "Ubuntu".to_string();
-        app.session.source_config.wsl_config.working_dir = "/home/user/backend".to_string();
-        app.session.source_config.wsl_config.sub_mode = WslSubMode::Command;
-        app.session.source_config.wsl_config.command_str = "python3 app.py".to_string();
+        // 1. Cấu hình WSL workspace trong session hiện tại
+        app.session.location = WorkspaceLocation::Wsl {
+            distro: "Ubuntu".to_string(),
+            working_dir: "/home/user/backend".to_string(),
+        };
+        app.session.source_config.source_type = SourceType::Process;
+        app.session.source_config.command_str = "python3 app.py".to_string();
         app.session.name = "WSL-Backend".to_string();
 
         // 2. Lưu workspace hiện tại
@@ -1421,7 +1411,7 @@ mod tests {
             .cloned()
             .expect("WSL-Backend must be saved in store");
 
-        assert_eq!(ws.source_type, SourceType::Wsl);
+        assert_eq!(ws.source_type, SourceType::Process);
         assert_eq!(ws.command_str, "python3 app.py");
         match &ws.location {
             WorkspaceLocation::Wsl {
@@ -1436,20 +1426,18 @@ mod tests {
 
         // 4. Mở lại workspace WSL qua open_or_switch_workspace
         app.open_or_switch_workspace(&ws);
-        assert_eq!(app.session.source_config.source_type, SourceType::Wsl);
-        assert_eq!(app.session.source_config.wsl_config.distro, "Ubuntu");
-        assert_eq!(
-            app.session.source_config.wsl_config.working_dir,
-            "/home/user/backend"
-        );
-        assert_eq!(
-            app.session.source_config.wsl_config.sub_mode,
-            WslSubMode::Command
-        );
-        assert_eq!(
-            app.session.source_config.wsl_config.command_str,
-            "python3 app.py"
-        );
+        assert_eq!(app.session.source_config.source_type, SourceType::Process);
+        assert_eq!(app.session.source_config.command_str, "python3 app.py");
+        match &app.session.location {
+            WorkspaceLocation::Wsl {
+                distro,
+                working_dir,
+            } => {
+                assert_eq!(distro, "Ubuntu");
+                assert_eq!(working_dir, "/home/user/backend");
+            }
+            _ => panic!("Expected WSL location"),
+        }
     }
 
     #[tokio::test]

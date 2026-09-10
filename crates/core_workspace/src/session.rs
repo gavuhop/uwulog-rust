@@ -160,22 +160,36 @@ impl WorkspaceSession {
 
     /// Đồng bộ WorkspaceLocation từ SourceConfig hiện tại
     pub fn sync_location(&mut self) {
-        match self.source_config.source_type {
-            SourceType::Wsl => {
-                self.location = WorkspaceLocation::Wsl {
-                    distro: self.source_config.wsl_config.distro.clone(),
-                    working_dir: self.source_config.wsl_config.working_dir.clone(),
-                };
+        match &mut self.location {
+            WorkspaceLocation::Wsl {
+                distro,
+                working_dir,
+            } => {
+                if distro.is_empty() && !self.source_config.wsl_config.distro.is_empty() {
+                    *distro = self.source_config.wsl_config.distro.clone();
+                }
+                if !self.source_config.working_dir.trim().is_empty() {
+                    *working_dir = self.source_config.working_dir.clone();
+                }
             }
-            _ => {
-                let dir = if !self.source_config.working_dir.trim().is_empty() {
-                    self.source_config.working_dir.clone()
+            WorkspaceLocation::Local { working_dir } => {
+                if self.source_config.source_type == SourceType::Wsl {
+                    self.location = WorkspaceLocation::Wsl {
+                        distro: self.source_config.wsl_config.distro.clone(),
+                        working_dir: self.source_config.wsl_config.working_dir.clone(),
+                    };
                 } else {
-                    std::env::current_dir()
-                        .map(|p| crate::clean_path(&p.to_string_lossy()))
-                        .unwrap_or_default()
-                };
-                self.location = WorkspaceLocation::Local { working_dir: dir };
+                    let dir = if !self.source_config.working_dir.trim().is_empty() {
+                        self.source_config.working_dir.clone()
+                    } else if !working_dir.trim().is_empty() {
+                        working_dir.clone()
+                    } else {
+                        std::env::current_dir()
+                            .map(|p| crate::clean_path(&p.to_string_lossy()))
+                            .unwrap_or_default()
+                    };
+                    *working_dir = dir;
+                }
             }
         }
     }
@@ -198,10 +212,18 @@ impl WorkspaceSession {
             }
             SourceType::Wsl => match self.source_config.wsl_config.sub_mode {
                 WslSubMode::Command => {
-                    ws.command_str = self.source_config.wsl_config.command_str.clone();
+                    ws.command_str = if !self.source_config.wsl_config.command_str.is_empty() {
+                        self.source_config.wsl_config.command_str.clone()
+                    } else {
+                        self.source_config.command_str.clone()
+                    };
                 }
                 WslSubMode::File => {
-                    ws.file_path = self.source_config.wsl_config.file_path.clone();
+                    ws.file_path = if !self.source_config.wsl_config.file_path.is_empty() {
+                        self.source_config.wsl_config.file_path.clone()
+                    } else {
+                        self.source_config.file_path.clone()
+                    };
                 }
             },
         }
@@ -220,6 +242,7 @@ impl WorkspaceSession {
             } => {
                 self.source_config.wsl_config.distro = distro.clone();
                 self.source_config.wsl_config.working_dir = working_dir.clone();
+                self.source_config.working_dir = working_dir.clone();
             }
             WorkspaceLocation::Local { working_dir } => {
                 self.source_config.working_dir = working_dir.clone();
@@ -228,13 +251,14 @@ impl WorkspaceSession {
 
         match ws.source_type {
             SourceType::Wsl => {
-                self.source_config.source_type = SourceType::Wsl;
                 if !ws.command_str.is_empty() {
-                    self.source_config.wsl_config.sub_mode = WslSubMode::Command;
-                    self.source_config.wsl_config.command_str = ws.command_str.clone();
+                    self.source_config.source_type = SourceType::Process;
+                    self.source_config.command_str = ws.command_str.clone();
                 } else if !ws.file_path.is_empty() {
-                    self.source_config.wsl_config.sub_mode = WslSubMode::File;
-                    self.source_config.wsl_config.file_path = ws.file_path.clone();
+                    self.source_config.source_type = SourceType::File;
+                    self.source_config.file_path = ws.file_path.clone();
+                } else {
+                    self.source_config.source_type = SourceType::Process;
                 }
             }
             SourceType::File => {
@@ -284,64 +308,121 @@ impl WorkspaceSession {
         match config.source_type {
             SourceType::Process => {
                 if !config.command_str.trim().is_empty() {
-                    let cmd_parts: Vec<&str> = config.command_str.split_whitespace().collect();
-                    if !cmd_parts.is_empty() {
-                        let prog = cmd_parts[0].to_string();
-                        let proc_args: Vec<String> =
-                            cmd_parts[1..].iter().map(|s| s.to_string()).collect();
-
-                        let workdir = if !config.working_dir.trim().is_empty() {
-                            Some(config.working_dir.clone())
-                        } else {
-                            std::env::current_dir()
-                                .ok()
-                                .map(|p| p.to_string_lossy().to_string())
-                        };
-
-                        let mut watch_rx = self.env_watch_rx.clone();
-                        let current_envs = self.env_vars.clone();
-                        rt.spawn(async move {
-                            let envs = if !current_envs.is_empty() {
-                                if let Some(latest) = watch_rx.borrow().as_ref() {
-                                    latest.clone()
-                                } else {
-                                    current_envs
-                                }
+                    match &self.location {
+                        WorkspaceLocation::Wsl {
+                            distro,
+                            working_dir,
+                        } => {
+                            let distro = distro.clone();
+                            let target_mode = WslTargetMode::Command(config.command_str.clone());
+                            let workdir = if !working_dir.trim().is_empty() {
+                                Some(working_dir.clone())
+                            } else if !config.working_dir.trim().is_empty() {
+                                Some(config.working_dir.clone())
                             } else {
-                                let wait_res = tokio::time::timeout(
-                                    std::time::Duration::from_millis(500),
-                                    async {
-                                        while watch_rx.borrow().is_none() {
-                                            if watch_rx.changed().await.is_err() {
-                                                break;
-                                            }
-                                        }
-                                        watch_rx.borrow().clone()
-                                    },
-                                )
-                                .await;
-
-                                wait_res.ok().flatten().unwrap_or_default()
+                                None
                             };
+                            rt.spawn(async move {
+                                let _ = WslSource::new_with_dir(distro, target_mode, workdir)
+                                    .start_stream(source_tx)
+                                    .await;
+                            });
+                            self.is_source_running = true;
+                        }
+                        WorkspaceLocation::Local { .. } => {
+                            let cmd_parts: Vec<&str> =
+                                config.command_str.split_whitespace().collect();
+                            if !cmd_parts.is_empty() {
+                                let prog = cmd_parts[0].to_string();
+                                let proc_args: Vec<String> =
+                                    cmd_parts[1..].iter().map(|s| s.to_string()).collect();
 
-                            let mut proc_src =
-                                ProcessSource::new_with_dir(prog, proc_args, workdir);
-                            if !envs.is_empty() {
-                                proc_src = proc_src.with_envs(envs);
+                                let workdir = if !config.working_dir.trim().is_empty() {
+                                    Some(config.working_dir.clone())
+                                } else if let WorkspaceLocation::Local { working_dir } =
+                                    &self.location
+                                {
+                                    if !working_dir.trim().is_empty() {
+                                        Some(working_dir.clone())
+                                    } else {
+                                        std::env::current_dir()
+                                            .ok()
+                                            .map(|p| p.to_string_lossy().to_string())
+                                    }
+                                } else {
+                                    std::env::current_dir()
+                                        .ok()
+                                        .map(|p| p.to_string_lossy().to_string())
+                                };
+
+                                let mut watch_rx = self.env_watch_rx.clone();
+                                let current_envs = self.env_vars.clone();
+                                rt.spawn(async move {
+                                    let envs = if !current_envs.is_empty() {
+                                        if let Some(latest) = watch_rx.borrow().as_ref() {
+                                            latest.clone()
+                                        } else {
+                                            current_envs
+                                        }
+                                    } else {
+                                        let wait_res = tokio::time::timeout(
+                                            std::time::Duration::from_millis(500),
+                                            async {
+                                                while watch_rx.borrow().is_none() {
+                                                    if watch_rx.changed().await.is_err() {
+                                                        break;
+                                                    }
+                                                }
+                                                watch_rx.borrow().clone()
+                                            },
+                                        )
+                                        .await;
+
+                                        wait_res.ok().flatten().unwrap_or_default()
+                                    };
+
+                                    let mut proc_src =
+                                        ProcessSource::new_with_dir(prog, proc_args, workdir);
+                                    if !envs.is_empty() {
+                                        proc_src = proc_src.with_envs(envs);
+                                    }
+                                    let _ = proc_src.start_stream(source_tx).await;
+                                });
+                                self.is_source_running = true;
                             }
-                            let _ = proc_src.start_stream(source_tx).await;
-                        });
-                        self.is_source_running = true;
+                        }
                     }
                 }
             }
             SourceType::File => {
                 if !config.file_path.trim().is_empty() {
-                    let path = config.file_path.clone();
-                    rt.spawn(async move {
-                        let _ = FileSource::new(path).start_stream(source_tx).await;
-                    });
-                    self.is_source_running = true;
+                    match &self.location {
+                        WorkspaceLocation::Wsl {
+                            distro,
+                            working_dir,
+                        } => {
+                            let distro = distro.clone();
+                            let target_mode = WslTargetMode::File(config.file_path.clone());
+                            let workdir = if !working_dir.trim().is_empty() {
+                                Some(working_dir.clone())
+                            } else {
+                                None
+                            };
+                            rt.spawn(async move {
+                                let _ = WslSource::new_with_dir(distro, target_mode, workdir)
+                                    .start_stream(source_tx)
+                                    .await;
+                            });
+                            self.is_source_running = true;
+                        }
+                        WorkspaceLocation::Local { .. } => {
+                            let path = config.file_path.clone();
+                            rt.spawn(async move {
+                                let _ = FileSource::new(path).start_stream(source_tx).await;
+                            });
+                            self.is_source_running = true;
+                        }
+                    }
                 }
             }
             SourceType::Wsl => {
@@ -350,6 +431,8 @@ impl WorkspaceSession {
                     WslSubMode::Command => {
                         if !wsl_cfg.command_str.trim().is_empty() {
                             Some(WslTargetMode::Command(wsl_cfg.command_str.clone()))
+                        } else if !config.command_str.trim().is_empty() {
+                            Some(WslTargetMode::Command(config.command_str.clone()))
                         } else {
                             None
                         }
@@ -357,6 +440,8 @@ impl WorkspaceSession {
                     WslSubMode::File => {
                         if !wsl_cfg.file_path.trim().is_empty() {
                             Some(WslTargetMode::File(wsl_cfg.file_path.clone()))
+                        } else if !config.file_path.trim().is_empty() {
+                            Some(WslTargetMode::File(config.file_path.clone()))
                         } else {
                             None
                         }
@@ -364,11 +449,23 @@ impl WorkspaceSession {
                 };
 
                 if let Some(target_mode) = mode {
-                    let distro = wsl_cfg.distro.clone();
-                    let working_dir = if wsl_cfg.working_dir.trim().is_empty() {
-                        None
+                    let distro = if !wsl_cfg.distro.is_empty() {
+                        wsl_cfg.distro.clone()
+                    } else if let WorkspaceLocation::Wsl { distro, .. } = &self.location {
+                        distro.clone()
                     } else {
+                        String::new()
+                    };
+                    let working_dir = if !wsl_cfg.working_dir.trim().is_empty() {
                         Some(wsl_cfg.working_dir.clone())
+                    } else if let WorkspaceLocation::Wsl { working_dir, .. } = &self.location {
+                        if !working_dir.trim().is_empty() {
+                            Some(working_dir.clone())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
                     };
                     rt.spawn(async move {
                         let _ = WslSource::new_with_dir(distro, target_mode, working_dir)

@@ -1,7 +1,8 @@
-use crate::app::{AppAction, SourceType, UwuGuiApp, WslSubMode};
+use crate::app::{AppAction, SourceType, UwuGuiApp};
 use crate::ui::card::render_card;
 use crate::ui::theme;
 use eframe::egui::{self, Rounding, Stroke};
+use uwu_core_workspace::WorkspaceLocation;
 
 pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
     if !app.show_launch_modal {
@@ -9,11 +10,22 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
     }
 
     if app.launch_modal_draft.is_none() {
-        app.launch_modal_draft = Some(app.session.source_config.clone());
+        let mut draft = app.session.source_config.clone();
+        if draft.source_type == SourceType::Wsl {
+            if !draft.wsl_config.command_str.is_empty() {
+                draft.command_str = draft.wsl_config.command_str.clone();
+                draft.source_type = SourceType::Process;
+            } else if !draft.wsl_config.file_path.is_empty() {
+                draft.file_path = draft.wsl_config.file_path.clone();
+                draft.source_type = SourceType::File;
+            } else {
+                draft.source_type = SourceType::Process;
+            }
+        }
+        app.launch_modal_draft = Some(draft);
     }
 
     let mut action_to_dispatch: Option<AppAction> = None;
-    let available_distros = app.available_wsl_distros.clone();
 
     egui::Window::new("⚙️ Launch & Source Parameters")
         .frame(
@@ -37,6 +49,7 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
             ui.separator();
             ui.add_space(6.0);
 
+            let is_wsl = matches!(app.session.location, WorkspaceLocation::Wsl { .. });
             let draft = app.launch_modal_draft.as_mut().unwrap();
 
             // Engine Performance Card
@@ -88,7 +101,11 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
                         ui.label(egui::RichText::new("Command:").color(theme::TEXT_MUTED));
                         ui.add(
                             egui::TextEdit::singleline(&mut draft.command_str)
-                                .hint_text("e.g. go run gen_logs.go")
+                                .hint_text(if is_wsl {
+                                    "e.g. python3 app.py or cargo run"
+                                } else {
+                                    "e.g. go run gen_logs.go"
+                                })
                                 .font(egui::TextStyle::Monospace)
                                 .desired_width(320.0)
                                 .margin(egui::Margin::symmetric(8.0, 4.0)),
@@ -125,117 +142,6 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
                             }
                         }
                     });
-                }
-
-                ui.add_space(6.0);
-
-                ui.radio_value(
-                    &mut draft.source_type,
-                    SourceType::Wsl,
-                    egui::RichText::new("🐧 WSL (Windows Subsystem for Linux)")
-                        .color(theme::TEXT_PRIMARY),
-                );
-                if draft.source_type == SourceType::Wsl {
-                    egui::Frame::none()
-                        .fill(theme::BG_CRUST)
-                        .rounding(Rounding::same(4.0))
-                        .inner_margin(egui::Margin::same(8.0))
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(egui::RichText::new("Distro:").color(theme::TEXT_MUTED));
-                                if !available_distros.is_empty() {
-                                    egui::ComboBox::from_id_salt("wsl_distro_combo")
-                                        .selected_text(if draft.wsl_config.distro.is_empty() {
-                                            "Select Distro"
-                                        } else {
-                                            &draft.wsl_config.distro
-                                        })
-                                        .show_ui(ui, |ui| {
-                                            for d in &available_distros {
-                                                ui.selectable_value(
-                                                    &mut draft.wsl_config.distro,
-                                                    d.clone(),
-                                                    d,
-                                                );
-                                            }
-                                        });
-                                } else {
-                                    ui.add(
-                                        egui::TextEdit::singleline(&mut draft.wsl_config.distro)
-                                            .hint_text("Ubuntu")
-                                            .desired_width(120.0),
-                                    );
-                                }
-                            });
-
-                            ui.add_space(4.0);
-
-                            ui.horizontal(|ui| {
-                                ui.label(egui::RichText::new("Workdir:").color(theme::TEXT_MUTED));
-                                ui.add(
-                                    egui::TextEdit::singleline(&mut draft.wsl_config.working_dir)
-                                        .hint_text("e.g. /home/user/project (Optional)")
-                                        .font(egui::TextStyle::Monospace)
-                                        .desired_width(280.0),
-                                );
-                            });
-
-                            ui.add_space(4.0);
-
-                            ui.horizontal(|ui| {
-                                ui.radio_value(
-                                    &mut draft.wsl_config.sub_mode,
-                                    WslSubMode::Command,
-                                    egui::RichText::new("🚀 Cmd")
-                                        .size(11.5)
-                                        .color(theme::TEXT_PRIMARY),
-                                );
-                                ui.radio_value(
-                                    &mut draft.wsl_config.sub_mode,
-                                    WslSubMode::File,
-                                    egui::RichText::new("📁 File")
-                                        .size(11.5)
-                                        .color(theme::TEXT_PRIMARY),
-                                );
-                            });
-
-                            ui.add_space(4.0);
-
-                            match draft.wsl_config.sub_mode {
-                                WslSubMode::Command => {
-                                    ui.horizontal(|ui| {
-                                        ui.label(
-                                            egui::RichText::new("Command:")
-                                                .color(theme::TEXT_MUTED),
-                                        );
-                                        ui.add(
-                                            egui::TextEdit::singleline(
-                                                &mut draft.wsl_config.command_str,
-                                            )
-                                            .hint_text("e.g. python3 app.py or cargo run")
-                                            .font(egui::TextStyle::Monospace)
-                                            .desired_width(280.0),
-                                        );
-                                    });
-                                }
-                                WslSubMode::File => {
-                                    ui.horizontal(|ui| {
-                                        ui.label(
-                                            egui::RichText::new("File Path:")
-                                                .color(theme::TEXT_MUTED),
-                                        );
-                                        ui.add(
-                                            egui::TextEdit::singleline(
-                                                &mut draft.wsl_config.file_path,
-                                            )
-                                            .hint_text("/var/log/app.log")
-                                            .font(egui::TextStyle::Monospace)
-                                            .desired_width(280.0),
-                                        );
-                                    });
-                                }
-                            }
-                        });
                 }
             });
 
