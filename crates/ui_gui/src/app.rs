@@ -5,8 +5,8 @@ use std::time::{Duration, Instant};
 use tokio::runtime::Handle;
 use uwu_core_schema::LogEvent;
 pub use uwu_core_workspace::{
-    RemoteConnectionOptions, SourceConfig, SourceType, Workspace, WorkspaceLocation,
-    WorkspaceSession, WorkspaceStore,
+    extract_project_name, RemoteConnectionOptions, SourceConfig, SourceType, Workspace,
+    WorkspaceLocation, WorkspaceSession, WorkspaceStore,
 };
 
 pub const RAW_STREAM_LIMIT: usize = 500;
@@ -104,10 +104,6 @@ impl std::ops::DerefMut for UwuGuiApp {
         let idx = self.active_index;
         &mut self.sessions[idx]
     }
-}
-
-pub(crate) fn extract_project_name(path_str: &str) -> String {
-    uwu_core_workspace::extract_project_name(path_str)
 }
 
 /// Tham số dòng lệnh khi khởi chạy uwu-gui
@@ -254,12 +250,14 @@ impl UwuGuiApp {
     pub(crate) fn build_initial_session(
         cli: &CliArgs,
         store: &WorkspaceStore,
-    ) -> (GuiSession, bool) {
+    ) -> (GuiSession, bool, Option<uuid::Uuid>) {
         let (location, source_type, cmd, file, has_custom_source) = cli.resolve_target();
 
         let saved_ws = store
             .find_by_location(&location)
             .or_else(|| store.find_by_workdir(location.working_dir()));
+
+        let saved_id = saved_ws.map(|ws| ws.id);
 
         let initial_session = if let (Some(ws), false) = (saved_ws, has_custom_source) {
             WorkspaceSession::from_workspace(ws, cli.capacity, cli.display_limit)
@@ -284,6 +282,7 @@ impl UwuGuiApp {
 
             let mut s = WorkspaceSession::new(project_name, location, source_config);
             if let Some(ws) = saved_ws {
+                s.id = ws.id;
                 if !ws.env_vars.is_empty() {
                     s.env_vars = ws.env_vars.clone();
                     s.env_watch_tx.send_replace(Some(s.env_vars.clone()));
@@ -301,7 +300,7 @@ impl UwuGuiApp {
             }
         }
 
-        (gui_session, has_custom_source)
+        (gui_session, has_custom_source, saved_id)
     }
 
     pub fn new(cc: &eframe::CreationContext<'_>, rt: Handle) -> Self {
@@ -311,7 +310,8 @@ impl UwuGuiApp {
 
         let cli = CliArgs::parse();
         let store = WorkspaceStore::load();
-        let (initial_gui_session, has_custom_source) = Self::build_initial_session(&cli, &store);
+        let (initial_gui_session, has_custom_source, saved_id) =
+            Self::build_initial_session(&cli, &store);
 
         let mut app = Self {
             sessions: vec![initial_gui_session],
@@ -328,17 +328,8 @@ impl UwuGuiApp {
         // Background task nạp biến môi trường cho session đầu tiên
         app.spawn_load_environment();
 
-        let saved_ws = app
-            .store
-            .find_by_location(&app.session.location)
-            .or_else(|| {
-                app.store
-                    .find_by_workdir(app.session.location.working_dir())
-            })
-            .cloned();
-
-        if let (Some(ws), false) = (saved_ws, has_custom_source) {
-            app.store.active_workspace_id = Some(ws.id);
+        if let (Some(id), false) = (saved_id, has_custom_source) {
+            app.store.active_workspace_id = Some(id);
             let _ = app.store.save();
         } else {
             // Tự động lưu workspace mới hoặc cấu hình nguồn mới vào store
@@ -365,6 +356,9 @@ impl UwuGuiApp {
 
     pub fn switch_session(&mut self, index: usize) {
         if index < self.sessions.len() {
+            if self.active_index == index {
+                return;
+            }
             self.active_index = index;
             self.store.active_workspace_id = Some(self.sessions[index].session.id);
             let _ = self.store.save();
@@ -382,7 +376,11 @@ impl UwuGuiApp {
             return;
         }
 
-        let mut gui_session = GuiSession::from_workspace(ws, 200_000, 5_000);
+        let mut gui_session = GuiSession::from_workspace(
+            ws,
+            self.session.source_config.capacity,
+            self.session.display_limit,
+        );
         gui_session.session.spawn_load_environment(&self.rt);
         self.sessions.push(gui_session);
         self.switch_session(self.sessions.len() - 1);
@@ -397,11 +395,15 @@ impl UwuGuiApp {
         removed.session.stop_source();
 
         if self.sessions.is_empty() {
-            let default_session = WorkspaceSession::new_default(200_000, 5_000);
-            self.sessions.push(GuiSession::new(default_session));
-        }
-
-        if self.active_index >= self.sessions.len() {
+            let s = WorkspaceSession::new_default(
+                removed.session.source_config.capacity,
+                removed.session.display_limit,
+            );
+            self.sessions.push(GuiSession::new(s));
+            self.active_index = 0;
+        } else if self.active_index > index {
+            self.active_index -= 1;
+        } else if self.active_index >= self.sessions.len() {
             self.active_index = self.sessions.len() - 1;
         }
 
@@ -410,7 +412,6 @@ impl UwuGuiApp {
         self.trigger_full_search();
     }
 
-    #[allow(dead_code)]
     pub fn cycle_project(&mut self, forward: bool) {
         if self.sessions.is_empty() {
             return;
@@ -581,7 +582,6 @@ impl UwuGuiApp {
     }
 
     pub fn restart_current_source(&mut self) {
-        self.stop_current_source();
         self.save_current_workspace();
         let active_idx = self.active_index;
         self.sessions[active_idx].session.restart_source(&self.rt);
@@ -937,6 +937,7 @@ impl eframe::App for UwuGuiApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.save_current_workspace();
         for s in &mut self.sessions {
             s.session.stop_source();
         }
@@ -1830,7 +1831,7 @@ mod tests {
         assert_eq!(file, "");
         assert!(has_custom);
 
-        let (session, custom_src) = UwuGuiApp::build_initial_session(&cli_remote, &store);
+        let (session, custom_src, _) = UwuGuiApp::build_initial_session(&cli_remote, &store);
         assert!(custom_src);
         assert_eq!(session.session.location, loc);
         assert_eq!(session.view.query, "error");
@@ -1844,8 +1845,101 @@ mod tests {
         assert_eq!(file, "production.log");
         assert!(has_custom);
 
-        let (session, custom_src) = UwuGuiApp::build_initial_session(&cli_file, &store);
+        let (session, custom_src, _) = UwuGuiApp::build_initial_session(&cli_file, &store);
         assert!(custom_src);
         assert_eq!(session.session.source_config.file_path, "production.log");
+    }
+
+    #[tokio::test]
+    async fn test_build_initial_session_preserves_saved_workspace_id_and_envs() {
+        let mut store = WorkspaceStore::default();
+        let mut saved_ws = Workspace::new(
+            "SavedProj",
+            WorkspaceLocation::local("D:\\my\\repo"),
+            SourceType::Process,
+        );
+        let saved_uuid = saved_ws.id;
+        saved_ws
+            .env_vars
+            .insert("ENV_KEY".to_string(), "ENV_VAL".to_string());
+        store.recent_workspaces.push(saved_ws);
+
+        let cli =
+            CliArgs::try_parse_from(["uwu-gui", "-d", "D:\\my\\repo", "-c", "custom-cmd"]).unwrap();
+        let (session, has_custom, saved_id) = UwuGuiApp::build_initial_session(&cli, &store);
+
+        assert!(has_custom);
+        assert_eq!(saved_id, Some(saved_uuid));
+        assert_eq!(session.session.id, saved_uuid);
+        assert_eq!(session.session.source_config.command_str, "custom-cmd");
+        assert_eq!(
+            session.session.env_vars.get("ENV_KEY").map(String::as_str),
+            Some("ENV_VAL")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_close_and_switch_session_behaviors() {
+        let mut app = create_test_app();
+        let ws1 = Workspace::new(
+            "P1",
+            WorkspaceLocation::local("D:\\test\\p1"),
+            SourceType::Process,
+        );
+        let ws2 = Workspace::new(
+            "P2",
+            WorkspaceLocation::local("D:\\test\\p2"),
+            SourceType::Process,
+        );
+
+        app.open_or_switch_workspace(&ws1);
+        assert_eq!(app.sessions.len(), 2);
+        assert_eq!(app.active_index, 1);
+        // Kiểm tra kế thừa capacity và display_limit từ active session
+        assert_eq!(app.session.source_config.capacity, 100);
+        assert_eq!(app.session.display_limit, 50);
+
+        app.open_or_switch_workspace(&ws2);
+        assert_eq!(app.sessions.len(), 3);
+        assert_eq!(app.active_index, 2);
+
+        // 1. switch_session vào chính index hiện tại là no-op
+        app.switch_session(2);
+        assert_eq!(app.active_index, 2);
+
+        // 2. close_session tab trước active_index sẽ giảm active_index đi 1
+        app.close_session(0);
+        assert_eq!(app.sessions.len(), 2);
+        assert_eq!(app.active_index, 1);
+        assert_eq!(app.session.name, "P2");
+
+        // 3. Đóng hết các session -> tạo session mặc định và kế thừa capacity
+        app.close_session(1);
+        assert_eq!(app.sessions.len(), 1);
+        assert_eq!(app.active_index, 0);
+
+        app.close_session(0);
+        assert_eq!(app.sessions.len(), 1);
+        assert_eq!(app.active_index, 0);
+        assert_eq!(app.session.source_config.capacity, 100);
+        assert_eq!(app.session.display_limit, 50);
+    }
+
+    #[tokio::test]
+    async fn test_on_exit_saves_current_workspace() {
+        use eframe::App;
+        let mut app = create_test_app();
+        app.sessions[0].session.name = "ExitTestProj".to_string();
+        app.sessions[0].view.query = "error_query".to_string();
+
+        app.on_exit(None);
+
+        let ws = app
+            .store
+            .recent_workspaces
+            .iter()
+            .find(|w| w.name == "ExitTestProj");
+        assert!(ws.is_some());
+        assert_eq!(ws.unwrap().last_query, "error_query");
     }
 }
