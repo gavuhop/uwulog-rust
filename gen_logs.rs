@@ -1,11 +1,11 @@
 //! Rust Log Generator for uwulog-rust
 //! Generates diverse, realistic structured JSON (and text) logs to stdout.
-//! 
+//!
 //! Build & Run:
 //!   rustc -O gen_logs.rs
 //!   ./gen_logs.exe --rate 30
 //!   ./gen_logs.exe --count 100000 --rate 0
-//! 
+//!
 //! Or pipe directly into uwulog-gui / uwulog-tui:
 //!   ./gen_logs.exe --rate 20 | cargo run --bin uwulog-gui
 

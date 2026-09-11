@@ -54,20 +54,7 @@ impl WslTransport {
             return Vec::new();
         }
 
-        // Xử lý giải mã UTF-16LE từ output của wsl.exe trên Windows
-        let text = if output.len() >= 2
-            && (output.len() % 2 == 0)
-            && output.iter().skip(1).step_by(2).any(|&b| b == 0)
-        {
-            let u16_vec: Vec<u16> = output
-                .chunks_exact(2)
-                .map(|c| u16::from_le_bytes([c[0], c[1]]))
-                .collect();
-            String::from_utf16_lossy(&u16_vec)
-        } else {
-            String::from_utf8_lossy(&output).to_string()
-        };
-
+        let text = decode_utf16le_or_utf8(&output);
         text.lines()
             .map(|l| l.trim().trim_matches('\0').trim())
             .filter(|l| !l.is_empty())
@@ -122,7 +109,7 @@ impl WslTransport {
 
         let version = env!("CARGO_PKG_VERSION");
         let binary_name = format!("uwu-agent-{}", version);
-        let remote_binary_path = format!("~/.local/share/uwu/server_state/{}", binary_name);
+        let remote_binary_path = format!("\"$HOME/.local/share/uwu/server_state/{}\"", binary_name);
 
         // 1. Kiểm tra xem binary đã tồn tại và chạy được chưa
         let check_cmd = format!("{} version", remote_binary_path);
@@ -178,7 +165,7 @@ impl WslTransport {
                 if out.status.success() {
                     let wsl_src = String::from_utf8_lossy(&out.stdout).trim().to_string();
                     let cp_cmd = format!(
-                        "mkdir -p ~/.local/share/uwu/server_state && cp '{}' {} && chmod 755 {}",
+                        "mkdir -p \"$HOME/.local/share/uwu/server_state\" && cp '{}' {} && chmod 755 {}",
                         wsl_src, remote_binary_path, remote_binary_path
                     );
 
@@ -206,7 +193,7 @@ impl WslTransport {
             if !upload_success {
                 if let Ok(bytes) = tokio::fs::read(&local_path).await {
                     let stream_cmd = format!(
-                        "mkdir -p ~/.local/share/uwu/server_state && cat > {} && chmod 755 {}",
+                        "mkdir -p \"$HOME/.local/share/uwu/server_state\" && cat > {} && chmod 755 {}",
                         remote_binary_path, remote_binary_path
                     );
 
@@ -258,6 +245,22 @@ impl WslTransport {
     }
 }
 
+/// Giải mã byte stream từ output của lệnh Windows (thường là UTF-16LE từ wsl.exe hoặc UTF-8)
+pub fn decode_utf16le_or_utf8(output: &[u8]) -> String {
+    if output.len() >= 2
+        && output.len().is_multiple_of(2)
+        && output.iter().skip(1).step_by(2).any(|&b| b == 0)
+    {
+        let u16_vec: Vec<u16> = output
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        String::from_utf16_lossy(&u16_vec)
+    } else {
+        String::from_utf8_lossy(output).to_string()
+    }
+}
+
 #[async_trait]
 impl RemoteTransport for WslTransport {
     fn name(&self) -> &str {
@@ -297,5 +300,43 @@ impl RemoteTransport for WslTransport {
         })?;
 
         super::wrap_child_stdio(child, "WSL Agent")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_wsl_transport_builder() {
+        let transport = WslTransport::new("Ubuntu")
+            .with_working_dir("/var/log")
+            .with_agent_cmd("/usr/local/bin/uwu-agent");
+
+        assert_eq!(transport.distro(), "Ubuntu");
+        assert_eq!(transport.name(), "WSL (Ubuntu)");
+        assert_eq!(transport.working_dir.as_deref(), Some("/var/log"));
+        assert_eq!(
+            transport.agent_cmd.as_deref(),
+            Some("/usr/local/bin/uwu-agent")
+        );
+    }
+
+    #[test]
+    fn test_decode_utf16le_or_utf8() {
+        // 1. Kiểm tra giải mã chuỗi UTF-8 tiêu chuẩn
+        let utf8_bytes = b"Ubuntu-22.04\nDebian\n";
+        assert_eq!(decode_utf16le_or_utf8(utf8_bytes), "Ubuntu-22.04\nDebian\n");
+
+        // 2. Kiểm tra giải mã chuỗi UTF-16LE từ Windows wsl --list --quiet
+        let utf16_str = "Ubuntu\r\nDebian\r\n";
+        let mut utf16_bytes = Vec::new();
+        for u in utf16_str.encode_utf16() {
+            utf16_bytes.extend_from_slice(&u.to_le_bytes());
+        }
+        assert_eq!(decode_utf16le_or_utf8(&utf16_bytes), utf16_str);
+
+        // 3. Chuỗi rỗng
+        assert_eq!(decode_utf16le_or_utf8(&[]), "");
     }
 }

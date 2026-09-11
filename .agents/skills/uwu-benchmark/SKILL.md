@@ -121,4 +121,3 @@ Báo cáo gửi người dùng cần cấu trúc như sau:
 * File báo cáo so sánh đối chiếu: [`benchmark_compare_report.md`](file:///D:/Learn/Go/uwulog-rust/benchmark_compare_report.md)
 * File cấu hình tác vụ Zed Editor: [`.zed/tasks.json`](file:///D:/Learn/Go/uwulog-rust/.zed/tasks.json)
 * Script tự động hóa runner: [run_bench.ps1](./scripts/run_bench.ps1)
-

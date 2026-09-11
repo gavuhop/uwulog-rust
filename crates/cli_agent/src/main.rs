@@ -11,59 +11,144 @@ use uwu_core_schema::RawLogEntry;
 use uwu_driver_sources::{FileSource, LogSource, ProcessSource};
 
 /// uwu-agent: Headless log streaming agent for remote environments (Linux / WSL / SSH / Containers)
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 #[command(
     name = "uwu-agent",
-    version = "0.1.0",
-    about = "Headless log collector & RPC agent for uwu-log"
+    about = "Headless log collector & RPC agent for uwu-log",
+    version = env!("CARGO_PKG_VERSION")
 )]
-struct Cli {
+pub struct AgentCli {
     #[command(subcommand)]
-    command: Option<Commands>,
+    pub command: Option<AgentSubcommand>,
 
-    /// Watch and tail a log file (standalone CLI mode)
-    #[arg(short = 'f', long)]
-    file: Option<String>,
+    /// Run a command and capture its stdout/stderr (standalone mode)
+    #[arg(
+        short = 'c',
+        short_alias = 'r',
+        long = "cmd",
+        visible_aliases = ["run", "command", "exec"],
+        help = "Execute a command and stream its output"
+    )]
+    pub cmd: Option<String>,
 
-    /// Run a command and capture its stdout/stderr (standalone CLI mode)
-    #[arg(short = 'r', long, alias = "cmd")]
-    cmd: Option<String>,
+    /// Watch and tail a log file (standalone mode)
+    #[arg(
+        short = 'f',
+        long = "file",
+        value_hint = clap::ValueHint::FilePath,
+        help = "Path to the log file to tail"
+    )]
+    pub file: Option<String>,
 
-    /// Positional argument fallback for file path
-    file_pos: Option<String>,
+    /// Working directory for command execution or relative file paths
+    #[arg(
+        short = 'd',
+        long = "dir",
+        visible_aliases = ["cwd", "working-dir"],
+        value_hint = clap::ValueHint::DirPath,
+        help = "Working directory"
+    )]
+    pub working_dir: Option<String>,
+
+    /// Positional argument fallback for file path or command
+    #[arg(value_name = "TARGET", value_hint = clap::ValueHint::AnyPath)]
+    pub target: Option<String>,
+
+    /// Command arguments passed after `--` (e.g. `uwu-agent -- cargo run --bin server`)
+    #[arg(last = true)]
+    pub trailing_cmd: Vec<String>,
 }
 
-#[derive(Subcommand, Debug)]
-enum Commands {
-    /// Start RPC proxy mode communicating via stdin/stdout framing
-    Proxy,
+#[derive(Subcommand, Debug, Clone, PartialEq, Eq)]
+pub enum AgentSubcommand {
+    /// Start RPC proxy mode communicating via framed stdin/stdout
+    Proxy {
+        /// Optional working directory override for proxy mode
+        #[arg(
+            short = 'd',
+            long = "dir",
+            visible_aliases = ["cwd", "working-dir"]
+        )]
+        working_dir: Option<String>,
+    },
     /// Print version information for client verification
     Version,
 }
 
+impl AgentCli {
+    /// Phân giải nguồn log mục tiêu (spec) và thư mục làm việc từ các cờ dòng lệnh
+    pub fn resolve_target(&self) -> Result<(RemoteLogSourceSpec, Option<String>)> {
+        let mut cmd = self.cmd.clone().unwrap_or_default();
+        if cmd.is_empty() && !self.trailing_cmd.is_empty() {
+            cmd = self.trailing_cmd.join(" ");
+        }
+
+        let file = self.file.clone().unwrap_or_default();
+        let dir = self.working_dir.clone().filter(|d| !d.trim().is_empty());
+
+        if !cmd.is_empty() {
+            Ok((RemoteLogSourceSpec::Command(cmd), dir))
+        } else if !file.is_empty() {
+            Ok((RemoteLogSourceSpec::File(file), dir))
+        } else if let Some(ref target_str) = self.target {
+            let p = std::path::Path::new(target_str);
+            if p.is_file() || p.extension().is_some() {
+                Ok((RemoteLogSourceSpec::File(target_str.clone()), dir))
+            } else {
+                Ok((RemoteLogSourceSpec::Command(target_str.clone()), dir))
+            }
+        } else {
+            anyhow::bail!(
+                "Please specify a command (-c/--cmd), a log file (-f/--file), or trailing arguments (-- <cmd>)"
+            );
+        }
+    }
+
+    /// Kiểm tra xem người dùng có truyền tham số để chạy trực tiếp (standalone) hay không
+    pub fn is_standalone(&self) -> bool {
+        self.cmd.is_some()
+            || self.file.is_some()
+            || self.target.is_some()
+            || !self.trailing_cmd.is_empty()
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cli = Cli::parse();
+    let cli = AgentCli::parse();
 
     match cli.command {
-        Some(Commands::Proxy) => run_rpc_proxy_mode().await,
-        Some(Commands::Version) => {
+        Some(AgentSubcommand::Proxy { working_dir }) => {
+            setup_proxy_diagnostics();
+            run_rpc_proxy_mode(working_dir).await
+        }
+        Some(AgentSubcommand::Version) => {
             println!("uwu-agent {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
         None => {
-            // Nếu không truyền cờ nào mà stdin là pipe thì tự động fallback vào proxy mode
-            if cli.file.is_none() && cli.cmd.is_none() && cli.file_pos.is_none() {
-                run_rpc_proxy_mode().await
-            } else {
+            if cli.is_standalone() {
                 run_standalone_mode(cli).await
+            } else {
+                // Mặc định không truyền cờ nào: chạy proxy mode giao tiếp qua stdin/stdout
+                setup_proxy_diagnostics();
+                run_rpc_proxy_mode(cli.working_dir).await
             }
         }
     }
 }
 
+/// Đảm bảo môi trường RPC tách biệt hoàn toàn stdout (Framed stream) và stderr (Diagnostics / Panic traces)
+fn setup_proxy_diagnostics() {
+    let default_panic = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        eprintln!("[uwu-agent PANIC] {}", info);
+        default_panic(info);
+    }));
+}
+
 /// RPC Proxy Mode: Giao tiếp 2 chiều với Local Client qua Framed Envelope trên stdin/stdout
-async fn run_rpc_proxy_mode() -> Result<()> {
+pub async fn run_rpc_proxy_mode(default_workdir: Option<String>) -> Result<()> {
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
 
@@ -88,7 +173,7 @@ async fn run_rpc_proxy_mode() -> Result<()> {
                     handle.abort();
                 }
 
-                let source = match create_source_from_spec(&spec) {
+                let source = match create_source_from_spec(&spec, default_workdir.clone()) {
                     Ok(s) => s,
                     Err(err) => {
                         let mut guard = writer.lock().await;
@@ -116,7 +201,7 @@ async fn run_rpc_proxy_mode() -> Result<()> {
                 let is_paused_clone = Arc::clone(&is_paused);
                 is_paused.store(false, Ordering::SeqCst);
 
-                // Task gom batch log và stream về Client qua framed writer
+                // Task gom batch log và stream về Client qua framed writer (50ms interval)
                 let handle = tokio::spawn(async move {
                     let mut batch = Vec::with_capacity(256);
                     let mut interval = tokio::time::interval(Duration::from_millis(50));
@@ -183,16 +268,9 @@ async fn run_rpc_proxy_mode() -> Result<()> {
 }
 
 /// Standalone CLI Mode: Dùng để test trực tiếp dòng lệnh trên remote
-async fn run_standalone_mode(cli: Cli) -> Result<()> {
-    let spec = if let Some(cmd_str) = cli.cmd {
-        RemoteLogSourceSpec::Command(cmd_str)
-    } else if let Some(file_path) = cli.file.or(cli.file_pos) {
-        RemoteLogSourceSpec::File(file_path)
-    } else {
-        anyhow::bail!("Please specify a log file (-f <path>) or command (-r '<cmd>')");
-    };
-
-    let source = create_source_from_spec(&spec)?;
+async fn run_standalone_mode(cli: AgentCli) -> Result<()> {
+    let (spec, workdir) = cli.resolve_target()?;
+    let source = create_source_from_spec(&spec, workdir)?;
 
     let (tx, mut rx) = mpsc::channel::<RawLogEntry>(10_000);
     source
@@ -207,17 +285,135 @@ async fn run_standalone_mode(cli: Cli) -> Result<()> {
     Ok(())
 }
 
-fn create_source_from_spec(spec: &RemoteLogSourceSpec) -> Result<Box<dyn LogSource>> {
+/// Khởi tạo LogSource tương ứng từ cấu hình remote spec
+pub fn create_source_from_spec(
+    spec: &RemoteLogSourceSpec,
+    working_dir: Option<String>,
+) -> Result<Box<dyn LogSource>> {
     match spec {
         RemoteLogSourceSpec::Command(cmd_str) => {
-            let parts: Vec<&str> = cmd_str.split_whitespace().collect();
-            if parts.is_empty() {
+            let cmd_str = cmd_str.trim();
+            if cmd_str.is_empty() {
                 anyhow::bail!("Command cannot be empty");
             }
-            let prog = parts[0].to_string();
-            let args = parts[1..].iter().map(|s| s.to_string()).collect();
-            Ok(Box::new(ProcessSource::new(prog, args)))
+
+            // Tương tự Zed: Thực thi qua shell để nạp đầy đủ PATH môi trường và hỗ trợ quotes/pipes
+            #[cfg(unix)]
+            {
+                let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+                let args = vec!["-c".to_string(), cmd_str.to_string()];
+                Ok(Box::new(ProcessSource::new_with_dir(
+                    shell,
+                    args,
+                    working_dir,
+                )))
+            }
+            #[cfg(windows)]
+            {
+                let args = vec!["/C".to_string(), cmd_str.to_string()];
+                Ok(Box::new(ProcessSource::new_with_dir(
+                    "cmd.exe",
+                    args,
+                    working_dir,
+                )))
+            }
         }
-        RemoteLogSourceSpec::File(path) => Ok(Box::new(FileSource::new(path))),
+        RemoteLogSourceSpec::File(path) => {
+            let file_path = if let Some(ref dir) = working_dir {
+                let p = std::path::Path::new(path);
+                if p.is_relative() {
+                    std::path::Path::new(dir)
+                        .join(path)
+                        .to_string_lossy()
+                        .to_string()
+                } else {
+                    path.clone()
+                }
+            } else {
+                path.clone()
+            };
+            Ok(Box::new(FileSource::new(file_path)))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_agent_cli_parsing_flags() {
+        // 1. Kiểm tra cờ --cmd và alias -r
+        let cli = AgentCli::try_parse_from(["uwu-agent", "-c", "cargo run"]).unwrap();
+        assert_eq!(cli.cmd.as_deref(), Some("cargo run"));
+        let (spec, _) = cli.resolve_target().unwrap();
+        assert_eq!(spec, RemoteLogSourceSpec::Command("cargo run".into()));
+
+        let cli_alias = AgentCli::try_parse_from(["uwu-agent", "-r", "python app.py"]).unwrap();
+        assert_eq!(cli_alias.cmd.as_deref(), Some("python app.py"));
+
+        // 2. Kiểm tra cờ --file và -f
+        let cli_file = AgentCli::try_parse_from(["uwu-agent", "-f", "/var/log/syslog"]).unwrap();
+        assert_eq!(cli_file.file.as_deref(), Some("/var/log/syslog"));
+        let (spec, _) = cli_file.resolve_target().unwrap();
+        assert_eq!(spec, RemoteLogSourceSpec::File("/var/log/syslog".into()));
+
+        // 3. Kiểm tra cờ --dir và alias cwd
+        let cli_dir =
+            AgentCli::try_parse_from(["uwu-agent", "-c", "make", "-d", "/home/user/project"])
+                .unwrap();
+        assert_eq!(cli_dir.working_dir.as_deref(), Some("/home/user/project"));
+        let (_, dir) = cli_dir.resolve_target().unwrap();
+        assert_eq!(dir.as_deref(), Some("/home/user/project"));
+
+        // 4. Trailing args với --
+        let cli_trailing =
+            AgentCli::try_parse_from(["uwu-agent", "-d", "/work", "--", "npm", "run", "dev"])
+                .unwrap();
+        assert_eq!(cli_trailing.trailing_cmd, vec!["npm", "run", "dev"]);
+        let (spec, dir) = cli_trailing.resolve_target().unwrap();
+        assert_eq!(spec, RemoteLogSourceSpec::Command("npm run dev".into()));
+        assert_eq!(dir.as_deref(), Some("/work"));
+    }
+
+    #[test]
+    fn test_agent_cli_subcommands() {
+        // Proxy subcommand
+        let cli_proxy = AgentCli::try_parse_from(["uwu-agent", "proxy"]).unwrap();
+        assert_eq!(
+            cli_proxy.command,
+            Some(AgentSubcommand::Proxy { working_dir: None })
+        );
+
+        let cli_proxy_dir =
+            AgentCli::try_parse_from(["uwu-agent", "proxy", "-d", "/var/log"]).unwrap();
+        assert_eq!(
+            cli_proxy_dir.command,
+            Some(AgentSubcommand::Proxy {
+                working_dir: Some("/var/log".to_string())
+            })
+        );
+
+        // Version subcommand
+        let cli_version = AgentCli::try_parse_from(["uwu-agent", "version"]).unwrap();
+        assert_eq!(cli_version.command, Some(AgentSubcommand::Version));
+    }
+
+    #[test]
+    fn test_agent_cli_positional_target() {
+        let cli_pos_file = AgentCli::try_parse_from(["uwu-agent", "app.log"]).unwrap();
+        let (spec, _) = cli_pos_file.resolve_target().unwrap();
+        assert_eq!(spec, RemoteLogSourceSpec::File("app.log".into()));
+
+        let cli_pos_cmd = AgentCli::try_parse_from(["uwu-agent", "journalctl -f"]).unwrap();
+        let (spec, _) = cli_pos_cmd.resolve_target().unwrap();
+        assert_eq!(spec, RemoteLogSourceSpec::Command("journalctl -f".into()));
+    }
+
+    #[test]
+    fn test_create_source_from_spec_empty_cmd_errors() {
+        let spec = RemoteLogSourceSpec::Command("   ".into());
+        let res = create_source_from_spec(&spec, None);
+        assert!(res.is_err());
     }
 }

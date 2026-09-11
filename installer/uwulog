@@ -8,7 +8,7 @@ set -e
 if [ -n "$WSL_DISTRO_NAME" ]; then
     DISTRO="$WSL_DISTRO_NAME"
     CURRENT_DIR="$PWD"
-    
+
     # 1. Tìm kiếm binary uwu-gui.exe trên Windows
     UWU_EXE=""
     if command -v uwu-gui.exe >/dev/null 2>&1; then

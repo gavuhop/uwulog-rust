@@ -66,19 +66,19 @@ try {
         $Distros = $rawDistros | ForEach-Object { $_.Trim().Replace("`0", "") } | Where-Object { $_ -ne "" }
         foreach ($distro in $Distros) {
             Write-Host "   -> Configuring WSL distro: $distro" -ForegroundColor Cyan
-            
+
             # Create ~/.local/bin
             & $wslExe -d $distro -- sh -c "mkdir -p ~/.local/bin ~/.local/share/uwu/server_state"
-            
+
             # Copy script uwulog via wslpath
             $wslScriptPath = (Join-Path $InstallDir "uwulog").Replace('\', '/')
             $wslUnixSrc = (& $wslExe -d $distro -- wslpath -u "$wslScriptPath").Trim()
             & $wslExe -d $distro -- sh -c "cp '$wslUnixSrc' ~/.local/bin/uwulog && chmod 755 ~/.local/bin/uwulog"
-            
+
             # Ensure PATH in ~/.bashrc
             $bashrcCheck = 'if ! grep -q ".local/bin" ~/.bashrc 2>/dev/null; then echo ''export PATH="$HOME/.local/bin:$PATH"'' >> ~/.bashrc; fi'
             & $wslExe -d $distro -- sh -c $bashrcCheck
-            
+
             Write-Host "      -> [OK] Installed ~/.local/bin/uwulog in [$distro]" -ForegroundColor Green
         }
     } else {

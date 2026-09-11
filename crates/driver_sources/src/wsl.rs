@@ -75,23 +75,8 @@ impl LogSource for WslSource {
 
         match &self.mode {
             WslTargetMode::Command(cmd_str) => {
-                let cd_prefix = if let Some(dir) = &self.working_dir {
-                    if !dir.trim().is_empty() {
-                        format!("cd '{}' 2>/dev/null || true; ", dir.replace('\'', "'\\''"))
-                    } else {
-                        String::new()
-                    }
-                } else {
-                    String::new()
-                };
-                let full_cmd = format!("{}{}", cd_prefix, cmd_str);
-                let quoted_cmd = format!("'{}'", full_cmd.replace('\'', "'\\''"));
-                // Giống Zed: Chạy qua interactive shell của người dùng ($SHELL -i -c hoặc bash -i -c)
-                // để nạp đầy đủ PATH, nvm, fnm, asdf, node, pnpm, cargo, go...
-                cmd.arg("sh").arg("-c").arg(format!(
-                    "if [ -n \"$SHELL\" ] && [ -x \"$SHELL\" ]; then exec \"$SHELL\" -i -c {0}; else exec bash -i -c {0}; fi",
-                    quoted_cmd
-                ));
+                let shell_cmd = build_wsl_shell_command(self.working_dir.as_deref(), cmd_str);
+                cmd.arg("sh").arg("-c").arg(shell_cmd);
             }
             WslTargetMode::File(file_path) => {
                 cmd.arg("tail").arg("-n").arg("+1").arg("-F").arg(file_path);
@@ -122,6 +107,26 @@ impl LogSource for WslSource {
     }
 }
 
+/// Xây dựng câu lệnh shell tương tác để thực thi trong WSL (giống Zed)
+/// Tự động nạp cấu hình $SHELL / bash và nạp đầy đủ PATH môi trường (nvm, cargo, go...)
+pub fn build_wsl_shell_command(working_dir: Option<&str>, cmd_str: &str) -> String {
+    let cd_prefix = if let Some(dir) = working_dir {
+        if !dir.trim().is_empty() {
+            format!("cd '{}' 2>/dev/null || true; ", dir.replace('\'', "'\\''"))
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
+    let full_cmd = format!("{}{}", cd_prefix, cmd_str);
+    let quoted_cmd = format!("'{}'", full_cmd.replace('\'', "'\\''"));
+    format!(
+        "if [ -n \"$SHELL\" ] && [ -x \"$SHELL\" ]; then exec \"$SHELL\" -i -c {0}; else exec bash -i -c {0}; fi",
+        quoted_cmd
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -136,5 +141,18 @@ mod tests {
 
         let src_default = WslSource::new("", WslTargetMode::Command("python3 app.py".into()));
         assert_eq!(src_default.name(), "wsl:default:cmd:python3 app.py");
+    }
+
+    #[test]
+    fn test_build_wsl_shell_command() {
+        // 1. Không có working directory
+        let cmd_no_dir = build_wsl_shell_command(None, "cargo run");
+        assert!(cmd_no_dir.contains("exec \"$SHELL\" -i -c 'cargo run'"));
+
+        // 2. Có working directory
+        let cmd_with_dir = build_wsl_shell_command(Some("/home/user/project"), "cargo run");
+        assert!(
+            cmd_with_dir.contains("cd '\\''/home/user/project'\\'' 2>/dev/null || true; cargo run")
+        );
     }
 }
