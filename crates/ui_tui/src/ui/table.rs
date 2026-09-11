@@ -20,8 +20,6 @@ pub fn render_table(f: &mut Frame, app: &mut App, area: Rect) {
                 LogColor::Red => Color::Red,
                 LogColor::Yellow => Color::Yellow,
                 LogColor::Green => Color::Green,
-                LogColor::Blue => Color::Blue,
-                LogColor::Cyan => Color::Cyan,
                 LogColor::Gray => Color::DarkGray,
                 LogColor::Default => Color::Reset,
             };

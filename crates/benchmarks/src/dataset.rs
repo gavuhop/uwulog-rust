@@ -41,7 +41,7 @@ impl SyntheticLogGenerator {
             ("INFO", LogColor::Green),
             ("INFO", LogColor::Green),
             ("INFO", LogColor::Green),
-            ("DEBUG", LogColor::Cyan),
+            ("DEBUG", LogColor::Gray),
             ("WARN", LogColor::Yellow),
             ("ERROR", LogColor::Red),
             ("FATAL", LogColor::Red),

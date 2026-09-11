@@ -309,7 +309,7 @@ mod tests {
                 "message": "Checking cache"
             })),
         });
-        assert_eq!(event_py.color, LogColor::Cyan);
+        assert_eq!(event_py.color, LogColor::Gray);
 
         let event_trace = LogNormalizer::normalize(RawLogEntry {
             payload: RawPayload::Json(serde_json::json!({
@@ -326,7 +326,7 @@ mod tests {
                 "message": "Security policy loaded"
             })),
         });
-        assert_eq!(event_notice.color, LogColor::Blue);
+        assert_eq!(event_notice.color, LogColor::Gray);
 
         let event_bunyan = LogNormalizer::normalize(RawLogEntry {
             payload: RawPayload::Json(serde_json::json!({

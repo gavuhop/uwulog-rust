@@ -169,13 +169,12 @@ pub fn reset_log_id_counter(val: u64) {
 }
 
 /// Màu sắc định dạng hiển thị của app (App Metadata Key - Không thuộc dữ liệu log thô)
+#[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum LogColor {
     Red,
     Yellow,
     Green,
-    Blue,
-    Cyan,
     Gray,
     #[default]
     Default,
@@ -202,21 +201,19 @@ impl LogColor {
             60 | 50 => LogColor::Red,
             40 => LogColor::Yellow,
             30 => LogColor::Green,
-            20 => LogColor::Cyan,
-            10 => LogColor::Gray,
+            20 | 10 => LogColor::Gray,
 
             // Syslog RFC 5424 (0=Emerg, 1=Alert, 2=Crit, 3=Err, 4=Warn, 5=Notice, 6=Info, 7=Debug)
             0..=3 => LogColor::Red,
             4 => LogColor::Yellow,
-            5 => LogColor::Blue,
             6 => LogColor::Green,
-            7 => LogColor::Cyan,
+            5 | 7 => LogColor::Gray,
 
             // HTTP Status Codes
             500..=599 => LogColor::Red,
             400..=499 => LogColor::Yellow,
             200..=299 => LogColor::Green,
-            300..=399 => LogColor::Cyan,
+            300..=399 => LogColor::Gray,
 
             _ => LogColor::Default,
         }
@@ -261,26 +258,22 @@ impl LogColor {
             || clean.eq_ignore_ascii_case("GREEN")
         {
             LogColor::Green
-        } else if clean.eq_ignore_ascii_case("NOTICE")
-            || clean.eq_ignore_ascii_case("AUDIT")
-            || clean.eq_ignore_ascii_case("NOTE")
-            || clean.eq_ignore_ascii_case("BLUE")
-        {
-            LogColor::Blue
         } else if clean.eq_ignore_ascii_case("DEBUG")
             || clean.eq_ignore_ascii_case("DBG")
-            || clean.eq_ignore_ascii_case("CYAN")
-        {
-            LogColor::Cyan
-        } else if clean.eq_ignore_ascii_case("TRACE")
+            || clean.eq_ignore_ascii_case("TRACE")
             || clean.eq_ignore_ascii_case("TRC")
             || clean.eq_ignore_ascii_case("VERBOSE")
             || clean.eq_ignore_ascii_case("FINE")
             || clean.eq_ignore_ascii_case("FINER")
             || clean.eq_ignore_ascii_case("FINEST")
             || clean.eq_ignore_ascii_case("SILLY")
+            || clean.eq_ignore_ascii_case("NOTICE")
+            || clean.eq_ignore_ascii_case("AUDIT")
+            || clean.eq_ignore_ascii_case("NOTE")
             || clean.eq_ignore_ascii_case("GRAY")
             || clean.eq_ignore_ascii_case("GREY")
+            || clean.eq_ignore_ascii_case("CYAN")
+            || clean.eq_ignore_ascii_case("BLUE")
         {
             LogColor::Gray
         } else {
@@ -493,11 +486,11 @@ mod tests {
         assert_eq!(LogColor::from_severity_str("success"), LogColor::Green);
         assert_eq!(LogColor::from_severity_str("ok"), LogColor::Green);
 
-        assert_eq!(LogColor::from_severity_str("NOTICE"), LogColor::Blue);
-        assert_eq!(LogColor::from_severity_str("audit"), LogColor::Blue);
+        assert_eq!(LogColor::from_severity_str("NOTICE"), LogColor::Gray);
+        assert_eq!(LogColor::from_severity_str("audit"), LogColor::Gray);
 
-        assert_eq!(LogColor::from_severity_str("DEBUG"), LogColor::Cyan);
-        assert_eq!(LogColor::from_severity_str("dbg"), LogColor::Cyan);
+        assert_eq!(LogColor::from_severity_str("DEBUG"), LogColor::Gray);
+        assert_eq!(LogColor::from_severity_str("dbg"), LogColor::Gray);
 
         assert_eq!(LogColor::from_severity_str("TRACE"), LogColor::Gray);
         assert_eq!(LogColor::from_severity_str("verbose"), LogColor::Gray);
@@ -514,27 +507,30 @@ mod tests {
         assert_eq!(LogColor::from_number(50), LogColor::Red);
         assert_eq!(LogColor::from_number(40), LogColor::Yellow);
         assert_eq!(LogColor::from_number(30), LogColor::Green);
-        assert_eq!(LogColor::from_number(20), LogColor::Cyan);
+        assert_eq!(LogColor::from_number(20), LogColor::Gray);
         assert_eq!(LogColor::from_number(10), LogColor::Gray);
 
         // Syslog
         assert_eq!(LogColor::from_number(3), LogColor::Red);
         assert_eq!(LogColor::from_number(4), LogColor::Yellow);
-        assert_eq!(LogColor::from_number(5), LogColor::Blue);
+        assert_eq!(LogColor::from_number(5), LogColor::Gray);
         assert_eq!(LogColor::from_number(6), LogColor::Green);
-        assert_eq!(LogColor::from_number(7), LogColor::Cyan);
+        assert_eq!(LogColor::from_number(7), LogColor::Gray);
 
         // HTTP status codes
         assert_eq!(LogColor::from_number(500), LogColor::Red);
         assert_eq!(LogColor::from_number(404), LogColor::Yellow);
         assert_eq!(LogColor::from_number(200), LogColor::Green);
-        assert_eq!(LogColor::from_number(304), LogColor::Cyan);
+        assert_eq!(LogColor::from_number(304), LogColor::Gray);
 
         // Stringified numbers
         assert_eq!(LogColor::from_severity_str("50"), LogColor::Red);
         assert_eq!(LogColor::from_severity_str("40"), LogColor::Yellow);
         assert_eq!(LogColor::from_severity_str("30"), LogColor::Green);
         assert_eq!(LogColor::from_severity_str("10"), LogColor::Gray);
+
+        // Memory footprint: exact 1 byte, Copy, zero heap allocation
+        assert_eq!(std::mem::size_of::<LogColor>(), 1);
     }
 
     #[test]
@@ -802,14 +798,14 @@ mod tests {
     #[test]
     fn test_log_color_parsing() {
         assert_eq!(LogColor::from_severity_str("10"), LogColor::Gray);
-        assert_eq!(LogColor::from_severity_str("20"), LogColor::Cyan);
+        assert_eq!(LogColor::from_severity_str("20"), LogColor::Gray);
         assert_eq!(LogColor::from_severity_str("30"), LogColor::Green);
         assert_eq!(LogColor::from_severity_str("40"), LogColor::Yellow);
         assert_eq!(LogColor::from_severity_str("50"), LogColor::Red);
         assert_eq!(LogColor::from_severity_str("60"), LogColor::Red);
         assert_eq!(LogColor::from_severity_str("WARN"), LogColor::Yellow);
         assert_eq!(LogColor::from_severity_str("ERROR"), LogColor::Red);
-        assert_eq!(LogColor::from_severity_str("DEBUG"), LogColor::Cyan);
+        assert_eq!(LogColor::from_severity_str("DEBUG"), LogColor::Gray);
 
         assert_eq!(
             LogColor::from_value(&serde_json::json!(30)),
@@ -818,7 +814,7 @@ mod tests {
         assert_eq!(LogColor::from_value(&serde_json::json!(50)), LogColor::Red);
         assert_eq!(
             LogColor::from_value(&serde_json::json!("NOTICE")),
-            LogColor::Blue
+            LogColor::Gray
         );
     }
 }
