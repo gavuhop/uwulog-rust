@@ -5,7 +5,8 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem},
     Frame,
 };
-use uwu_core_schema::LogLevel;
+use std::borrow::Cow;
+use uwu_core_schema::LogColor;
 
 pub fn render_table(f: &mut Frame, app: &mut App, area: Rect) {
     let total_logs = app.engine.total_logs();
@@ -15,21 +16,22 @@ pub fn render_table(f: &mut Frame, app: &mut App, area: Rect) {
         .cached_logs
         .iter()
         .map(|log| {
-            let level_color = match log.level {
-                LogLevel::Error | LogLevel::Fatal => Color::Red,
-                LogLevel::Warn => Color::Yellow,
-                LogLevel::Info => Color::Green,
-                LogLevel::Debug => Color::Cyan,
-                LogLevel::Trace => Color::Magenta,
-                LogLevel::Unknown => Color::Gray,
+            let level_color = match log.color {
+                LogColor::Red => Color::Red,
+                LogColor::Yellow => Color::Yellow,
+                LogColor::Green => Color::Green,
+                LogColor::Blue => Color::Blue,
+                LogColor::Cyan => Color::Cyan,
+                LogColor::Gray => Color::DarkGray,
+                LogColor::Default => Color::Reset,
             };
 
-            let line_content = format!(
-                "[{}] [{:<5}] {}",
-                log.timestamp,
-                log.level.as_str(),
-                log.message
-            );
+            let lvl_cow = log
+                .get_field_cow("level")
+                .or_else(|| log.get_field_cow("lvl"))
+                .unwrap_or(Cow::Borrowed("-"));
+
+            let line_content = format!("[{}] [{:<5}] {}", log.timestamp, lvl_cow, log.message);
 
             ListItem::new(line_content).style(Style::default().fg(level_color))
         })

@@ -1,7 +1,7 @@
 //! High-performance Synthetic Log Generator for uwulog-rust Benchmarking
 
 use chrono::Utc;
-use uwu_core_schema::{LogEvent, LogFields, LogLevel, RawLogEntry, RawPayload};
+use uwu_core_schema::{LogColor, LogEvent, LogFields, RawLogEntry, RawPayload};
 
 pub struct SyntheticLogGenerator {
     state: u64,
@@ -38,13 +38,13 @@ impl SyntheticLogGenerator {
         let base_time = Utc::now().timestamp() as f64;
 
         let levels = [
-            LogLevel::Info,
-            LogLevel::Info,
-            LogLevel::Info,
-            LogLevel::Debug,
-            LogLevel::Warn,
-            LogLevel::Error,
-            LogLevel::Fatal,
+            ("INFO", LogColor::Green),
+            ("INFO", LogColor::Green),
+            ("INFO", LogColor::Green),
+            ("DEBUG", LogColor::Cyan),
+            ("WARN", LogColor::Yellow),
+            ("ERROR", LogColor::Red),
+            ("FATAL", LogColor::Red),
         ];
 
         let tags = [
@@ -76,7 +76,7 @@ impl SyntheticLogGenerator {
         ];
 
         for i in 0..count {
-            let lvl = levels[self.gen_range(0, levels.len())];
+            let (lvl_str, color) = levels[self.gen_range(0, levels.len())];
             let tag = tags[self.gen_range(0, tags.len())];
             let source = sources[self.gen_range(0, sources.len())];
             let msg = msg_templates[self.gen_range(0, msg_templates.len())];
@@ -89,7 +89,8 @@ impl SyntheticLogGenerator {
                 .unwrap_or_else(Utc::now)
                 .to_rfc3339();
 
-            let mut fields = LogFields::with_capacity(5);
+            let mut fields = LogFields::with_capacity(6);
+            fields.insert("level", serde_json::Value::String(lvl_str.to_string()));
             fields.insert("tag", serde_json::Value::String(tag.to_string()));
             fields.insert("source", serde_json::Value::String(source.to_string()));
             fields.insert("latency", serde_json::json!(latency));
@@ -101,9 +102,9 @@ impl SyntheticLogGenerator {
 
             events.push(LogEvent {
                 id: (i + 1) as u64,
+                color,
                 timestamp: ts_str,
                 timestamp_secs: Some(ts_secs),
-                level: lvl,
                 message: msg.to_string(),
                 fields,
             });

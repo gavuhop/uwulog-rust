@@ -10,7 +10,6 @@ use cell::render_cell;
 use eframe::egui::{self, Pos2};
 use egui_extras::{Column, TableBuilder};
 use header::{render_drag_ghost, render_table_headers};
-use uwu_core_schema::LogLevel;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum TableMode {
@@ -202,12 +201,7 @@ pub fn render_log_table(ui: &mut egui::Ui, app: &mut UwuGuiApp, mode: TableMode)
                                 || app.selected_log.as_ref().is_some_and(|s| s.id == event.id);
 
                             let is_highlighted = app.is_row_highlighted(&event.id);
-                            let row_color = match event.level {
-                                LogLevel::Error | LogLevel::Fatal => theme::COLOR_ERROR,
-                                LogLevel::Warn => theme::COLOR_WARN,
-                                LogLevel::Info => theme::COLOR_INFO,
-                                _ => theme::TEXT_MUTED,
-                            };
+                            let row_color = theme::log_color_to_egui(event.color);
 
                             for col in &visible_cols {
                                 row.col(|ui| {

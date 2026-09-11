@@ -9,7 +9,7 @@ use eframe::egui::{self, Id, Rounding, Stroke};
 use fields::{render_kv_field, render_meta_field};
 use std::collections::HashMap;
 use text_box::render_text_box;
-use uwu_core_schema::{LogLevel, StandardField};
+use uwu_core_schema::StandardField;
 
 pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     let mut action_to_dispatch: Option<AppAction> = None;
@@ -108,12 +108,7 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
         ui.separator();
         ui.add_space(6.0);
 
-        let (log_color, is_colored) = match event.level {
-            LogLevel::Error | LogLevel::Fatal => (theme::COLOR_ERROR, true),
-            LogLevel::Warn => (theme::COLOR_WARN, true),
-            LogLevel::Info => (theme::COLOR_INFO, true),
-            _ => (theme::TEXT_MUTED, false),
-        };
+        let log_color = theme::log_color_to_egui(event.color);
 
         let has_any_highlights = app.has_any_highlights();
 
@@ -121,6 +116,9 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
             .id_salt("detail_inspector_scroll_area")
             .auto_shrink([false, false])
             .show(ui, |ui| {
+                let ts_key = event.semantic_key(StandardField::Timestamp);
+                let lvl_key = event.semantic_key(StandardField::Level);
+
                 // Metadata Card
                 render_card(ui, "Metadata", |ui| {
                     let mut ctx = ActionContext {
@@ -128,9 +126,6 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                         has_any_highlights,
                         action: &mut action_to_dispatch,
                     };
-
-                    let ts_key = event.semantic_key(StandardField::Timestamp);
-                    let lvl_key = event.semantic_key(StandardField::Level);
 
                     render_meta_field(
                         ui,
@@ -140,15 +135,10 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                         true,
                         &mut ctx,
                     );
-                    ui.add_space(5.0);
-                    render_meta_field(
-                        ui,
-                        lvl_key,
-                        &event.level.to_string(),
-                        log_color,
-                        false,
-                        &mut ctx,
-                    );
+                    if let Some(lvl_val) = event.get_field_cow(lvl_key) {
+                        ui.add_space(5.0);
+                        render_meta_field(ui, lvl_key, &lvl_val, log_color, false, &mut ctx);
+                    }
                 });
 
                 ui.add_space(8.0);
@@ -157,11 +147,7 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
 
                 // Message Card
                 render_card(ui, "Message", |ui| {
-                    let msg_color = if is_colored {
-                        log_color
-                    } else {
-                        theme::TEXT_PRIMARY
-                    };
+                    let msg_color = log_color;
 
                     let mut ctx = ActionContext {
                         highlighted_terms: &app.highlighted_terms,
@@ -436,5 +422,43 @@ mod tests {
                 "method",
             ]
         );
+    }
+
+    #[test]
+    fn test_parsed_fields_preserves_raw_keys_and_values() {
+        use uwu_core_schema::{LogColor, LogEvent};
+
+        let mut fields = HashMap::new();
+        fields.insert("timestamp".to_string(), serde_json::json!("2026-09-11"));
+        fields.insert("message".to_string(), serde_json::json!("msg"));
+        fields.insert("id".to_string(), serde_json::json!(1));
+        fields.insert("level".to_string(), serde_json::json!(30));
+        fields.insert("user".to_string(), serde_json::json!("alice"));
+
+        let event = LogEvent::new("2026-09-11", LogColor::Green, "msg", fields);
+
+        let ts_key = event.semantic_key(StandardField::Timestamp);
+        let msg_key = event.semantic_key(StandardField::Message);
+
+        let custom_fields: Vec<(&String, &serde_json::Value)> = event
+            .fields
+            .iter()
+            .filter(|(k, _)| {
+                let s = k.as_str();
+                s != "id" && s != ts_key && s != msg_key
+            })
+            .collect();
+
+        let custom_fields = cluster_log_fields(custom_fields);
+        let keys: Vec<&str> = custom_fields.iter().map(|(k, _)| k.as_str()).collect();
+        assert!(keys.contains(&"level"));
+        assert!(keys.contains(&"user"));
+        assert!(!keys.contains(&"timestamp"));
+        assert!(!keys.contains(&"message"));
+        assert!(!keys.contains(&"id"));
+
+        let lvl_field = custom_fields.iter().find(|(k, _)| *k == "level").unwrap();
+        assert_eq!(lvl_field.1, &serde_json::json!(30));
+        assert_eq!(uwu_core_schema::value_to_cow(lvl_field.1), "30");
     }
 }

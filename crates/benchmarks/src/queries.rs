@@ -21,7 +21,7 @@ pub const BENCHMARK_QUERIES: &[BenchmarkQuery] = &[
     BenchmarkQuery {
         name: "03_exact_field_match",
         query: "level:error",
-        description: "Direct canonical field exact matching on LogLevel",
+        description: "Direct canonical field exact matching on level",
     },
     BenchmarkQuery {
         name: "04_regex_match",

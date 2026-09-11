@@ -773,7 +773,7 @@ mod tests {
         // Filtered INFO logs must match the exact sequence of INFO logs appearing in raw_logs
         let raw_info_ids: Vec<_> = raw_logs
             .iter()
-            .filter(|e| e.level == uwu_core_schema::LogLevel::Info)
+            .filter(|e| e.color == uwu_core_schema::LogColor::Green)
             .map(|e| (e.id, e.message.clone()))
             .collect();
 

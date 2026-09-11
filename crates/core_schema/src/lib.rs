@@ -6,76 +6,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 pub mod fields;
 pub use fields::{Iter, IterMut, Keys, LogFields, Values};
 
-/// Cấp độ log chuẩn hóa
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum LogLevel {
-    Unknown,
-    Trace,
-    Debug,
-    Info,
-    Warn,
-    Error,
-    Fatal,
-}
-
-impl std::fmt::Display for LogLevel {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
-
-impl LogLevel {
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            LogLevel::Unknown => "UNKNOWN",
-            LogLevel::Trace => "TRACE",
-            LogLevel::Debug => "DEBUG",
-            LogLevel::Info => "INFO",
-            LogLevel::Warn => "WARN",
-            LogLevel::Error => "ERROR",
-            LogLevel::Fatal => "FATAL",
-        }
-    }
-
-    pub fn parse_str(s: &str) -> Self {
-        let clean = s.trim();
-        if clean.eq_ignore_ascii_case("TRACE")
-            || clean.eq_ignore_ascii_case("TRC")
-            || clean.eq_ignore_ascii_case("VERBOSE")
-        {
-            LogLevel::Trace
-        } else if clean.eq_ignore_ascii_case("DEBUG") || clean.eq_ignore_ascii_case("DBG") {
-            LogLevel::Debug
-        } else if clean.eq_ignore_ascii_case("INFO")
-            || clean.eq_ignore_ascii_case("INF")
-            || clean.eq_ignore_ascii_case("INFORMATION")
-            || clean.eq_ignore_ascii_case("NOTICE")
-        {
-            LogLevel::Info
-        } else if clean.eq_ignore_ascii_case("WARN")
-            || clean.eq_ignore_ascii_case("WARNING")
-            || clean.eq_ignore_ascii_case("WRN")
-        {
-            LogLevel::Warn
-        } else if clean.eq_ignore_ascii_case("ERROR")
-            || clean.eq_ignore_ascii_case("ERR")
-            || clean.eq_ignore_ascii_case("CRITICAL")
-            || clean.eq_ignore_ascii_case("CRIT")
-        {
-            LogLevel::Error
-        } else if clean.eq_ignore_ascii_case("FATAL")
-            || clean.eq_ignore_ascii_case("FTL")
-            || clean.eq_ignore_ascii_case("EMERG")
-            || clean.eq_ignore_ascii_case("EMERGENCY")
-            || clean.eq_ignore_ascii_case("ALERT")
-        {
-            LogLevel::Fatal
-        } else {
-            LogLevel::Unknown
-        }
-    }
-}
-
 /// Các trường cơ sở chuẩn hóa trong toàn bộ hệ thống (Single Source of Truth)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum StandardField {
@@ -111,7 +41,8 @@ impl StandardField {
             "timestamp" | "time" | "ts" | "@timestamp" | "date" | "datetime" => {
                 Some(Self::Timestamp)
             }
-            "level" | "lvl" | "lv" | "severity" | "priority" => Some(Self::Level),
+            "level" | "lvl" | "lv" | "severity" | "priority" | "loglevel" | "log_level"
+            | "log.level" | "levelname" => Some(Self::Level),
             "message" | "msg" | "text" | "body" => Some(Self::Message),
             "id" => Some(Self::Id),
             _ => None,
@@ -237,14 +168,135 @@ pub fn reset_log_id_counter(val: u64) {
     NEXT_LOG_ID.store(val, Ordering::Relaxed);
 }
 
+/// Màu sắc định dạng hiển thị của app (App Metadata Key - Không thuộc dữ liệu log thô)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub enum LogColor {
+    Red,
+    Yellow,
+    Green,
+    Blue,
+    Cyan,
+    Gray,
+    #[default]
+    Default,
+}
+
+impl LogColor {
+    pub fn from_value(val: &serde_json::Value) -> Self {
+        match val {
+            serde_json::Value::String(s) => Self::from_severity_str(s),
+            serde_json::Value::Number(n) => {
+                if let Some(i) = n.as_i64() {
+                    Self::from_number(i)
+                } else {
+                    LogColor::Default
+                }
+            }
+            _ => LogColor::Default,
+        }
+    }
+
+    pub fn from_number(n: i64) -> Self {
+        match n {
+            // Bunyan / Pino / Zap levels
+            60 | 50 => LogColor::Red,
+            40 => LogColor::Yellow,
+            30 => LogColor::Green,
+            20 => LogColor::Cyan,
+            10 => LogColor::Gray,
+
+            // Syslog RFC 5424 (0=Emerg, 1=Alert, 2=Crit, 3=Err, 4=Warn, 5=Notice, 6=Info, 7=Debug)
+            0..=3 => LogColor::Red,
+            4 => LogColor::Yellow,
+            5 => LogColor::Blue,
+            6 => LogColor::Green,
+            7 => LogColor::Cyan,
+
+            // HTTP Status Codes
+            500..=599 => LogColor::Red,
+            400..=499 => LogColor::Yellow,
+            200..=299 => LogColor::Green,
+            300..=399 => LogColor::Cyan,
+
+            _ => LogColor::Default,
+        }
+    }
+
+    pub fn from_severity_str(s: &str) -> Self {
+        let clean = s.trim();
+        if let Ok(num) = clean.parse::<i64>() {
+            let col = Self::from_number(num);
+            if col != LogColor::Default {
+                return col;
+            }
+        }
+
+        if clean.eq_ignore_ascii_case("ERROR")
+            || clean.eq_ignore_ascii_case("ERR")
+            || clean.eq_ignore_ascii_case("CRITICAL")
+            || clean.eq_ignore_ascii_case("CRIT")
+            || clean.eq_ignore_ascii_case("FATAL")
+            || clean.eq_ignore_ascii_case("FTL")
+            || clean.eq_ignore_ascii_case("EMERG")
+            || clean.eq_ignore_ascii_case("EMERGENCY")
+            || clean.eq_ignore_ascii_case("ALERT")
+            || clean.eq_ignore_ascii_case("PANIC")
+            || clean.eq_ignore_ascii_case("FAIL")
+            || clean.eq_ignore_ascii_case("FAILED")
+            || clean.eq_ignore_ascii_case("FAILURE")
+            || clean.eq_ignore_ascii_case("RED")
+        {
+            LogColor::Red
+        } else if clean.eq_ignore_ascii_case("WARN")
+            || clean.eq_ignore_ascii_case("WARNING")
+            || clean.eq_ignore_ascii_case("WRN")
+            || clean.eq_ignore_ascii_case("YELLOW")
+        {
+            LogColor::Yellow
+        } else if clean.eq_ignore_ascii_case("INFO")
+            || clean.eq_ignore_ascii_case("INF")
+            || clean.eq_ignore_ascii_case("INFORMATION")
+            || clean.eq_ignore_ascii_case("SUCCESS")
+            || clean.eq_ignore_ascii_case("OK")
+            || clean.eq_ignore_ascii_case("GREEN")
+        {
+            LogColor::Green
+        } else if clean.eq_ignore_ascii_case("NOTICE")
+            || clean.eq_ignore_ascii_case("AUDIT")
+            || clean.eq_ignore_ascii_case("NOTE")
+            || clean.eq_ignore_ascii_case("BLUE")
+        {
+            LogColor::Blue
+        } else if clean.eq_ignore_ascii_case("DEBUG")
+            || clean.eq_ignore_ascii_case("DBG")
+            || clean.eq_ignore_ascii_case("CYAN")
+        {
+            LogColor::Cyan
+        } else if clean.eq_ignore_ascii_case("TRACE")
+            || clean.eq_ignore_ascii_case("TRC")
+            || clean.eq_ignore_ascii_case("VERBOSE")
+            || clean.eq_ignore_ascii_case("FINE")
+            || clean.eq_ignore_ascii_case("FINER")
+            || clean.eq_ignore_ascii_case("FINEST")
+            || clean.eq_ignore_ascii_case("SILLY")
+            || clean.eq_ignore_ascii_case("GRAY")
+            || clean.eq_ignore_ascii_case("GREY")
+        {
+            LogColor::Gray
+        } else {
+            LogColor::Default
+        }
+    }
+}
+
 /// LogEvent đại diện cho 1 bản ghi log đã được chuẩn hóa
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogEvent {
     pub id: u64,
+    pub color: LogColor,
     pub timestamp: String,
     #[serde(default)]
     pub timestamp_secs: Option<f64>,
-    pub level: LogLevel,
     pub message: String,
     pub fields: LogFields,
 }
@@ -252,7 +304,7 @@ pub struct LogEvent {
 impl LogEvent {
     pub fn new(
         timestamp: impl Into<String>,
-        level: LogLevel,
+        color: LogColor,
         message: impl Into<String>,
         fields: impl Into<LogFields>,
     ) -> Self {
@@ -260,9 +312,9 @@ impl LogEvent {
         let timestamp_secs = uwu_core_util::parse_iso_to_secs(&ts_str);
         Self {
             id: next_log_id(),
+            color,
             timestamp: ts_str,
             timestamp_secs,
-            level,
             message: message.into(),
             fields: fields.into(),
         }
@@ -305,18 +357,57 @@ impl LogEvent {
             .unwrap_or_else(|| field.canonical_name())
     }
 
-    /// Lấy giá trị chuỗi (Zero-Alloc Cow) của bất kỳ trường chuẩn hay custom nào
+    /// Trả về cặp (key, value) thực tế trong `fields` tương ứng với trường chuẩn (nếu có)
+    pub fn raw_field_for_standard(
+        &self,
+        field: StandardField,
+    ) -> Option<(&str, &serde_json::Value)> {
+        self.fields
+            .iter()
+            .find(|(k, _)| StandardField::from_alias(k) == Some(field))
+            .map(|(k, v)| (k.as_str(), v))
+    }
+
+    /// Lấy giá trị chuỗi (Zero-Alloc Cow) của bất kỳ trường chuẩn hay custom nào:
+    /// 1. Nếu `field_name` khớp chính xác một key trong `self.fields`: trả về giá trị thực tế của trường đó.
+    /// 2. Nếu không có key chính xác nhưng `field_name` là trường chuẩn hoặc alias của trường chuẩn:
+    ///    - Ưu tiên tìm trường tương ứng thực tế trong `self.fields` (ví dụ: cột là "level" nhưng log có "lvl: warning" -> trả về "warning").
+    ///    - Nếu log không chứa trường đó trong `fields` (ví dụ: plain text log), fallback về giá trị chuẩn hóa trong struct (`self.timestamp`, `self.message`, `self.id`).
     pub fn get_field_cow<'a>(&'a self, field_name: &str) -> Option<Cow<'a, str>> {
-        if let Some(std_field) = StandardField::from_alias(field_name) {
-            match std_field {
-                StandardField::Timestamp => Some(Cow::Borrowed(&self.timestamp)),
-                StandardField::Level => Some(Cow::Borrowed(self.level.as_str())),
-                StandardField::Message => Some(Cow::Borrowed(&self.message)),
-                StandardField::Id => Some(Cow::Owned(self.id.to_string())),
-            }
-        } else {
-            self.fields.get(field_name).map(value_to_cow)
+        // 1. Kiểm tra trực tiếp key trong fields (O(1) lookup)
+        if let Some(v) = self.fields.get(field_name) {
+            return Some(value_to_cow(v));
         }
+
+        // 2. Nếu không có key chính xác, kiểm tra xem có phải alias của trường chuẩn không
+        if let Some(std_field) = StandardField::from_alias(field_name) {
+            // Tìm xem trong fields có key nào khác là alias của std_field không
+            if let Some((_, v)) = self.raw_field_for_standard(std_field) {
+                return Some(value_to_cow(v));
+            }
+
+            // Fallback về trường chuẩn hóa trong struct nếu fields không có
+            return match std_field {
+                StandardField::Timestamp => {
+                    if !self.timestamp.is_empty() {
+                        Some(Cow::Borrowed(&self.timestamp))
+                    } else {
+                        None
+                    }
+                }
+                StandardField::Message => {
+                    if !self.message.is_empty() {
+                        Some(Cow::Borrowed(&self.message))
+                    } else {
+                        None
+                    }
+                }
+                StandardField::Id => Some(Cow::Owned(self.id.to_string())),
+                _ => None,
+            };
+        }
+
+        None
     }
 
     /// Lấy giá trị số (f64) phục vụ lọc số và thời gian
@@ -350,7 +441,6 @@ impl LogEvent {
     /// Tìm kiếm Text tự do trên toàn bộ bản ghi log (Canonical Full-Text Search)
     pub fn matches_text(&self, needle: &str) -> bool {
         uwu_core_util::contains_ignore_case(&self.message, needle)
-            || uwu_core_util::contains_ignore_case(self.level.as_str(), needle)
             || uwu_core_util::contains_ignore_case(&self.timestamp, needle)
             || self.fields.values().any(|v| match v {
                 serde_json::Value::String(s) => uwu_core_util::contains_ignore_case(s, needle),
@@ -385,51 +475,66 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_log_level_parse_all_variants() {
-        assert_eq!(LogLevel::parse_str("TRACE"), LogLevel::Trace);
-        assert_eq!(LogLevel::parse_str("trc"), LogLevel::Trace);
-        assert_eq!(LogLevel::parse_str("VERBOSE"), LogLevel::Trace);
-        assert_eq!(LogLevel::parse_str("DEBUG"), LogLevel::Debug);
-        assert_eq!(LogLevel::parse_str("dbg"), LogLevel::Debug);
-        assert_eq!(LogLevel::parse_str("INFO"), LogLevel::Info);
-        assert_eq!(LogLevel::parse_str("inf"), LogLevel::Info);
-        assert_eq!(LogLevel::parse_str("INFORMATION"), LogLevel::Info);
-        assert_eq!(LogLevel::parse_str("Notice"), LogLevel::Info);
-        assert_eq!(LogLevel::parse_str("WARN"), LogLevel::Warn);
-        assert_eq!(LogLevel::parse_str("warning"), LogLevel::Warn);
-        assert_eq!(LogLevel::parse_str("wrn"), LogLevel::Warn);
-        assert_eq!(LogLevel::parse_str("ERROR"), LogLevel::Error);
-        assert_eq!(LogLevel::parse_str("err"), LogLevel::Error);
-        assert_eq!(LogLevel::parse_str("CRITICAL"), LogLevel::Error);
-        assert_eq!(LogLevel::parse_str("crit"), LogLevel::Error);
-        assert_eq!(LogLevel::parse_str("FATAL"), LogLevel::Fatal);
-        assert_eq!(LogLevel::parse_str("ftl"), LogLevel::Fatal);
-        assert_eq!(LogLevel::parse_str("EMERG"), LogLevel::Fatal);
-        assert_eq!(LogLevel::parse_str("emergency"), LogLevel::Fatal);
-        assert_eq!(LogLevel::parse_str("ALERT"), LogLevel::Fatal);
-        assert_eq!(LogLevel::parse_str("CUSTOM_LEVEL"), LogLevel::Unknown);
-        assert_eq!(LogLevel::parse_str(""), LogLevel::Unknown);
+    fn test_log_color_classification_strings() {
+        assert_eq!(LogColor::from_severity_str("ERROR"), LogColor::Red);
+        assert_eq!(LogColor::from_severity_str("err"), LogColor::Red);
+        assert_eq!(LogColor::from_severity_str("CRITICAL"), LogColor::Red);
+        assert_eq!(LogColor::from_severity_str("fatal"), LogColor::Red);
+        assert_eq!(LogColor::from_severity_str("panic"), LogColor::Red);
+        assert_eq!(LogColor::from_severity_str("fail"), LogColor::Red);
+        assert_eq!(LogColor::from_severity_str("red"), LogColor::Red);
+
+        assert_eq!(LogColor::from_severity_str("WARN"), LogColor::Yellow);
+        assert_eq!(LogColor::from_severity_str("warning"), LogColor::Yellow);
+        assert_eq!(LogColor::from_severity_str("wrn"), LogColor::Yellow);
+
+        assert_eq!(LogColor::from_severity_str("INFO"), LogColor::Green);
+        assert_eq!(LogColor::from_severity_str("information"), LogColor::Green);
+        assert_eq!(LogColor::from_severity_str("success"), LogColor::Green);
+        assert_eq!(LogColor::from_severity_str("ok"), LogColor::Green);
+
+        assert_eq!(LogColor::from_severity_str("NOTICE"), LogColor::Blue);
+        assert_eq!(LogColor::from_severity_str("audit"), LogColor::Blue);
+
+        assert_eq!(LogColor::from_severity_str("DEBUG"), LogColor::Cyan);
+        assert_eq!(LogColor::from_severity_str("dbg"), LogColor::Cyan);
+
+        assert_eq!(LogColor::from_severity_str("TRACE"), LogColor::Gray);
+        assert_eq!(LogColor::from_severity_str("verbose"), LogColor::Gray);
+        assert_eq!(LogColor::from_severity_str("silly"), LogColor::Gray);
+
+        assert_eq!(LogColor::from_severity_str("CUSTOM"), LogColor::Default);
+        assert_eq!(LogColor::from_severity_str(""), LogColor::Default);
     }
 
     #[test]
-    fn test_log_level_display() {
-        assert_eq!(LogLevel::Trace.to_string(), "TRACE");
-        assert_eq!(LogLevel::Debug.to_string(), "DEBUG");
-        assert_eq!(LogLevel::Info.to_string(), "INFO");
-        assert_eq!(LogLevel::Warn.to_string(), "WARN");
-        assert_eq!(LogLevel::Error.to_string(), "ERROR");
-        assert_eq!(LogLevel::Fatal.to_string(), "FATAL");
-        assert_eq!(LogLevel::Unknown.to_string(), "UNKNOWN");
-    }
+    fn test_log_color_classification_numbers() {
+        // Bunyan / Pino
+        assert_eq!(LogColor::from_number(60), LogColor::Red);
+        assert_eq!(LogColor::from_number(50), LogColor::Red);
+        assert_eq!(LogColor::from_number(40), LogColor::Yellow);
+        assert_eq!(LogColor::from_number(30), LogColor::Green);
+        assert_eq!(LogColor::from_number(20), LogColor::Cyan);
+        assert_eq!(LogColor::from_number(10), LogColor::Gray);
 
-    #[test]
-    fn test_log_level_ordering() {
-        assert!(LogLevel::Unknown < LogLevel::Trace);
-        assert!(LogLevel::Trace < LogLevel::Debug);
-        assert!(LogLevel::Debug < LogLevel::Info);
-        assert!(LogLevel::Info < LogLevel::Warn);
-        assert!(LogLevel::Warn < LogLevel::Error);
-        assert!(LogLevel::Error < LogLevel::Fatal);
+        // Syslog
+        assert_eq!(LogColor::from_number(3), LogColor::Red);
+        assert_eq!(LogColor::from_number(4), LogColor::Yellow);
+        assert_eq!(LogColor::from_number(5), LogColor::Blue);
+        assert_eq!(LogColor::from_number(6), LogColor::Green);
+        assert_eq!(LogColor::from_number(7), LogColor::Cyan);
+
+        // HTTP status codes
+        assert_eq!(LogColor::from_number(500), LogColor::Red);
+        assert_eq!(LogColor::from_number(404), LogColor::Yellow);
+        assert_eq!(LogColor::from_number(200), LogColor::Green);
+        assert_eq!(LogColor::from_number(304), LogColor::Cyan);
+
+        // Stringified numbers
+        assert_eq!(LogColor::from_severity_str("50"), LogColor::Red);
+        assert_eq!(LogColor::from_severity_str("40"), LogColor::Yellow);
+        assert_eq!(LogColor::from_severity_str("30"), LogColor::Green);
+        assert_eq!(LogColor::from_severity_str("10"), LogColor::Gray);
     }
 
     #[test]
@@ -478,14 +583,13 @@ mod tests {
 
         let event = LogEvent::new(
             "2026-08-20T10:00:00Z",
-            LogLevel::Error,
+            LogColor::Red,
             "Something failed badly",
             fields,
         );
 
         // Access via alias
         assert_eq!(event.get_field_cow("ts").unwrap(), "2026-08-20T10:00:00Z");
-        assert_eq!(event.get_field_cow("lvl").unwrap(), "ERROR");
         assert_eq!(
             event.get_field_cow("msg").unwrap(),
             "Something failed badly"
@@ -501,7 +605,6 @@ mod tests {
 
         // Full text search
         assert!(event.matches_text("failed"));
-        assert!(event.matches_text("error"));
         assert!(event.matches_text("u99"));
         assert!(!event.matches_text("non_existent_text"));
     }
@@ -608,7 +711,7 @@ mod tests {
             serde_json::json!("eu-central-cluster-a"),
         );
 
-        let event = LogEvent::new("2026-09-07T11:47:52+07:00", LogLevel::Info, "test", fields);
+        let event = LogEvent::new("2026-09-07T11:47:52+07:00", LogColor::Green, "test", fields);
         let raw = event.raw_display();
         let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
 
@@ -622,7 +725,7 @@ mod tests {
 
     #[test]
     fn test_raw_display_plain_text() {
-        let event = LogEvent::new("", LogLevel::Unknown, "plain message text", HashMap::new());
+        let event = LogEvent::new("", LogColor::Default, "plain message text", HashMap::new());
         assert_eq!(event.raw_display(), "plain message text");
     }
 
@@ -635,11 +738,87 @@ mod tests {
             serde_json::json!("i-7e5c5d"),
         );
 
-        let event = LogEvent::new("2026-09-07T11:47:52+07:00", LogLevel::Info, "test", fields);
+        let event = LogEvent::new("2026-09-07T11:47:52+07:00", LogColor::Green, "test", fields);
         let beauty = event.beauty_display();
         assert!(beauty.contains('\n'));
         assert!(beauty.contains("\"status\": 201"));
         assert!(beauty.contains("\"metadata\": {"));
         assert!(beauty.contains("\"instance_id\": \"i-7e5c5d\""));
+    }
+
+    #[test]
+    fn test_raw_display_preserves_raw_data_and_types() {
+        let mut fields = HashMap::new();
+        fields.insert("status".to_string(), serde_json::json!(500));
+        fields.insert("level".to_string(), serde_json::json!(30));
+
+        let event = LogEvent::new(
+            "2026-09-07T11:47:52+07:00",
+            LogColor::Red,
+            "error occurred",
+            fields,
+        );
+        let raw = event.raw_display();
+        let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(parsed["level"], 30);
+        assert_eq!(parsed["status"], 500);
+
+        let mut fields_alias = HashMap::new();
+        fields_alias.insert("lvl".to_string(), serde_json::json!("notice"));
+        let event_alias = LogEvent::new(
+            "2026-09-07T11:47:52+07:00",
+            LogColor::Green,
+            "ok",
+            fields_alias,
+        );
+        let raw_alias = event_alias.raw_display();
+        let parsed_alias: serde_json::Value = serde_json::from_str(&raw_alias).unwrap();
+        assert_eq!(parsed_alias["lvl"], "notice");
+    }
+
+    #[test]
+    fn test_get_field_cow_hierarchical_resolution() {
+        let mut fields = HashMap::new();
+        fields.insert("lvl".to_string(), serde_json::json!("warning"));
+        fields.insert("ts".to_string(), serde_json::json!("1724140800"));
+        fields.insert("user_id".to_string(), serde_json::json!(42));
+
+        let event = LogEvent::new("1724140800", LogColor::Yellow, "test msg", fields);
+
+        assert_eq!(event.get_field_cow("lvl").unwrap(), "warning");
+        assert_eq!(event.get_field_cow("user_id").unwrap(), "42");
+        assert_eq!(event.get_field_cow("level").unwrap(), "warning");
+        assert_eq!(event.get_field_cow("timestamp").unwrap(), "1724140800");
+        assert_eq!(event.get_field_cow("message").unwrap(), "test msg");
+
+        let plain_event = LogEvent::new("2026-09-11", LogColor::Red, "fatal error", HashMap::new());
+        assert_eq!(
+            plain_event.get_field_cow("timestamp").unwrap(),
+            "2026-09-11"
+        );
+        assert_eq!(plain_event.get_field_cow("message").unwrap(), "fatal error");
+    }
+
+    #[test]
+    fn test_log_color_parsing() {
+        assert_eq!(LogColor::from_severity_str("10"), LogColor::Gray);
+        assert_eq!(LogColor::from_severity_str("20"), LogColor::Cyan);
+        assert_eq!(LogColor::from_severity_str("30"), LogColor::Green);
+        assert_eq!(LogColor::from_severity_str("40"), LogColor::Yellow);
+        assert_eq!(LogColor::from_severity_str("50"), LogColor::Red);
+        assert_eq!(LogColor::from_severity_str("60"), LogColor::Red);
+        assert_eq!(LogColor::from_severity_str("WARN"), LogColor::Yellow);
+        assert_eq!(LogColor::from_severity_str("ERROR"), LogColor::Red);
+        assert_eq!(LogColor::from_severity_str("DEBUG"), LogColor::Cyan);
+
+        assert_eq!(
+            LogColor::from_value(&serde_json::json!(30)),
+            LogColor::Green
+        );
+        assert_eq!(LogColor::from_value(&serde_json::json!(50)), LogColor::Red);
+        assert_eq!(
+            LogColor::from_value(&serde_json::json!("NOTICE")),
+            LogColor::Blue
+        );
     }
 }

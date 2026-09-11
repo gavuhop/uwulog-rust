@@ -4,7 +4,7 @@ use std::io::Write;
 use std::sync::Arc;
 use std::time::Duration;
 use uwu_core_engine::SystemEngine;
-use uwu_core_schema::LogLevel;
+use uwu_core_schema::LogColor;
 use uwu_driver_sources::{FileSource, ProcessSource};
 
 #[tokio::test]
@@ -60,7 +60,8 @@ async fn test_full_pipeline_multi_source_and_parallel_filter() {
     // 4. Test parallel filtering
     let (err_count, err_logs) = engine.search_with_count("level:error", 10);
     assert_eq!(err_count, 1);
-    assert_eq!(err_logs[0].level, LogLevel::Error);
+    assert_eq!(err_logs[0].color, LogColor::Red);
+    assert_eq!(err_logs[0].get_field_cow("level").as_deref(), Some("ERROR"));
     assert_eq!(
         err_logs[0].fields.get("db_port").unwrap(),
         &serde_json::json!(5432)

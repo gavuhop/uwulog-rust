@@ -2,12 +2,12 @@ use super::evaluator::eval_event;
 use super::parser::parse_query;
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use uwu_core_schema::{LogEvent, LogLevel};
+use uwu_core_schema::{LogColor, LogEvent};
 use uwu_core_util::parse_numeric_value;
 
 fn val_to_log_event(v: &Value) -> LogEvent {
     let mut fields = HashMap::new();
-    let mut level = LogLevel::Unknown;
+    let mut color = LogColor::Default;
     let mut timestamp = String::new();
     let mut message = String::new();
 
@@ -17,9 +17,7 @@ fn val_to_log_event(v: &Value) -> LogEvent {
             if let Some(std_field) = uwu_core_schema::StandardField::from_alias(k) {
                 match std_field {
                     uwu_core_schema::StandardField::Level => {
-                        if let Some(s) = val.as_str() {
-                            level = LogLevel::parse_str(s);
-                        }
+                        color = LogColor::from_value(val);
                     }
                     uwu_core_schema::StandardField::Timestamp => {
                         if let Some(s) = val.as_str() {
@@ -39,7 +37,7 @@ fn val_to_log_event(v: &Value) -> LogEvent {
         }
     }
 
-    LogEvent::new(timestamp, level, message, fields)
+    LogEvent::new(timestamp, color, message, fields)
 }
 
 fn filter_logs(logs_val: Vec<Value>, query: String) -> Vec<u32> {
@@ -478,7 +476,7 @@ fn test_relative_now_and_sub_millisecond_floats() {
     // 2. Test sub-millisecond float precision without epsilon 0.0001
     let mut log_item = LogEvent::new(
         "2026-08-23T10:00:00Z",
-        LogLevel::Info,
+        LogColor::Green,
         "Sub-ms latency test",
         HashMap::new(),
     );
@@ -495,7 +493,7 @@ fn test_relative_now_and_sub_millisecond_floats() {
     // 3. Test quoted minus literal preservation vs negated quoted string
     let log_neg_val = LogEvent::new(
         "2026-08-23T10:00:00Z",
-        LogLevel::Info,
+        LogColor::Green,
         "Offset is -500ms between clocks",
         HashMap::new(),
     );
@@ -508,7 +506,7 @@ fn test_relative_now_and_sub_millisecond_floats() {
     // 4. Test URL matching without quotes
     let log_url = LogEvent::new(
         "2026-08-23T10:00:00Z",
-        LogLevel::Info,
+        LogColor::Green,
         "Request to https://api.service.io/v1/health status=200",
         HashMap::new(),
     );
@@ -521,7 +519,7 @@ fn test_escaped_quotes_and_nested_quotes_query() {
     let now = 1755940000.0;
     let log_event = LogEvent::new(
         "2026-08-23T10:00:00Z",
-        LogLevel::Error,
+        LogColor::Red,
         "Failed to \"validate\" payment token",
         HashMap::new(),
     );

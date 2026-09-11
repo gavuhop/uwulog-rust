@@ -949,7 +949,7 @@ mod tests {
     use super::*;
     use crate::ui::autocomplete::{SuggestionItem, SuggestionKind};
     use std::collections::HashMap;
-    use uwu_core_schema::{LogEvent, LogLevel, RawLogEntry, RawPayload};
+    use uwu_core_schema::{LogColor, LogEvent, RawLogEntry, RawPayload};
 
     fn create_test_app() -> UwuGuiApp {
         let rt = tokio::runtime::Handle::current();
@@ -1139,7 +1139,7 @@ mod tests {
         let mut app = create_test_app();
         let log = LogEvent::new(
             "2026-08-20T10:00:00Z",
-            LogLevel::Info,
+            LogColor::Green,
             "msg",
             HashMap::from([("custom_field".to_string(), serde_json::json!("val"))]),
         );
@@ -1566,7 +1566,7 @@ mod tests {
 
         let event = LogEvent::new(
             "2026-08-20T10:00:00Z",
-            uwu_core_schema::LogLevel::Info,
+            uwu_core_schema::LogColor::Green,
             "test message",
             std::collections::HashMap::new(),
         );
@@ -1666,8 +1666,13 @@ mod tests {
         let mut app = create_test_app();
 
         // 1. When selected_log is present
-        let test_log = LogEvent::new("2026-09-10 12:00:00", LogLevel::Info, "msg", HashMap::new())
-            .with_id(123);
+        let test_log = LogEvent::new(
+            "2026-09-10 12:00:00",
+            LogColor::Green,
+            "msg",
+            HashMap::new(),
+        )
+        .with_id(123);
         app.selected_log = Some(test_log);
         assert!(app.selected_log.is_some());
 

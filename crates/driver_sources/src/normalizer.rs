@@ -1,8 +1,8 @@
-use uwu_core_schema::{LogEvent, LogFields, LogLevel, RawLogEntry, RawPayload};
+use uwu_core_schema::{LogColor, LogEvent, LogFields, RawLogEntry, RawPayload};
 use uwu_core_util::strip_ansi;
 
 struct DetectedSemanticFields {
-    level: LogLevel,
+    color: LogColor,
     timestamp: String,
     message: String,
 }
@@ -31,7 +31,8 @@ impl LogNormalizer {
                     std::borrow::Cow::Borrowed(_) => s,
                     std::borrow::Cow::Owned(owned) => owned,
                 };
-                LogEvent::new(String::new(), LogLevel::Unknown, message, LogFields::new())
+
+                LogEvent::new(String::new(), LogColor::Default, message, LogFields::new())
             }
             RawPayload::KeyValue(kv) => {
                 let fields: LogFields = kv
@@ -40,7 +41,7 @@ impl LogNormalizer {
                     .collect();
                 let detected = Self::detect_semantic_fields(&fields);
 
-                LogEvent::new(detected.timestamp, detected.level, detected.message, fields)
+                LogEvent::new(detected.timestamp, detected.color, detected.message, fields)
             }
         }
     }
@@ -86,14 +87,10 @@ impl LogNormalizer {
             }
         }
 
-        let level = if let Some(val) = level_val {
-            if let Some(s) = val.as_str() {
-                LogLevel::parse_str(s)
-            } else {
-                LogLevel::parse_str(&val.to_string())
-            }
+        let color = if let Some(val) = level_val {
+            LogColor::from_value(val)
         } else {
-            LogLevel::Unknown
+            LogColor::Default
         };
 
         let timestamp = if let Some(val) = timestamp_val {
@@ -117,7 +114,7 @@ impl LogNormalizer {
         };
 
         DetectedSemanticFields {
-            level,
+            color,
             timestamp,
             message,
         }
@@ -129,7 +126,7 @@ impl LogNormalizer {
         fields.shrink_to_fit();
         let detected = Self::detect_semantic_fields(&fields);
 
-        LogEvent::new(detected.timestamp, detected.level, detected.message, fields)
+        LogEvent::new(detected.timestamp, detected.color, detected.message, fields)
     }
 }
 
@@ -152,8 +149,12 @@ mod tests {
         };
 
         let event = LogNormalizer::normalize(entry);
-        assert_eq!(event.level, LogLevel::Error);
+        assert_eq!(event.color, LogColor::Red);
         assert_eq!(event.message, "Database connection lost");
+        assert_eq!(
+            event.fields.get("level").unwrap(),
+            &serde_json::json!("ERROR")
+        );
         assert_eq!(event.fields.get("db_id").unwrap(), &serde_json::json!(42));
         assert_eq!(event.timestamp, "2026-08-14T10:00:00Z");
     }
@@ -166,7 +167,7 @@ mod tests {
         };
 
         let event = LogNormalizer::normalize(entry);
-        assert_eq!(event.level, LogLevel::Unknown);
+        assert_eq!(event.color, LogColor::Default);
         assert_eq!(event.message, text);
         assert_eq!(event.timestamp, "");
     }
@@ -184,6 +185,7 @@ mod tests {
         };
         let event = LogNormalizer::normalize(entry);
         assert_eq!(event.timestamp, custom_ts);
+        assert_eq!(event.color, LogColor::Green);
     }
 
     #[test]
@@ -205,7 +207,7 @@ mod tests {
         };
 
         let event = LogNormalizer::normalize(entry);
-        assert_eq!(event.level, LogLevel::Warn);
+        assert_eq!(event.color, LogColor::Yellow);
         assert_eq!(
             event.fields.get("metadata.system.env").unwrap(),
             &serde_json::json!("production")
@@ -237,6 +239,7 @@ mod tests {
 
         let event = LogNormalizer::normalize(entry);
         assert_eq!(event.message, "Service started");
+        assert_eq!(event.color, LogColor::Green);
     }
 
     #[test]
@@ -253,9 +256,10 @@ mod tests {
         };
 
         let event = LogNormalizer::normalize(entry);
-        assert_eq!(event.level, LogLevel::Error);
+        assert_eq!(event.color, LogColor::Red);
         assert_eq!(event.message, "Fatal storage error");
         assert_eq!(event.timestamp, "1724140800");
+        assert_eq!(event.fields.get("lvl").unwrap(), &serde_json::json!("CRIT"));
 
         // Test alias severity + text + @timestamp
         let json_payload2 = serde_json::json!({
@@ -267,9 +271,13 @@ mod tests {
         let event2 = LogNormalizer::normalize(RawLogEntry {
             payload: RawPayload::Json(json_payload2),
         });
-        assert_eq!(event2.level, LogLevel::Warn);
+        assert_eq!(event2.color, LogColor::Yellow);
         assert_eq!(event2.message, "High CPU");
         assert_eq!(event2.timestamp, "2026-08-20T10:00:00Z");
+        assert_eq!(
+            event2.fields.get("severity").unwrap(),
+            &serde_json::json!("WARNING")
+        );
 
         // Test custom fields when no message field
         let json_payload3 = serde_json::json!({
@@ -287,8 +295,54 @@ mod tests {
         let event = LogNormalizer::normalize(RawLogEntry {
             payload: RawPayload::Text(json_text.to_string()),
         });
-        assert_eq!(event.level, LogLevel::Warn);
+        assert_eq!(event.color, LogColor::Yellow);
         assert_eq!(event.message, "Low disk space");
         assert_eq!(event.fields.get("free_mb").unwrap(), &serde_json::json!(50));
+    }
+
+    #[test]
+    fn test_normalize_diverse_level_keys_and_values() {
+        // 1. Python / Logback loglevel / log_level keys
+        let event_py = LogNormalizer::normalize(RawLogEntry {
+            payload: RawPayload::Json(serde_json::json!({
+                "log_level": "DEBUG",
+                "message": "Checking cache"
+            })),
+        });
+        assert_eq!(event_py.color, LogColor::Cyan);
+
+        let event_trace = LogNormalizer::normalize(RawLogEntry {
+            payload: RawPayload::Json(serde_json::json!({
+                "loglevel": "TRACE",
+                "message": "Packet dump"
+            })),
+        });
+        assert_eq!(event_trace.color, LogColor::Gray);
+
+        // 2. Syslog notice & Bunyan numeric
+        let event_notice = LogNormalizer::normalize(RawLogEntry {
+            payload: RawPayload::Json(serde_json::json!({
+                "priority": "NOTICE",
+                "message": "Security policy loaded"
+            })),
+        });
+        assert_eq!(event_notice.color, LogColor::Blue);
+
+        let event_bunyan = LogNormalizer::normalize(RawLogEntry {
+            payload: RawPayload::Json(serde_json::json!({
+                "lvl": 50,
+                "msg": "Fatal storage error"
+            })),
+        });
+        assert_eq!(event_bunyan.color, LogColor::Red);
+
+        // 3. Without a level key, color is Default (no message prefix guessing)
+        let event_no_level = LogNormalizer::normalize(RawLogEntry {
+            payload: RawPayload::Json(serde_json::json!({
+                "message": "[ERROR] Payment gateway unreachable",
+                "attempt": 3
+            })),
+        });
+        assert_eq!(event_no_level.color, LogColor::Default);
     }
 }
