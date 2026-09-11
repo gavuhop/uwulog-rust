@@ -1,8 +1,7 @@
 //! High-performance Synthetic Log Generator for uwulog-rust Benchmarking
 
 use chrono::Utc;
-use std::collections::HashMap;
-use uwu_core_schema::{LogEvent, LogLevel, RawLogEntry, RawPayload};
+use uwu_core_schema::{LogEvent, LogFields, LogLevel, RawLogEntry, RawPayload};
 
 pub struct SyntheticLogGenerator {
     state: u64,
@@ -90,19 +89,13 @@ impl SyntheticLogGenerator {
                 .unwrap_or_else(Utc::now)
                 .to_rfc3339();
 
-            let mut fields = HashMap::with_capacity(6);
+            let mut fields = LogFields::with_capacity(5);
+            fields.insert("tag", serde_json::Value::String(tag.to_string()));
+            fields.insert("source", serde_json::Value::String(source.to_string()));
+            fields.insert("latency", serde_json::json!(latency));
+            fields.insert("duration", serde_json::json!(duration));
             fields.insert(
-                "tag".to_string(),
-                serde_json::Value::String(tag.to_string()),
-            );
-            fields.insert(
-                "source".to_string(),
-                serde_json::Value::String(source.to_string()),
-            );
-            fields.insert("latency".to_string(), serde_json::json!(latency));
-            fields.insert("duration".to_string(), serde_json::json!(duration));
-            fields.insert(
-                "req_id".to_string(),
+                "req_id",
                 serde_json::json!(format!("req_{:06}", i % 100000)),
             );
 

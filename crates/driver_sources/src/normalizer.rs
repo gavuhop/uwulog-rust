@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-use uwu_core_schema::{LogEvent, LogLevel, RawLogEntry, RawPayload};
+use uwu_core_schema::{LogEvent, LogFields, LogLevel, RawLogEntry, RawPayload};
 use uwu_core_util::strip_ansi;
 
 struct DetectedSemanticFields {
@@ -32,10 +31,10 @@ impl LogNormalizer {
                     std::borrow::Cow::Borrowed(_) => s,
                     std::borrow::Cow::Owned(owned) => owned,
                 };
-                LogEvent::new(String::new(), LogLevel::Unknown, message, HashMap::new())
+                LogEvent::new(String::new(), LogLevel::Unknown, message, LogFields::new())
             }
             RawPayload::KeyValue(kv) => {
-                let fields: HashMap<String, serde_json::Value> = kv
+                let fields: LogFields = kv
                     .into_iter()
                     .map(|(k, v)| (k, serde_json::Value::String(v)))
                     .collect();
@@ -46,11 +45,7 @@ impl LogNormalizer {
         }
     }
 
-    fn flatten_json_value(
-        prefix: &str,
-        v: &serde_json::Value,
-        out: &mut HashMap<String, serde_json::Value>,
-    ) {
+    fn flatten_json_value(prefix: &str, v: &serde_json::Value, out: &mut LogFields) {
         if let Some(obj) = v.as_object() {
             for (k, child_val) in obj {
                 let full_key = if prefix.is_empty() {
@@ -68,9 +63,7 @@ impl LogNormalizer {
         }
     }
 
-    fn detect_semantic_fields(
-        fields: &HashMap<String, serde_json::Value>,
-    ) -> DetectedSemanticFields {
+    fn detect_semantic_fields(fields: &LogFields) -> DetectedSemanticFields {
         let mut timestamp_val = None;
         let mut level_val = None;
         let mut message_val = None;
@@ -131,8 +124,9 @@ impl LogNormalizer {
     }
 
     fn normalize_json(v: &serde_json::Value) -> LogEvent {
-        let mut fields = HashMap::new();
+        let mut fields = LogFields::new();
         Self::flatten_json_value("", v, &mut fields);
+        fields.shrink_to_fit();
         let detected = Self::detect_semantic_fields(&fields);
 
         LogEvent::new(detected.timestamp, detected.level, detected.message, fields)
@@ -142,6 +136,7 @@ impl LogNormalizer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     #[test]
     fn test_normalize_json() {

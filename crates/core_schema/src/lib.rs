@@ -3,6 +3,9 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+pub mod fields;
+pub use fields::{Iter, IterMut, Keys, LogFields, Values};
+
 /// Cấp độ log chuẩn hóa
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum LogLevel {
@@ -213,9 +216,11 @@ pub fn unflatten_json_ordered<'a>(
     serde_json::Value::Object(root)
 }
 
-/// Chuyển đổi một HashMap có chứa các key dạng dot-notation ("a.b.c") về cấu trúc JSON lồng nhau (nested JSON object)
+/// Chuyển đổi một tập hợp các trường có chứa các key dạng dot-notation ("a.b.c") về cấu trúc JSON lồng nhau (nested JSON object)
 /// Tự động gom nhóm các trường cùng cụm theo thứ tự xuất hiện tự nhiên
-pub fn unflatten_json(fields: &HashMap<String, serde_json::Value>) -> serde_json::Value {
+pub fn unflatten_json<'a>(
+    fields: impl IntoIterator<Item = (&'a String, &'a serde_json::Value)>,
+) -> serde_json::Value {
     let clustered = cluster_fields(fields);
     unflatten_json_ordered(clustered.into_iter().map(|(k, v)| (k.as_str(), v)))
 }
@@ -241,7 +246,7 @@ pub struct LogEvent {
     pub timestamp_secs: Option<f64>,
     pub level: LogLevel,
     pub message: String,
-    pub fields: HashMap<String, serde_json::Value>,
+    pub fields: LogFields,
 }
 
 impl LogEvent {
@@ -249,7 +254,7 @@ impl LogEvent {
         timestamp: impl Into<String>,
         level: LogLevel,
         message: impl Into<String>,
-        fields: HashMap<String, serde_json::Value>,
+        fields: impl Into<LogFields>,
     ) -> Self {
         let ts_str = timestamp.into();
         let timestamp_secs = uwu_core_util::parse_iso_to_secs(&ts_str);
@@ -259,7 +264,7 @@ impl LogEvent {
             timestamp_secs,
             level,
             message: message.into(),
-            fields,
+            fields: fields.into(),
         }
     }
 
