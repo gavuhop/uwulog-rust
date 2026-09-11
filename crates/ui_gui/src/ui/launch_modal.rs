@@ -46,7 +46,7 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
                     .show(ui, |ui| {
                         ui.add(
                             egui::Label::new(
-                                egui::RichText::new("RingBuffer Capacity (-cap):")
+                                egui::RichText::new("RingBuffer Capacity (-C / --capacity):")
                                     .color(theme::TEXT_MUTED),
                             )
                             .wrap_mode(egui::TextWrapMode::Extend),

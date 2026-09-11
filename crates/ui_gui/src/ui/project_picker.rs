@@ -206,16 +206,13 @@ pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, tri
                             if search_filter.is_empty() {
                                 true
                             } else {
-                                let (name, remote_info, dir) = match &ws.location {
-                                    WorkspaceLocation::Remote(remote) => (
-                                        ws.name.as_str(),
-                                        remote.display_name(),
-                                        remote.working_dir(),
-                                    ),
-                                    WorkspaceLocation::Local { working_dir } => {
-                                        (ws.name.as_str(), "", working_dir.as_str())
-                                    }
-                                };
+                                let name = ws.name.as_str();
+                                let remote_info = ws
+                                    .location
+                                    .as_remote()
+                                    .map(|r| r.display_name())
+                                    .unwrap_or("");
+                                let dir = ws.location.working_dir();
                                 name.to_lowercase().contains(&search_filter)
                                     || remote_info.to_lowercase().contains(&search_filter)
                                     || dir.to_lowercase().contains(&search_filter)
@@ -367,9 +364,7 @@ pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, tri
 
             let ws = Workspace::new(
                 folder_name,
-                WorkspaceLocation::Local {
-                    working_dir: path_str,
-                },
+                WorkspaceLocation::local(path_str),
                 SourceType::Process,
             );
             app.dispatch_action(AppAction::OpenWorkspace(ws));

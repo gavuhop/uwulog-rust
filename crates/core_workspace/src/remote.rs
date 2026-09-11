@@ -10,15 +10,10 @@ pub enum RemoteConnectionOptions {
 }
 
 impl RemoteConnectionOptions {
-    /// Khởi tạo cấu hình kết nối Remote WSL
-    pub fn wsl(distro: impl Into<String>, working_dir: impl Into<String>) -> Self {
-        Self::Wsl(WslConnectionOptions::new(distro, working_dir))
-    }
-
     /// Khởi tạo cấu hình Remote từ chuỗi target (ví dụ: "wsl:Ubuntu", "Ubuntu") cùng thư mục làm việc
     pub fn parse(target: &str, working_dir: impl Into<String>) -> Self {
         let distro = target.strip_prefix("wsl:").unwrap_or(target);
-        Self::wsl(distro, working_dir)
+        Self::Wsl(WslConnectionOptions::new(distro, working_dir))
     }
 
     /// Tên hiển thị định danh cho remote (ví dụ tên Distro đối với WSL, hoặc Host đối với SSH)
@@ -50,7 +45,8 @@ impl RemoteConnectionOptions {
     }
 
     /// Cập nhật thư mục làm việc trên remote
-    pub fn set_working_dir(&mut self, dir: String) {
+    pub fn set_working_dir(&mut self, dir: impl Into<String>) {
+        let dir = dir.into();
         match self {
             RemoteConnectionOptions::Wsl(opts) => opts.working_dir = dir,
         }
@@ -83,6 +79,12 @@ impl RemoteConnectionOptions {
     }
 }
 
+impl std::fmt::Display for RemoteConnectionOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.summary())
+    }
+}
+
 /// Tùy chọn kết nối WSL (Windows Subsystem for Linux)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WslConnectionOptions {
@@ -104,6 +106,16 @@ impl WslConnectionOptions {
     pub fn with_user(mut self, user: impl Into<String>) -> Self {
         self.user = Some(user.into());
         self
+    }
+}
+
+impl std::fmt::Display for WslConnectionOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if !self.working_dir.is_empty() {
+            write!(f, "{} ({})", self.working_dir, self.distro)
+        } else {
+            write!(f, "WSL ({})", self.distro)
+        }
     }
 }
 

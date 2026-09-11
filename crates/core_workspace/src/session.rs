@@ -110,11 +110,7 @@ impl WorkspaceSession {
             ..Default::default()
         };
 
-        Self::new(
-            name,
-            WorkspaceLocation::Local { working_dir },
-            source_config,
-        )
+        Self::new(name, WorkspaceLocation::local(working_dir), source_config)
     }
 
     pub fn from_workspace(ws: &Workspace, capacity: usize, display_limit: usize) -> Self {
@@ -131,24 +127,20 @@ impl WorkspaceSession {
 
     /// Đồng bộ WorkspaceLocation từ SourceConfig hiện tại
     pub fn sync_location(&mut self) {
-        match &mut self.location {
-            WorkspaceLocation::Remote(remote) => {
-                if !self.source_config.working_dir.trim().is_empty() {
-                    remote.set_working_dir(self.source_config.working_dir.clone());
-                }
-            }
-            WorkspaceLocation::Local { working_dir } => {
-                let dir = if !self.source_config.working_dir.trim().is_empty() {
-                    self.source_config.working_dir.clone()
-                } else if !working_dir.trim().is_empty() {
-                    working_dir.clone()
-                } else {
-                    std::env::current_dir()
-                        .map(|p| crate::clean_path(&p.to_string_lossy()))
-                        .unwrap_or_default()
-                };
-                *working_dir = dir;
-            }
+        let dir = if !self.source_config.working_dir.trim().is_empty() {
+            self.source_config.working_dir.clone()
+        } else if !self.location.working_dir().trim().is_empty() {
+            self.location.working_dir().to_string()
+        } else if !self.location.is_remote() {
+            std::env::current_dir()
+                .map(|p| crate::clean_path(&p.to_string_lossy()))
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+
+        if !dir.is_empty() {
+            self.location.set_working_dir(dir);
         }
     }
 
@@ -246,16 +238,8 @@ impl WorkspaceSession {
 
                                 let workdir = if !config.working_dir.trim().is_empty() {
                                     Some(config.working_dir.clone())
-                                } else if let WorkspaceLocation::Local { working_dir } =
-                                    &self.location
-                                {
-                                    if !working_dir.trim().is_empty() {
-                                        Some(working_dir.clone())
-                                    } else {
-                                        std::env::current_dir()
-                                            .ok()
-                                            .map(|p| p.to_string_lossy().to_string())
-                                    }
+                                } else if !self.location.working_dir().trim().is_empty() {
+                                    Some(self.location.working_dir().to_string())
                                 } else {
                                     std::env::current_dir()
                                         .ok()
@@ -434,20 +418,19 @@ impl WorkspaceSession {
 
     /// Chuỗi tóm tắt vị trí/nguồn log dùng cho tooltip và picker
     pub fn target_summary(&self) -> String {
-        match &self.location {
-            WorkspaceLocation::Remote(remote) => remote.summary(),
-            WorkspaceLocation::Local { .. } => {
-                let dir = self.effective_working_dir();
-                if !dir.is_empty() {
-                    dir.to_string()
-                } else if !self.source_config.file_path.is_empty() {
-                    self.source_config.file_path.clone()
-                } else if !self.source_config.command_str.is_empty() {
-                    self.source_config.command_str.clone()
-                } else {
-                    String::new()
-                }
+        let dir = self.effective_working_dir();
+        if !dir.is_empty() {
+            if let Some(remote) = self.location.as_remote() {
+                format!("{} ({})", dir, remote.display_name())
+            } else {
+                dir.to_string()
             }
+        } else if !self.source_config.file_path.is_empty() {
+            self.source_config.file_path.clone()
+        } else if !self.source_config.command_str.is_empty() {
+            self.source_config.command_str.clone()
+        } else {
+            self.location.summary()
         }
     }
 }

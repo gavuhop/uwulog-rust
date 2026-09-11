@@ -68,6 +68,29 @@ impl WorkspaceLocation {
         }
     }
 
+    /// Cập nhật thư mục làm việc (áp dụng cho cả Local lẫn Remote)
+    pub fn set_working_dir(&mut self, dir: impl Into<String>) {
+        let dir = dir.into();
+        match self {
+            WorkspaceLocation::Local { working_dir } => *working_dir = dir,
+            WorkspaceLocation::Remote(remote) => remote.set_working_dir(dir),
+        }
+    }
+
+    /// Chuỗi tóm tắt vị trí thư mục làm việc
+    pub fn summary(&self) -> String {
+        match self {
+            WorkspaceLocation::Local { working_dir } => {
+                if !working_dir.is_empty() {
+                    working_dir.clone()
+                } else {
+                    "Local Workspace".to_string()
+                }
+            }
+            WorkspaceLocation::Remote(remote) => remote.summary(),
+        }
+    }
+
     /// Lấy working directory đã được chuẩn hóa để so sánh
     pub fn normalized_dir(&self) -> String {
         normalize_workdir(self.working_dir())
@@ -83,6 +106,12 @@ impl WorkspaceLocation {
             (WorkspaceLocation::Remote(r1), WorkspaceLocation::Remote(r2)) => r1.is_same(r2),
             _ => false,
         }
+    }
+}
+
+impl std::fmt::Display for WorkspaceLocation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.summary())
     }
 }
 
@@ -145,19 +174,14 @@ impl Workspace {
 
     /// Đường dẫn tóm tắt mục tiêu (dùng cho tooltip hoặc subtitle)
     pub fn target_summary(&self) -> String {
-        match &self.location {
-            WorkspaceLocation::Remote(remote) => remote.summary(),
-            WorkspaceLocation::Local { working_dir } => {
-                if !working_dir.is_empty() {
-                    working_dir.clone()
-                } else if !self.file_path.is_empty() {
-                    self.file_path.clone()
-                } else if !self.command_str.is_empty() {
-                    self.command_str.clone()
-                } else {
-                    "Local Workspace".to_string()
-                }
-            }
+        if !self.location.working_dir().is_empty() {
+            self.location.summary()
+        } else if !self.file_path.is_empty() {
+            self.file_path.clone()
+        } else if !self.command_str.is_empty() {
+            self.command_str.clone()
+        } else {
+            self.location.summary()
         }
     }
 }
@@ -263,6 +287,13 @@ impl WorkspaceStore {
             .find(|w| w.location.normalized_dir() == clean_dir)
     }
 
+    /// Tìm workspace theo WorkspaceLocation (so sánh cả Remote/Local và đường dẫn)
+    pub fn find_by_location(&self, location: &WorkspaceLocation) -> Option<&Workspace> {
+        self.recent_workspaces
+            .iter()
+            .find(|w| w.location.is_same(location))
+    }
+
     /// Lấy workspace đang được kích hoạt
     pub fn get_active(&self) -> Option<&Workspace> {
         if let Some(id) = self.active_workspace_id {
@@ -312,7 +343,7 @@ mod tests {
 
         let ws1 = Workspace::new(
             "backend-service",
-            WorkspaceLocation::remote(RemoteConnectionOptions::wsl("Ubuntu", "/home/user/backend")),
+            WorkspaceLocation::remote(WslConnectionOptions::new("Ubuntu", "/home/user/backend")),
             SourceType::Process,
         );
         let id1 = ws1.id;
@@ -324,9 +355,7 @@ mod tests {
 
         let ws2 = Workspace::new(
             "frontend-app",
-            WorkspaceLocation::Local {
-                working_dir: "D:\\Projects\\frontend".to_string(),
-            },
+            WorkspaceLocation::local("D:\\Projects\\frontend"),
             SourceType::Process,
         );
         let id2 = ws2.id;
@@ -344,9 +373,7 @@ mod tests {
         let mut store = WorkspaceStore::default();
         let ws = Workspace::new(
             "uwulog-rust",
-            WorkspaceLocation::Local {
-                working_dir: "D:\\Learn\\Go\\uwulog-rust".to_string(),
-            },
+            WorkspaceLocation::local("D:\\Learn\\Go\\uwulog-rust"),
             SourceType::Process,
         );
         store.add_or_update(ws);
@@ -386,9 +413,7 @@ mod tests {
         // Add second session
         let ws2 = Workspace::new(
             "test-service-2",
-            WorkspaceLocation::Local {
-                working_dir: "D:\\test\\service2".to_string(),
-            },
+            WorkspaceLocation::local("D:\\test\\service2"),
             SourceType::Process,
         );
         let rt = tokio::runtime::Handle::current();
@@ -424,9 +449,7 @@ mod tests {
     fn test_workspace_serde_json_compatibility() {
         let ws = Workspace::new(
             "test-app",
-            WorkspaceLocation::Local {
-                working_dir: "C:\\Projects\\app".to_string(),
-            },
+            WorkspaceLocation::local("C:\\Projects\\app"),
             SourceType::Process,
         );
 
@@ -439,7 +462,7 @@ mod tests {
 
         let wsl_ws = Workspace::new(
             "wsl-app",
-            WorkspaceLocation::remote(RemoteConnectionOptions::wsl("Ubuntu", "/home/user")),
+            WorkspaceLocation::remote(WslConnectionOptions::new("Ubuntu", "/home/user")),
             SourceType::Process,
         );
         let wsl_json = serde_json::to_string(&wsl_ws).unwrap();
@@ -453,20 +476,23 @@ mod tests {
 
     #[tokio::test]
     async fn test_workspace_domain_methods() {
-        let local_ws = Workspace::new(
+        let mut local_ws = Workspace::new(
             "my-app",
-            WorkspaceLocation::Local {
-                working_dir: "C:\\Projects\\app".to_string(),
-            },
+            WorkspaceLocation::local("C:\\Projects\\app"),
             SourceType::Process,
         );
         assert_eq!(local_ws.icon(), "🖥");
         assert_eq!(local_ws.display_label(), "my-app");
         assert_eq!(local_ws.target_summary(), "C:\\Projects\\app");
+        assert!(!local_ws.location.is_remote());
+        assert_eq!(format!("{}", local_ws.location), "C:\\Projects\\app");
 
-        let wsl_ws = Workspace::new(
+        local_ws.location.set_working_dir("C:\\Projects\\app2");
+        assert_eq!(local_ws.location.working_dir(), "C:\\Projects\\app2");
+
+        let mut wsl_ws = Workspace::new(
             "ubuntu-service",
-            WorkspaceLocation::remote(RemoteConnectionOptions::wsl(
+            WorkspaceLocation::remote(WslConnectionOptions::new(
                 "Ubuntu-22.04",
                 "/home/user/service",
             )),
@@ -475,12 +501,18 @@ mod tests {
         assert_eq!(wsl_ws.icon(), "🐧");
         assert_eq!(wsl_ws.display_label(), "ubuntu-service (Ubuntu-22.04)");
         assert_eq!(wsl_ws.target_summary(), "/home/user/service (Ubuntu-22.04)");
+        assert!(wsl_ws.location.is_remote());
+        assert_eq!(
+            format!("{}", wsl_ws.location),
+            "/home/user/service (Ubuntu-22.04)"
+        );
+
+        wsl_ws.location.set_working_dir("/home/user/service2");
+        assert_eq!(wsl_ws.location.working_dir(), "/home/user/service2");
 
         let file_ws = Workspace::new(
             "syslog",
-            WorkspaceLocation::Local {
-                working_dir: "C:\\Logs".to_string(),
-            },
+            WorkspaceLocation::local("C:\\Logs"),
             SourceType::File,
         );
         assert_eq!(file_ws.icon(), "📄");
@@ -493,7 +525,7 @@ mod tests {
         );
         assert_eq!(
             session.target_summary(),
-            "/home/user/service (Ubuntu-22.04)"
+            "/home/user/service2 (Ubuntu-22.04)"
         );
     }
 }

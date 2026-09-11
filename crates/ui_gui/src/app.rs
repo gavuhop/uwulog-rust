@@ -182,145 +182,108 @@ pub struct CliArgs {
     pub trailing_cmd: Vec<String>,
 }
 
-impl UwuGuiApp {
-    pub fn new(cc: &eframe::CreationContext<'_>, rt: Handle) -> Self {
-        crate::ui::theme::apply_theme(&cc.egui_ctx);
-        #[cfg(target_os = "windows")]
-        crate::ui::theme::apply_windows_titlebar_theme(cc);
-
-        let cli = CliArgs::parse();
-        let display_limit = cli.display_limit;
-        let capacity = cli.capacity;
-
-        let mut cmd_to_run = cli.cmd.unwrap_or_default();
-        if cmd_to_run.is_empty() && !cli.trailing_cmd.is_empty() {
-            cmd_to_run = cli.trailing_cmd.join(" ");
+impl CliArgs {
+    /// Phân giải vị trí làm việc và cấu hình nguồn chạy (cmd, file, hoặc thư mục) từ các cờ dòng lệnh
+    pub fn resolve_target(&self) -> (WorkspaceLocation, SourceType, String, String, bool) {
+        let mut cmd = self.cmd.clone().unwrap_or_default();
+        if cmd.is_empty() && !self.trailing_cmd.is_empty() {
+            cmd = self.trailing_cmd.join(" ");
         }
 
-        let mut file_to_read = cli.file.unwrap_or_default();
-        let mut working_dir = cli.working_dir.unwrap_or_default();
+        let mut file = self.file.clone().unwrap_or_default();
+        let mut dir = self.working_dir.clone().unwrap_or_default();
         let mut source_type = SourceType::Process;
-        let mut custom_cmd_or_file_specified = false;
+        let mut has_custom_source = false;
 
-        if !cmd_to_run.is_empty() {
+        if !cmd.is_empty() {
             source_type = SourceType::Process;
-            custom_cmd_or_file_specified = true;
-        } else if !file_to_read.is_empty() {
+            has_custom_source = true;
+        } else if !file.is_empty() {
             source_type = SourceType::File;
-            custom_cmd_or_file_specified = true;
-        } else if let Some(ref path_str) = cli.path {
-            if cli.remote.is_some() {
-                let p = std::path::Path::new(path_str);
-                if p.extension().is_some() {
-                    file_to_read = path_str.clone();
-                    source_type = SourceType::File;
-                    custom_cmd_or_file_specified = true;
-                } else {
-                    working_dir = path_str.clone();
-                }
+            has_custom_source = true;
+        } else if let Some(ref path_str) = self.path {
+            let is_file = if self.remote.is_some() {
+                std::path::Path::new(path_str).extension().is_some()
             } else {
-                let candidate = std::path::Path::new(path_str);
-                if candidate.is_dir() {
-                    working_dir = path_str.clone();
-                } else {
-                    file_to_read = path_str.clone();
-                    source_type = SourceType::File;
-                    custom_cmd_or_file_specified = true;
-                }
+                !std::path::Path::new(path_str).is_dir()
+            };
+
+            if is_file {
+                file = path_str.clone();
+                source_type = SourceType::File;
+                has_custom_source = true;
+            } else {
+                dir = path_str.clone();
             }
         }
 
-        if !working_dir.is_empty() && cli.remote.is_none() {
-            let p = std::path::Path::new(&working_dir);
+        // Chuẩn hóa thư mục làm việc nếu ở môi trường local
+        if !dir.is_empty() && self.remote.is_none() {
+            let p = std::path::Path::new(&dir);
             if let Ok(canon) = p.canonicalize() {
-                working_dir = uwu_core_workspace::clean_path(&canon.to_string_lossy());
+                dir = uwu_core_workspace::clean_path(&canon.to_string_lossy());
             } else {
-                working_dir = uwu_core_workspace::clean_path(&working_dir);
+                dir = uwu_core_workspace::clean_path(&dir);
             }
         }
 
-        let remote_location = if let Some(ref rem) = cli.remote {
-            let dir = if !working_dir.is_empty() {
-                working_dir.clone()
+        let location = if let Some(ref rem) = self.remote {
+            let remote_dir = if !dir.is_empty() {
+                dir
             } else {
                 "/home".to_string()
             };
-            Some(WorkspaceLocation::remote(RemoteConnectionOptions::parse(
-                rem, dir,
-            )))
+            WorkspaceLocation::remote(RemoteConnectionOptions::parse(rem, remote_dir))
         } else {
-            None
-        };
-
-        let store = WorkspaceStore::load();
-
-        let active_workdir = if let Some(ref loc) = remote_location {
-            loc.working_dir().to_string()
-        } else if !working_dir.is_empty() {
-            working_dir.clone()
-        } else if let Ok(cwd) = std::env::current_dir() {
-            uwu_core_workspace::clean_path(&cwd.to_string_lossy())
-        } else {
-            String::new()
-        };
-
-        if remote_location.is_none() && working_dir.is_empty() {
-            working_dir = active_workdir.clone();
-        }
-
-        let saved_ws = store.find_by_workdir(&active_workdir).cloned();
-
-        let initial_project_name = if let Some(ref ws) = saved_ws {
-            ws.name.clone()
-        } else if let Some(ref loc) = remote_location {
-            let dir = loc.working_dir();
-            if !dir.is_empty() {
-                extract_project_name(dir)
+            let local_dir = if !dir.is_empty() {
+                dir
             } else {
-                loc.display_name().to_string()
-            }
-        } else if !working_dir.is_empty() {
-            extract_project_name(&working_dir)
-        } else {
-            "Workspace".to_string()
+                std::env::current_dir()
+                    .map(|d| uwu_core_workspace::clean_path(&d.to_string_lossy()))
+                    .unwrap_or_default()
+            };
+            WorkspaceLocation::local(local_dir)
         };
 
-        let initial_location = if let Some(ref ws) = saved_ws {
-            ws.location.clone()
-        } else if let Some(loc) = remote_location {
-            loc
-        } else {
-            WorkspaceLocation::Local {
-                working_dir: working_dir.clone(),
-            }
-        };
+        (location, source_type, cmd, file, has_custom_source)
+    }
+}
 
-        let source_config = SourceConfig {
-            source_type,
-            command_str: cmd_to_run,
-            file_path: file_to_read,
-            working_dir,
-            capacity,
-            display_limit,
-        };
+impl UwuGuiApp {
+    /// Khởi tạo GuiSession ban đầu từ tham số CLI và lịch sử WorkspaceStore đã lưu
+    pub(crate) fn build_initial_session(
+        cli: &CliArgs,
+        store: &WorkspaceStore,
+    ) -> (GuiSession, bool) {
+        let (location, source_type, cmd, file, has_custom_source) = cli.resolve_target();
 
-        let initial_query = if let Some(ref q) = cli.query {
-            q.clone()
-        } else if !custom_cmd_or_file_specified {
-            saved_ws
-                .as_ref()
-                .map(|ws| ws.last_query.clone())
-                .unwrap_or_default()
-        } else {
-            String::new()
-        };
+        let saved_ws = store
+            .find_by_location(&location)
+            .or_else(|| store.find_by_workdir(location.working_dir()));
 
-        let initial_session = if let (Some(ws), false) = (&saved_ws, custom_cmd_or_file_specified) {
-            WorkspaceSession::from_workspace(ws, capacity, display_limit)
+        let initial_session = if let (Some(ws), false) = (saved_ws, has_custom_source) {
+            WorkspaceSession::from_workspace(ws, cli.capacity, cli.display_limit)
         } else {
-            let mut s =
-                WorkspaceSession::new(initial_project_name, initial_location, source_config);
-            if let Some(ref ws) = saved_ws {
+            let project_name = saved_ws.map(|ws| ws.name.clone()).unwrap_or_else(|| {
+                let dir = location.working_dir();
+                if !dir.is_empty() {
+                    extract_project_name(dir)
+                } else {
+                    location.display_name().to_string()
+                }
+            });
+
+            let source_config = SourceConfig {
+                source_type,
+                command_str: cmd,
+                file_path: file,
+                working_dir: location.working_dir().to_string(),
+                capacity: cli.capacity,
+                display_limit: cli.display_limit,
+            };
+
+            let mut s = WorkspaceSession::new(project_name, location, source_config);
+            if let Some(ws) = saved_ws {
                 if !ws.env_vars.is_empty() {
                     s.env_vars = ws.env_vars.clone();
                     s.env_watch_tx.send_replace(Some(s.env_vars.clone()));
@@ -329,8 +292,26 @@ impl UwuGuiApp {
             s
         };
 
-        let mut initial_gui_session = GuiSession::new(initial_session);
-        initial_gui_session.view.query = initial_query;
+        let mut gui_session = GuiSession::new(initial_session);
+        if let Some(ref q) = cli.query {
+            gui_session.view.query = q.clone();
+        } else if !has_custom_source {
+            if let Some(ws) = saved_ws {
+                gui_session.view.query = ws.last_query.clone();
+            }
+        }
+
+        (gui_session, has_custom_source)
+    }
+
+    pub fn new(cc: &eframe::CreationContext<'_>, rt: Handle) -> Self {
+        crate::ui::theme::apply_theme(&cc.egui_ctx);
+        #[cfg(target_os = "windows")]
+        crate::ui::theme::apply_windows_titlebar_theme(cc);
+
+        let cli = CliArgs::parse();
+        let store = WorkspaceStore::load();
+        let (initial_gui_session, has_custom_source) = Self::build_initial_session(&cli, &store);
 
         let mut app = Self {
             sessions: vec![initial_gui_session],
@@ -347,16 +328,24 @@ impl UwuGuiApp {
         // Background task nạp biến môi trường cho session đầu tiên
         app.spawn_load_environment();
 
-        if let Some(ref ws) = saved_ws {
+        let saved_ws = app
+            .store
+            .find_by_location(&app.session.location)
+            .or_else(|| {
+                app.store
+                    .find_by_workdir(app.session.location.working_dir())
+            })
+            .cloned();
+
+        if let (Some(ws), false) = (saved_ws, has_custom_source) {
             app.store.active_workspace_id = Some(ws.id);
             let _ = app.store.save();
         } else {
-            // Tự động lưu workspace mới này vào store để lần sau nhớ
+            // Tự động lưu workspace mới hoặc cấu hình nguồn mới vào store
             app.save_current_workspace();
         }
 
-        if custom_cmd_or_file_specified {
-            app.save_current_workspace();
+        if has_custom_source {
             app.start_configured_source();
         }
         app.trigger_full_search();
@@ -975,9 +964,7 @@ mod tests {
 
         let session = WorkspaceSession::new(
             "Test Project".to_string(),
-            WorkspaceLocation::Local {
-                working_dir: String::new(),
-            },
+            WorkspaceLocation::local(""),
             source_config,
         );
 
@@ -1330,9 +1317,7 @@ mod tests {
 
         let ws2 = Workspace::new(
             "Project B",
-            WorkspaceLocation::Local {
-                working_dir: "D:\\test\\proj_b".to_string(),
-            },
+            WorkspaceLocation::local("D:\\test\\proj_b"),
             SourceType::Process,
         );
         app.open_or_switch_workspace(&ws2);
@@ -1366,8 +1351,9 @@ mod tests {
         let mut app = create_test_app();
 
         // 1. Cấu hình Remote workspace trong session hiện tại
-        app.session.location =
-            WorkspaceLocation::remote(RemoteConnectionOptions::wsl("Ubuntu", "/home/user/backend"));
+        app.session.location = WorkspaceLocation::remote(
+            uwu_core_workspace::WslConnectionOptions::new("Ubuntu", "/home/user/backend"),
+        );
         app.session.source_config.source_type = SourceType::Process;
         app.session.source_config.command_str = "python3 app.py".to_string();
         app.session.name = "Remote-Backend".to_string();
@@ -1408,9 +1394,7 @@ mod tests {
         let mut app = create_test_app();
         let ws_forward = Workspace::new(
             "test-slash",
-            WorkspaceLocation::Local {
-                working_dir: "D:/Learn/Go/uwulog-rust".to_string(),
-            },
+            WorkspaceLocation::local("D:/Learn/Go/uwulog-rust"),
             SourceType::Process,
         );
         app.open_or_switch_workspace(&ws_forward);
@@ -1420,9 +1404,7 @@ mod tests {
         // Try opening the same folder with backslashes
         let ws_backward = Workspace::new(
             "test-slash-alt",
-            WorkspaceLocation::Local {
-                working_dir: "D:\\Learn\\Go\\uwulog-rust\\".to_string(),
-            },
+            WorkspaceLocation::local("D:\\Learn\\Go\\uwulog-rust\\"),
             SourceType::Process,
         );
         app.open_or_switch_workspace(&ws_backward);
@@ -1508,16 +1490,12 @@ mod tests {
         let mut app = create_test_app();
         let ws1 = Workspace::new(
             "Service A",
-            WorkspaceLocation::Local {
-                working_dir: "C:\\projects\\service_a".to_string(),
-            },
+            WorkspaceLocation::local("C:\\projects\\service_a"),
             SourceType::Process,
         );
         let ws2 = Workspace::new(
             "Service B",
-            WorkspaceLocation::Local {
-                working_dir: "C:\\projects\\service_b".to_string(),
-            },
+            WorkspaceLocation::local("C:\\projects\\service_b"),
             SourceType::Process,
         );
 
@@ -1825,5 +1803,49 @@ mod tests {
         assert_eq!(wsl_legacy.cmd.as_deref(), Some("tail -f log"));
         assert_eq!(wsl_legacy.remote.as_deref(), Some("Ubuntu-22.04"));
         assert_eq!(wsl_legacy.working_dir.as_deref(), Some("/var/log"));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_target_and_build_initial_session() {
+        let store = WorkspaceStore::default();
+
+        // Case 1: Remote CLI with command
+        let cli_remote = CliArgs::try_parse_from([
+            "uwu-gui",
+            "--remote",
+            "Ubuntu",
+            "-d",
+            "/var/log",
+            "-c",
+            "journalctl -f",
+            "-q",
+            "error",
+        ])
+        .unwrap();
+        let (loc, src_type, cmd, file, has_custom) = cli_remote.resolve_target();
+        assert!(loc.is_remote());
+        assert_eq!(loc.working_dir(), "/var/log");
+        assert_eq!(src_type, SourceType::Process);
+        assert_eq!(cmd, "journalctl -f");
+        assert_eq!(file, "");
+        assert!(has_custom);
+
+        let (session, custom_src) = UwuGuiApp::build_initial_session(&cli_remote, &store);
+        assert!(custom_src);
+        assert_eq!(session.session.location, loc);
+        assert_eq!(session.view.query, "error");
+
+        // Case 2: Positional log file on local
+        let cli_file = CliArgs::try_parse_from(["uwu-gui", "production.log"]).unwrap();
+        let (loc, src_type, cmd, file, has_custom) = cli_file.resolve_target();
+        assert!(!loc.is_remote());
+        assert_eq!(src_type, SourceType::File);
+        assert_eq!(cmd, "");
+        assert_eq!(file, "production.log");
+        assert!(has_custom);
+
+        let (session, custom_src) = UwuGuiApp::build_initial_session(&cli_file, &store);
+        assert!(custom_src);
+        assert_eq!(session.session.source_config.file_path, "production.log");
     }
 }

@@ -1,5 +1,5 @@
 use crate::session::WorkspaceSession;
-use crate::{Workspace, WorkspaceStore};
+use crate::{Workspace, WorkspaceLocation, WorkspaceStore};
 use tokio::runtime::Handle;
 use uuid::Uuid;
 
@@ -52,6 +52,12 @@ impl MultiWorkspaceManager {
             .position(|s| s.location.normalized_dir() == clean_dir)
     }
 
+    pub fn find_session_by_location(&self, location: &WorkspaceLocation) -> Option<usize> {
+        self.sessions
+            .iter()
+            .position(|s| s.location.is_same(location))
+    }
+
     pub fn add_session(&mut self, session: WorkspaceSession, activate: bool) -> usize {
         let sid = session.id;
         if let Some(existing_idx) = self.find_session_by_id(sid) {
@@ -79,9 +85,8 @@ impl MultiWorkspaceManager {
     ) -> usize {
         // 1. Kiểm tra xem workspace này đã mở trong window chưa (theo ID hoặc Location)
         if let Some(existing_idx) = self
-            .sessions
-            .iter()
-            .position(|s| s.id == ws.id || s.location.is_same(&ws.location))
+            .find_session_by_id(ws.id)
+            .or_else(|| self.find_session_by_location(&ws.location))
         {
             self.switch_session(existing_idx);
             return existing_idx;
