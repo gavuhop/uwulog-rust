@@ -23,8 +23,8 @@ pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
 
 pub fn render_log_table(ui: &mut egui::Ui, app: &mut UwuGuiApp, mode: TableMode) {
     let row_count = match mode {
-        TableMode::Filtered => app.cached_logs.len(),
-        TableMode::Unfiltered => app.unfiltered_state.cached_unfiltered.len(),
+        TableMode::Filtered => app.viewport.cached_logs.len(),
+        TableMode::Unfiltered => app.unfiltered.cached_unfiltered.len(),
     };
     let text_height = egui::TextStyle::Monospace.resolve(ui.style()).size;
 
@@ -51,7 +51,7 @@ pub fn render_log_table(ui: &mut egui::Ui, app: &mut UwuGuiApp, mode: TableMode)
     let pointer_pos: Option<Pos2> = ui.input(|i| i.pointer.hover_pos());
 
     let visible_cols: Vec<ColumnItem> = app
-        .column_state
+        .columns
         .columns
         .iter()
         .filter(|c| c.visible)
@@ -78,8 +78,8 @@ pub fn render_log_table(ui: &mut egui::Ui, app: &mut UwuGuiApp, mode: TableMode)
 
     let default_ts = "2026-08-21 23:29:07";
     let logs = match mode {
-        TableMode::Filtered => &app.cached_logs[..],
-        TableMode::Unfiltered => &app.unfiltered_state.cached_unfiltered[..],
+        TableMode::Filtered => &app.viewport.cached_logs[..],
+        TableMode::Unfiltered => &app.unfiltered.cached_unfiltered[..],
     };
     let sample_ts = logs
         .iter()
@@ -133,27 +133,28 @@ pub fn render_log_table(ui: &mut egui::Ui, app: &mut UwuGuiApp, mode: TableMode)
 
             match mode {
                 TableMode::Filtered => {
-                    let has_new_data = app.has_new_data;
-                    let force_scroll = app.request_scroll_to_bottom;
-                    if (force_scroll || (app.is_auto_scroll && has_new_data)) && row_count > 0 {
-                        builder = builder.scroll_to_row(row_count - 1, Some(egui::Align::Max));
-                        app.request_scroll_to_bottom = false;
-                    }
-                    app.prev_table_row_count = row_count;
-                }
-                TableMode::Unfiltered => {
-                    if app.unfiltered_state.request_scroll_to_target && row_count > 0 {
-                        if let Some(target_idx) = app.unfiltered_state.target_index {
-                            builder = builder.scroll_to_row(target_idx, Some(egui::Align::Center));
-                        }
-                        app.unfiltered_state.request_scroll_to_target = false;
-                    } else if app.unfiltered_state.is_live
-                        && (app.unfiltered_state.request_scroll_to_bottom
-                            || app.unfiltered_state.has_new_data)
+                    let has_new_data = app.viewport.has_new_data;
+                    let force_scroll = app.viewport.request_scroll_to_bottom;
+                    if (force_scroll || (app.viewport.is_auto_scroll && has_new_data))
                         && row_count > 0
                     {
                         builder = builder.scroll_to_row(row_count - 1, Some(egui::Align::Max));
-                        app.unfiltered_state.request_scroll_to_bottom = false;
+                        app.viewport.request_scroll_to_bottom = false;
+                    }
+                    app.viewport.prev_table_row_count = row_count;
+                }
+                TableMode::Unfiltered => {
+                    if app.unfiltered.request_scroll_to_target && row_count > 0 {
+                        if let Some(target_idx) = app.unfiltered.target_index {
+                            builder = builder.scroll_to_row(target_idx, Some(egui::Align::Center));
+                        }
+                        app.unfiltered.request_scroll_to_target = false;
+                    } else if app.unfiltered.is_live
+                        && (app.unfiltered.request_scroll_to_bottom || app.unfiltered.has_new_data)
+                        && row_count > 0
+                    {
+                        builder = builder.scroll_to_row(row_count - 1, Some(egui::Align::Max));
+                        app.unfiltered.request_scroll_to_bottom = false;
                     }
                 }
             }
@@ -170,13 +171,13 @@ pub fn render_log_table(ui: &mut egui::Ui, app: &mut UwuGuiApp, mode: TableMode)
                 })
                 .body(|body| {
                     let mut render_ctx = ActionContext {
-                        highlighted_terms: &app.highlighted_terms,
+                        highlighted_terms: &app.inspector.highlighted_terms,
                         has_any_highlights,
                         action: &mut action_to_dispatch,
                     };
 
                     let target_id = if mode == TableMode::Unfiltered {
-                        app.unfiltered_state.target_id
+                        app.unfiltered.target_id
                     } else {
                         None
                     };
@@ -189,16 +190,20 @@ pub fn render_log_table(ui: &mut egui::Ui, app: &mut UwuGuiApp, mode: TableMode)
                         }
 
                         let maybe_event = match mode {
-                            TableMode::Filtered => app.cached_logs.get(row_index),
+                            TableMode::Filtered => app.viewport.cached_logs.get(row_index),
                             TableMode::Unfiltered => {
-                                app.unfiltered_state.cached_unfiltered.get(row_index)
+                                app.unfiltered.cached_unfiltered.get(row_index)
                             }
                         };
 
                         if let Some(event) = maybe_event {
                             let is_target = target_id.is_some_and(|id| id == event.id);
                             let is_selected = is_target
-                                || app.selected_log.as_ref().is_some_and(|s| s.id == event.id);
+                                || app
+                                    .inspector
+                                    .selected_log
+                                    .as_ref()
+                                    .is_some_and(|s| s.id == event.id);
 
                             let is_highlighted = app.is_row_highlighted(&event.id);
                             let row_color = theme::log_color_to_egui(event.color);
@@ -229,27 +234,19 @@ pub fn render_log_table(ui: &mut egui::Ui, app: &mut UwuGuiApp, mode: TableMode)
     }
 
     if let Some(name) = new_header_drag {
-        app.column_state.header_dragged_name = Some(name);
+        app.columns.header_dragged_name = Some(name);
     }
 
     if let Some((from_name, to_name)) = target_header_swap {
-        let from_idx = app
-            .column_state
-            .columns
-            .iter()
-            .position(|c| c.name == from_name);
-        let to_idx = app
-            .column_state
-            .columns
-            .iter()
-            .position(|c| c.name == to_name);
+        let from_idx = app.columns.columns.iter().position(|c| c.name == from_name);
+        let to_idx = app.columns.columns.iter().position(|c| c.name == to_name);
         if let (Some(from), Some(to)) = (from_idx, to_idx) {
-            app.column_state.reorder(from, to);
+            app.columns.reorder(from, to);
             ui.ctx().request_repaint();
         }
     }
 
-    if let Some(ref dragged_name) = app.column_state.header_dragged_name {
+    if let Some(ref dragged_name) = app.columns.header_dragged_name {
         if let Some(pos) = pointer_pos {
             render_drag_ghost(ui, dragged_name, pos);
         }
@@ -265,8 +262,8 @@ pub fn render_log_table(ui: &mut egui::Ui, app: &mut UwuGuiApp, mode: TableMode)
 
     if last_row_visible && scroll_delta_y < 0.0 {
         match mode {
-            TableMode::Filtered => app.is_auto_scroll = true,
-            TableMode::Unfiltered => app.unfiltered_state.is_live = true,
+            TableMode::Filtered => app.viewport.is_auto_scroll = true,
+            TableMode::Unfiltered => app.unfiltered.is_live = true,
         }
     }
 }

@@ -41,20 +41,20 @@ fn create_test_app() -> UwuGuiApp {
 #[tokio::test]
 async fn test_latch_toggle() {
     let mut app = create_test_app();
-    assert!(app.is_auto_scroll);
+    assert!(app.viewport.is_auto_scroll);
 
     app.unlatch();
-    assert!(!app.is_auto_scroll);
+    assert!(!app.viewport.is_auto_scroll);
 
     app.latch();
-    assert!(app.is_auto_scroll);
-    assert!(app.request_scroll_to_bottom);
+    assert!(app.viewport.is_auto_scroll);
+    assert!(app.viewport.request_scroll_to_bottom);
 
     app.toggle_latch();
-    assert!(!app.is_auto_scroll);
+    assert!(!app.viewport.is_auto_scroll);
 
     app.toggle_latch();
-    assert!(app.is_auto_scroll);
+    assert!(app.viewport.is_auto_scroll);
 }
 
 #[tokio::test]
@@ -118,17 +118,17 @@ async fn test_filter_and_exclude_term() {
     let mut app = create_test_app();
 
     app.apply_filter_term("level:error");
-    assert_eq!(app.query, "level:error");
+    assert_eq!(app.search.query, "level:error");
 
     app.apply_filter_term("tag:Auth");
-    assert_eq!(app.query, "level:error tag:Auth");
+    assert_eq!(app.search.query, "level:error tag:Auth");
 
     app.exclude_filter_term("healthcheck");
-    assert_eq!(app.query, "level:error tag:Auth -healthcheck");
+    assert_eq!(app.search.query, "level:error tag:Auth -healthcheck");
 
     app.exclude_filter_term("-already_negated");
     assert_eq!(
-        app.query,
+        app.search.query,
         "level:error tag:Auth -healthcheck -already_negated"
     );
 }
@@ -144,9 +144,9 @@ async fn test_apply_autocomplete_suggestion() {
         example_syntax: "level:".to_string(),
         insert_text: "level:".to_string(),
     };
-    app.autocomplete_state.active_token_range = (0, 0);
+    app.search.autocomplete.active_token_range = (0, 0);
     app.apply_autocomplete_suggestion(&item_key);
-    assert_eq!(app.query, "level:");
+    assert_eq!(app.search.query, "level:");
 
     let item_val = SuggestionItem {
         kind: SuggestionKind::OperatorOrValue,
@@ -155,10 +155,10 @@ async fn test_apply_autocomplete_suggestion() {
         example_syntax: "error".to_string(),
         insert_text: "error".to_string(),
     };
-    app.autocomplete_state.active_token_range = (6, 6);
+    app.search.autocomplete.active_token_range = (6, 6);
     app.apply_autocomplete_suggestion(&item_val);
-    assert_eq!(app.query, "level:error");
-    assert!(!app.autocomplete_state.is_open);
+    assert_eq!(app.search.query, "level:error");
+    assert!(!app.search.autocomplete.is_open);
 }
 
 #[tokio::test]
@@ -177,14 +177,14 @@ async fn test_unfiltered_stream_open_close_and_focus() {
 
     app.open_unfiltered_stream(Some(12345));
     assert_eq!(app.active_tab, ActiveTab::Unfiltered);
-    assert!(app.unfiltered_state.is_open);
-    assert_eq!(app.unfiltered_state.target_id, Some(12345));
-    assert!(!app.unfiltered_state.is_live);
+    assert!(app.unfiltered.is_open);
+    assert_eq!(app.unfiltered.target_id, Some(12345));
+    assert!(!app.unfiltered.is_live);
 
     app.close_unfiltered_stream();
     assert_eq!(app.active_tab, ActiveTab::Filtered);
-    assert!(!app.unfiltered_state.is_open);
-    assert!(app.unfiltered_state.target_id.is_none());
+    assert!(!app.unfiltered.is_open);
+    assert!(app.unfiltered.target_id.is_none());
 }
 
 #[tokio::test]
@@ -206,13 +206,13 @@ async fn test_sync_discovered_fields_replaces_aliases() {
 async fn test_unlatch_unfiltered_idempotency() {
     let mut app = create_test_app();
     app.open_unfiltered_stream(None);
-    assert!(app.unfiltered_state.is_live);
+    assert!(app.unfiltered.is_live);
 
     app.unlatch_unfiltered();
-    assert!(!app.unfiltered_state.is_live);
+    assert!(!app.unfiltered.is_live);
 
     app.unlatch_unfiltered();
-    assert!(!app.unfiltered_state.is_live);
+    assert!(!app.unfiltered.is_live);
 }
 
 #[tokio::test]
@@ -230,12 +230,12 @@ async fn test_unfiltered_live_tick_sync_both_branches() {
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
     app.trigger_full_search();
-    assert_eq!(app.cached_logs.len(), 5);
+    assert_eq!(app.viewport.cached_logs.len(), 5);
 
     // 2. Open unfiltered stream in LIVE mode
     app.open_unfiltered_stream(None);
-    assert!(app.unfiltered_state.is_live);
-    assert_eq!(app.unfiltered_state.cached_unfiltered.len(), 5);
+    assert!(app.unfiltered.is_live);
+    assert_eq!(app.unfiltered.cached_unfiltered.len(), 5);
 
     // 3. Ingest 5 more logs
     for i in 5..10 {
@@ -247,12 +247,12 @@ async fn test_unfiltered_live_tick_sync_both_branches() {
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
     // Force last_search_time backward to satisfy 150ms debounce in tick()
-    app.last_search_time = Instant::now() - Duration::from_millis(200);
+    app.search.last_search_time = Instant::now() - Duration::from_millis(200);
     app.tick();
 
     // Both filtered and unfiltered live buffers must have received all 10 logs
-    assert_eq!(app.cached_logs.len(), 10);
-    assert_eq!(app.unfiltered_state.cached_unfiltered.len(), 10);
+    assert_eq!(app.viewport.cached_logs.len(), 10);
+    assert_eq!(app.unfiltered.cached_unfiltered.len(), 10);
 }
 
 #[tokio::test]
@@ -269,8 +269,8 @@ async fn test_unfiltered_frozen_snapshot_no_drift() {
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     app.open_unfiltered_stream(Some(2));
-    assert!(!app.unfiltered_state.is_live);
-    let initial_count = app.unfiltered_state.cached_unfiltered.len();
+    assert!(!app.unfiltered.is_live);
+    let initial_count = app.unfiltered.cached_unfiltered.len();
 
     let new_entry = RawLogEntry {
         payload: RawPayload::Text("{\"level\":\"INFO\",\"message\":\"msg 99\"}".to_string()),
@@ -279,7 +279,7 @@ async fn test_unfiltered_frozen_snapshot_no_drift() {
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     app.tick();
-    assert_eq!(app.unfiltered_state.cached_unfiltered.len(), initial_count);
+    assert_eq!(app.unfiltered.cached_unfiltered.len(), initial_count);
 }
 
 #[tokio::test]
@@ -297,11 +297,11 @@ async fn test_repeated_unlatch_idempotency_preserves_pause_state() {
     app.tick();
 
     app.unlatch();
-    assert!(!app.is_auto_scroll);
-    let paused_count = app.filtered_seen_at_pause;
+    assert!(!app.viewport.is_auto_scroll);
+    let paused_count = app.viewport.pause_snapshot.filtered_seen;
 
     app.unlatch();
-    assert_eq!(app.filtered_seen_at_pause, paused_count);
+    assert_eq!(app.viewport.pause_snapshot.filtered_seen, paused_count);
 }
 
 #[tokio::test]
@@ -352,7 +352,7 @@ async fn test_close_unfiltered_stream_frees_ram() {
     let mut app = create_test_app();
     app.open_unfiltered_stream(None);
     app.close_unfiltered_stream();
-    assert!(app.unfiltered_state.cached_unfiltered.is_empty());
+    assert!(app.unfiltered.cached_unfiltered.is_empty());
 }
 
 #[tokio::test]
@@ -361,7 +361,7 @@ async fn test_multi_project_switch_and_close() {
     assert_eq!(app.sessions.len(), 1);
     assert_eq!(app.active_index, 0);
 
-    app.query = "level:error".to_string();
+    app.search.query = "level:error".to_string();
 
     let ws2 = Workspace::new(
         "Project B",
@@ -373,25 +373,25 @@ async fn test_multi_project_switch_and_close() {
     assert_eq!(app.sessions.len(), 2);
     assert_eq!(app.active_index, 1);
     assert_eq!(app.session.name, "Project B");
-    assert_eq!(app.query, "");
+    assert_eq!(app.search.query, "");
 
-    app.query = "tag:Audio".to_string();
+    app.search.query = "tag:Audio".to_string();
 
     app.switch_session(0);
     assert_eq!(app.active_index, 0);
     assert_eq!(app.session.name, "Test Project");
-    assert_eq!(app.query, "level:error");
+    assert_eq!(app.search.query, "level:error");
 
     app.switch_session(1);
     assert_eq!(app.active_index, 1);
     assert_eq!(app.session.name, "Project B");
-    assert_eq!(app.query, "tag:Audio");
+    assert_eq!(app.search.query, "tag:Audio");
 
     app.close_session(1);
     assert_eq!(app.sessions.len(), 1);
     assert_eq!(app.active_index, 0);
     assert_eq!(app.session.name, "Test Project");
-    assert_eq!(app.query, "level:error");
+    assert_eq!(app.search.query, "level:error");
 }
 
 #[tokio::test]
@@ -575,36 +575,36 @@ async fn test_zed_style_app_action_dispatch() {
 #[tokio::test]
 async fn test_app_action_columns_modal_flow() {
     let mut app = create_test_app();
-    let initial_cols = app.column_state.columns.clone();
+    let initial_cols = app.columns.columns.clone();
 
     // 1. Open columns modal
     app.dispatch_action(AppAction::OpenColumnsModal);
-    assert!(app.column_state.is_modal_open);
-    assert!(app.column_state.draft_columns.is_some());
+    assert!(app.columns.is_modal_open);
+    assert!(app.columns.draft_columns.is_some());
 
     // 2. Modify draft
-    if let Some(ref mut draft) = app.column_state.draft_columns {
+    if let Some(ref mut draft) = app.columns.draft_columns {
         draft[0].visible = false;
     }
 
     // Live columns should still be unchanged (Live vs Draft separation)
-    assert_eq!(app.column_state.columns, initial_cols);
-    assert!(app.column_state.columns[0].visible);
+    assert_eq!(app.columns.columns, initial_cols);
+    assert!(app.columns.columns[0].visible);
 
     // 3. Cancel / Close modal
     app.dispatch_action(AppAction::CloseColumnsModal);
-    assert!(!app.column_state.is_modal_open);
-    assert!(app.column_state.draft_columns.is_none());
-    assert_eq!(app.column_state.columns, initial_cols);
+    assert!(!app.columns.is_modal_open);
+    assert!(app.columns.draft_columns.is_none());
+    assert_eq!(app.columns.columns, initial_cols);
 
     // 4. Open again, modify and Apply
     app.dispatch_action(AppAction::OpenColumnsModal);
-    if let Some(ref mut draft) = app.column_state.draft_columns {
+    if let Some(ref mut draft) = app.columns.draft_columns {
         draft[0].visible = false;
     }
     app.dispatch_action(AppAction::ApplyColumnsModal);
-    assert!(!app.column_state.is_modal_open);
-    assert!(!app.column_state.columns[0].visible);
+    assert!(!app.columns.is_modal_open);
+    assert!(!app.columns.columns[0].visible);
 }
 
 #[tokio::test]
@@ -619,11 +619,14 @@ async fn test_app_action_select_log_and_switch_tab() {
     );
 
     app.dispatch_action(AppAction::SelectLog(Some(event.clone())));
-    assert!(app.selected_log.is_some());
-    assert_eq!(app.selected_log.as_ref().unwrap().message, "test message");
+    assert!(app.inspector.selected_log.is_some());
+    assert_eq!(
+        app.inspector.selected_log.as_ref().unwrap().message,
+        "test message"
+    );
 
     app.dispatch_action(AppAction::SelectLog(None));
-    assert!(app.selected_log.is_none());
+    assert!(app.inspector.selected_log.is_none());
 
     app.dispatch_action(AppAction::SwitchTab(ActiveTab::Unfiltered));
     assert_eq!(app.active_tab, ActiveTab::Unfiltered);
@@ -637,13 +640,13 @@ async fn test_app_action_query_filter_and_clear() {
     let mut app = create_test_app();
 
     app.dispatch_action(AppAction::ApplyFilterTerm("level:error".to_string()));
-    assert_eq!(app.query, "level:error");
+    assert_eq!(app.search.query, "level:error");
 
     app.dispatch_action(AppAction::ExcludeFilterTerm("user_id:42".to_string()));
-    assert_eq!(app.query, "level:error -user_id:42");
+    assert_eq!(app.search.query, "level:error -user_id:42");
 
     app.dispatch_action(AppAction::ClearQuery);
-    assert!(app.query.is_empty());
+    assert!(app.search.query.is_empty());
 }
 
 #[tokio::test]
@@ -654,11 +657,11 @@ async fn test_app_action_highlights() {
     assert!(app.is_row_highlighted(&100));
 
     app.dispatch_action(AppAction::ToggleTermHighlight("error".to_string()));
-    assert!(app.highlighted_terms.contains("error"));
+    assert!(app.inspector.highlighted_terms.contains("error"));
 
     app.dispatch_action(AppAction::ClearAllHighlights);
     assert!(!app.is_row_highlighted(&100));
-    assert!(app.highlighted_terms.is_empty());
+    assert!(app.inspector.highlighted_terms.is_empty());
 }
 
 #[tokio::test]
@@ -666,32 +669,32 @@ async fn test_app_action_latch_and_unfiltered() {
     let mut app = create_test_app();
 
     // Latch toggle
-    assert!(app.is_auto_scroll);
+    assert!(app.viewport.is_auto_scroll);
     app.dispatch_action(AppAction::ToggleLatch);
-    assert!(!app.is_auto_scroll);
+    assert!(!app.viewport.is_auto_scroll);
     app.dispatch_action(AppAction::ToggleLatch);
-    assert!(app.is_auto_scroll);
+    assert!(app.viewport.is_auto_scroll);
 
     // Open & close unfiltered stream
     app.dispatch_action(AppAction::OpenUnfilteredStream(Some(42)));
-    assert!(app.unfiltered_state.is_open);
+    assert!(app.unfiltered.is_open);
     assert_eq!(app.active_tab, ActiveTab::Unfiltered);
 
     // Unfiltered live toggle
-    assert!(!app.unfiltered_state.is_live);
+    assert!(!app.unfiltered.is_live);
     app.dispatch_action(AppAction::ToggleUnfilteredLive);
-    assert!(app.unfiltered_state.is_live);
+    assert!(app.unfiltered.is_live);
 
     app.dispatch_action(AppAction::RefreshUnfilteredSnapshot);
 
     app.dispatch_action(AppAction::FocusInMainAndClearFilter);
-    assert!(!app.unfiltered_state.is_open);
+    assert!(!app.unfiltered.is_open);
     assert_eq!(app.active_tab, ActiveTab::Filtered);
 
     app.dispatch_action(AppAction::OpenUnfilteredStream(None));
-    assert!(app.unfiltered_state.is_open);
+    assert!(app.unfiltered.is_open);
     app.dispatch_action(AppAction::CloseUnfilteredStream);
-    assert!(!app.unfiltered_state.is_open);
+    assert!(!app.unfiltered.is_open);
 }
 
 #[tokio::test]
@@ -720,8 +723,8 @@ async fn test_app_action_dismiss_top_layer() {
         HashMap::new(),
     )
     .with_id(123);
-    app.selected_log = Some(test_log);
-    assert!(app.selected_log.is_some());
+    app.inspector.selected_log = Some(test_log);
+    assert!(app.inspector.selected_log.is_some());
 
     // 2. Add unfiltered stream on top
     app.open_unfiltered_stream(None);
@@ -731,7 +734,7 @@ async fn test_app_action_dismiss_top_layer() {
     app.push_overlay(OverlayLayer::LaunchModal);
 
     // 4. Add columns modal on top (stack)
-    app.column_state.open_modal();
+    app.columns.open_modal();
     app.push_overlay(OverlayLayer::ColumnsModal);
 
     // 5. Add project picker on top (stack)
@@ -756,11 +759,11 @@ async fn test_app_action_dismiss_top_layer() {
     // Pop 4: Unfiltered stream tab
     app.dispatch_action(AppAction::DismissTopLayer);
     assert_eq!(app.active_tab, ActiveTab::Filtered);
-    assert!(app.selected_log.is_some());
+    assert!(app.inspector.selected_log.is_some());
 
     // Pop 5: Selected log inspector
     app.dispatch_action(AppAction::DismissTopLayer);
-    assert!(app.selected_log.is_none());
+    assert!(app.inspector.selected_log.is_none());
 
     // Pop 6: Nothing left to pop
     assert!(!app.dismiss_top_layer());
@@ -887,7 +890,7 @@ async fn test_resolve_target_and_build_initial_session() {
     let (session, custom_src, _) = UwuGuiApp::build_initial_session(&cli_remote, &store);
     assert!(custom_src);
     assert_eq!(session.session.location, loc);
-    assert_eq!(session.view.query, "error");
+    assert_eq!(session.view.search.query, "error");
 
     // Case 2: Positional log file on local
     let cli_file = CliArgs::try_parse_from(["uwu-gui", "production.log"]).unwrap();
@@ -983,7 +986,7 @@ async fn test_on_exit_saves_current_workspace() {
     use eframe::App;
     let mut app = create_test_app();
     app.sessions[0].session.name = "ExitTestProj".to_string();
-    app.sessions[0].view.query = "error_query".to_string();
+    app.sessions[0].view.search.query = "error_query".to_string();
 
     app.on_exit(None);
 

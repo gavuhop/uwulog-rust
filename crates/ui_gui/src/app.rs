@@ -164,10 +164,10 @@ impl UwuGuiApp {
 
         let mut gui_session = GuiSession::new(initial_session);
         if let Some(ref q) = cli.query {
-            gui_session.view.query = q.clone();
+            gui_session.view.search.query = q.clone();
         } else if !has_custom_source {
             if let Some(ws) = saved_ws {
-                gui_session.view.query = ws.last_query.clone();
+                gui_session.view.search.query = ws.last_query.clone();
             }
         }
 
@@ -339,15 +339,15 @@ impl UwuGuiApp {
                 self.launch_modal_draft = None;
             }
             AppAction::OpenColumnsModal => {
-                self.column_state.open_modal();
+                self.columns.open_modal();
                 self.push_overlay(OverlayLayer::ColumnsModal);
             }
             AppAction::CloseColumnsModal => {
-                self.column_state.close_modal();
+                self.columns.close_modal();
                 self.close_overlay(OverlayLayer::ColumnsModal);
             }
             AppAction::ApplyColumnsModal => {
-                self.column_state.apply_modal();
+                self.columns.apply_modal();
                 self.close_overlay(OverlayLayer::ColumnsModal);
             }
             AppAction::ToggleProjectPicker => {
@@ -406,21 +406,21 @@ impl UwuGuiApp {
                     self.project_search_query.clear();
                 }
                 OverlayLayer::ColumnsModal => {
-                    self.column_state.close_modal();
+                    self.columns.close_modal();
                 }
             }
             true
-        } else if self.autocomplete_state.is_open {
-            self.autocomplete_state.is_open = false;
+        } else if self.search.autocomplete.is_open {
+            self.search.autocomplete.is_open = false;
             true
-        } else if self.history_state.is_open {
-            self.history_state.close_popup();
+        } else if self.search.history.is_open {
+            self.search.history.close_popup();
             true
         } else if self.active_tab == ActiveTab::Unfiltered {
             self.close_unfiltered_stream();
             true
-        } else if self.selected_log.is_some() {
-            self.selected_log = None;
+        } else if self.inspector.selected_log.is_some() {
+            self.inspector.selected_log = None;
             true
         } else {
             false
@@ -442,7 +442,7 @@ impl UwuGuiApp {
         gui_session.session.sync_location();
 
         let mut ws = gui_session.session.to_workspace();
-        ws.last_query = gui_session.view.query.clone();
+        ws.last_query = gui_session.view.search.query.clone();
         self.store.add_or_update(ws);
     }
 
@@ -450,7 +450,7 @@ impl UwuGuiApp {
         let active_idx = self.active_index;
         let gui_session = &mut self.sessions[active_idx];
         gui_session.session.apply_workspace(ws);
-        gui_session.view.query = ws.last_query.clone();
+        gui_session.view.search.query = ws.last_query.clone();
         gui_session.session.spawn_load_environment(&self.rt);
         self.save_current_workspace();
     }
@@ -472,11 +472,11 @@ impl UwuGuiApp {
         self.sessions[active_idx].session.restart_source(&self.rt);
 
         let view = &mut self.sessions[active_idx].view;
-        view.cached_logs.clear();
-        view.total_matched = 0;
-        view.selected_log = None;
-        view.last_processed_count = 0;
-        view.unfiltered_state.cached_unfiltered.clear();
+        view.viewport.cached_logs.clear();
+        view.viewport.total_matched = 0;
+        view.inspector.selected_log = None;
+        view.viewport.last_processed_count = 0;
+        view.unfiltered.cached_unfiltered.clear();
 
         self.trigger_full_search();
     }

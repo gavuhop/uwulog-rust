@@ -10,12 +10,12 @@ pub fn render_table_headers(
     new_header_drag: &mut Option<String>,
     target_header_swap: &mut Option<(String, String)>,
 ) {
-    let current_dragged = app.column_state.header_dragged_name.clone();
+    let current_dragged = app.columns.header_dragged_name.clone();
 
     for col in visible_cols {
         header.col(|ui| {
             let is_dragged = current_dragged.as_deref() == Some(&col.name);
-            let is_drop_target = app.column_state.header_drop_target.as_deref() == Some(&col.name);
+            let is_drop_target = app.columns.header_drop_target.as_deref() == Some(&col.name);
 
             let available_size = ui.available_size();
             let (rect, resp) =
@@ -26,9 +26,9 @@ pub fn render_table_headers(
             }
 
             if resp.hovered() && !is_dragged {
-                if let Some(ref dragged_name) = app.column_state.header_dragged_name {
+                if let Some(ref dragged_name) = app.columns.header_dragged_name {
                     if dragged_name != &col.name {
-                        app.column_state.header_drop_target = Some(col.name.clone());
+                        app.columns.header_drop_target = Some(col.name.clone());
                     }
                 }
             }
@@ -88,15 +88,15 @@ pub fn render_table_headers(
     // Khi người dùng thả chuột (drag stopped / pointer released)
     if header.response().ctx.input(|i| i.pointer.any_released()) {
         if let (Some(from_name), Some(to_name)) = (
-            app.column_state.header_dragged_name.take(),
-            app.column_state.header_drop_target.take(),
+            app.columns.header_dragged_name.take(),
+            app.columns.header_drop_target.take(),
         ) {
             if from_name != to_name {
                 *target_header_swap = Some((from_name, to_name));
             }
         } else {
-            app.column_state.header_dragged_name = None;
-            app.column_state.header_drop_target = None;
+            app.columns.header_dragged_name = None;
+            app.columns.header_drop_target = None;
         }
     }
 }

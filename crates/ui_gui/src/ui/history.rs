@@ -104,25 +104,25 @@ impl SearchHistoryState {
 }
 
 pub fn render_history_popup(ctx: &egui::Context, app: &mut UwuGuiApp, input_rect: Rect) {
-    if !app.history_state.is_open {
+    if !app.search.history.is_open {
         return;
     }
 
     if ctx.input(|i| i.key_pressed(Key::Escape)) {
-        app.history_state.is_open = false;
+        app.search.history.is_open = false;
         return;
     }
 
     let popup_pos = Pos2::new(input_rect.min.x, input_rect.max.y + 8.0);
     let popup_width = input_rect.width().max(420.0);
-    let entry_count = app.history_state.entries.len().max(1);
+    let entry_count = app.search.history.entries.len().max(1);
     let approx_height = (entry_count as f32 * 28.0) + 48.0;
     let popup_rect = Rect::from_min_size(popup_pos, egui::vec2(popup_width, approx_height));
 
     if ctx.input(|i| i.pointer.any_pressed() || i.pointer.any_click()) {
         if let Some(pos) = ctx.input(|i| i.pointer.interact_pos()) {
             if !input_rect.contains(pos) && !popup_rect.contains(pos) {
-                app.history_state.is_open = false;
+                app.search.history.is_open = false;
                 return;
             }
         }
@@ -153,7 +153,7 @@ pub fn render_history_popup(ctx: &egui::Context, app: &mut UwuGuiApp, input_rect
                         );
 
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if !app.history_state.entries.is_empty()
+                            if !app.search.history.entries.is_empty()
                                 && ui
                                     .button(
                                         egui::RichText::new("Clear")
@@ -172,7 +172,7 @@ pub fn render_history_popup(ctx: &egui::Context, app: &mut UwuGuiApp, input_rect
                     ui.separator();
                     ui.add_space(4.0);
 
-                    if app.history_state.entries.is_empty() {
+                    if app.search.history.entries.is_empty() {
                         ui.horizontal(|ui| {
                             ui.add_space(4.0);
                             ui.label(
@@ -184,7 +184,7 @@ pub fn render_history_popup(ctx: &egui::Context, app: &mut UwuGuiApp, input_rect
                         });
                         ui.add_space(2.0);
                     } else {
-                        for hist_query in &app.history_state.entries {
+                        for hist_query in &app.search.history.entries {
                             let desired_size = egui::vec2(ui.available_width(), 26.0);
                             let (rect, resp) =
                                 ui.allocate_exact_size(desired_size, egui::Sense::click());
@@ -231,16 +231,16 @@ pub fn render_history_popup(ctx: &egui::Context, app: &mut UwuGuiApp, input_rect
         });
 
     if clear_all_clicked {
-        app.history_state.entries.clear();
+        app.search.history.entries.clear();
         ctx.request_repaint();
     }
 
     if let Some(chosen_query) = selected_history_item {
-        app.query = chosen_query.clone();
-        app.history_state.apply_history_item(&chosen_query);
-        app.autocomplete_state.is_open = false;
-        app.autocomplete_state.suggestions.clear();
-        app.autocomplete_state.just_applied = true;
+        app.search.query = chosen_query.clone();
+        app.search.history.apply_history_item(&chosen_query);
+        app.search.autocomplete.is_open = false;
+        app.search.autocomplete.suggestions.clear();
+        app.search.autocomplete.just_applied = true;
         app.trigger_full_search();
         ctx.request_repaint();
     }

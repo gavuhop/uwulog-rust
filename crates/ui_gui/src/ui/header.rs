@@ -101,7 +101,7 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
         // 2. Stream Tabs: Main / Filtered and Raw Stream
         let is_filtered_tab = app.active_tab == crate::app::ActiveTab::Filtered;
         let is_unfiltered_tab = app.active_tab == crate::app::ActiveTab::Unfiltered;
-        let is_filtering = !app.query.trim().is_empty();
+        let is_filtering = !app.search.query.trim().is_empty();
 
         let filtered_tab_text = if is_filtering {
             "🔍 Filtered".to_string()
@@ -148,14 +148,14 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
             ui.add_space(4.0);
 
             // Table Columns & Ordering Modal Button
-            let visible_count = app.column_state.columns.iter().filter(|c| c.visible).count();
+            let visible_count = app.columns.columns.iter().filter(|c| c.visible).count();
             let columns_btn = egui::Button::new(
                 egui::RichText::new(format!("📊 ({visible_count})"))
                     .size(11.5)
                     .strong()
                     .color(theme::TEXT_PRIMARY),
             )
-            .fill(if app.column_state.is_modal_open {
+            .fill(if app.columns.is_modal_open {
                 theme::BG_SURFACE1
             } else {
                 theme::BG_SURFACE0
@@ -237,7 +237,7 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
 
             // Snapshot Button (Chỉ hiển thị khi đang xem Tab Raw Stream)
             if app.active_tab == crate::app::ActiveTab::Unfiltered {
-                let snapshot_tooltip = if app.unfiltered_state.is_live {
+                let snapshot_tooltip = if app.unfiltered.is_live {
                     "Freeze current Raw Stream into a fixed snapshot at this moment"
                 } else {
                     "Re-capture the latest surrounding context snapshot from buffer"
@@ -254,7 +254,7 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 .rounding(Rounding::same(4.0));
 
                 if ui.add(snapshot_btn).on_hover_text(snapshot_tooltip).clicked() {
-                    if app.unfiltered_state.is_live {
+                    if app.unfiltered.is_live {
                         app.dispatch_action(crate::app::AppAction::ToggleUnfilteredLive);
                     } else {
                         app.dispatch_action(crate::app::AppAction::RefreshUnfilteredSnapshot);
@@ -267,16 +267,16 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
             // Latch / Live / Paused State Toggle Button
             let (is_live, toggle_tooltip) = match app.active_tab {
                 crate::app::ActiveTab::Filtered => (
-                    app.is_auto_scroll,
-                    if app.is_auto_scroll {
+                    app.viewport.is_auto_scroll,
+                    if app.viewport.is_auto_scroll {
                         "Main Stream: LIVE (Following tail)\n• Click to pause (Unlatch)\n• Scroll up or select a log to unlatch"
                     } else {
                         "Main Stream: PAUSED (View frozen)\n• Click to live stream & scroll to bottom"
                     },
                 ),
                 crate::app::ActiveTab::Unfiltered => (
-                    app.unfiltered_state.is_live,
-                    if app.unfiltered_state.is_live {
+                    app.unfiltered.is_live,
+                    if app.unfiltered.is_live {
                         "Raw Stream: LIVE (Following real-time stream)\n• Click to pause / freeze snapshot"
                     } else {
                         "Raw Stream: PAUSED (Snapshot frozen)\n• Click to follow live real-time stream"
@@ -330,13 +330,13 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
 
             // 4. Ở giữa: Search Box Command Palette Style tự động co dãn theo khoảng trống còn lại
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                let button_extras = if !app.query.is_empty() { 52.0 } else { 28.0 };
+                let button_extras = if !app.search.query.is_empty() { 52.0 } else { 28.0 };
                 let available_w = ui.available_width();
                 let search_box_width = (available_w - button_extras - 6.0).max(40.0);
 
                 let search_id = Id::new("search_query_input");
                 let search_response = ui.add(
-                    egui::TextEdit::singleline(&mut app.query)
+                    egui::TextEdit::singleline(&mut app.search.query)
                         .id(search_id)
                         .hint_text(
                             egui::RichText::new("🔍 Filter query (e.g. level:error, status:500, time:now..10m)...")
@@ -348,11 +348,11 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 );
 
                 // Giữ lại con trỏ chuột và focus vào ô input sau khi chọn gợi ý
-                if app.autocomplete_state.just_applied {
-                    app.autocomplete_state.just_applied = false;
+                if app.search.autocomplete.just_applied {
+                    app.search.autocomplete.just_applied = false;
                     ui.ctx().memory_mut(|m| m.request_focus(search_id));
                     if let Some(mut state) = egui::text_edit::TextEditState::load(ui.ctx(), search_id) {
-                        let char_count = app.query.chars().count();
+                        let char_count = app.search.query.chars().count();
                         state
                             .cursor
                             .set_char_range(Some(egui::text::CCursorRange::one(
@@ -362,18 +362,18 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                     }
                 } else if search_response.changed() || search_response.gained_focus() {
                     // Khi gõ chữ hoặc focus vào ô tìm kiếm: luôn ẩn menu lịch sử
-                    app.history_state.close_popup();
+                    app.search.history.close_popup();
 
                     let available_fields = app.get_available_log_fields();
                     let (suggestions, token_range) =
-                        crate::ui::autocomplete::generate_suggestions(&app.query, &available_fields);
-                    app.autocomplete_state.suggestions = suggestions;
-                    app.autocomplete_state.active_token_range = token_range;
-                    app.autocomplete_state.selected_index = 0;
-                    app.autocomplete_state.is_open = !app.autocomplete_state.suggestions.is_empty();
+                        crate::ui::autocomplete::generate_suggestions(&app.search.query, &available_fields);
+                    app.search.autocomplete.suggestions = suggestions;
+                    app.search.autocomplete.active_token_range = token_range;
+                    app.search.autocomplete.selected_index = 0;
+                    app.search.autocomplete.is_open = !app.search.autocomplete.suggestions.is_empty();
                     if search_response.changed() {
                         // Reset debounce timer để tick() sẽ lưu lịch sử sau 500ms dừng gõ
-                        app.history_state.mark_query_changed(Instant::now());
+                        app.search.history.mark_query_changed(Instant::now());
                         app.trigger_full_search();
                     }
                 }
@@ -384,13 +384,13 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 if (search_response.lost_focus() || search_response.has_focus())
                     && ui.ctx().input(|i| i.key_pressed(egui::Key::Enter))
                 {
-                    let q = app.query.clone();
-                    app.history_state.record(&q);
-                    app.history_state.mark_recorded();
+                    let q = app.search.query.clone();
+                    app.search.history.record(&q);
+                    app.search.history.mark_recorded();
                 }
 
                 // Quick Clear button if query is not empty
-                if !app.query.is_empty()
+                if !app.search.query.is_empty()
                     && ui
                         .button(
                             egui::RichText::new("✖")
@@ -405,13 +405,13 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
 
                 // Search History Toggle Button (⏱)
                 let history_btn = egui::Button::new(egui::RichText::new("⏱").size(11.0).color(
-                    if app.history_state.is_open {
+                    if app.search.history.is_open {
                         theme::TEXT_KEY
                     } else {
                         theme::TEXT_MUTED
                     },
                 ))
-                .fill(if app.history_state.is_open {
+                .fill(if app.search.history.is_open {
                     theme::BG_SURFACE1
                 } else {
                     theme::BG_SURFACE0
@@ -424,10 +424,10 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                     .on_hover_text("Search history")
                     .clicked()
                 {
-                    let opened = app.history_state.toggle_popup();
+                    let opened = app.search.history.toggle_popup();
                     if opened {
-                        app.autocomplete_state.is_open = false;
-                        app.autocomplete_state.suggestions.clear();
+                        app.search.autocomplete.is_open = false;
+                        app.search.autocomplete.suggestions.clear();
                     }
                 }
 
@@ -569,13 +569,13 @@ fn render_window_controls(ui: &mut egui::Ui) {
 /// - main (đã lọc):   Live -> số log khớp         | Pause -> số log khớp mới đến / số log khớp tại pause
 /// - Raw:             Live -> số log hiện tại     | Pause -> số log mới đến / số log tại pause
 pub fn render_log_counter(ui: &mut egui::Ui, app: &UwuGuiApp) {
-    let is_filtering = !app.query.trim().is_empty();
+    let is_filtering = !app.search.query.trim().is_empty();
 
     let (count_text, count_color, count_tooltip) = match app.active_tab {
         crate::app::ActiveTab::Unfiltered => {
             let total_now = app.session.engine.total_processed() as usize;
 
-            if app.unfiltered_state.is_live {
+            if app.unfiltered.is_live {
                 // Live: số log hiện tại
                 let text = theme::format_number(total_now);
                 let tooltip = format!(
@@ -589,50 +589,50 @@ pub fn render_log_counter(ui: &mut egui::Ui, app: &UwuGuiApp) {
                 // Pause: số log mới đến / số log tại pause
                 format_paused_stream_counter(
                     "Raw Stream",
-                    app.unfiltered_state.snapshot_processed_count as usize,
+                    app.unfiltered.snapshot_processed_count as usize,
                     total_now,
                 )
             }
         }
         crate::app::ActiveTab::Filtered => {
             if is_filtering {
-                if app.is_auto_scroll {
+                if app.viewport.is_auto_scroll {
                     // Live: số log khớp
-                    let text = if app.total_matched > app.cached_logs.len() {
+                    let text = if app.viewport.total_matched > app.viewport.cached_logs.len() {
                         format!(
                             "{}/{}",
-                            theme::format_number(app.cached_logs.len()),
-                            theme::format_number(app.total_matched)
+                            theme::format_number(app.viewport.cached_logs.len()),
+                            theme::format_number(app.viewport.total_matched)
                         )
                     } else {
-                        theme::format_number(app.total_matched)
+                        theme::format_number(app.viewport.total_matched)
                     };
                     let tooltip = format!(
                         "Filter Query: \"{}\" (Live)\n• Total Matched: {}\n• Displayed: {} (Limit: {})",
-                        app.query.trim(),
-                        theme::format_number(app.total_matched),
-                        theme::format_number(app.cached_logs.len()),
+                        app.search.query.trim(),
+                        theme::format_number(app.viewport.total_matched),
+                        theme::format_number(app.viewport.cached_logs.len()),
                         theme::format_number(app.session.display_limit),
                     );
                     (text, theme::TEXT_KEY, tooltip)
                 } else {
                     // Pause: số log khớp mới đến / số log khớp tại pause
-                    let seen_matched_at_pause = app.filtered_seen_at_pause;
-                    let new_matched = app.paused_new_matched_count;
+                    let seen_matched_at_pause = app.viewport.pause_snapshot.filtered_seen;
+                    let new_matched = app.viewport.pause_snapshot.paused_new_matched_count;
                     let text = format_fraction(new_matched, seen_matched_at_pause);
                     let tooltip = format!(
                         "Filter Query: \"{}\" (Paused)\n• New Matched Logs Since Pause: {}\n• Matched at Pause: {}\n• Displayed: {}",
-                        app.query.trim(),
+                        app.search.query.trim(),
                         theme::format_number(new_matched),
                         theme::format_number(seen_matched_at_pause),
-                        theme::format_number(app.cached_logs.len()),
+                        theme::format_number(app.viewport.cached_logs.len()),
                     );
                     (text, theme::TEXT_KEY, tooltip)
                 }
             } else {
                 let total_now = app.session.engine.total_processed() as usize;
 
-                if app.is_auto_scroll {
+                if app.viewport.is_auto_scroll {
                     // Live: số log hiện tại
                     let text = theme::format_number(total_now);
                     let tooltip = format!(
@@ -640,14 +640,14 @@ pub fn render_log_counter(ui: &mut egui::Ui, app: &UwuGuiApp) {
                         theme::format_number(total_now),
                         theme::format_number(app.session.engine.total_logs()),
                         theme::format_number(app.session.engine.max_capacity()),
-                        theme::format_number(app.cached_logs.len()),
+                        theme::format_number(app.viewport.cached_logs.len()),
                     );
                     (text, theme::TEXT_MUTED, tooltip)
                 } else {
                     // Pause: số log mới đến / số log tại pause
                     format_paused_stream_counter(
                         "Main Stream",
-                        app.global_seen_at_pause as usize,
+                        app.viewport.pause_snapshot.global_seen as usize,
                         total_now,
                     )
                 }

@@ -14,7 +14,7 @@ use uwu_core_schema::StandardField;
 pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     let mut action_to_dispatch: Option<AppAction> = None;
 
-    if let Some(event) = &app.selected_log {
+    if let Some(event) = &app.inspector.selected_log {
         let is_highlighted = app.is_row_highlighted(&event.id);
         let event_id = event.id;
         let has_any_highlights = app.has_any_highlights();
@@ -122,7 +122,7 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 // Metadata Card
                 render_card(ui, "Metadata", |ui| {
                     let mut ctx = ActionContext {
-                        highlighted_terms: &app.highlighted_terms,
+                        highlighted_terms: &app.inspector.highlighted_terms,
                         has_any_highlights,
                         action: &mut action_to_dispatch,
                     };
@@ -150,7 +150,7 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                     let msg_color = log_color;
 
                     let mut ctx = ActionContext {
-                        highlighted_terms: &app.highlighted_terms,
+                        highlighted_terms: &app.inspector.highlighted_terms,
                         has_any_highlights,
                         action: &mut action_to_dispatch,
                     };
@@ -183,7 +183,7 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 if !custom_fields.is_empty() {
                     render_card(ui, "Parsed Fields", |ui| {
                         let mut ctx = ActionContext {
-                            highlighted_terms: &app.highlighted_terms,
+                            highlighted_terms: &app.inspector.highlighted_terms,
                             has_any_highlights,
                             action: &mut action_to_dispatch,
                         };
@@ -329,7 +329,7 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                     ui.add_space(4.0);
 
                     let mut ctx = ActionContext {
-                        highlighted_terms: &app.highlighted_terms,
+                        highlighted_terms: &app.inspector.highlighted_terms,
                         has_any_highlights,
                         action: &mut action_to_dispatch,
                     };
