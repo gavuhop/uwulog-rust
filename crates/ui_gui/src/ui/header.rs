@@ -9,7 +9,7 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
 
     ui.horizontal(|ui| {
         // 1. Menu Icon Button (☰) - Flat style, không viền, không nổi lên
-        let is_menu_open = app.main_menu_open;
+        let is_menu_open = app.is_overlay_open(crate::app::OverlayLayer::MainMenu);
         let menu_btn = egui::Button::new(
             egui::RichText::new("☰")
                 .strong()
@@ -52,17 +52,19 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
         }
 
         // Project Button (Flat style, không viền, không nổi lên)
+        let is_project_picker_open =
+            app.is_overlay_open(crate::app::OverlayLayer::ProjectPicker);
         if !app.session.name.is_empty() {
             let proj_btn = egui::Button::new(
                 egui::RichText::new(&app.session.name)
                     .strong()
-                    .color(if app.project_picker_open {
+                    .color(if is_project_picker_open {
                         theme::TEXT_KEY
                     } else {
                         theme::TEXT_PRIMARY
                     }),
             )
-            .fill(if app.project_picker_open {
+            .fill(if is_project_picker_open {
                 theme::BG_SURFACE1
             } else {
                 Color32::TRANSPARENT

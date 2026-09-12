@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use uwu_core_workspace::{Workspace, WorkspaceLocation};
 
 pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, trigger_rect: Rect) {
-    if !app.project_picker_open {
+    if !app.is_overlay_open(crate::app::OverlayLayer::ProjectPicker) {
         return;
     }
 

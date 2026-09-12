@@ -86,20 +86,53 @@ pub enum AppAction {
     DismissTopLayer,
 }
 
+/// Các tầng hiển thị nổi (Overlay / Modal / Popup) theo mô hình Navigation Stack & State Machine
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OverlayLayer {
+    /// Menu chính (☰)
+    MainMenu,
+    /// Submenu chọn Theme bên phải
+    ThemeSubmenu,
+    /// Modal thông tin ứng dụng About
+    AboutModal,
+    /// Modal cấu hình nguồn dữ liệu khởi chạy
+    LaunchModal,
+    /// Bộ chọn Project / Workspace phong cách Zed
+    ProjectPicker,
+    /// Modal tùy biến cột và thứ tự hiển thị
+    ColumnsModal,
+}
+
 pub struct UwuGuiApp {
     pub sessions: Vec<GuiSession>,
     pub active_index: usize,
     pub store: WorkspaceStore,
     pub rt: Handle,
-    pub show_launch_modal: bool,
     pub launch_modal_draft: Option<SourceConfig>,
-    pub project_picker_open: bool,
     pub project_search_query: String,
     pub prev_screen_width: f32,
-    pub main_menu_open: bool,
-    pub main_menu_theme_sub_open: bool,
-    pub show_about_modal: bool,
+    pub overlay_stack: Vec<OverlayLayer>,
     pub should_quit: bool,
+}
+
+impl UwuGuiApp {
+    /// Kiểm tra xem một layer có đang mở trên stack hay không
+    #[inline]
+    pub fn is_overlay_open(&self, layer: OverlayLayer) -> bool {
+        self.overlay_stack.contains(&layer)
+    }
+
+    /// Đẩy một layer mới vào đỉnh ngăn xếp nếu chưa có
+    pub fn push_overlay(&mut self, layer: OverlayLayer) {
+        if !self.is_overlay_open(layer) {
+            self.overlay_stack.push(layer);
+        }
+    }
+
+    /// Đóng một layer cụ thể khỏi ngăn xếp
+    pub fn close_overlay(&mut self, layer: OverlayLayer) {
+        self.overlay_stack.retain(|l| *l != layer);
+    }
 }
 
 impl std::ops::Deref for UwuGuiApp {
@@ -329,14 +362,10 @@ impl UwuGuiApp {
             active_index: 0,
             store,
             rt,
-            show_launch_modal: false,
             launch_modal_draft: None,
-            project_picker_open: false,
             project_search_query: String::new(),
             prev_screen_width: 0.0,
-            main_menu_open: false,
-            main_menu_theme_sub_open: false,
-            show_about_modal: false,
+            overlay_stack: Vec::new(),
             should_quit: false,
         };
 
@@ -467,10 +496,10 @@ impl UwuGuiApp {
             AppAction::RestartSource => self.restart_current_source(),
             AppAction::OpenLaunchModal => {
                 self.launch_modal_draft = Some(self.session.source_config.clone());
-                self.show_launch_modal = true;
+                self.push_overlay(OverlayLayer::LaunchModal);
             }
             AppAction::CloseLaunchModal => {
-                self.show_launch_modal = false;
+                self.close_overlay(OverlayLayer::LaunchModal);
                 self.launch_modal_draft = None;
             }
             AppAction::ApplyLaunchModal => {
@@ -479,18 +508,27 @@ impl UwuGuiApp {
                     self.save_current_workspace();
                     self.restart_current_source();
                 }
-                self.show_launch_modal = false;
+                self.close_overlay(OverlayLayer::LaunchModal);
             }
             AppAction::ApplyAndRestartSource(new_config) => {
                 self.session.source_config = new_config;
                 self.save_current_workspace();
                 self.restart_current_source();
-                self.show_launch_modal = false;
+                self.close_overlay(OverlayLayer::LaunchModal);
                 self.launch_modal_draft = None;
             }
-            AppAction::OpenColumnsModal => self.column_state.open_modal(),
-            AppAction::CloseColumnsModal => self.column_state.close_modal(),
-            AppAction::ApplyColumnsModal => self.column_state.apply_modal(),
+            AppAction::OpenColumnsModal => {
+                self.column_state.open_modal();
+                self.push_overlay(OverlayLayer::ColumnsModal);
+            }
+            AppAction::CloseColumnsModal => {
+                self.column_state.close_modal();
+                self.close_overlay(OverlayLayer::ColumnsModal);
+            }
+            AppAction::ApplyColumnsModal => {
+                self.column_state.apply_modal();
+                self.close_overlay(OverlayLayer::ColumnsModal);
+            }
             AppAction::SelectLog(log) => self.selected_log = log,
             AppAction::SwitchTab(tab) => {
                 if tab == ActiveTab::Unfiltered && !self.unfiltered_state.is_open {
@@ -516,32 +554,30 @@ impl UwuGuiApp {
             AppAction::CloseUnfilteredStream => self.close_unfiltered_stream(),
             AppAction::FocusInMainAndClearFilter => self.focus_in_main_and_clear_filter(),
             AppAction::ToggleProjectPicker => {
-                self.project_picker_open = !self.project_picker_open;
-                if !self.project_picker_open {
-                    self.project_search_query.clear();
+                if self.is_overlay_open(OverlayLayer::ProjectPicker) {
+                    self.close_project_picker();
+                } else {
+                    self.push_overlay(OverlayLayer::ProjectPicker);
                 }
             }
             AppAction::CloseProjectPicker => self.close_project_picker(),
             AppAction::ToggleMainMenu => {
-                self.main_menu_open = !self.main_menu_open;
-                if !self.main_menu_open {
-                    self.main_menu_theme_sub_open = false;
+                if self.is_overlay_open(OverlayLayer::MainMenu) {
+                    self.close_main_menu();
+                } else {
+                    self.push_overlay(OverlayLayer::MainMenu);
                 }
             }
-            AppAction::CloseMainMenu => {
-                self.main_menu_open = false;
-                self.main_menu_theme_sub_open = false;
-            }
+            AppAction::CloseMainMenu => self.close_main_menu(),
             AppAction::OpenAboutModal => {
-                self.main_menu_open = false;
-                self.main_menu_theme_sub_open = false;
-                self.show_about_modal = true;
+                self.close_main_menu();
+                self.push_overlay(OverlayLayer::AboutModal);
             }
             AppAction::CloseAboutModal => {
-                self.show_about_modal = false;
+                self.close_overlay(OverlayLayer::AboutModal);
             }
             AppAction::QuitApp => {
-                self.main_menu_open = false;
+                self.close_main_menu();
                 self.should_quit = true;
             }
             AppAction::DismissTopLayer => {
@@ -550,30 +586,37 @@ impl UwuGuiApp {
         }
     }
 
-    /// Đóng lớp giao diện trên cùng theo thứ tự ngăn xếp (Chain of Responsibility / Pop Stack)
+    /// Đóng toàn bộ hệ thống menu chính và submenu liên quan
+    pub fn close_main_menu(&mut self) {
+        self.close_overlay(OverlayLayer::MainMenu);
+        self.close_overlay(OverlayLayer::ThemeSubmenu);
+    }
+
+    /// Đóng lớp giao diện trên cùng theo thứ tự ngăn xếp (Navigation Stack LIFO)
     pub fn dismiss_top_layer(&mut self) -> bool {
-        if self.main_menu_open {
-            self.main_menu_open = false;
-            self.main_menu_theme_sub_open = false;
-            true
-        } else if self.show_about_modal {
-            self.show_about_modal = false;
+        if let Some(top) = self.overlay_stack.pop() {
+            match top {
+                OverlayLayer::MainMenu => {
+                    self.close_overlay(OverlayLayer::ThemeSubmenu);
+                }
+                OverlayLayer::ThemeSubmenu => {}
+                OverlayLayer::AboutModal => {}
+                OverlayLayer::LaunchModal => {
+                    self.launch_modal_draft = None;
+                }
+                OverlayLayer::ProjectPicker => {
+                    self.project_search_query.clear();
+                }
+                OverlayLayer::ColumnsModal => {
+                    self.column_state.close_modal();
+                }
+            }
             true
         } else if self.autocomplete_state.is_open {
             self.autocomplete_state.is_open = false;
             true
         } else if self.history_state.is_open {
             self.history_state.close_popup();
-            true
-        } else if self.project_picker_open {
-            self.close_project_picker();
-            true
-        } else if self.column_state.is_modal_open {
-            self.column_state.close_modal();
-            true
-        } else if self.show_launch_modal {
-            self.show_launch_modal = false;
-            self.launch_modal_draft = None;
             true
         } else if self.active_tab == ActiveTab::Unfiltered {
             self.close_unfiltered_stream();
@@ -587,7 +630,7 @@ impl UwuGuiApp {
     }
 
     pub fn close_project_picker(&mut self) {
-        self.project_picker_open = false;
+        self.close_overlay(OverlayLayer::ProjectPicker);
         self.project_search_query.clear();
     }
 
@@ -1026,14 +1069,10 @@ mod tests {
             active_index: 0,
             store,
             rt,
-            show_launch_modal: false,
             launch_modal_draft: None,
-            project_picker_open: false,
             project_search_query: String::new(),
             prev_screen_width: 0.0,
-            main_menu_open: false,
-            main_menu_theme_sub_open: false,
-            show_about_modal: false,
+            overlay_stack: Vec::new(),
             should_quit: false,
         }
     }
@@ -1490,7 +1529,7 @@ mod tests {
 
         // Open launch modal creates draft from live session
         app.dispatch_action(AppAction::OpenLaunchModal);
-        assert!(app.show_launch_modal);
+        assert!(app.is_overlay_open(OverlayLayer::LaunchModal));
         assert!(app.launch_modal_draft.is_some());
 
         // Modify draft in form (e.g. user toggles to File source and types a path)
@@ -1506,7 +1545,7 @@ mod tests {
 
         // User cancels modal
         app.dispatch_action(AppAction::CloseLaunchModal);
-        assert!(!app.show_launch_modal);
+        assert!(!app.is_overlay_open(OverlayLayer::LaunchModal));
         assert!(app.launch_modal_draft.is_none());
 
         // Live session remains intact
@@ -1530,7 +1569,7 @@ mod tests {
 
         // Apply
         app.dispatch_action(AppAction::ApplyLaunchModal);
-        assert!(!app.show_launch_modal);
+        assert!(!app.is_overlay_open(OverlayLayer::LaunchModal));
         assert!(app.launch_modal_draft.is_none());
 
         // Live session has received the new config
@@ -1704,13 +1743,13 @@ mod tests {
     async fn test_app_action_project_picker() {
         let mut app = create_test_app();
 
-        assert!(!app.project_picker_open);
+        assert!(!app.is_overlay_open(OverlayLayer::ProjectPicker));
         app.dispatch_action(AppAction::ToggleProjectPicker);
-        assert!(app.project_picker_open);
+        assert!(app.is_overlay_open(OverlayLayer::ProjectPicker));
 
         app.project_search_query = "search_test".to_string();
         app.dispatch_action(AppAction::CloseProjectPicker);
-        assert!(!app.project_picker_open);
+        assert!(!app.is_overlay_open(OverlayLayer::ProjectPicker));
         assert!(app.project_search_query.is_empty());
     }
 
@@ -1733,29 +1772,30 @@ mod tests {
         app.open_unfiltered_stream(None);
         assert_eq!(app.active_tab, ActiveTab::Unfiltered);
 
-        // 3. Add launch modal on top
-        app.show_launch_modal = true;
+        // 3. Add launch modal on top (stack)
+        app.push_overlay(OverlayLayer::LaunchModal);
 
-        // 4. Add columns modal on top
-        app.column_state.is_modal_open = true;
+        // 4. Add columns modal on top (stack)
+        app.column_state.open_modal();
+        app.push_overlay(OverlayLayer::ColumnsModal);
 
-        // 5. Add project picker on top
-        app.project_picker_open = true;
+        // 5. Add project picker on top (stack)
+        app.push_overlay(OverlayLayer::ProjectPicker);
 
         // Popping order verification:
         // Pop 1: Project picker
         app.dispatch_action(AppAction::DismissTopLayer);
-        assert!(!app.project_picker_open);
-        assert!(app.column_state.is_modal_open);
+        assert!(!app.is_overlay_open(OverlayLayer::ProjectPicker));
+        assert!(app.is_overlay_open(OverlayLayer::ColumnsModal));
 
         // Pop 2: Columns modal
         app.dispatch_action(AppAction::DismissTopLayer);
-        assert!(!app.column_state.is_modal_open);
-        assert!(app.show_launch_modal);
+        assert!(!app.is_overlay_open(OverlayLayer::ColumnsModal));
+        assert!(app.is_overlay_open(OverlayLayer::LaunchModal));
 
         // Pop 3: Launch modal
         app.dispatch_action(AppAction::DismissTopLayer);
-        assert!(!app.show_launch_modal);
+        assert!(!app.is_overlay_open(OverlayLayer::LaunchModal));
         assert_eq!(app.active_tab, ActiveTab::Unfiltered);
 
         // Pop 4: Unfiltered stream tab

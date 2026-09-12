@@ -4,7 +4,7 @@ use crate::ui::theme;
 use eframe::egui::{self, Rounding, Stroke};
 
 pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
-    if !app.show_launch_modal {
+    if !app.is_overlay_open(crate::app::OverlayLayer::LaunchModal) {
         return;
     }
 
