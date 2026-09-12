@@ -14,7 +14,7 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
 
     let mut action_to_dispatch: Option<AppAction> = None;
 
-    egui::Window::new("⚙️ Launch & Source Parameters")
+    egui::Window::new("Launch & Source Parameters")
         .frame(
             egui::Frame::window(&ctx.style())
                 .fill(theme::BG_MANTLE)
