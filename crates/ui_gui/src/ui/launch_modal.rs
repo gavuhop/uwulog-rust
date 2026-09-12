@@ -77,19 +77,25 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
 
             // Log Source Selection Card
             render_card(ui, "Log Source Selection", |ui| {
+                let source_before = draft.source_type;
+
                 ui.radio_value(
                     &mut draft.source_type,
                     SourceType::Process,
                     egui::RichText::new("🚀 Command").color(theme::TEXT_PRIMARY),
                 );
-                if draft.source_type == SourceType::Process {
+
+                if source_before == SourceType::Process {
                     ui.horizontal(|ui| {
                         ui.label(egui::RichText::new("Command:").color(theme::TEXT_MUTED));
                         ui.add(
                             egui::TextEdit::singleline(&mut draft.command_str)
-                                .hint_text("e.g. go run gen_logs.go")
+                                .desired_width(ui.available_width())
+                                .hint_text(
+                                    egui::RichText::new("e.g. go run gen_logs.go")
+                                        .color(theme::TEXT_PLACEHOLDER),
+                                )
                                 .font(egui::TextStyle::Monospace)
-                                .desired_width(320.0)
                                 .margin(egui::Margin::symmetric(8.0, 4.0)),
                         );
                     });
@@ -102,12 +108,25 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
                     SourceType::File,
                     egui::RichText::new("📁 Log File (File Tailer)").color(theme::TEXT_PRIMARY),
                 );
-                if draft.source_type == SourceType::File {
+
+                if source_before == SourceType::File {
                     ui.horizontal(|ui| {
                         ui.label(egui::RichText::new("File Path:").color(theme::TEXT_MUTED));
-                        ui.add(
+
+                        let browse_width = 84.0;
+                        let spacing = ui.spacing().item_spacing.x;
+
+                        // Reserve exact space for Browse button.
+                        let text_width = (ui.available_width() - browse_width - spacing).max(80.0);
+
+                        ui.add_sized(
+                            [text_width, 22.0],
                             egui::TextEdit::singleline(&mut draft.file_path)
-                                .desired_width(260.0)
+                                .hint_text(
+                                    egui::RichText::new("e.g. /path/to/app.log")
+                                        .color(theme::TEXT_PLACEHOLDER),
+                                )
+                                .font(egui::TextStyle::Monospace)
                                 .margin(egui::Margin::symmetric(8.0, 4.0)),
                         );
 
@@ -118,7 +137,7 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
                         .stroke(Stroke::new(1.0, theme::BG_SURFACE1))
                         .rounding(Rounding::same(4.0));
 
-                        if ui.add(browse_btn).clicked() {
+                        if ui.add_sized([browse_width, 22.0], browse_btn).clicked() {
                             if let Some(path) = rfd::FileDialog::new().pick_file() {
                                 draft.file_path = path.display().to_string();
                             }
@@ -142,7 +161,7 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
                 .stroke(Stroke::new(1.0, theme::BTN_RESTART_BORDER))
                 .rounding(Rounding::same(4.0));
 
-                if ui.add(apply_btn).clicked() {
+                if ui.add(apply_btn).clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     action_to_dispatch = Some(AppAction::ApplyLaunchModal);
                 }
 
