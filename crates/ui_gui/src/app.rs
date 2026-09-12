@@ -2,7 +2,7 @@ pub use crate::cli::CliArgs;
 pub use crate::overlay::{OverlayLayer, OverlayStack};
 #[allow(unused_imports)]
 pub use crate::session_view::{
-    ActiveTab, GuiSession, GuiViewState, UnfilteredViewState, RAW_STREAM_LIMIT,
+    ActiveTab, GuiSession, GuiViewState, SearchState, UnfilteredViewState, RAW_STREAM_LIMIT,
 };
 use clap::Parser;
 use eframe::egui;

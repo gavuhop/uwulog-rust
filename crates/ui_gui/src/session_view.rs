@@ -2,16 +2,15 @@ use crate::ui::autocomplete::{AutocompleteState, FieldType, SuggestionItem, Sugg
 use crate::ui::columns_modal::ColumnState;
 use crate::ui::history::SearchHistoryState;
 use std::collections::{BTreeMap, HashSet};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
-use uwu_core_engine::SystemEngine;
 use uwu_core_schema::LogEvent;
 use uwu_core_workspace::{Workspace, WorkspaceSession};
 
 pub const RAW_STREAM_LIMIT: usize = 500;
 
-#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Default)]
 pub enum ActiveTab {
+    #[default]
     Filtered,
     Unfiltered,
 }
@@ -48,16 +47,28 @@ pub struct SearchState {
     pub schema_cache: BTreeMap<String, FieldType>,
 }
 
-impl SearchState {
-    pub fn new(engine: &Arc<SystemEngine>) -> Self {
+impl Default for SearchState {
+    fn default() -> Self {
         Self {
             query: String::new(),
             last_query: String::new(),
             last_search_time: Instant::now(),
             autocomplete: AutocompleteState::default(),
             history: SearchHistoryState::default(),
-            schema_cache: engine.get_schema_map().into_iter().collect(),
+            schema_cache: BTreeMap::new(),
         }
+    }
+}
+
+impl SearchState {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_schema(schema: impl IntoIterator<Item = (String, FieldType)>) -> Self {
+        let mut state = Self::default();
+        state.sync_schema(schema);
+        state
     }
 
     pub fn apply_filter_term(&mut self, term: &str) {
@@ -123,8 +134,15 @@ impl SearchState {
         }
     }
 
-    pub fn sync_discovered_fields(&mut self, engine: &SystemEngine) {
-        self.schema_cache = engine.get_schema_map().into_iter().collect();
+    pub fn sync_schema(&mut self, schema: impl IntoIterator<Item = (String, FieldType)>) {
+        self.schema_cache = schema.into_iter().collect();
+    }
+
+    pub fn sync_discovered_fields(
+        &mut self,
+        schema: impl IntoIterator<Item = (String, FieldType)>,
+    ) {
+        self.sync_schema(schema);
     }
 
     pub fn get_available_fields(&self) -> Vec<(String, FieldType)> {
@@ -299,6 +317,7 @@ impl InspectorState {
 
 /// Lưu trữ trạng thái hiển thị giao diện của từng workspace session.
 /// Gom nhóm rõ ràng theo 4 Sub-Models: Search, Viewport, Inspector, và Columns.
+#[derive(Default)]
 pub struct GuiViewState {
     pub search: SearchState,
     pub viewport: ViewportState,
@@ -309,15 +328,14 @@ pub struct GuiViewState {
 }
 
 impl GuiViewState {
-    pub fn new(engine: &Arc<SystemEngine>) -> Self {
-        Self {
-            search: SearchState::new(engine),
-            viewport: ViewportState::new(),
-            inspector: InspectorState::new(),
-            columns: ColumnState::default(),
-            unfiltered: UnfilteredViewState::default(),
-            active_tab: ActiveTab::Filtered,
-        }
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_schema(schema: impl IntoIterator<Item = (String, FieldType)>) -> Self {
+        let mut view = Self::default();
+        view.search.sync_schema(schema);
+        view
     }
 }
 
@@ -330,13 +348,13 @@ pub struct GuiSession {
 
 impl GuiSession {
     pub fn new(session: WorkspaceSession) -> Self {
-        let view = GuiViewState::new(&session.engine);
+        let view = GuiViewState::with_schema(session.engine.get_schema_map());
         Self { session, view }
     }
 
     pub fn from_workspace(ws: &Workspace, capacity: usize, display_limit: usize) -> Self {
         let session = WorkspaceSession::from_workspace(ws, capacity, display_limit);
-        let mut view = GuiViewState::new(&session.engine);
+        let mut view = GuiViewState::with_schema(session.engine.get_schema_map());
         view.search.query = ws.last_query.clone();
         Self { session, view }
     }
@@ -457,7 +475,7 @@ impl GuiSession {
         self.view.columns.sync_discovered_keys(logs);
         self.view
             .search
-            .sync_discovered_fields(&self.session.engine);
+            .sync_schema(self.session.engine.get_schema_map());
     }
 
     pub fn get_available_log_fields(&self) -> Vec<(String, FieldType)> {
