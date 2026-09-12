@@ -1,0 +1,143 @@
+use crate::app::UwuGuiApp;
+use crate::theme;
+use eframe::egui::{self, Color32, FontId, Id, Key, Order, Pos2, Rect, Rounding, Stroke};
+
+/// Render Autocomplete Dropdown Popup ngay dưới ô tìm kiếm
+pub fn render_autocomplete_popup(ctx: &egui::Context, app: &mut UwuGuiApp, input_rect: Rect) {
+    if !app.search.autocomplete.is_open || app.search.autocomplete.suggestions.is_empty() {
+        return;
+    }
+
+    // Xử lý phím điều hướng khi popup đang mở
+    let mut item_to_apply = None;
+
+    if ctx.input(|i| i.key_pressed(Key::ArrowDown))
+        && !app.search.autocomplete.suggestions.is_empty()
+    {
+        app.search.autocomplete.selected_index = (app.search.autocomplete.selected_index + 1)
+            % app.search.autocomplete.suggestions.len();
+    }
+
+    if ctx.input(|i| i.key_pressed(Key::ArrowUp)) && !app.search.autocomplete.suggestions.is_empty()
+    {
+        if app.search.autocomplete.selected_index == 0 {
+            app.search.autocomplete.selected_index = app.search.autocomplete.suggestions.len() - 1;
+        } else {
+            app.search.autocomplete.selected_index -= 1;
+        }
+    }
+
+    if ctx.input(|i| i.key_pressed(Key::Tab) || i.key_pressed(Key::Enter)) {
+        if let Some(item) = app
+            .search
+            .autocomplete
+            .suggestions
+            .get(app.search.autocomplete.selected_index)
+        {
+            item_to_apply = Some(item.clone());
+        }
+    }
+
+    if ctx.input(|i| i.key_pressed(Key::Escape)) {
+        app.search.autocomplete.is_open = false;
+        return;
+    }
+
+    // Vẽ Floating Dropdown Panel (cách đáy filter box một khoảng thông thoáng để không bị đè viền)
+    let dropdown_pos = Pos2::new(input_rect.min.x, input_rect.max.y + 8.0);
+    let dropdown_width = input_rect.width().max(420.0);
+    let approx_height = (app.search.autocomplete.suggestions.len() as f32 * 26.0) + 16.0;
+    let popup_rect = Rect::from_min_size(dropdown_pos, egui::vec2(dropdown_width, approx_height));
+
+    if ctx.input(|i| i.pointer.any_pressed() || i.pointer.any_click()) {
+        if let Some(pos) = ctx.input(|i| i.pointer.interact_pos()) {
+            if !input_rect.contains(pos) && !popup_rect.contains(pos) {
+                app.search.autocomplete.is_open = false;
+                return;
+            }
+        }
+    }
+
+    egui::Area::new(Id::new("search_autocomplete_dropdown_area"))
+        .order(Order::Foreground)
+        .fixed_pos(dropdown_pos)
+        .show(ctx, |ui| {
+            egui::Frame::default()
+                .fill(theme::BG_MANTLE)
+                .stroke(Stroke::new(1.0, theme::BG_SURFACE0))
+                .rounding(Rounding::same(6.0))
+                .inner_margin(egui::Margin::same(4.0))
+                .show(ui, |ui| {
+                    ui.set_width(dropdown_width);
+
+                    let mut hovered_index = None;
+                    for (idx, item) in app.search.autocomplete.suggestions.iter().enumerate() {
+                        let is_selected = idx == app.search.autocomplete.selected_index;
+
+                        let desired_size = egui::vec2(ui.available_width(), 26.0);
+                        let (rect, resp) =
+                            ui.allocate_exact_size(desired_size, egui::Sense::click());
+
+                        if resp.hovered() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                            hovered_index = Some(idx);
+                        }
+
+                        if resp.clicked() {
+                            item_to_apply = Some(item.clone());
+                        }
+
+                        let row_bg = if is_selected || resp.hovered() {
+                            theme::BG_ROW_SELECTED
+                        } else {
+                            Color32::TRANSPARENT
+                        };
+
+                        ui.painter().rect_filled(rect, Rounding::same(4.0), row_bg);
+
+                        // Vẽ trực tiếp bằng Painter: hoàn toàn như 1 Button thuần túy, không có widget con cướp click hay bôi đen chữ
+                        let center_y = rect.center().y;
+                        let mut left_x = rect.min.x + 8.0;
+
+                        // Cột trái 1: Ký hiệu toán tử (~, -, <=, ...)
+                        if !item.op_symbol.is_empty() {
+                            ui.painter().text(
+                                Pos2::new(left_x, center_y),
+                                egui::Align2::LEFT_CENTER,
+                                item.op_symbol,
+                                FontId::monospace(11.5),
+                                theme::TEXT_KEY,
+                            );
+                            left_x += 24.0;
+                        }
+
+                        // Cột trái 2: Tên hành động / Tên key
+                        ui.painter().text(
+                            Pos2::new(left_x, center_y),
+                            egui::Align2::LEFT_CENTER,
+                            &item.action_name,
+                            FontId::monospace(12.0),
+                            theme::TEXT_PRIMARY,
+                        );
+
+                        // Cột phải: Cú pháp ví dụ in nghiêng
+                        let right_x = rect.max.x - 8.0;
+                        ui.painter().text(
+                            Pos2::new(right_x, center_y),
+                            egui::Align2::RIGHT_CENTER,
+                            &item.example_syntax,
+                            FontId::monospace(11.5),
+                            theme::TEXT_MUTED,
+                        );
+                    }
+                    if let Some(hover_idx) = hovered_index {
+                        app.search.autocomplete.selected_index = hover_idx;
+                    }
+                });
+        });
+
+    if let Some(item) = item_to_apply {
+        app.apply_autocomplete_suggestion(&item);
+        ctx.request_repaint();
+    }
+}

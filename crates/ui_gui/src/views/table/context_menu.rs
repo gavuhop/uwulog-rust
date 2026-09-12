@@ -1,5 +1,4 @@
-use crate::app::AppAction;
-use crate::ui::actions::{copy_and_close, render_filter_actions_menu, ActionContext};
+use crate::actions::{copy_and_close, render_filter_actions_menu, ActionContext, AppAction};
 use eframe::egui;
 
 /// Parameters for rendering the right-click context menu of a table cell

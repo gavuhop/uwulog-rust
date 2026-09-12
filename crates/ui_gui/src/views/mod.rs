@@ -1,18 +1,17 @@
-pub mod actions;
-pub mod autocomplete;
-pub mod card;
-pub mod columns_modal;
 pub mod detail;
 pub mod header;
-pub mod history;
-pub mod launch_modal;
-pub mod menu_popup;
-pub mod project_picker;
+pub mod modals;
 pub mod table;
-pub mod theme;
-pub mod unfiltered_table;
+pub mod unfiltered;
+
+pub use detail::render_detail;
+pub use header::render_header;
+pub use modals::{render_columns_modal, render_launch_modal, render_project_picker_popup};
+pub use table::render_table;
+pub use unfiltered::render_unfiltered_table;
 
 use crate::app::UwuGuiApp;
+use crate::theme;
 use eframe::egui;
 
 pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
@@ -20,22 +19,22 @@ pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
 
     // Phím Escape: Đóng lớp giao diện trên cùng theo thứ tự ngăn xếp (Chain of Responsibility / Pop Stack)
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-        app.dispatch_action(crate::app::AppAction::DismissTopLayer);
+        app.dispatch_action(crate::actions::AppAction::DismissTopLayer);
     }
 
     // Phím tắt mở Project Picker (Alt+P hoặc Ctrl+Alt+O)
     if ctx.input(|i| i.modifiers.alt && i.key_pressed(egui::Key::P))
         || ctx.input(|i| i.modifiers.command && i.modifiers.alt && i.key_pressed(egui::Key::O))
     {
-        app.dispatch_action(crate::app::AppAction::ToggleProjectPicker);
+        app.dispatch_action(crate::actions::AppAction::ToggleProjectPicker);
     }
 
     // Phím tắt chuyển project trong This Window (Ctrl+PageUp / Ctrl+PageDown)
     if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::PageUp)) {
-        app.dispatch_action(crate::app::AppAction::CycleSession(false));
+        app.dispatch_action(crate::actions::AppAction::CycleSession(false));
     }
     if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::PageDown)) {
-        app.dispatch_action(crate::app::AppAction::CycleSession(true));
+        app.dispatch_action(crate::actions::AppAction::CycleSession(true));
     }
 
     // Top Panel: Unified 1-Tier Modern Custom Title & Header Bar
@@ -124,27 +123,27 @@ pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
                         .inner_margin(egui::Margin::symmetric(8.0, 4.0)),
                 )
                 .show_inside(ui, |ui| match app.active_tab {
-                    crate::app::ActiveTab::Filtered => {
+                    crate::state::ActiveTab::Filtered => {
                         ui.push_id("main_filtered_table_scope", |ui| {
                             table::render_table(ui, app);
                         });
                     }
-                    crate::app::ActiveTab::Unfiltered => {
+                    crate::state::ActiveTab::Unfiltered => {
                         ui.push_id("unfiltered_table_scope", |ui| {
-                            unfiltered_table::render_unfiltered_table(ui, app);
+                            unfiltered::render_unfiltered_table(ui, app);
                         });
                     }
                 });
         });
 
     // Modal Dialog: Launch & Source Parameters
-    launch_modal::render_launch_modal(ctx, app);
+    modals::render_launch_modal(ctx, app);
 
     // Modal Dialog: Table Columns & Ordering
-    columns_modal::render_columns_modal(ctx, app);
+    modals::render_columns_modal(ctx, app);
 
     // Modal Dialog: About uwulog
-    menu_popup::render_about_modal(ctx, app);
+    crate::components::render_about_modal(ctx, app);
 
     // Window Resize Border Handles (Hỗ trợ kéo dãn / thu nhỏ 4 góc và 4 cạnh cửa sổ)
     render_window_resize_borders(ctx);

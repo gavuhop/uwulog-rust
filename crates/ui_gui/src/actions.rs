@@ -1,7 +1,64 @@
-//! UI utilities and string formatting helpers for actions.
+//! UI utilities and action definitions (Zed-style Command Pattern).
 
-use crate::app::AppAction;
+use crate::state::{ActiveTab, SearchState};
 use std::collections::HashSet;
+use uwu_core_schema::LogEvent;
+use uwu_core_workspace::{SourceConfig, Workspace};
+
+/// Unified Action enum for high-level application & session state mutations
+#[derive(Debug, Clone)]
+pub enum AppAction {
+    SwitchSession(usize),
+    CloseSession(usize),
+    CycleSession(bool),
+    OpenWorkspace(Workspace),
+    LoadWorkspace(Workspace),
+    DeleteWorkspace(uuid::Uuid),
+    StartSource,
+    StopSource,
+    RestartSource,
+    OpenLaunchModal,
+    CloseLaunchModal,
+    ApplyLaunchModal,
+    ApplyAndRestartSource(SourceConfig),
+    OpenColumnsModal,
+    CloseColumnsModal,
+    ApplyColumnsModal,
+    SelectLog(Option<LogEvent>),
+    SwitchTab(ActiveTab),
+
+    // Search Query & Filtering
+    ApplyFilterTerm(String),
+    ExcludeFilterTerm(String),
+    ClearQuery,
+
+    // Highlights
+    ToggleRowHighlight(u64),
+    ToggleTermHighlight(String),
+    ClearAllHighlights,
+
+    // Stream & Latch Controls
+    ToggleLatch,
+    ToggleUnfilteredLive,
+    RefreshUnfilteredSnapshot,
+    OpenUnfilteredStream(Option<u64>),
+    CloseUnfilteredStream,
+    FocusInMainAndClearFilter,
+
+    // Project Picker
+    ToggleProjectPicker,
+    CloseProjectPicker,
+
+    // Main Menu & About
+    ToggleMainMenu,
+    CloseMainMenu,
+    OpenAboutModal,
+    CloseAboutModal,
+    QuitApp,
+
+    // Global Dismiss / Stack Pop
+    DismissTopLayer,
+}
 
 /// Unified render context passed down to subcomponents (tables, detail inspector, cells)
 pub struct ActionContext<'a> {
@@ -69,8 +126,8 @@ pub fn render_filter_actions_menu(
 
     if ui.button(format!("Filter \"{}\"", display_text)).clicked() {
         let term = match field_name {
-            Some(f) => crate::app::UwuGuiApp::format_field_term(f, text),
-            None => crate::app::UwuGuiApp::format_selection_term(text),
+            Some(f) => SearchState::format_field_term(f, text),
+            None => SearchState::format_selection_term(text),
         };
         *ctx.action = Some(AppAction::ApplyFilterTerm(term));
         ui.close_menu();
@@ -78,8 +135,8 @@ pub fn render_filter_actions_menu(
 
     if ui.button(format!("Exclude \"{}\"", display_text)).clicked() {
         let term = match field_name {
-            Some(f) => crate::app::UwuGuiApp::format_field_term(f, text),
-            None => crate::app::UwuGuiApp::format_selection_term(text),
+            Some(f) => SearchState::format_field_term(f, text),
+            None => SearchState::format_selection_term(text),
         };
         *ctx.action = Some(AppAction::ExcludeFilterTerm(term));
         ui.close_menu();

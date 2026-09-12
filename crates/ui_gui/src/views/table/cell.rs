@@ -1,6 +1,6 @@
-use crate::ui::actions::ActionContext;
-use crate::ui::table::context_menu::{render_cell_context_menu, CellMenuContext};
-use crate::ui::theme;
+use super::context_menu::{render_cell_context_menu, CellMenuContext};
+use crate::actions::ActionContext;
+use crate::theme;
 use eframe::egui;
 use uwu_core_schema::LogEvent;
 
@@ -66,12 +66,8 @@ pub fn render_cell(
     let is_secondary_down = ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary));
     let clicked = resp.clicked() && !is_secondary_down;
 
-    let selected_text = crate::ui::actions::extract_selected_text(
-        ui.ctx(),
-        cell_id,
-        &cell_text,
-        resp.clicked() && !is_secondary_down,
-    );
+    let selected_text =
+        crate::actions::extract_selected_text(ui.ctx(), cell_id, &cell_text, clicked);
 
     resp.context_menu(|ui| {
         let menu_ctx = CellMenuContext {

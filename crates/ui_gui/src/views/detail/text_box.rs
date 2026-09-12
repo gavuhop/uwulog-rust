@@ -1,5 +1,5 @@
-use crate::ui::actions::{copy_and_close, render_filter_actions_menu, ActionContext};
-use crate::ui::theme;
+use crate::actions::{copy_and_close, render_filter_actions_menu, ActionContext};
+use crate::theme;
 use eframe::egui::{self, Id};
 
 /// Renders a multiline selectable text area (used for Message and Raw Payload cards) with selection-based quick filters.
@@ -38,7 +38,7 @@ pub fn render_text_box(
 
     let is_secondary_down = ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary));
 
-    let selected_text = crate::ui::actions::extract_selected_text(
+    let selected_text = crate::actions::extract_selected_text(
         ui.ctx(),
         box_id,
         &val,

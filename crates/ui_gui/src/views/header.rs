@@ -1,5 +1,5 @@
 use crate::app::UwuGuiApp;
-use crate::ui::theme;
+use crate::theme;
 use eframe::egui::{self, Color32, Id, Rounding, Stroke};
 use std::time::Instant;
 
@@ -366,7 +366,7 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
 
                     let available_fields = app.get_available_log_fields();
                     let (suggestions, token_range) =
-                        crate::ui::autocomplete::generate_suggestions(&app.search.query, &available_fields);
+                        crate::state::generate_suggestions(&app.search.query, &available_fields);
                     app.search.autocomplete.suggestions = suggestions;
                     app.search.autocomplete.active_token_range = token_range;
                     app.search.autocomplete.selected_index = 0;
@@ -432,22 +432,22 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 }
 
                 // Render autocomplete popup dropdown below search box
-                crate::ui::autocomplete::render_autocomplete_popup(ui.ctx(), app, search_rect);
+                crate::components::render_autocomplete_popup(ui.ctx(), app, search_rect);
 
                 // Render search history popup dropdown below search box
-                crate::ui::history::render_history_popup(ui.ctx(), app, search_rect);
+                crate::components::render_history_popup(ui.ctx(), app, search_rect);
             });
         });
     });
 
     // Render Main Menu Popover (About, Theme, Quit)
     if let Some(rect) = menu_btn_rect {
-        crate::ui::menu_popup::render_main_menu_popup(ui.ctx(), app, rect);
+        crate::components::render_main_menu_popup(ui.ctx(), app, rect);
     }
 
     // Render Zed-Style Project Picker Popover
     if let Some(rect) = proj_btn_rect {
-        crate::ui::project_picker::render_project_picker_popup(ui.ctx(), app, rect);
+        crate::views::modals::render_project_picker_popup(ui.ctx(), app, rect);
     }
 }
 

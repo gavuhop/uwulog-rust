@@ -1,6 +1,6 @@
 use crate::app::{AppAction, SourceType, UwuGuiApp};
-use crate::ui::card::render_card;
-use crate::ui::theme;
+use crate::components::render_card;
+use crate::theme;
 use eframe::egui::{self, Rounding, Stroke};
 
 pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {

@@ -2,10 +2,10 @@ pub mod cell;
 pub mod context_menu;
 pub mod header;
 
-use crate::app::{AppAction, UwuGuiApp};
-use crate::ui::actions::ActionContext;
-use crate::ui::columns_modal::ColumnItem;
-use crate::ui::theme;
+use crate::actions::{ActionContext, AppAction};
+use crate::app::UwuGuiApp;
+use crate::state::ColumnItem;
+use crate::theme;
 use cell::render_cell;
 use eframe::egui::{self, Pos2};
 use egui_extras::{Column, TableBuilder};

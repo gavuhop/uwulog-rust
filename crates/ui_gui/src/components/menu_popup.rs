@@ -1,5 +1,5 @@
 use crate::app::{AppAction, OverlayLayer, UwuGuiApp};
-use crate::ui::theme;
+use crate::theme;
 use eframe::egui::{self, Color32, Id, Key, Order, Pos2, Rect, Rounding, Stroke};
 
 pub fn render_main_menu_popup(ctx: &egui::Context, app: &mut UwuGuiApp, trigger_rect: Rect) {

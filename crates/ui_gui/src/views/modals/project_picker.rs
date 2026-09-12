@@ -1,5 +1,5 @@
 use crate::app::{AppAction, SourceType, UwuGuiApp};
-use crate::ui::theme;
+use crate::theme;
 use eframe::egui::{self, Color32, Id, Key, Order, Pos2, Rect, Rounding, Stroke};
 use std::collections::HashSet;
 use uwu_core_workspace::{Workspace, WorkspaceLocation};

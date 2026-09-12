@@ -1,8 +1,12 @@
-mod app;
+pub mod actions;
+pub mod app;
 pub mod cli;
+pub mod components;
 pub mod overlay;
-pub mod session_view;
-mod ui;
+pub mod session;
+pub mod state;
+pub mod theme;
+pub mod views;
 
 use app::UwuGuiApp;
 use eframe::NativeOptions;

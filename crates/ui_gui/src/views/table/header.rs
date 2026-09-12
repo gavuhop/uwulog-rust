@@ -1,6 +1,6 @@
 use crate::app::UwuGuiApp;
-use crate::ui::columns_modal::ColumnItem;
-use crate::ui::theme;
+use crate::state::ColumnItem;
+use crate::theme;
 use eframe::egui::{self, Color32, FontId, Pos2, Rounding, Stroke};
 
 pub fn render_table_headers(

@@ -1,73 +1,16 @@
+pub use crate::actions::AppAction;
 pub use crate::cli::CliArgs;
 pub use crate::overlay::{OverlayLayer, OverlayStack};
-#[allow(unused_imports)]
-pub use crate::session_view::{
-    ActiveTab, GuiSession, GuiViewState, SearchState, UnfilteredViewState, RAW_STREAM_LIMIT,
-};
+pub use crate::session::GuiSession;
+pub use crate::state::{ActiveTab, GuiViewState, RAW_STREAM_LIMIT};
 use clap::Parser;
 use eframe::egui;
 use std::time::{Duration, Instant};
 use tokio::runtime::Handle;
-use uwu_core_schema::LogEvent;
 pub use uwu_core_workspace::SourceType;
 use uwu_core_workspace::{
     extract_project_name, SourceConfig, Workspace, WorkspaceSession, WorkspaceStore,
 };
-
-/// Unified Action enum for high-level application & session state mutations (Zed-style Command Pattern)
-#[derive(Debug, Clone)]
-pub enum AppAction {
-    SwitchSession(usize),
-    CloseSession(usize),
-    CycleSession(bool),
-    OpenWorkspace(Workspace),
-    LoadWorkspace(Workspace),
-    DeleteWorkspace(uuid::Uuid),
-    StartSource,
-    StopSource,
-    RestartSource,
-    OpenLaunchModal,
-    CloseLaunchModal,
-    ApplyLaunchModal,
-    ApplyAndRestartSource(SourceConfig),
-    OpenColumnsModal,
-    CloseColumnsModal,
-    ApplyColumnsModal,
-    SelectLog(Option<LogEvent>),
-    SwitchTab(ActiveTab),
-
-    // Search Query & Filtering
-    ApplyFilterTerm(String),
-    ExcludeFilterTerm(String),
-    ClearQuery,
-
-    // Highlights
-    ToggleRowHighlight(u64),
-    ToggleTermHighlight(String),
-    ClearAllHighlights,
-
-    // Stream & Latch Controls
-    ToggleLatch,
-    ToggleUnfilteredLive,
-    RefreshUnfilteredSnapshot,
-    OpenUnfilteredStream(Option<u64>),
-    CloseUnfilteredStream,
-    FocusInMainAndClearFilter,
-
-    // Project Picker
-    ToggleProjectPicker,
-    CloseProjectPicker,
-
-    // Main Menu & About
-    ToggleMainMenu,
-    CloseMainMenu,
-    OpenAboutModal,
-    CloseAboutModal,
-    QuitApp,
-
-    // Global Dismiss / Stack Pop
-    DismissTopLayer,
-}
 
 pub struct UwuGuiApp {
     pub sessions: Vec<GuiSession>,
@@ -175,9 +118,9 @@ impl UwuGuiApp {
     }
 
     pub fn new(cc: &eframe::CreationContext<'_>, rt: Handle) -> Self {
-        crate::ui::theme::apply_theme(&cc.egui_ctx);
+        crate::theme::apply_theme(&cc.egui_ctx);
         #[cfg(target_os = "windows")]
-        crate::ui::theme::apply_windows_titlebar_theme(cc);
+        crate::theme::apply_windows_titlebar_theme(cc);
 
         let cli = CliArgs::parse();
         let store = WorkspaceStore::load();
@@ -470,14 +413,7 @@ impl UwuGuiApp {
         self.save_current_workspace();
         let active_idx = self.active_index;
         self.sessions[active_idx].session.restart_source(&self.rt);
-
-        let view = &mut self.sessions[active_idx].view;
-        view.viewport.cached_logs.clear();
-        view.viewport.total_matched = 0;
-        view.inspector.selected_log = None;
-        view.viewport.last_processed_count = 0;
-        view.unfiltered.cached_unfiltered.clear();
-
+        self.sessions[active_idx].view.reset_stream_data();
         self.trigger_full_search();
     }
 
@@ -519,7 +455,7 @@ impl eframe::App for UwuGuiApp {
 
         self.tick();
         ctx.request_repaint_after(Duration::from_millis(100));
-        crate::ui::render_ui(ctx, self);
+        crate::views::render_ui(ctx, self);
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {

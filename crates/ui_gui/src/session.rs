@@ -1,343 +1,10 @@
-use crate::ui::autocomplete::{AutocompleteState, FieldType, SuggestionItem, SuggestionKind};
-use crate::ui::columns_modal::ColumnState;
-use crate::ui::history::SearchHistoryState;
-use std::collections::{BTreeMap, HashSet};
+use crate::actions::AppAction;
+use crate::state::{
+    ActiveTab, FieldType, GuiViewState, SearchState, SuggestionItem, RAW_STREAM_LIMIT,
+};
 use std::time::{Duration, Instant};
 use uwu_core_schema::LogEvent;
 use uwu_core_workspace::{Workspace, WorkspaceSession};
-
-pub const RAW_STREAM_LIMIT: usize = 500;
-
-#[derive(PartialEq, Eq, Clone, Copy, Debug, Default)]
-pub enum ActiveTab {
-    #[default]
-    Filtered,
-    Unfiltered,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct UnfilteredViewState {
-    pub is_open: bool,
-    pub target_id: Option<u64>,
-    pub cached_unfiltered: Vec<LogEvent>,
-    pub target_index: Option<usize>,
-    pub request_scroll_to_target: bool,
-    pub is_live: bool,
-    pub request_scroll_to_bottom: bool,
-    pub has_new_data: bool,
-    pub snapshot_processed_count: u64,
-}
-
-/// Trạng thái đếm số log khi người dùng dừng cuộn (Pause streaming)
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct PauseSnapshot {
-    pub global_seen: u64,
-    pub filtered_seen: usize,
-    pub filtered_processed: u64,
-    pub paused_new_matched_count: usize,
-}
-
-/// Trạng thái tìm kiếm, lọc truy vấn, gợi ý autocomplete và cache schema keys
-pub struct SearchState {
-    pub query: String,
-    pub last_query: String,
-    pub last_search_time: Instant,
-    pub autocomplete: AutocompleteState,
-    pub history: SearchHistoryState,
-    pub schema_cache: BTreeMap<String, FieldType>,
-}
-
-impl Default for SearchState {
-    fn default() -> Self {
-        Self {
-            query: String::new(),
-            last_query: String::new(),
-            last_search_time: Instant::now(),
-            autocomplete: AutocompleteState::default(),
-            history: SearchHistoryState::default(),
-            schema_cache: BTreeMap::new(),
-        }
-    }
-}
-
-impl SearchState {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn with_schema(schema: impl IntoIterator<Item = (String, FieldType)>) -> Self {
-        let mut state = Self::default();
-        state.sync_schema(schema);
-        state
-    }
-
-    pub fn apply_filter_term(&mut self, term: &str) {
-        let current = self.query.trim();
-        if current.is_empty() {
-            self.query = term.to_string();
-        } else {
-            let tokens: Vec<&str> = current.split_whitespace().collect();
-            if !tokens.contains(&term) {
-                self.query = format!("{current} {term}");
-            }
-        }
-    }
-
-    pub fn exclude_filter_term(&mut self, term: &str) {
-        let exclude_term = if term.starts_with('-') {
-            term.to_string()
-        } else {
-            format!("-{term}")
-        };
-        self.apply_filter_term(&exclude_term);
-    }
-
-    pub fn clear(&mut self) {
-        self.query.clear();
-        self.autocomplete.is_open = false;
-        self.history.close_popup();
-    }
-
-    pub fn apply_autocomplete_suggestion(&mut self, item: &SuggestionItem) -> bool {
-        let (start, end) = self.autocomplete.active_token_range;
-        if start <= end && end <= self.query.len() {
-            let mut new_query = String::new();
-            new_query.push_str(&self.query[..start]);
-            new_query.push_str(&item.insert_text);
-            new_query.push_str(&self.query[end..]);
-            self.query = new_query;
-        } else {
-            self.query = item.insert_text.clone();
-        }
-
-        self.autocomplete.just_applied = true;
-
-        match item.kind {
-            SuggestionKind::Key => {
-                let available_fields = self.get_available_fields();
-                let (suggestions, token_range) =
-                    crate::ui::autocomplete::generate_suggestions(&self.query, &available_fields);
-                if !suggestions.is_empty() {
-                    self.autocomplete.suggestions = suggestions;
-                    self.autocomplete.active_token_range = token_range;
-                    self.autocomplete.selected_index = 0;
-                    self.autocomplete.is_open = true;
-                } else {
-                    self.autocomplete.is_open = false;
-                }
-                false
-            }
-            SuggestionKind::OperatorOrValue => {
-                self.autocomplete.is_open = false;
-                true
-            }
-        }
-    }
-
-    pub fn sync_schema(&mut self, schema: impl IntoIterator<Item = (String, FieldType)>) {
-        self.schema_cache = schema.into_iter().collect();
-    }
-
-    pub fn sync_discovered_fields(
-        &mut self,
-        schema: impl IntoIterator<Item = (String, FieldType)>,
-    ) {
-        self.sync_schema(schema);
-    }
-
-    pub fn get_available_fields(&self) -> Vec<(String, FieldType)> {
-        self.schema_cache
-            .iter()
-            .map(|(k, v)| (k.clone(), *v))
-            .collect()
-    }
-
-    pub fn format_field_term(field: &str, val: &str) -> String {
-        let clean_val = val.trim();
-        if field.eq_ignore_ascii_case("level") {
-            format!("level:{}", clean_val.to_lowercase())
-        } else {
-            format!("{}:{}", field, Self::format_selection_term(clean_val))
-        }
-    }
-
-    pub fn format_selection_term(text: &str) -> String {
-        let clean = text
-            .replace(" ↵ ", " ")
-            .replace('\n', " ")
-            .replace('\r', "");
-        let clean = clean.trim();
-        if clean.contains(' ') || clean.contains('"') || clean.contains(':') {
-            format!("\"{}\"", clean.replace('"', "\\\""))
-        } else {
-            clean.to_string()
-        }
-    }
-}
-
-/// Trạng thái hiển thị luồng log, bộ đệm cuộn và latch auto-scroll
-pub struct ViewportState {
-    pub cached_logs: Vec<LogEvent>,
-    pub total_matched: usize,
-    pub is_auto_scroll: bool,
-    pub request_scroll_to_bottom: bool,
-    pub has_new_data: bool,
-    pub prev_table_row_count: usize,
-    pub last_processed_count: u64,
-    pub pause_snapshot: PauseSnapshot,
-}
-
-impl Default for ViewportState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ViewportState {
-    pub fn new() -> Self {
-        Self {
-            cached_logs: Vec::new(),
-            total_matched: 0,
-            is_auto_scroll: true,
-            request_scroll_to_bottom: false,
-            has_new_data: false,
-            prev_table_row_count: 0,
-            last_processed_count: 0,
-            pause_snapshot: PauseSnapshot::default(),
-        }
-    }
-
-    pub fn latch(&mut self) -> bool {
-        let was_unlatched = !self.is_auto_scroll;
-        self.is_auto_scroll = true;
-        self.request_scroll_to_bottom = true;
-        was_unlatched
-    }
-
-    pub fn unlatch(&mut self, total_processed: u64) {
-        if !self.is_auto_scroll {
-            return;
-        }
-        self.is_auto_scroll = false;
-        self.record_pause(total_processed);
-    }
-
-    pub fn toggle_latch(&mut self, total_processed: u64) -> bool {
-        if self.is_auto_scroll {
-            self.unlatch(total_processed);
-            false
-        } else {
-            self.latch();
-            true
-        }
-    }
-
-    pub fn record_pause(&mut self, total_processed: u64) {
-        self.pause_snapshot.global_seen = total_processed;
-        self.pause_snapshot.filtered_seen = self.total_matched;
-        self.pause_snapshot.filtered_processed = total_processed;
-        self.pause_snapshot.paused_new_matched_count = 0;
-    }
-}
-
-/// Trạng thái thanh xem chi tiết log (Inspector) và quản lý Highlight
-pub struct InspectorState {
-    pub selected_log: Option<LogEvent>,
-    pub width_ratio: f32,
-    pub highlighted_row_ids: HashSet<u64>,
-    pub highlighted_terms: HashSet<String>,
-}
-
-impl Default for InspectorState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl InspectorState {
-    pub fn new() -> Self {
-        Self {
-            selected_log: None,
-            width_ratio: 0.35,
-            highlighted_row_ids: HashSet::new(),
-            highlighted_terms: HashSet::new(),
-        }
-    }
-
-    pub fn is_open(&self) -> bool {
-        self.selected_log.is_some()
-    }
-
-    pub fn close(&mut self) {
-        self.selected_log = None;
-    }
-
-    pub fn toggle_row_highlight(&mut self, id: u64) {
-        if self.highlighted_row_ids.contains(&id) {
-            self.highlighted_row_ids.remove(&id);
-        } else {
-            self.highlighted_row_ids.insert(id);
-        }
-    }
-
-    pub fn is_row_highlighted(&self, id: &u64) -> bool {
-        self.highlighted_row_ids.contains(id)
-    }
-
-    pub fn toggle_term_highlight(&mut self, term: &str) {
-        let clean = term.trim().to_lowercase();
-        if clean.is_empty() {
-            return;
-        }
-        if self.highlighted_terms.contains(&clean) {
-            self.highlighted_terms.remove(&clean);
-        } else {
-            self.highlighted_terms.insert(clean);
-        }
-    }
-
-    pub fn is_term_highlighted(&self, term: &str) -> bool {
-        let clean = term.trim().to_lowercase();
-        if clean.is_empty() {
-            false
-        } else {
-            self.highlighted_terms.contains(&clean)
-        }
-    }
-
-    pub fn has_any_highlights(&self) -> bool {
-        !self.highlighted_row_ids.is_empty() || !self.highlighted_terms.is_empty()
-    }
-
-    pub fn clear_all_highlights(&mut self) {
-        self.highlighted_row_ids.clear();
-        self.highlighted_terms.clear();
-    }
-}
-
-/// Lưu trữ trạng thái hiển thị giao diện của từng workspace session.
-/// Gom nhóm rõ ràng theo 4 Sub-Models: Search, Viewport, Inspector, và Columns.
-#[derive(Default)]
-pub struct GuiViewState {
-    pub search: SearchState,
-    pub viewport: ViewportState,
-    pub inspector: InspectorState,
-    pub columns: ColumnState,
-    pub unfiltered: UnfilteredViewState,
-    pub active_tab: ActiveTab,
-}
-
-impl GuiViewState {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn with_schema(schema: impl IntoIterator<Item = (String, FieldType)>) -> Self {
-        let mut view = Self::default();
-        view.search.sync_schema(schema);
-        view
-    }
-}
 
 /// Thực thể đại diện cho một Workspace đang mở trong GUI.
 /// Hợp nhất: `session` (SSOT cho Runtime/Engine/Process/Store) + `view` (ViewModel với các Sub-Models chuyên trách).
@@ -595,65 +262,65 @@ impl GuiSession {
     }
 
     /// Xử lý các hành động tác động trực tiếp lên View State & Engine của Session
-    pub fn handle_action(&mut self, action: &crate::app::AppAction) -> bool {
+    pub fn handle_action(&mut self, action: &AppAction) -> bool {
         match action {
-            crate::app::AppAction::SelectLog(log) => {
+            AppAction::SelectLog(log) => {
                 self.view.inspector.selected_log = log.clone();
                 true
             }
-            crate::app::AppAction::SwitchTab(tab) => {
+            AppAction::SwitchTab(tab) => {
                 if *tab == ActiveTab::Unfiltered && !self.view.unfiltered.is_open {
                     self.open_unfiltered_stream(None);
                 }
                 self.view.active_tab = *tab;
                 true
             }
-            crate::app::AppAction::ApplyFilterTerm(term) => {
+            AppAction::ApplyFilterTerm(term) => {
                 self.apply_filter_term(term);
                 true
             }
-            crate::app::AppAction::ExcludeFilterTerm(term) => {
+            AppAction::ExcludeFilterTerm(term) => {
                 self.exclude_filter_term(term);
                 true
             }
-            crate::app::AppAction::ClearQuery => {
+            AppAction::ClearQuery => {
                 self.view.search.clear();
                 self.trigger_full_search();
                 true
             }
-            crate::app::AppAction::ToggleRowHighlight(id) => {
+            AppAction::ToggleRowHighlight(id) => {
                 self.toggle_row_highlight(*id);
                 true
             }
-            crate::app::AppAction::ToggleTermHighlight(term) => {
+            AppAction::ToggleTermHighlight(term) => {
                 self.toggle_term_highlight(term);
                 true
             }
-            crate::app::AppAction::ClearAllHighlights => {
+            AppAction::ClearAllHighlights => {
                 self.clear_all_highlights();
                 true
             }
-            crate::app::AppAction::ToggleLatch => {
+            AppAction::ToggleLatch => {
                 self.toggle_latch();
                 true
             }
-            crate::app::AppAction::ToggleUnfilteredLive => {
+            AppAction::ToggleUnfilteredLive => {
                 self.toggle_unfiltered_live();
                 true
             }
-            crate::app::AppAction::RefreshUnfilteredSnapshot => {
+            AppAction::RefreshUnfilteredSnapshot => {
                 self.refresh_unfiltered_snapshot();
                 true
             }
-            crate::app::AppAction::OpenUnfilteredStream(id) => {
+            AppAction::OpenUnfilteredStream(id) => {
                 self.open_unfiltered_stream(*id);
                 true
             }
-            crate::app::AppAction::CloseUnfilteredStream => {
+            AppAction::CloseUnfilteredStream => {
                 self.close_unfiltered_stream();
                 true
             }
-            crate::app::AppAction::FocusInMainAndClearFilter => {
+            AppAction::FocusInMainAndClearFilter => {
                 self.focus_in_main_and_clear_filter();
                 true
             }

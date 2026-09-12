@@ -1,10 +1,10 @@
 pub mod fields;
 pub mod text_box;
 
-use crate::app::{AppAction, UwuGuiApp};
-use crate::ui::actions::ActionContext;
-use crate::ui::card::render_card;
-use crate::ui::theme;
+use crate::actions::{ActionContext, AppAction};
+use crate::app::UwuGuiApp;
+use crate::components::render_card;
+use crate::theme;
 use eframe::egui::{self, Id, Rounding, Stroke};
 use fields::{render_kv_field, render_meta_field};
 use std::collections::HashMap;

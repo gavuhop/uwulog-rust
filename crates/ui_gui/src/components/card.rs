@@ -1,4 +1,4 @@
-use crate::ui::theme;
+use crate::theme;
 use eframe::egui::{self, Rounding, Stroke};
 
 pub fn render_card<R>(

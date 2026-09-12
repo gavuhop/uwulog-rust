@@ -1,5 +1,5 @@
-use crate::ui::actions::{copy_and_close, render_filter_actions_menu, ActionContext};
-use crate::ui::theme;
+use crate::actions::{copy_and_close, render_filter_actions_menu, ActionContext};
+use crate::theme;
 use eframe::egui;
 
 fn render_field_item(

@@ -1,5 +1,5 @@
 use super::*;
-use crate::ui::autocomplete::{SuggestionItem, SuggestionKind};
+use crate::state::{SuggestionItem, SuggestionKind};
 use std::collections::HashMap;
 use uwu_core_schema::{LogColor, LogEvent, RawLogEntry, RawPayload};
 use uwu_core_workspace::WorkspaceLocation;
