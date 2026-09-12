@@ -1,4 +1,6 @@
 mod app;
+pub mod cli;
+pub mod overlay;
 pub mod session_view;
 mod ui;
 
