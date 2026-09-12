@@ -75,6 +75,13 @@ pub enum AppAction {
     ToggleProjectPicker,
     CloseProjectPicker,
 
+    // Main Menu & About
+    ToggleMainMenu,
+    CloseMainMenu,
+    OpenAboutModal,
+    CloseAboutModal,
+    QuitApp,
+
     // Global Dismiss / Stack Pop
     DismissTopLayer,
 }
@@ -89,6 +96,10 @@ pub struct UwuGuiApp {
     pub project_picker_open: bool,
     pub project_search_query: String,
     pub prev_screen_width: f32,
+    pub main_menu_open: bool,
+    pub main_menu_theme_sub_open: bool,
+    pub show_about_modal: bool,
+    pub should_quit: bool,
 }
 
 impl std::ops::Deref for UwuGuiApp {
@@ -323,6 +334,10 @@ impl UwuGuiApp {
             project_picker_open: false,
             project_search_query: String::new(),
             prev_screen_width: 0.0,
+            main_menu_open: false,
+            main_menu_theme_sub_open: false,
+            show_about_modal: false,
+            should_quit: false,
         };
 
         // Background task nạp biến môi trường cho session đầu tiên
@@ -507,6 +522,28 @@ impl UwuGuiApp {
                 }
             }
             AppAction::CloseProjectPicker => self.close_project_picker(),
+            AppAction::ToggleMainMenu => {
+                self.main_menu_open = !self.main_menu_open;
+                if !self.main_menu_open {
+                    self.main_menu_theme_sub_open = false;
+                }
+            }
+            AppAction::CloseMainMenu => {
+                self.main_menu_open = false;
+                self.main_menu_theme_sub_open = false;
+            }
+            AppAction::OpenAboutModal => {
+                self.main_menu_open = false;
+                self.main_menu_theme_sub_open = false;
+                self.show_about_modal = true;
+            }
+            AppAction::CloseAboutModal => {
+                self.show_about_modal = false;
+            }
+            AppAction::QuitApp => {
+                self.main_menu_open = false;
+                self.should_quit = true;
+            }
             AppAction::DismissTopLayer => {
                 self.dismiss_top_layer();
             }
@@ -515,7 +552,14 @@ impl UwuGuiApp {
 
     /// Đóng lớp giao diện trên cùng theo thứ tự ngăn xếp (Chain of Responsibility / Pop Stack)
     pub fn dismiss_top_layer(&mut self) -> bool {
-        if self.autocomplete_state.is_open {
+        if self.main_menu_open {
+            self.main_menu_open = false;
+            self.main_menu_theme_sub_open = false;
+            true
+        } else if self.show_about_modal {
+            self.show_about_modal = false;
+            true
+        } else if self.autocomplete_state.is_open {
             self.autocomplete_state.is_open = false;
             true
         } else if self.history_state.is_open {
@@ -931,6 +975,11 @@ impl UwuGuiApp {
 
 impl eframe::App for UwuGuiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if self.should_quit {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
+
         self.tick();
         ctx.request_repaint_after(Duration::from_millis(100));
         crate::ui::render_ui(ctx, self);
@@ -982,6 +1031,10 @@ mod tests {
             project_picker_open: false,
             project_search_query: String::new(),
             prev_screen_width: 0.0,
+            main_menu_open: false,
+            main_menu_theme_sub_open: false,
+            show_about_modal: false,
+            should_quit: false,
         }
     }
 

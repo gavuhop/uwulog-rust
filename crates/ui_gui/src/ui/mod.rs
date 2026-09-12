@@ -6,6 +6,7 @@ pub mod detail;
 pub mod header;
 pub mod history;
 pub mod launch_modal;
+pub mod menu_popup;
 pub mod project_picker;
 pub mod table;
 pub mod theme;
@@ -141,6 +142,9 @@ pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
 
     // Modal Dialog: Table Columns & Ordering
     columns_modal::render_columns_modal(ctx, app);
+
+    // Modal Dialog: About uwulog
+    menu_popup::render_about_modal(ctx, app);
 
     // Window Resize Border Handles (Hỗ trợ kéo dãn / thu nhỏ 4 góc và 4 cạnh cửa sổ)
     render_window_resize_borders(ctx);

@@ -1,27 +1,38 @@
 use crate::app::UwuGuiApp;
 use crate::ui::theme;
-use eframe::egui::{self, Id, Rounding, Stroke};
+use eframe::egui::{self, Color32, Id, Rounding, Stroke};
 use std::time::Instant;
 
 pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     let mut proj_btn_rect = None;
+    let mut menu_btn_rect = None;
+
     ui.horizontal(|ui| {
-        // 1. App Title / Brand (hỗ trợ kéo di chuyển cửa sổ & double click maximize)
-        let brand_response = ui.add(
-            egui::Label::new(
-                egui::RichText::new("🐱 uwulog")
-                    .strong()
-                    .size(13.5)
-                    .color(theme::TEXT_KEY),
-            )
-            .sense(egui::Sense::click_and_drag()),
-        );
-        if brand_response.dragged_by(egui::PointerButton::Primary) {
-            ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
-        }
-        if brand_response.double_clicked() {
-            let is_maximized = ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
-            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!is_maximized));
+        // 1. Menu Icon Button (☰) - Flat style, không viền, không nổi lên
+        let is_menu_open = app.main_menu_open;
+        let menu_btn = egui::Button::new(
+            egui::RichText::new("☰")
+                .strong()
+                .size(13.5)
+                .color(if is_menu_open {
+                    theme::TEXT_KEY
+                } else {
+                    theme::TEXT_PRIMARY
+                }),
+        )
+        .fill(if is_menu_open {
+            theme::BG_SURFACE1
+        } else {
+            Color32::TRANSPARENT
+        })
+        .stroke(Stroke::NONE)
+        .rounding(Rounding::same(4.0));
+
+        let menu_resp = ui.add_sized([24.0, 22.0], menu_btn);
+        menu_btn_rect = Some(menu_resp.rect);
+
+        if menu_resp.on_hover_text("Open Application Menu").clicked() {
+            app.dispatch_action(crate::app::AppAction::ToggleMainMenu);
         }
 
         // Nhận diện môi trường remote để hiển thị badge
@@ -40,11 +51,10 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
             ));
         }
 
+        // Project Button (Flat style, không viền, không nổi lên)
         if !app.session.name.is_empty() {
-            ui.add_space(2.0);
             let proj_btn = egui::Button::new(
-                egui::RichText::new(format!("📁 {} ▾", app.session.name))
-                    .size(11.0)
+                egui::RichText::new(&app.session.name)
                     .strong()
                     .color(if app.project_picker_open {
                         theme::TEXT_KEY
@@ -55,9 +65,9 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
             .fill(if app.project_picker_open {
                 theme::BG_SURFACE1
             } else {
-                theme::BG_SURFACE0
+                Color32::TRANSPARENT
             })
-            .stroke(Stroke::new(1.0, theme::BG_SURFACE1))
+            .stroke(Stroke::NONE)
             .rounding(Rounding::same(4.0));
 
             let proj_resp = ui.add(proj_btn);
@@ -84,8 +94,6 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
         // Environment Status Indicator (lấy cảm hứng từ ActivityIndicator trong Zed)
         render_environment_status(ui, app);
 
-        ui.add_space(4.0);
-        ui.separator();
         ui.add_space(4.0);
 
         // 2. Stream Tabs: Main / Filtered and Raw Stream
@@ -429,6 +437,11 @@ pub fn render_header(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
             });
         });
     });
+
+    // Render Main Menu Popover (About, Theme, Quit)
+    if let Some(rect) = menu_btn_rect {
+        crate::ui::menu_popup::render_main_menu_popup(ui.ctx(), app, rect);
+    }
 
     // Render Zed-Style Project Picker Popover
     if let Some(rect) = proj_btn_rect {
