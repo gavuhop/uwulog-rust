@@ -1,15 +1,22 @@
-use crate::app::{AppAction, SourceType, UwuGuiApp};
+use crate::actions::AppAction;
 use crate::components::render_card;
 use crate::theme;
 use eframe::egui::{self, Rounding, Stroke};
+use uwu_core_workspace::{SourceConfig, SourceType};
 
-pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
-    if !app.is_overlay_open(crate::app::OverlayLayer::LaunchModal) {
+pub fn render_launch_modal(
+    ctx: &egui::Context,
+    is_open: bool,
+    draft: &mut Option<SourceConfig>,
+    current_config: &SourceConfig,
+    dispatch: &mut impl FnMut(AppAction),
+) {
+    if !is_open {
         return;
     }
 
-    if app.launch_modal_draft.is_none() {
-        app.launch_modal_draft = Some(app.session.source_config.clone());
+    if draft.is_none() {
+        *draft = Some(current_config.clone());
     }
 
     let mut action_to_dispatch: Option<AppAction> = None;
@@ -23,10 +30,12 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
                 .rounding(Rounding::same(6.0)),
         )
         .collapsible(false)
-        .resizable(true)
-        .default_width(500.0)
+        .resizable(false)
+        .default_width(440.0)
         .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
         .show(ctx, |ui| {
+            let draft = draft.as_mut().unwrap();
+
             ui.label(
                 egui::RichText::new("Settings & Launch Parameters")
                     .size(14.0)
@@ -35,8 +44,6 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
             );
             ui.separator();
             ui.add_space(6.0);
-
-            let draft = app.launch_modal_draft.as_mut().unwrap();
 
             // Engine Performance Card
             render_card(ui, "System Engine Performance", |ui| {
@@ -178,6 +185,6 @@ pub fn render_launch_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
         });
 
     if let Some(action) = action_to_dispatch {
-        app.dispatch_action(action);
+        dispatch(action);
     }
 }

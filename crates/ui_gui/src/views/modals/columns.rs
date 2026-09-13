@@ -1,16 +1,20 @@
 use crate::actions::AppAction;
-use crate::app::UwuGuiApp;
 use crate::components::render_card;
+use crate::state::ColumnState;
 use crate::theme;
 use eframe::egui::{self, Color32, FontId, Pos2, Rect, Rounding, Stroke};
 
-pub fn render_columns_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
-    if !app.columns.is_modal_open {
+pub fn render_columns_modal(
+    ctx: &egui::Context,
+    columns: &mut ColumnState,
+    dispatch: &mut impl FnMut(AppAction),
+) {
+    if !columns.is_modal_open {
         return;
     }
 
-    if app.columns.draft_columns.is_none() {
-        app.columns.draft_columns = Some(app.columns.columns.clone());
+    if columns.draft_columns.is_none() {
+        columns.draft_columns = Some(columns.columns.clone());
     }
 
     let mut action_to_dispatch: Option<AppAction> = None;
@@ -49,18 +53,18 @@ pub fn render_columns_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new("🔍").size(12.0).color(theme::TEXT_MUTED));
                 let avail_w = ui.available_width();
-                let clear_btn_w = if app.columns.filter_query.is_empty() { 0.0 } else { 28.0 };
+                let clear_btn_w = if columns.filter_query.is_empty() { 0.0 } else { 28.0 };
                 let text_w = (avail_w - clear_btn_w - 6.0).max(100.0);
 
                 ui.add_sized(
                     [text_w, 22.0],
-                    egui::TextEdit::singleline(&mut app.columns.filter_query)
+                    egui::TextEdit::singleline(&mut columns.filter_query)
                         .hint_text("Filter column keys...")
                         .font(egui::TextStyle::Monospace)
                         .margin(egui::Margin::symmetric(8.0, 4.0)),
                 );
-                if !app.columns.filter_query.is_empty() && ui.button("✖").clicked() {
-                    app.columns.filter_query.clear();
+                if !columns.filter_query.is_empty() && ui.button("✖").clicked() {
+                    columns.filter_query.clear();
                 }
             });
 
@@ -68,14 +72,14 @@ pub fn render_columns_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
 
             // Columns Drag & Drop List Card
             render_card(ui, "Columns List (Drag to Reorder)", |ui| {
-                let filter_lower = app.columns.filter_query.trim().to_lowercase();
-                let total_cols = app.columns.draft_columns.as_ref().map_or(0, |c| c.len());
+                let filter_lower = columns.filter_query.trim().to_lowercase();
+                let total_cols = columns.draft_columns.as_ref().map_or(0, |c| c.len());
 
                 let pointer_pos = ui.ctx().pointer_latest_pos();
                 let pointer_released = ui.input(|i| i.pointer.any_released());
 
                 if pointer_released {
-                    app.columns.dragged_index = None;
+                    columns.dragged_index = None;
                 }
 
                 egui::ScrollArea::vertical()
@@ -89,7 +93,7 @@ pub fn render_columns_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
 
                         for idx in 0..total_cols {
                             let (col_name, col_visible) = {
-                                let item = &app.columns.draft_columns.as_ref().unwrap()[idx];
+                                let item = &columns.draft_columns.as_ref().unwrap()[idx];
                                 (item.name.clone(), item.visible)
                             };
 
@@ -99,7 +103,7 @@ pub fn render_columns_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
                                 continue;
                             }
 
-                            let is_dragging_this = app.columns.dragged_index == Some(idx);
+                            let is_dragging_this = columns.dragged_index == Some(idx);
                             let desired_size = egui::vec2(ui.available_width(), 30.0);
                             let (rect, resp) = ui.allocate_exact_size(
                                 desired_size,
@@ -112,7 +116,7 @@ pub fn render_columns_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
                             }
 
                             // Detect drop target while dragging
-                            if let Some(dragged_idx) = app.columns.dragged_index {
+                            if let Some(dragged_idx) = columns.dragged_index {
                                 if dragged_idx != idx {
                                     if let Some(pos) = pointer_pos {
                                         if rect.contains(pos) {
@@ -264,17 +268,17 @@ pub fn render_columns_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
                         }
 
                         if let Some(idx) = new_drag_source {
-                            app.columns.dragged_index = Some(idx);
+                            columns.dragged_index = Some(idx);
                         }
 
                         if let Some((from, to)) = target_drop {
-                            app.columns.reorder_draft(from, to);
-                            app.columns.dragged_index = Some(to);
+                            columns.reorder_draft(from, to);
+                            columns.dragged_index = Some(to);
                             ui.ctx().request_repaint();
                         }
 
                         if let Some((idx, new_vis)) = toggle_vis {
-                            if let Some(draft) = &mut app.columns.draft_columns {
+                            if let Some(draft) = &mut columns.draft_columns {
                                 draft[idx].visible = new_vis;
                             }
                         }
@@ -299,7 +303,7 @@ pub fn render_columns_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
                     .on_hover_text("Reset draft column order and visibility to default")
                     .clicked()
                 {
-                    app.columns.reset_draft_to_defaults();
+                    columns.reset_draft_to_defaults();
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -333,6 +337,6 @@ pub fn render_columns_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
         });
 
     if let Some(action) = action_to_dispatch {
-        app.dispatch_action(action);
+        dispatch(action);
     }
 }

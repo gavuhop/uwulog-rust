@@ -1,10 +1,10 @@
-use crate::app::UwuGuiApp;
+use crate::session::GuiSession;
 use crate::theme;
 use eframe::egui::{self, Color32, FontId, Id, Key, Order, Pos2, Rect, Rounding, Stroke};
 
 /// Render Autocomplete Dropdown Popup ngay dưới ô tìm kiếm
-pub fn render_autocomplete_popup(ctx: &egui::Context, app: &mut UwuGuiApp, input_rect: Rect) {
-    if !app.search.autocomplete.is_open || app.search.autocomplete.suggestions.is_empty() {
+pub fn render_autocomplete_popup(ctx: &egui::Context, session: &mut GuiSession, input_rect: Rect) {
+    if !session.search.autocomplete.is_open || session.search.autocomplete.suggestions.is_empty() {
         return;
     }
 
@@ -12,47 +12,50 @@ pub fn render_autocomplete_popup(ctx: &egui::Context, app: &mut UwuGuiApp, input
     let mut item_to_apply = None;
 
     if ctx.input(|i| i.key_pressed(Key::ArrowDown))
-        && !app.search.autocomplete.suggestions.is_empty()
+        && !session.search.autocomplete.suggestions.is_empty()
     {
-        app.search.autocomplete.selected_index = (app.search.autocomplete.selected_index + 1)
-            % app.search.autocomplete.suggestions.len();
+        session.search.autocomplete.selected_index = (session.search.autocomplete.selected_index
+            + 1)
+            % session.search.autocomplete.suggestions.len();
     }
 
-    if ctx.input(|i| i.key_pressed(Key::ArrowUp)) && !app.search.autocomplete.suggestions.is_empty()
+    if ctx.input(|i| i.key_pressed(Key::ArrowUp))
+        && !session.search.autocomplete.suggestions.is_empty()
     {
-        if app.search.autocomplete.selected_index == 0 {
-            app.search.autocomplete.selected_index = app.search.autocomplete.suggestions.len() - 1;
+        if session.search.autocomplete.selected_index == 0 {
+            session.search.autocomplete.selected_index =
+                session.search.autocomplete.suggestions.len() - 1;
         } else {
-            app.search.autocomplete.selected_index -= 1;
+            session.search.autocomplete.selected_index -= 1;
         }
     }
 
     if ctx.input(|i| i.key_pressed(Key::Tab) || i.key_pressed(Key::Enter)) {
-        if let Some(item) = app
+        if let Some(item) = session
             .search
             .autocomplete
             .suggestions
-            .get(app.search.autocomplete.selected_index)
+            .get(session.search.autocomplete.selected_index)
         {
             item_to_apply = Some(item.clone());
         }
     }
 
     if ctx.input(|i| i.key_pressed(Key::Escape)) {
-        app.search.autocomplete.is_open = false;
+        session.search.autocomplete.is_open = false;
         return;
     }
 
     // Vẽ Floating Dropdown Panel (cách đáy filter box một khoảng thông thoáng để không bị đè viền)
     let dropdown_pos = Pos2::new(input_rect.min.x, input_rect.max.y + 8.0);
     let dropdown_width = input_rect.width().max(420.0);
-    let approx_height = (app.search.autocomplete.suggestions.len() as f32 * 26.0) + 16.0;
+    let approx_height = (session.search.autocomplete.suggestions.len() as f32 * 26.0) + 16.0;
     let popup_rect = Rect::from_min_size(dropdown_pos, egui::vec2(dropdown_width, approx_height));
 
     if ctx.input(|i| i.pointer.any_pressed() || i.pointer.any_click()) {
         if let Some(pos) = ctx.input(|i| i.pointer.interact_pos()) {
             if !input_rect.contains(pos) && !popup_rect.contains(pos) {
-                app.search.autocomplete.is_open = false;
+                session.search.autocomplete.is_open = false;
                 return;
             }
         }
@@ -71,8 +74,8 @@ pub fn render_autocomplete_popup(ctx: &egui::Context, app: &mut UwuGuiApp, input
                     ui.set_width(dropdown_width);
 
                     let mut hovered_index = None;
-                    for (idx, item) in app.search.autocomplete.suggestions.iter().enumerate() {
-                        let is_selected = idx == app.search.autocomplete.selected_index;
+                    for (idx, item) in session.search.autocomplete.suggestions.iter().enumerate() {
+                        let is_selected = idx == session.search.autocomplete.selected_index;
 
                         let desired_size = egui::vec2(ui.available_width(), 26.0);
                         let (rect, resp) =
@@ -131,13 +134,13 @@ pub fn render_autocomplete_popup(ctx: &egui::Context, app: &mut UwuGuiApp, input
                         );
                     }
                     if let Some(hover_idx) = hovered_index {
-                        app.search.autocomplete.selected_index = hover_idx;
+                        session.search.autocomplete.selected_index = hover_idx;
                     }
                 });
         });
 
     if let Some(item) = item_to_apply {
-        app.apply_autocomplete_suggestion(&item);
+        session.apply_autocomplete_suggestion(&item);
         ctx.request_repaint();
     }
 }

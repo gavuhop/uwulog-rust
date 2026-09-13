@@ -1,21 +1,27 @@
-use crate::app::{AppAction, OverlayLayer, UwuGuiApp};
+use crate::actions::AppAction;
+use crate::overlay::{OverlayLayer, OverlayStack};
 use crate::theme;
 use eframe::egui::{self, Color32, Id, Key, Order, Pos2, Rect, Rounding, Stroke};
 
-pub fn render_main_menu_popup(ctx: &egui::Context, app: &mut UwuGuiApp, trigger_rect: Rect) {
-    if !app.is_overlay_open(OverlayLayer::MainMenu) {
+pub fn render_main_menu_popup(
+    ctx: &egui::Context,
+    overlay_stack: &mut OverlayStack,
+    dispatch: &mut impl FnMut(AppAction),
+    trigger_rect: Rect,
+) {
+    if !overlay_stack.is_open(OverlayLayer::MainMenu) {
         return;
     }
 
     if ctx.input(|i| i.key_pressed(Key::Escape)) {
-        app.dispatch_action(AppAction::CloseMainMenu);
+        dispatch(AppAction::CloseMainMenu);
         return;
     }
 
     let popup_pos = Pos2::new(trigger_rect.min.x, trigger_rect.max.y + 6.0);
     let popup_width = 170.0;
     let submenu_width = 230.0;
-    let is_theme_sub_open = app.is_overlay_open(OverlayLayer::ThemeSubmenu);
+    let is_theme_sub_open = overlay_stack.is_open(OverlayLayer::ThemeSubmenu);
 
     // Kích thước ước lượng của toàn bộ menu và submenu
     let total_bounds = Rect::from_min_size(
@@ -34,7 +40,7 @@ pub fn render_main_menu_popup(ctx: &egui::Context, app: &mut UwuGuiApp, trigger_
     if ctx.input(|i| i.pointer.any_pressed() || i.pointer.any_click()) {
         if let Some(pos) = ctx.input(|i| i.pointer.interact_pos()) {
             if !trigger_rect.contains(pos) && !total_bounds.contains(pos) {
-                app.dispatch_action(AppAction::CloseMainMenu);
+                dispatch(AppAction::CloseMainMenu);
                 return;
             }
         }
@@ -101,18 +107,18 @@ pub fn render_main_menu_popup(ctx: &egui::Context, app: &mut UwuGuiApp, trigger_
                         resp
                     };
 
-                    // --- Item 1: About ---
+                    // --- Item 1: About uwulog ---
                     let about_resp =
                         render_menu_item(ui, "About uwulog", theme::TEXT_PRIMARY, false, None);
                     if about_resp.clicked() {
                         action_to_dispatch = Some(AppAction::OpenAboutModal);
                     }
                     if about_resp.hovered() {
-                        app.close_overlay(OverlayLayer::ThemeSubmenu);
+                        overlay_stack.close(OverlayLayer::ThemeSubmenu);
                     }
 
                     // --- Item 2: Theme (Hover có độ trễ nhẹ hoặc click để mở menu bên phải) ---
-                    let is_theme_open = app.is_overlay_open(OverlayLayer::ThemeSubmenu);
+                    let is_theme_open = overlay_stack.is_open(OverlayLayer::ThemeSubmenu);
                     let theme_resp = render_menu_item(
                         ui,
                         "Theme",
@@ -130,7 +136,7 @@ pub fn render_main_menu_popup(ctx: &egui::Context, app: &mut UwuGuiApp, trigger_
                         let hover_start: f64 = ctx.data(|d| d.get_temp(hover_id)).unwrap_or(now);
                         ctx.data_mut(|d| d.insert_temp(hover_id, hover_start));
                         if now - hover_start >= 0.15 || theme_resp.clicked() {
-                            app.push_overlay(OverlayLayer::ThemeSubmenu);
+                            overlay_stack.push(OverlayLayer::ThemeSubmenu);
                         } else {
                             ctx.request_repaint();
                         }
@@ -144,7 +150,7 @@ pub fn render_main_menu_popup(ctx: &egui::Context, app: &mut UwuGuiApp, trigger_
                         action_to_dispatch = Some(AppAction::QuitApp);
                     }
                     if quit_resp.hovered() {
-                        app.close_overlay(OverlayLayer::ThemeSubmenu);
+                        overlay_stack.close(OverlayLayer::ThemeSubmenu);
                     }
                 });
         });
@@ -159,7 +165,7 @@ pub fn render_main_menu_popup(ctx: &egui::Context, app: &mut UwuGuiApp, trigger_
         "Catppuccin Latte (Light)",
     ];
 
-    if app.is_overlay_open(OverlayLayer::ThemeSubmenu) {
+    if overlay_stack.is_open(OverlayLayer::ThemeSubmenu) {
         if let Some(t_rect) = theme_btn_rect {
             let submenu_pos = Pos2::new(t_rect.max.x + 4.0, t_rect.min.y);
             let submenu_height = (THEME_OPTIONS.len() as f32) * 24.0 + 8.0;
@@ -178,11 +184,11 @@ pub fn render_main_menu_popup(ctx: &egui::Context, app: &mut UwuGuiApp, trigger_
                 let in_submenu = submenu_rect.expand(2.0).contains(pointer_pos);
 
                 if !in_theme_btn && !in_bridge && !in_submenu {
-                    app.close_overlay(OverlayLayer::ThemeSubmenu);
+                    overlay_stack.close(OverlayLayer::ThemeSubmenu);
                 }
             }
 
-            if app.is_overlay_open(OverlayLayer::ThemeSubmenu) {
+            if overlay_stack.is_open(OverlayLayer::ThemeSubmenu) {
                 egui::Area::new(Id::new("main_menu_theme_submenu_area"))
                     .order(Order::Foreground)
                     .fixed_pos(submenu_pos)
@@ -262,7 +268,7 @@ pub fn render_main_menu_popup(ctx: &egui::Context, app: &mut UwuGuiApp, trigger_
                                         ctx.data_mut(|d| {
                                             d.insert_temp(selected_theme_id, name.to_string());
                                         });
-                                        app.close_main_menu();
+                                        overlay_stack.close_main_menu();
                                     }
                                 }
                             });
@@ -272,12 +278,16 @@ pub fn render_main_menu_popup(ctx: &egui::Context, app: &mut UwuGuiApp, trigger_
     }
 
     if let Some(action) = action_to_dispatch {
-        app.dispatch_action(action);
+        dispatch(action);
     }
 }
 
-pub fn render_about_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
-    if !app.is_overlay_open(OverlayLayer::AboutModal) {
+pub fn render_about_modal(
+    ctx: &egui::Context,
+    is_open: bool,
+    dispatch: &mut impl FnMut(AppAction),
+) {
+    if !is_open {
         return;
     }
 
@@ -336,6 +346,6 @@ pub fn render_about_modal(ctx: &egui::Context, app: &mut UwuGuiApp) {
         });
 
     if close {
-        app.dispatch_action(AppAction::CloseAboutModal);
+        dispatch(AppAction::CloseAboutModal);
     }
 }

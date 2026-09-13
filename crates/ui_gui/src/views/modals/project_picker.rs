@@ -1,16 +1,47 @@
-use crate::app::{AppAction, SourceType, UwuGuiApp};
+use crate::actions::AppAction;
 use crate::theme;
 use eframe::egui::{self, Color32, Id, Key, Order, Pos2, Rect, Rounding, Stroke};
 use std::collections::HashSet;
-use uwu_core_workspace::{Workspace, WorkspaceLocation};
+use uwu_core_workspace::{SourceType, Workspace, WorkspaceLocation, WorkspaceStore};
 
-pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, trigger_rect: Rect) {
-    if !app.is_overlay_open(crate::app::OverlayLayer::ProjectPicker) {
+#[derive(Debug, Clone)]
+pub struct ProjectPickerSessionInfo {
+    pub id: uuid::Uuid,
+    pub name: String,
+    pub icon: &'static str,
+    pub target_summary: String,
+    pub normalized_dir: String,
+}
+
+pub struct ProjectPickerArgs<'a> {
+    pub is_open: bool,
+    pub store: &'a WorkspaceStore,
+    pub sessions: &'a [ProjectPickerSessionInfo],
+    pub active_index: usize,
+    pub project_search_query: &'a mut String,
+    pub trigger_rect: Rect,
+}
+
+pub fn render_project_picker_popup(
+    ctx: &egui::Context,
+    args: ProjectPickerArgs<'_>,
+    dispatch: &mut impl FnMut(AppAction),
+) {
+    let ProjectPickerArgs {
+        is_open,
+        store,
+        sessions,
+        active_index,
+        project_search_query,
+        trigger_rect,
+    } = args;
+
+    if !is_open {
         return;
     }
 
     if ctx.input(|i| i.key_pressed(Key::Escape)) {
-        app.dispatch_action(AppAction::CloseProjectPicker);
+        dispatch(AppAction::CloseProjectPicker);
         return;
     }
 
@@ -22,7 +53,7 @@ pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, tri
     if ctx.input(|i| i.pointer.any_pressed() || i.pointer.any_click()) {
         if let Some(pos) = ctx.input(|i| i.pointer.interact_pos()) {
             if !trigger_rect.contains(pos) && !popup_rect.contains(pos) {
-                app.dispatch_action(AppAction::CloseProjectPicker);
+                dispatch(AppAction::CloseProjectPicker);
                 return;
             }
         }
@@ -53,7 +84,7 @@ pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, tri
                                 .size(11.0)
                                 .color(theme::TEXT_MUTED),
                         );
-                        let search_edit = egui::TextEdit::singleline(&mut app.project_search_query)
+                        let search_edit = egui::TextEdit::singleline(project_search_query)
                             .hint_text("Search projects...")
                             .desired_width(popup_width - 36.0)
                             .margin(egui::Margin::symmetric(4.0, 3.0));
@@ -64,7 +95,7 @@ pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, tri
                     ui.separator();
                     ui.add_space(4.0);
 
-                    let search_filter = app.project_search_query.trim().to_lowercase();
+                    let search_filter = project_search_query.trim().to_lowercase();
 
                     // 2. Section: This Window (Active Project)
                     ui.label(
@@ -79,12 +110,12 @@ pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, tri
                         .id_salt("this_window_scroll")
                         .max_height(140.0)
                         .show(ui, |ui| {
-                            for (ix, session) in app.sessions.iter().enumerate() {
-                                let is_active = ix == app.active_index;
-                                let name = if session.session.name.is_empty() {
+                            for (ix, session) in sessions.iter().enumerate() {
+                                let is_active = ix == active_index;
+                                let name = if session.name.is_empty() {
                                     "Workspace".to_string()
                                 } else {
-                                    session.session.name.clone()
+                                    session.name.clone()
                                 };
 
                                 if !search_filter.is_empty()
@@ -93,8 +124,8 @@ pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, tri
                                     continue;
                                 }
 
-                                let icon = session.session.icon();
-                                let tooltip_path = session.session.target_summary();
+                                let icon = session.icon;
+                                let tooltip_path = &session.target_summary;
                                 let mut frame = egui::Frame::none()
                                     .rounding(Rounding::same(4.0))
                                     .inner_margin(egui::Margin::symmetric(6.0, 4.0));
@@ -182,15 +213,11 @@ pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, tri
                     );
                     ui.add_space(2.0);
 
-                    let open_ids: HashSet<_> = app.sessions.iter().map(|s| s.session.id).collect();
-                    let open_dirs: HashSet<_> = app
-                        .sessions
-                        .iter()
-                        .map(|s| s.session.location.normalized_dir())
-                        .collect();
+                    let open_ids: HashSet<_> = sessions.iter().map(|s| s.id).collect();
+                    let open_dirs: HashSet<_> =
+                        sessions.iter().map(|s| s.normalized_dir.clone()).collect();
 
-                    let filtered_recent: Vec<_> = app
-                        .store
+                    let filtered_recent: Vec<_> = store
                         .recent_workspaces
                         .iter()
                         .filter(|ws| {
@@ -340,23 +367,23 @@ pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, tri
         });
 
     if let Some(ix) = session_to_switch {
-        app.dispatch_action(AppAction::SwitchSession(ix));
+        dispatch(AppAction::SwitchSession(ix));
     }
 
     if let Some(ix) = session_to_close {
-        app.dispatch_action(AppAction::CloseSession(ix));
+        dispatch(AppAction::CloseSession(ix));
     }
 
     if let Some(id) = project_to_delete {
-        app.dispatch_action(AppAction::DeleteWorkspace(id));
+        dispatch(AppAction::DeleteWorkspace(id));
     }
 
     if let Some(ws) = project_to_open {
-        app.dispatch_action(AppAction::OpenWorkspace(ws));
+        dispatch(AppAction::OpenWorkspace(ws));
     }
 
     if open_local_folder_clicked {
-        app.dispatch_action(AppAction::CloseProjectPicker);
+        dispatch(AppAction::CloseProjectPicker);
         if let Some(folder) = rfd::FileDialog::new().pick_folder() {
             let path_str = uwu_core_workspace::clean_path(&folder.to_string_lossy());
             let _ = std::env::set_current_dir(&folder);
@@ -367,7 +394,7 @@ pub fn render_project_picker_popup(ctx: &egui::Context, app: &mut UwuGuiApp, tri
                 WorkspaceLocation::local(path_str),
                 SourceType::Process,
             );
-            app.dispatch_action(AppAction::OpenWorkspace(ws));
+            dispatch(AppAction::OpenWorkspace(ws));
         }
     }
 }

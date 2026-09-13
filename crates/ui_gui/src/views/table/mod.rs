@@ -3,7 +3,7 @@ pub mod context_menu;
 pub mod header;
 
 use crate::actions::{ActionContext, AppAction};
-use crate::app::UwuGuiApp;
+use crate::session::GuiSession;
 use crate::state::ColumnItem;
 use crate::theme;
 use cell::render_cell;
@@ -17,14 +17,23 @@ pub enum TableMode {
     Unfiltered,
 }
 
-pub fn render_table(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
-    render_log_table(ui, app, TableMode::Filtered);
+pub fn render_table(
+    ui: &mut egui::Ui,
+    session: &mut GuiSession,
+    dispatch: &mut impl FnMut(AppAction),
+) {
+    render_log_table(ui, session, TableMode::Filtered, dispatch);
 }
 
-pub fn render_log_table(ui: &mut egui::Ui, app: &mut UwuGuiApp, mode: TableMode) {
+pub fn render_log_table(
+    ui: &mut egui::Ui,
+    session: &mut GuiSession,
+    mode: TableMode,
+    dispatch: &mut impl FnMut(AppAction),
+) {
     let row_count = match mode {
-        TableMode::Filtered => app.viewport.cached_logs.len(),
-        TableMode::Unfiltered => app.unfiltered.cached_unfiltered.len(),
+        TableMode::Filtered => session.viewport.cached_logs.len(),
+        TableMode::Unfiltered => session.unfiltered.cached_unfiltered.len(),
     };
     let text_height = egui::TextStyle::Monospace.resolve(ui.style()).size;
 
@@ -41,8 +50,8 @@ pub fn render_log_table(ui: &mut egui::Ui, app: &mut UwuGuiApp, mode: TableMode)
     });
     if scroll_delta_y > 0.0 {
         match mode {
-            TableMode::Filtered => app.unlatch(),
-            TableMode::Unfiltered => app.unlatch_unfiltered(),
+            TableMode::Filtered => session.unlatch(),
+            TableMode::Unfiltered => session.unlatch_unfiltered(),
         }
     }
 
@@ -50,7 +59,7 @@ pub fn render_log_table(ui: &mut egui::Ui, app: &mut UwuGuiApp, mode: TableMode)
     let mut target_header_swap = None;
     let pointer_pos: Option<Pos2> = ui.input(|i| i.pointer.hover_pos());
 
-    let visible_cols: Vec<ColumnItem> = app
+    let visible_cols: Vec<ColumnItem> = session
         .columns
         .columns
         .iter()
@@ -74,12 +83,12 @@ pub fn render_log_table(ui: &mut egui::Ui, app: &mut UwuGuiApp, mode: TableMode)
     );
 
     let mut action_to_dispatch: Option<AppAction> = None;
-    let has_any_highlights = app.has_any_highlights();
+    let has_any_highlights = session.has_any_highlights();
 
     let default_ts = "2026-08-21 23:29:07";
     let logs = match mode {
-        TableMode::Filtered => &app.viewport.cached_logs[..],
-        TableMode::Unfiltered => &app.unfiltered.cached_unfiltered[..],
+        TableMode::Filtered => &session.viewport.cached_logs[..],
+        TableMode::Unfiltered => &session.unfiltered.cached_unfiltered[..],
     };
     let sample_ts = logs
         .iter()
@@ -133,28 +142,29 @@ pub fn render_log_table(ui: &mut egui::Ui, app: &mut UwuGuiApp, mode: TableMode)
 
             match mode {
                 TableMode::Filtered => {
-                    let has_new_data = app.viewport.has_new_data;
-                    let force_scroll = app.viewport.request_scroll_to_bottom;
-                    if (force_scroll || (app.viewport.is_auto_scroll && has_new_data))
+                    let has_new_data = session.viewport.has_new_data;
+                    let force_scroll = session.viewport.request_scroll_to_bottom;
+                    if (force_scroll || (session.viewport.is_auto_scroll && has_new_data))
                         && row_count > 0
                     {
                         builder = builder.scroll_to_row(row_count - 1, Some(egui::Align::Max));
-                        app.viewport.request_scroll_to_bottom = false;
+                        session.viewport.request_scroll_to_bottom = false;
                     }
-                    app.viewport.prev_table_row_count = row_count;
+                    session.viewport.prev_table_row_count = row_count;
                 }
                 TableMode::Unfiltered => {
-                    if app.unfiltered.request_scroll_to_target && row_count > 0 {
-                        if let Some(target_idx) = app.unfiltered.target_index {
+                    if session.unfiltered.request_scroll_to_target && row_count > 0 {
+                        if let Some(target_idx) = session.unfiltered.target_index {
                             builder = builder.scroll_to_row(target_idx, Some(egui::Align::Center));
                         }
-                        app.unfiltered.request_scroll_to_target = false;
-                    } else if app.unfiltered.is_live
-                        && (app.unfiltered.request_scroll_to_bottom || app.unfiltered.has_new_data)
+                        session.unfiltered.request_scroll_to_target = false;
+                    } else if session.unfiltered.is_live
+                        && (session.unfiltered.request_scroll_to_bottom
+                            || session.unfiltered.has_new_data)
                         && row_count > 0
                     {
                         builder = builder.scroll_to_row(row_count - 1, Some(egui::Align::Max));
-                        app.unfiltered.request_scroll_to_bottom = false;
+                        session.unfiltered.request_scroll_to_bottom = false;
                     }
                 }
             }
@@ -164,20 +174,20 @@ pub fn render_log_table(ui: &mut egui::Ui, app: &mut UwuGuiApp, mode: TableMode)
                     render_table_headers(
                         &mut tbl_header,
                         &visible_cols,
-                        app,
+                        &mut session.columns,
                         &mut new_header_drag,
                         &mut target_header_swap,
                     );
                 })
                 .body(|body| {
                     let mut render_ctx = ActionContext {
-                        highlighted_terms: &app.inspector.highlighted_terms,
+                        highlighted_terms: &session.inspector.highlighted_terms,
                         has_any_highlights,
                         action: &mut action_to_dispatch,
                     };
 
                     let target_id = if mode == TableMode::Unfiltered {
-                        app.unfiltered.target_id
+                        session.unfiltered.target_id
                     } else {
                         None
                     };
@@ -190,22 +200,22 @@ pub fn render_log_table(ui: &mut egui::Ui, app: &mut UwuGuiApp, mode: TableMode)
                         }
 
                         let maybe_event = match mode {
-                            TableMode::Filtered => app.viewport.cached_logs.get(row_index),
+                            TableMode::Filtered => session.viewport.cached_logs.get(row_index),
                             TableMode::Unfiltered => {
-                                app.unfiltered.cached_unfiltered.get(row_index)
+                                session.unfiltered.cached_unfiltered.get(row_index)
                             }
                         };
 
                         if let Some(event) = maybe_event {
                             let is_target = target_id.is_some_and(|id| id == event.id);
                             let is_selected = is_target
-                                || app
+                                || session
                                     .inspector
                                     .selected_log
                                     .as_ref()
                                     .is_some_and(|s| s.id == event.id);
 
-                            let is_highlighted = app.is_row_highlighted(&event.id);
+                            let is_highlighted = session.is_row_highlighted(&event.id);
                             let row_color = theme::log_color_to_egui(event.color);
 
                             for col in &visible_cols {
@@ -230,40 +240,48 @@ pub fn render_log_table(ui: &mut egui::Ui, app: &mut UwuGuiApp, mode: TableMode)
         });
 
     if let Some(action) = action_to_dispatch {
-        app.dispatch_action(action);
+        dispatch(action);
     }
 
     if let Some(name) = new_header_drag {
-        app.columns.header_dragged_name = Some(name);
+        session.columns.header_dragged_name = Some(name);
     }
 
     if let Some((from_name, to_name)) = target_header_swap {
-        let from_idx = app.columns.columns.iter().position(|c| c.name == from_name);
-        let to_idx = app.columns.columns.iter().position(|c| c.name == to_name);
+        let from_idx = session
+            .columns
+            .columns
+            .iter()
+            .position(|c| c.name == from_name);
+        let to_idx = session
+            .columns
+            .columns
+            .iter()
+            .position(|c| c.name == to_name);
         if let (Some(from), Some(to)) = (from_idx, to_idx) {
-            app.columns.reorder(from, to);
+            session.columns.reorder(from, to);
             ui.ctx().request_repaint();
         }
     }
 
-    if let Some(ref dragged_name) = app.columns.header_dragged_name {
+    if let Some(ref dragged_name) = session.columns.header_dragged_name {
         if let Some(pos) = pointer_pos {
             render_drag_ghost(ui, dragged_name, pos);
         }
     }
 
     if let Some(event) = newly_selected_event {
-        app.dispatch_action(crate::app::AppAction::SelectLog(Some(event)));
+        dispatch(AppAction::SelectLog(Some(event)));
         match mode {
-            TableMode::Filtered => app.unlatch(),
-            TableMode::Unfiltered => app.unlatch_unfiltered(),
+            TableMode::Filtered => session.unlatch(),
+            TableMode::Unfiltered => session.unlatch_unfiltered(),
         }
     }
 
     if last_row_visible && scroll_delta_y < 0.0 {
         match mode {
-            TableMode::Filtered => app.viewport.is_auto_scroll = true,
-            TableMode::Unfiltered => app.unfiltered.is_live = true,
+            TableMode::Filtered => session.viewport.is_auto_scroll = true,
+            TableMode::Unfiltered => session.unfiltered.is_live = true,
         }
     }
 }

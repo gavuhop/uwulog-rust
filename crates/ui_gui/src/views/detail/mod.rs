@@ -2,8 +2,8 @@ pub mod fields;
 pub mod text_box;
 
 use crate::actions::{ActionContext, AppAction};
-use crate::app::UwuGuiApp;
 use crate::components::render_card;
+use crate::session::GuiSession;
 use crate::theme;
 use eframe::egui::{self, Id, Rounding, Stroke};
 use fields::{render_kv_field, render_meta_field};
@@ -11,13 +11,17 @@ use std::collections::HashMap;
 use text_box::render_text_box;
 use uwu_core_schema::StandardField;
 
-pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
+pub fn render_detail(
+    ui: &mut egui::Ui,
+    session: &mut GuiSession,
+    dispatch: &mut impl FnMut(AppAction),
+) {
     let mut action_to_dispatch: Option<AppAction> = None;
 
-    if let Some(event) = &app.inspector.selected_log {
-        let is_highlighted = app.is_row_highlighted(&event.id);
+    if let Some(event) = &session.inspector.selected_log {
+        let is_highlighted = session.is_row_highlighted(&event.id);
         let event_id = event.id;
-        let has_any_highlights = app.has_any_highlights();
+        let has_any_highlights = session.has_any_highlights();
 
         ui.horizontal(|ui| {
             ui.label(
@@ -110,7 +114,7 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
 
         let log_color = theme::log_color_to_egui(event.color);
 
-        let has_any_highlights = app.has_any_highlights();
+        let has_any_highlights = session.has_any_highlights();
 
         egui::ScrollArea::vertical()
             .id_salt("detail_inspector_scroll_area")
@@ -122,7 +126,7 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 // Metadata Card
                 render_card(ui, "Metadata", |ui| {
                     let mut ctx = ActionContext {
-                        highlighted_terms: &app.inspector.highlighted_terms,
+                        highlighted_terms: &session.inspector.highlighted_terms,
                         has_any_highlights,
                         action: &mut action_to_dispatch,
                     };
@@ -150,7 +154,7 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                     let msg_color = log_color;
 
                     let mut ctx = ActionContext {
-                        highlighted_terms: &app.inspector.highlighted_terms,
+                        highlighted_terms: &session.inspector.highlighted_terms,
                         has_any_highlights,
                         action: &mut action_to_dispatch,
                     };
@@ -183,7 +187,7 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 if !custom_fields.is_empty() {
                     render_card(ui, "Parsed Fields", |ui| {
                         let mut ctx = ActionContext {
-                            highlighted_terms: &app.inspector.highlighted_terms,
+                            highlighted_terms: &session.inspector.highlighted_terms,
                             has_any_highlights,
                             action: &mut action_to_dispatch,
                         };
@@ -329,7 +333,7 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                     ui.add_space(4.0);
 
                     let mut ctx = ActionContext {
-                        highlighted_terms: &app.inspector.highlighted_terms,
+                        highlighted_terms: &session.inspector.highlighted_terms,
                         has_any_highlights,
                         action: &mut action_to_dispatch,
                     };
@@ -354,7 +358,7 @@ pub fn render_detail(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     }
 
     if let Some(action) = action_to_dispatch {
-        app.dispatch_action(action);
+        dispatch(action);
     }
 }
 

@@ -41,54 +41,56 @@ fn create_test_app() -> UwuGuiApp {
 #[tokio::test]
 async fn test_latch_toggle() {
     let mut app = create_test_app();
-    assert!(app.viewport.is_auto_scroll);
+    let session = app.active_session_mut();
+    assert!(session.viewport.is_auto_scroll);
 
-    app.unlatch();
-    assert!(!app.viewport.is_auto_scroll);
+    session.unlatch();
+    assert!(!session.viewport.is_auto_scroll);
 
-    app.latch();
-    assert!(app.viewport.is_auto_scroll);
-    assert!(app.viewport.request_scroll_to_bottom);
+    session.latch();
+    assert!(session.viewport.is_auto_scroll);
+    assert!(session.viewport.request_scroll_to_bottom);
 
-    app.toggle_latch();
-    assert!(!app.viewport.is_auto_scroll);
+    session.toggle_latch();
+    assert!(!session.viewport.is_auto_scroll);
 
-    app.toggle_latch();
-    assert!(app.viewport.is_auto_scroll);
+    session.toggle_latch();
+    assert!(session.viewport.is_auto_scroll);
 }
 
 #[tokio::test]
 async fn test_highlight_toggle_and_clear() {
     let mut app = create_test_app();
+    let session = app.active_session_mut();
     let id1 = 1001u64;
     let id2 = 1002u64;
 
-    assert!(!app.is_row_highlighted(&id1));
-    assert!(!app.has_any_highlights());
+    assert!(!session.is_row_highlighted(&id1));
+    assert!(!session.has_any_highlights());
 
-    app.toggle_row_highlight(id1);
-    assert!(app.is_row_highlighted(&id1));
-    assert!(app.has_any_highlights());
+    session.toggle_row_highlight(id1);
+    assert!(session.is_row_highlighted(&id1));
+    assert!(session.has_any_highlights());
 
-    app.toggle_row_highlight(id2);
-    assert!(app.is_row_highlighted(&id2));
+    session.toggle_row_highlight(id2);
+    assert!(session.is_row_highlighted(&id2));
 
     // Term highlight
-    assert!(!app.is_term_highlighted("timeout"));
-    app.toggle_term_highlight("timeout");
-    assert!(app.is_term_highlighted("timeout"));
-    assert!(app.is_term_highlighted("TIMEOUT")); // Case-insensitive
-    assert!(app.has_any_highlights());
+    assert!(!session.is_term_highlighted("timeout"));
+    session.toggle_term_highlight("timeout");
+    assert!(session.is_term_highlighted("timeout"));
+    assert!(session.is_term_highlighted("TIMEOUT")); // Case-insensitive
+    assert!(session.has_any_highlights());
 
-    app.toggle_term_highlight("timeout");
-    assert!(!app.is_term_highlighted("timeout"));
+    session.toggle_term_highlight("timeout");
+    assert!(!session.is_term_highlighted("timeout"));
 
     // Clear all
-    app.toggle_term_highlight("error");
-    app.clear_all_highlights();
-    assert!(!app.has_any_highlights());
-    assert!(!app.is_row_highlighted(&id1));
-    assert!(!app.is_term_highlighted("error"));
+    session.toggle_term_highlight("error");
+    session.clear_all_highlights();
+    assert!(!session.has_any_highlights());
+    assert!(!session.is_row_highlighted(&id1));
+    assert!(!session.is_term_highlighted("error"));
 }
 
 #[tokio::test]
@@ -116,19 +118,20 @@ async fn test_format_field_and_selection_term() {
 #[tokio::test]
 async fn test_filter_and_exclude_term() {
     let mut app = create_test_app();
+    let session = app.active_session_mut();
 
-    app.apply_filter_term("level:error");
-    assert_eq!(app.search.query, "level:error");
+    session.apply_filter_term("level:error");
+    assert_eq!(session.search.query, "level:error");
 
-    app.apply_filter_term("tag:Auth");
-    assert_eq!(app.search.query, "level:error tag:Auth");
+    session.apply_filter_term("tag:Auth");
+    assert_eq!(session.search.query, "level:error tag:Auth");
 
-    app.exclude_filter_term("healthcheck");
-    assert_eq!(app.search.query, "level:error tag:Auth -healthcheck");
+    session.exclude_filter_term("healthcheck");
+    assert_eq!(session.search.query, "level:error tag:Auth -healthcheck");
 
-    app.exclude_filter_term("-already_negated");
+    session.exclude_filter_term("-already_negated");
     assert_eq!(
-        app.search.query,
+        session.search.query,
         "level:error tag:Auth -healthcheck -already_negated"
     );
 }
@@ -136,6 +139,7 @@ async fn test_filter_and_exclude_term() {
 #[tokio::test]
 async fn test_apply_autocomplete_suggestion() {
     let mut app = create_test_app();
+    let session = app.active_session_mut();
 
     let item_key = SuggestionItem {
         kind: SuggestionKind::Key,
@@ -144,9 +148,9 @@ async fn test_apply_autocomplete_suggestion() {
         example_syntax: "level:".to_string(),
         insert_text: "level:".to_string(),
     };
-    app.search.autocomplete.active_token_range = (0, 0);
-    app.apply_autocomplete_suggestion(&item_key);
-    assert_eq!(app.search.query, "level:");
+    session.search.autocomplete.active_token_range = (0, 0);
+    session.apply_autocomplete_suggestion(&item_key);
+    assert_eq!(session.search.query, "level:");
 
     let item_val = SuggestionItem {
         kind: SuggestionKind::OperatorOrValue,
@@ -155,16 +159,16 @@ async fn test_apply_autocomplete_suggestion() {
         example_syntax: "error".to_string(),
         insert_text: "error".to_string(),
     };
-    app.search.autocomplete.active_token_range = (6, 6);
-    app.apply_autocomplete_suggestion(&item_val);
-    assert_eq!(app.search.query, "level:error");
-    assert!(!app.search.autocomplete.is_open);
+    session.search.autocomplete.active_token_range = (6, 6);
+    session.apply_autocomplete_suggestion(&item_val);
+    assert_eq!(session.search.query, "level:error");
+    assert!(!session.search.autocomplete.is_open);
 }
 
 #[tokio::test]
 async fn test_get_available_log_fields_inference() {
     let app = create_test_app();
-    let fields = app.get_available_log_fields();
+    let fields = app.active_session().get_available_log_fields();
     assert!(!fields.is_empty());
     assert!(fields.iter().any(|(k, _)| k == "level"));
     assert!(fields.iter().any(|(k, _)| k == "timestamp"));
@@ -173,18 +177,19 @@ async fn test_get_available_log_fields_inference() {
 #[tokio::test]
 async fn test_unfiltered_stream_open_close_and_focus() {
     let mut app = create_test_app();
-    assert_eq!(app.active_tab, ActiveTab::Filtered);
+    let session = app.active_session_mut();
+    assert_eq!(session.active_tab, ActiveTab::Filtered);
 
-    app.open_unfiltered_stream(Some(12345));
-    assert_eq!(app.active_tab, ActiveTab::Unfiltered);
-    assert!(app.unfiltered.is_open);
-    assert_eq!(app.unfiltered.target_id, Some(12345));
-    assert!(!app.unfiltered.is_live);
+    session.open_unfiltered_stream(Some(12345));
+    assert_eq!(session.active_tab, ActiveTab::Unfiltered);
+    assert!(session.unfiltered.is_open);
+    assert_eq!(session.unfiltered.target_id, Some(12345));
+    assert!(!session.unfiltered.is_live);
 
-    app.close_unfiltered_stream();
-    assert_eq!(app.active_tab, ActiveTab::Filtered);
-    assert!(!app.unfiltered.is_open);
-    assert!(app.unfiltered.target_id.is_none());
+    session.close_unfiltered_stream();
+    assert_eq!(session.active_tab, ActiveTab::Filtered);
+    assert!(!session.unfiltered.is_open);
+    assert!(session.unfiltered.target_id.is_none());
 }
 
 #[tokio::test]
@@ -197,28 +202,30 @@ async fn test_sync_discovered_fields_replaces_aliases() {
         HashMap::from([("custom_field".to_string(), serde_json::json!("val"))]),
     );
 
-    app.sync_discovered_fields(&[log]);
-    let fields = app.get_available_log_fields();
+    let session = app.active_session_mut();
+    session.sync_discovered_fields(&[log]);
+    let fields = session.get_available_log_fields();
     assert!(fields.iter().any(|(k, _)| k == "level"));
 }
 
 #[tokio::test]
 async fn test_unlatch_unfiltered_idempotency() {
     let mut app = create_test_app();
-    app.open_unfiltered_stream(None);
-    assert!(app.unfiltered.is_live);
+    let session = app.active_session_mut();
+    session.open_unfiltered_stream(None);
+    assert!(session.unfiltered.is_live);
 
-    app.unlatch_unfiltered();
-    assert!(!app.unfiltered.is_live);
+    session.unlatch_unfiltered();
+    assert!(!session.unfiltered.is_live);
 
-    app.unlatch_unfiltered();
-    assert!(!app.unfiltered.is_live);
+    session.unlatch_unfiltered();
+    assert!(!session.unfiltered.is_live);
 }
 
 #[tokio::test]
 async fn test_unfiltered_live_tick_sync_both_branches() {
     let mut app = create_test_app();
-    let tx = app.session.engine.get_channel();
+    let tx = app.active_session().session.engine.get_channel();
 
     // 1. Initial 5 logs
     for i in 0..5 {
@@ -229,13 +236,13 @@ async fn test_unfiltered_live_tick_sync_both_branches() {
     }
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
-    app.trigger_full_search();
-    assert_eq!(app.viewport.cached_logs.len(), 5);
+    app.active_session_mut().trigger_full_search();
+    assert_eq!(app.active_session().viewport.cached_logs.len(), 5);
 
     // 2. Open unfiltered stream in LIVE mode
-    app.open_unfiltered_stream(None);
-    assert!(app.unfiltered.is_live);
-    assert_eq!(app.unfiltered.cached_unfiltered.len(), 5);
+    app.active_session_mut().open_unfiltered_stream(None);
+    assert!(app.active_session().unfiltered.is_live);
+    assert_eq!(app.active_session().unfiltered.cached_unfiltered.len(), 5);
 
     // 3. Ingest 5 more logs
     for i in 5..10 {
@@ -247,18 +254,18 @@ async fn test_unfiltered_live_tick_sync_both_branches() {
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
     // Force last_search_time backward to satisfy 150ms debounce in tick()
-    app.search.last_search_time = Instant::now() - Duration::from_millis(200);
+    app.active_session_mut().search.last_search_time = Instant::now() - Duration::from_millis(200);
     app.tick();
 
     // Both filtered and unfiltered live buffers must have received all 10 logs
-    assert_eq!(app.viewport.cached_logs.len(), 10);
-    assert_eq!(app.unfiltered.cached_unfiltered.len(), 10);
+    assert_eq!(app.active_session().viewport.cached_logs.len(), 10);
+    assert_eq!(app.active_session().unfiltered.cached_unfiltered.len(), 10);
 }
 
 #[tokio::test]
 async fn test_unfiltered_frozen_snapshot_no_drift() {
     let mut app = create_test_app();
-    let tx = app.session.engine.get_channel();
+    let tx = app.active_session().session.engine.get_channel();
 
     for i in 0..5 {
         let entry = RawLogEntry {
@@ -268,9 +275,9 @@ async fn test_unfiltered_frozen_snapshot_no_drift() {
     }
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    app.open_unfiltered_stream(Some(2));
-    assert!(!app.unfiltered.is_live);
-    let initial_count = app.unfiltered.cached_unfiltered.len();
+    app.active_session_mut().open_unfiltered_stream(Some(2));
+    assert!(!app.active_session().unfiltered.is_live);
+    let initial_count = app.active_session().unfiltered.cached_unfiltered.len();
 
     let new_entry = RawLogEntry {
         payload: RawPayload::Text("{\"level\":\"INFO\",\"message\":\"msg 99\"}".to_string()),
@@ -279,13 +286,16 @@ async fn test_unfiltered_frozen_snapshot_no_drift() {
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     app.tick();
-    assert_eq!(app.unfiltered.cached_unfiltered.len(), initial_count);
+    assert_eq!(
+        app.active_session().unfiltered.cached_unfiltered.len(),
+        initial_count
+    );
 }
 
 #[tokio::test]
 async fn test_repeated_unlatch_idempotency_preserves_pause_state() {
     let mut app = create_test_app();
-    let tx = app.session.engine.get_channel();
+    let tx = app.active_session().session.engine.get_channel();
 
     for i in 0..10 {
         let entry = RawLogEntry {
@@ -296,12 +306,15 @@ async fn test_repeated_unlatch_idempotency_preserves_pause_state() {
     tokio::time::sleep(Duration::from_millis(50)).await;
     app.tick();
 
-    app.unlatch();
-    assert!(!app.viewport.is_auto_scroll);
-    let paused_count = app.viewport.pause_snapshot.filtered_seen;
+    app.active_session_mut().unlatch();
+    assert!(!app.active_session().viewport.is_auto_scroll);
+    let paused_count = app.active_session().viewport.pause_snapshot.filtered_seen;
 
-    app.unlatch();
-    assert_eq!(app.viewport.pause_snapshot.filtered_seen, paused_count);
+    app.active_session_mut().unlatch();
+    assert_eq!(
+        app.active_session().viewport.pause_snapshot.filtered_seen,
+        paused_count
+    );
 }
 
 #[tokio::test]
@@ -313,7 +326,7 @@ async fn test_spawn_load_environment_and_tick() {
     app.tick();
 
     assert!(matches!(
-        app.session.env_status,
+        app.active_session().session.env_status,
         uwu_core_workspace::EnvLoadStatus::Ready { .. }
     ));
 }
@@ -321,38 +334,39 @@ async fn test_spawn_load_environment_and_tick() {
 #[tokio::test]
 async fn test_source_running_state_transitions_to_stopped() {
     let mut app = create_test_app();
-    assert!(!app.session.is_source_running);
+    assert!(!app.active_session().session.is_source_running);
 
     #[cfg(target_os = "windows")]
     {
-        app.session.source_config.command_str = "cmd /c echo test".to_string();
+        app.active_session_mut().session.source_config.command_str = "cmd /c echo test".to_string();
     }
     #[cfg(not(target_os = "windows"))]
     {
-        app.session.source_config.command_str = "echo test".to_string();
+        app.active_session_mut().session.source_config.command_str = "echo test".to_string();
     }
 
     app.start_configured_source();
-    assert!(app.session.is_source_running);
+    assert!(app.active_session().session.is_source_running);
 
     let start = Instant::now();
     while start.elapsed() < Duration::from_secs(3) {
         tokio::time::sleep(Duration::from_millis(50)).await;
         app.tick();
-        if !app.session.is_source_running {
+        if !app.active_session().session.is_source_running {
             break;
         }
     }
 
-    assert!(!app.session.is_source_running);
+    assert!(!app.active_session().session.is_source_running);
 }
 
 #[tokio::test]
 async fn test_close_unfiltered_stream_frees_ram() {
     let mut app = create_test_app();
-    app.open_unfiltered_stream(None);
-    app.close_unfiltered_stream();
-    assert!(app.unfiltered.cached_unfiltered.is_empty());
+    let session = app.active_session_mut();
+    session.open_unfiltered_stream(None);
+    session.close_unfiltered_stream();
+    assert!(session.unfiltered.cached_unfiltered.is_empty());
 }
 
 #[tokio::test]
@@ -361,7 +375,7 @@ async fn test_multi_project_switch_and_close() {
     assert_eq!(app.sessions.len(), 1);
     assert_eq!(app.active_index, 0);
 
-    app.search.query = "level:error".to_string();
+    app.active_session_mut().search.query = "level:error".to_string();
 
     let ws2 = Workspace::new(
         "Project B",
@@ -372,26 +386,26 @@ async fn test_multi_project_switch_and_close() {
 
     assert_eq!(app.sessions.len(), 2);
     assert_eq!(app.active_index, 1);
-    assert_eq!(app.session.name, "Project B");
-    assert_eq!(app.search.query, "");
+    assert_eq!(app.active_session().session.name, "Project B");
+    assert_eq!(app.active_session().search.query, "");
 
-    app.search.query = "tag:Audio".to_string();
+    app.active_session_mut().search.query = "tag:Audio".to_string();
 
     app.switch_session(0);
     assert_eq!(app.active_index, 0);
-    assert_eq!(app.session.name, "Test Project");
-    assert_eq!(app.search.query, "level:error");
+    assert_eq!(app.active_session().session.name, "Test Project");
+    assert_eq!(app.active_session().search.query, "level:error");
 
     app.switch_session(1);
     assert_eq!(app.active_index, 1);
-    assert_eq!(app.session.name, "Project B");
-    assert_eq!(app.search.query, "tag:Audio");
+    assert_eq!(app.active_session().session.name, "Project B");
+    assert_eq!(app.active_session().search.query, "tag:Audio");
 
     app.close_session(1);
     assert_eq!(app.sessions.len(), 1);
     assert_eq!(app.active_index, 0);
-    assert_eq!(app.session.name, "Test Project");
-    assert_eq!(app.search.query, "level:error");
+    assert_eq!(app.active_session().session.name, "Test Project");
+    assert_eq!(app.active_session().search.query, "level:error");
 }
 
 #[tokio::test]
@@ -399,12 +413,12 @@ async fn test_remote_workspace_save_and_reload() {
     let mut app = create_test_app();
 
     // 1. Cấu hình Remote workspace trong session hiện tại
-    app.session.location = WorkspaceLocation::remote(
+    app.active_session_mut().session.location = WorkspaceLocation::remote(
         uwu_core_workspace::WslConnectionOptions::new("Ubuntu", "/home/user/backend"),
     );
-    app.session.source_config.source_type = SourceType::Process;
-    app.session.source_config.command_str = "python3 app.py".to_string();
-    app.session.name = "Remote-Backend".to_string();
+    app.active_session_mut().session.source_config.source_type = SourceType::Process;
+    app.active_session_mut().session.source_config.command_str = "python3 app.py".to_string();
+    app.active_session_mut().session.name = "Remote-Backend".to_string();
 
     // 2. Lưu workspace hiện tại
     app.save_current_workspace();
@@ -426,9 +440,16 @@ async fn test_remote_workspace_save_and_reload() {
 
     // 4. Mở lại workspace Remote qua open_or_switch_workspace
     app.open_or_switch_workspace(&ws);
-    assert_eq!(app.session.source_config.source_type, SourceType::Process);
-    assert_eq!(app.session.source_config.command_str, "python3 app.py");
+    assert_eq!(
+        app.active_session().session.source_config.source_type,
+        SourceType::Process
+    );
+    assert_eq!(
+        app.active_session().session.source_config.command_str,
+        "python3 app.py"
+    );
     let remote = app
+        .active_session()
         .session
         .location
         .as_remote()
@@ -479,8 +500,8 @@ fn test_extract_project_name() {
 #[tokio::test]
 async fn test_zed_style_draft_isolation_and_cancel() {
     let mut app = create_test_app();
-    app.session.source_config.source_type = SourceType::Process;
-    app.session.source_config.command_str = "cargo run".to_string();
+    app.active_session_mut().session.source_config.source_type = SourceType::Process;
+    app.active_session_mut().session.source_config.command_str = "cargo run".to_string();
 
     // Open launch modal creates draft from live session
     app.dispatch_action(AppAction::OpenLaunchModal);
@@ -494,9 +515,15 @@ async fn test_zed_style_draft_isolation_and_cancel() {
     }
 
     // Live session must remain completely untouched while modal is uncommitted
-    assert_eq!(app.session.source_config.source_type, SourceType::Process);
-    assert_eq!(app.session.source_config.command_str, "cargo run");
-    assert_eq!(app.session.source_config.file_path, "");
+    assert_eq!(
+        app.active_session().session.source_config.source_type,
+        SourceType::Process
+    );
+    assert_eq!(
+        app.active_session().session.source_config.command_str,
+        "cargo run"
+    );
+    assert_eq!(app.active_session().session.source_config.file_path, "");
 
     // User cancels modal
     app.dispatch_action(AppAction::CloseLaunchModal);
@@ -504,15 +531,21 @@ async fn test_zed_style_draft_isolation_and_cancel() {
     assert!(app.launch_modal_draft.is_none());
 
     // Live session remains intact
-    assert_eq!(app.session.source_config.source_type, SourceType::Process);
-    assert_eq!(app.session.source_config.command_str, "cargo run");
+    assert_eq!(
+        app.active_session().session.source_config.source_type,
+        SourceType::Process
+    );
+    assert_eq!(
+        app.active_session().session.source_config.command_str,
+        "cargo run"
+    );
 }
 
 #[tokio::test]
 async fn test_zed_style_draft_apply() {
     let mut app = create_test_app();
-    app.session.source_config.source_type = SourceType::Process;
-    app.session.source_config.command_str = "cargo run".to_string();
+    app.active_session_mut().session.source_config.source_type = SourceType::Process;
+    app.active_session_mut().session.source_config.command_str = "cargo run".to_string();
 
     // Open modal
     app.dispatch_action(AppAction::OpenLaunchModal);
@@ -528,9 +561,15 @@ async fn test_zed_style_draft_apply() {
     assert!(app.launch_modal_draft.is_none());
 
     // Live session has received the new config
-    assert_eq!(app.session.source_config.source_type, SourceType::File);
-    assert_eq!(app.session.source_config.file_path, "C:\\logs\\app.log");
-    assert_eq!(app.session.source_config.capacity, 50_000);
+    assert_eq!(
+        app.active_session().session.source_config.source_type,
+        SourceType::File
+    );
+    assert_eq!(
+        app.active_session().session.source_config.file_path,
+        "C:\\logs\\app.log"
+    );
+    assert_eq!(app.active_session().session.source_config.capacity, 50_000);
 }
 
 #[tokio::test]
@@ -575,36 +614,36 @@ async fn test_zed_style_app_action_dispatch() {
 #[tokio::test]
 async fn test_app_action_columns_modal_flow() {
     let mut app = create_test_app();
-    let initial_cols = app.columns.columns.clone();
+    let initial_cols = app.active_session().columns.columns.clone();
 
     // 1. Open columns modal
     app.dispatch_action(AppAction::OpenColumnsModal);
-    assert!(app.columns.is_modal_open);
-    assert!(app.columns.draft_columns.is_some());
+    assert!(app.active_session().columns.is_modal_open);
+    assert!(app.active_session().columns.draft_columns.is_some());
 
     // 2. Modify draft
-    if let Some(ref mut draft) = app.columns.draft_columns {
+    if let Some(ref mut draft) = app.active_session_mut().columns.draft_columns {
         draft[0].visible = false;
     }
 
     // Live columns should still be unchanged (Live vs Draft separation)
-    assert_eq!(app.columns.columns, initial_cols);
-    assert!(app.columns.columns[0].visible);
+    assert_eq!(app.active_session().columns.columns, initial_cols);
+    assert!(app.active_session().columns.columns[0].visible);
 
     // 3. Cancel / Close modal
     app.dispatch_action(AppAction::CloseColumnsModal);
-    assert!(!app.columns.is_modal_open);
-    assert!(app.columns.draft_columns.is_none());
-    assert_eq!(app.columns.columns, initial_cols);
+    assert!(!app.active_session().columns.is_modal_open);
+    assert!(app.active_session().columns.draft_columns.is_none());
+    assert_eq!(app.active_session().columns.columns, initial_cols);
 
     // 4. Open again, modify and Apply
     app.dispatch_action(AppAction::OpenColumnsModal);
-    if let Some(ref mut draft) = app.columns.draft_columns {
+    if let Some(ref mut draft) = app.active_session_mut().columns.draft_columns {
         draft[0].visible = false;
     }
     app.dispatch_action(AppAction::ApplyColumnsModal);
-    assert!(!app.columns.is_modal_open);
-    assert!(!app.columns.columns[0].visible);
+    assert!(!app.active_session().columns.is_modal_open);
+    assert!(!app.active_session().columns.columns[0].visible);
 }
 
 #[tokio::test]
@@ -619,20 +658,25 @@ async fn test_app_action_select_log_and_switch_tab() {
     );
 
     app.dispatch_action(AppAction::SelectLog(Some(event.clone())));
-    assert!(app.inspector.selected_log.is_some());
+    assert!(app.active_session().inspector.selected_log.is_some());
     assert_eq!(
-        app.inspector.selected_log.as_ref().unwrap().message,
+        app.active_session()
+            .inspector
+            .selected_log
+            .as_ref()
+            .unwrap()
+            .message,
         "test message"
     );
 
     app.dispatch_action(AppAction::SelectLog(None));
-    assert!(app.inspector.selected_log.is_none());
+    assert!(app.active_session().inspector.selected_log.is_none());
 
     app.dispatch_action(AppAction::SwitchTab(ActiveTab::Unfiltered));
-    assert_eq!(app.active_tab, ActiveTab::Unfiltered);
+    assert_eq!(app.active_session().active_tab, ActiveTab::Unfiltered);
 
     app.dispatch_action(AppAction::SwitchTab(ActiveTab::Filtered));
-    assert_eq!(app.active_tab, ActiveTab::Filtered);
+    assert_eq!(app.active_session().active_tab, ActiveTab::Filtered);
 }
 
 #[tokio::test]
@@ -640,13 +684,13 @@ async fn test_app_action_query_filter_and_clear() {
     let mut app = create_test_app();
 
     app.dispatch_action(AppAction::ApplyFilterTerm("level:error".to_string()));
-    assert_eq!(app.search.query, "level:error");
+    assert_eq!(app.active_session().search.query, "level:error");
 
     app.dispatch_action(AppAction::ExcludeFilterTerm("user_id:42".to_string()));
-    assert_eq!(app.search.query, "level:error -user_id:42");
+    assert_eq!(app.active_session().search.query, "level:error -user_id:42");
 
     app.dispatch_action(AppAction::ClearQuery);
-    assert!(app.search.query.is_empty());
+    assert!(app.active_session().search.query.is_empty());
 }
 
 #[tokio::test]
@@ -654,14 +698,18 @@ async fn test_app_action_highlights() {
     let mut app = create_test_app();
 
     app.dispatch_action(AppAction::ToggleRowHighlight(100));
-    assert!(app.is_row_highlighted(&100));
+    assert!(app.active_session().is_row_highlighted(&100));
 
     app.dispatch_action(AppAction::ToggleTermHighlight("error".to_string()));
-    assert!(app.inspector.highlighted_terms.contains("error"));
+    assert!(app
+        .active_session()
+        .inspector
+        .highlighted_terms
+        .contains("error"));
 
     app.dispatch_action(AppAction::ClearAllHighlights);
-    assert!(!app.is_row_highlighted(&100));
-    assert!(app.inspector.highlighted_terms.is_empty());
+    assert!(!app.active_session().is_row_highlighted(&100));
+    assert!(app.active_session().inspector.highlighted_terms.is_empty());
 }
 
 #[tokio::test]
@@ -669,32 +717,32 @@ async fn test_app_action_latch_and_unfiltered() {
     let mut app = create_test_app();
 
     // Latch toggle
-    assert!(app.viewport.is_auto_scroll);
+    assert!(app.active_session().viewport.is_auto_scroll);
     app.dispatch_action(AppAction::ToggleLatch);
-    assert!(!app.viewport.is_auto_scroll);
+    assert!(!app.active_session().viewport.is_auto_scroll);
     app.dispatch_action(AppAction::ToggleLatch);
-    assert!(app.viewport.is_auto_scroll);
+    assert!(app.active_session().viewport.is_auto_scroll);
 
     // Open & close unfiltered stream
     app.dispatch_action(AppAction::OpenUnfilteredStream(Some(42)));
-    assert!(app.unfiltered.is_open);
-    assert_eq!(app.active_tab, ActiveTab::Unfiltered);
+    assert!(app.active_session().unfiltered.is_open);
+    assert_eq!(app.active_session().active_tab, ActiveTab::Unfiltered);
 
     // Unfiltered live toggle
-    assert!(!app.unfiltered.is_live);
+    assert!(!app.active_session().unfiltered.is_live);
     app.dispatch_action(AppAction::ToggleUnfilteredLive);
-    assert!(app.unfiltered.is_live);
+    assert!(app.active_session().unfiltered.is_live);
 
     app.dispatch_action(AppAction::RefreshUnfilteredSnapshot);
 
     app.dispatch_action(AppAction::FocusInMainAndClearFilter);
-    assert!(!app.unfiltered.is_open);
-    assert_eq!(app.active_tab, ActiveTab::Filtered);
+    assert!(!app.active_session().unfiltered.is_open);
+    assert_eq!(app.active_session().active_tab, ActiveTab::Filtered);
 
     app.dispatch_action(AppAction::OpenUnfilteredStream(None));
-    assert!(app.unfiltered.is_open);
+    assert!(app.active_session().unfiltered.is_open);
     app.dispatch_action(AppAction::CloseUnfilteredStream);
-    assert!(!app.unfiltered.is_open);
+    assert!(!app.active_session().unfiltered.is_open);
 }
 
 #[tokio::test]
@@ -723,18 +771,18 @@ async fn test_app_action_dismiss_top_layer() {
         HashMap::new(),
     )
     .with_id(123);
-    app.inspector.selected_log = Some(test_log);
-    assert!(app.inspector.selected_log.is_some());
+    app.active_session_mut().inspector.selected_log = Some(test_log);
+    assert!(app.active_session().inspector.selected_log.is_some());
 
     // 2. Add unfiltered stream on top
-    app.open_unfiltered_stream(None);
-    assert_eq!(app.active_tab, ActiveTab::Unfiltered);
+    app.active_session_mut().open_unfiltered_stream(None);
+    assert_eq!(app.active_session().active_tab, ActiveTab::Unfiltered);
 
     // 3. Add launch modal on top (stack)
     app.push_overlay(OverlayLayer::LaunchModal);
 
     // 4. Add columns modal on top (stack)
-    app.columns.open_modal();
+    app.active_session_mut().columns.open_modal();
     app.push_overlay(OverlayLayer::ColumnsModal);
 
     // 5. Add project picker on top (stack)
@@ -754,16 +802,16 @@ async fn test_app_action_dismiss_top_layer() {
     // Pop 3: Launch modal
     app.dispatch_action(AppAction::DismissTopLayer);
     assert!(!app.is_overlay_open(OverlayLayer::LaunchModal));
-    assert_eq!(app.active_tab, ActiveTab::Unfiltered);
+    assert_eq!(app.active_session().active_tab, ActiveTab::Unfiltered);
 
     // Pop 4: Unfiltered stream tab
     app.dispatch_action(AppAction::DismissTopLayer);
-    assert_eq!(app.active_tab, ActiveTab::Filtered);
-    assert!(app.inspector.selected_log.is_some());
+    assert_eq!(app.active_session().active_tab, ActiveTab::Filtered);
+    assert!(app.active_session().inspector.selected_log.is_some());
 
     // Pop 5: Selected log inspector
     app.dispatch_action(AppAction::DismissTopLayer);
-    assert!(app.inspector.selected_log.is_none());
+    assert!(app.active_session().inspector.selected_log.is_none());
 
     // Pop 6: Nothing left to pop
     assert!(!app.dismiss_top_layer());
@@ -952,8 +1000,8 @@ async fn test_close_and_switch_session_behaviors() {
     assert_eq!(app.sessions.len(), 2);
     assert_eq!(app.active_index, 1);
     // Kiểm tra kế thừa capacity và display_limit từ active session
-    assert_eq!(app.session.source_config.capacity, 100);
-    assert_eq!(app.session.display_limit, 50);
+    assert_eq!(app.active_session().session.source_config.capacity, 100);
+    assert_eq!(app.active_session().session.display_limit, 50);
 
     app.open_or_switch_workspace(&ws2);
     assert_eq!(app.sessions.len(), 3);
@@ -967,7 +1015,7 @@ async fn test_close_and_switch_session_behaviors() {
     app.close_session(0);
     assert_eq!(app.sessions.len(), 2);
     assert_eq!(app.active_index, 1);
-    assert_eq!(app.session.name, "P2");
+    assert_eq!(app.active_session().session.name, "P2");
 
     // 3. Đóng hết các session -> tạo session mặc định và kế thừa capacity
     app.close_session(1);
@@ -977,8 +1025,8 @@ async fn test_close_and_switch_session_behaviors() {
     app.close_session(0);
     assert_eq!(app.sessions.len(), 1);
     assert_eq!(app.active_index, 0);
-    assert_eq!(app.session.source_config.capacity, 100);
-    assert_eq!(app.session.display_limit, 50);
+    assert_eq!(app.active_session().session.source_config.capacity, 100);
+    assert_eq!(app.active_session().session.display_limit, 50);
 }
 
 #[tokio::test]

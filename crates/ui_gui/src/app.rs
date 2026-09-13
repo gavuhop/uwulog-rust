@@ -44,16 +44,16 @@ impl UwuGuiApp {
     }
 }
 
-impl std::ops::Deref for UwuGuiApp {
-    type Target = GuiSession;
-
-    fn deref(&self) -> &Self::Target {
+impl UwuGuiApp {
+    /// Lấy tham chiếu bất biến tới session đang hoạt động
+    #[inline]
+    pub fn active_session(&self) -> &GuiSession {
         &self.sessions[self.active_index]
     }
-}
 
-impl std::ops::DerefMut for UwuGuiApp {
-    fn deref_mut(&mut self) -> &mut Self::Target {
+    /// Lấy tham chiếu khả biến tới session đang hoạt động
+    #[inline]
+    pub fn active_session_mut(&mut self) -> &mut GuiSession {
         let idx = self.active_index;
         &mut self.sessions[idx]
     }
@@ -153,7 +153,7 @@ impl UwuGuiApp {
         if has_custom_source {
             app.start_configured_source();
         }
-        app.trigger_full_search();
+        app.active_session_mut().trigger_full_search();
 
         app
     }
@@ -166,7 +166,7 @@ impl UwuGuiApp {
             self.active_index = index;
             self.store.active_workspace_id = Some(self.sessions[index].session.id);
             let _ = self.store.save();
-            self.trigger_full_search();
+            self.active_session_mut().trigger_full_search();
         }
     }
 
@@ -180,11 +180,9 @@ impl UwuGuiApp {
             return;
         }
 
-        let mut gui_session = GuiSession::from_workspace(
-            ws,
-            self.session.source_config.capacity,
-            self.session.display_limit,
-        );
+        let cap = self.active_session().session.source_config.capacity;
+        let limit = self.active_session().session.display_limit;
+        let mut gui_session = GuiSession::from_workspace(ws, cap, limit);
         gui_session.session.spawn_load_environment(&self.rt);
         self.sessions.push(gui_session);
         self.switch_session(self.sessions.len() - 1);
@@ -213,7 +211,7 @@ impl UwuGuiApp {
 
         self.store.active_workspace_id = Some(self.sessions[self.active_index].session.id);
         let _ = self.store.save();
-        self.trigger_full_search();
+        self.active_session_mut().trigger_full_search();
     }
 
     pub fn cycle_project(&mut self, forward: bool) {
@@ -249,7 +247,8 @@ impl UwuGuiApp {
             AppAction::LoadWorkspace(ws) => {
                 self.load_workspace(&ws);
                 if self.launch_modal_draft.is_some() {
-                    self.launch_modal_draft = Some(self.session.source_config.clone());
+                    self.launch_modal_draft =
+                        Some(self.active_session().session.source_config.clone());
                 }
             }
             AppAction::DeleteWorkspace(id) => {
@@ -259,7 +258,7 @@ impl UwuGuiApp {
             AppAction::StopSource => self.stop_current_source(),
             AppAction::RestartSource => self.restart_current_source(),
             AppAction::OpenLaunchModal => {
-                self.launch_modal_draft = Some(self.session.source_config.clone());
+                self.launch_modal_draft = Some(self.active_session().session.source_config.clone());
                 self.push_overlay(OverlayLayer::LaunchModal);
             }
             AppAction::CloseLaunchModal => {
@@ -268,29 +267,29 @@ impl UwuGuiApp {
             }
             AppAction::ApplyLaunchModal => {
                 if let Some(draft) = self.launch_modal_draft.take() {
-                    self.session.source_config = draft;
+                    self.active_session_mut().session.source_config = draft;
                     self.save_current_workspace();
                     self.restart_current_source();
                 }
                 self.close_overlay(OverlayLayer::LaunchModal);
             }
             AppAction::ApplyAndRestartSource(new_config) => {
-                self.session.source_config = new_config;
+                self.active_session_mut().session.source_config = new_config;
                 self.save_current_workspace();
                 self.restart_current_source();
                 self.close_overlay(OverlayLayer::LaunchModal);
                 self.launch_modal_draft = None;
             }
             AppAction::OpenColumnsModal => {
-                self.columns.open_modal();
+                self.active_session_mut().view.columns.open_modal();
                 self.push_overlay(OverlayLayer::ColumnsModal);
             }
             AppAction::CloseColumnsModal => {
-                self.columns.close_modal();
+                self.active_session_mut().view.columns.close_modal();
                 self.close_overlay(OverlayLayer::ColumnsModal);
             }
             AppAction::ApplyColumnsModal => {
-                self.columns.apply_modal();
+                self.active_session_mut().view.columns.apply_modal();
                 self.close_overlay(OverlayLayer::ColumnsModal);
             }
             AppAction::ToggleProjectPicker => {
@@ -349,21 +348,21 @@ impl UwuGuiApp {
                     self.project_search_query.clear();
                 }
                 OverlayLayer::ColumnsModal => {
-                    self.columns.close_modal();
+                    self.active_session_mut().view.columns.close_modal();
                 }
             }
             true
-        } else if self.search.autocomplete.is_open {
-            self.search.autocomplete.is_open = false;
+        } else if self.active_session().view.search.autocomplete.is_open {
+            self.active_session_mut().view.search.autocomplete.is_open = false;
             true
-        } else if self.search.history.is_open {
-            self.search.history.close_popup();
+        } else if self.active_session().view.search.history.is_open {
+            self.active_session_mut().view.search.history.close_popup();
             true
-        } else if self.active_tab == ActiveTab::Unfiltered {
-            self.close_unfiltered_stream();
+        } else if self.active_session().view.active_tab == ActiveTab::Unfiltered {
+            self.active_session_mut().close_unfiltered_stream();
             true
-        } else if self.inspector.selected_log.is_some() {
-            self.inspector.selected_log = None;
+        } else if self.active_session().view.inspector.selected_log.is_some() {
+            self.active_session_mut().view.inspector.selected_log = None;
             true
         } else {
             false
@@ -414,7 +413,7 @@ impl UwuGuiApp {
         let active_idx = self.active_index;
         self.sessions[active_idx].session.restart_source(&self.rt);
         self.sessions[active_idx].view.reset_stream_data();
-        self.trigger_full_search();
+        self.active_session_mut().trigger_full_search();
     }
 
     pub fn spawn_load_environment(&mut self) {

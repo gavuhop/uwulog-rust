@@ -6,7 +6,9 @@ pub mod unfiltered;
 
 pub use detail::render_detail;
 pub use header::render_header;
-pub use modals::{render_columns_modal, render_launch_modal, render_project_picker_popup};
+pub use modals::{
+    render_columns_modal, render_launch_modal, render_project_picker_popup, ProjectPickerArgs,
+};
 pub use table::render_table;
 pub use unfiltered::render_unfiltered_table;
 
@@ -17,25 +19,60 @@ use eframe::egui;
 pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
     ctx.set_visuals(theme::create_visuals());
 
+    let mut pending_actions: Vec<crate::actions::AppAction> = Vec::new();
+    let mut dispatch = |action: crate::actions::AppAction| {
+        pending_actions.push(action);
+    };
+
     // Phím Escape: Đóng lớp giao diện trên cùng theo thứ tự ngăn xếp (Chain of Responsibility / Pop Stack)
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-        app.dispatch_action(crate::actions::AppAction::DismissTopLayer);
+        dispatch(crate::actions::AppAction::DismissTopLayer);
     }
 
     // Phím tắt mở Project Picker (Alt+P hoặc Ctrl+Alt+O)
     if ctx.input(|i| i.modifiers.alt && i.key_pressed(egui::Key::P))
         || ctx.input(|i| i.modifiers.command && i.modifiers.alt && i.key_pressed(egui::Key::O))
     {
-        app.dispatch_action(crate::actions::AppAction::ToggleProjectPicker);
+        dispatch(crate::actions::AppAction::ToggleProjectPicker);
     }
 
     // Phím tắt chuyển project trong This Window (Ctrl+PageUp / Ctrl+PageDown)
     if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::PageUp)) {
-        app.dispatch_action(crate::actions::AppAction::CycleSession(false));
+        dispatch(crate::actions::AppAction::CycleSession(false));
     }
     if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::PageDown)) {
-        app.dispatch_action(crate::actions::AppAction::CycleSession(true));
+        dispatch(crate::actions::AppAction::CycleSession(true));
     }
+
+    let is_launch_open = app.is_overlay_open(crate::overlay::OverlayLayer::LaunchModal);
+    let is_about_open = app.is_overlay_open(crate::overlay::OverlayLayer::AboutModal);
+
+    let active_index = app.active_index;
+    let session_summaries: Vec<modals::ProjectPickerSessionInfo> = app
+        .sessions
+        .iter()
+        .map(|s| modals::ProjectPickerSessionInfo {
+            id: s.session.id,
+            name: if s.session.name.is_empty() {
+                "Workspace".to_string()
+            } else {
+                s.session.name.clone()
+            },
+            icon: s.session.icon(),
+            target_summary: s.session.target_summary(),
+            normalized_dir: s.session.location.normalized_dir(),
+        })
+        .collect();
+
+    let mut header_cx = header::HeaderContext {
+        overlay_stack: &mut app.overlay_stack,
+        store: &app.store,
+        sessions: &session_summaries,
+        active_index,
+        project_search_query: &mut app.project_search_query,
+    };
+
+    let active_session = &mut app.sessions[active_index];
 
     // Top Panel: Unified 1-Tier Modern Custom Title & Header Bar
     egui::TopBottomPanel::top("header_panel")
@@ -52,7 +89,7 @@ pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
         )
         .resizable(false)
         .show(ctx, |ui| {
-            header::render_header(ui, app);
+            header::render_header(ui, active_session, &mut header_cx, &mut dispatch);
         });
 
     // Central Panel: Left Table View & Right Inspector Panel
@@ -63,20 +100,20 @@ pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
                 .inner_margin(egui::Margin::same(0.0)),
         )
         .show(ctx, |ui| {
-            if app.inspector.is_open() {
+            if active_session.view.inspector.is_open() {
                 let screen_width = ctx.screen_rect().width();
                 let panel_id = egui::Id::new("detail_inspector_panel");
 
                 // Nếu tỷ lệ chưa hợp lệ, đặt mặc định 35% chiều rộng màn hình
-                if !(0.15..=0.85).contains(&app.inspector.width_ratio) {
-                    app.inspector.width_ratio = 0.35;
+                if !(0.15..=0.85).contains(&active_session.view.inspector.width_ratio) {
+                    active_session.view.inspector.width_ratio = 0.35;
                 }
 
                 // Khi kích thước màn hình thay đổi (Resize cửa sổ hoặc Zoom In/Out):
                 // Tự động cập nhật lại kích thước panel theo đúng tỷ lệ inspector.width_ratio!
                 if app.prev_screen_width > 0.0 && (screen_width - app.prev_screen_width).abs() > 2.0
                 {
-                    let new_width = (screen_width * app.inspector.width_ratio)
+                    let new_width = (screen_width * active_session.view.inspector.width_ratio)
                         .clamp(240.0, screen_width * 0.75);
                     ctx.data_mut(|d| {
                         if let Some(mut state) =
@@ -89,8 +126,8 @@ pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
                 }
                 app.prev_screen_width = screen_width;
 
-                let target_width =
-                    (screen_width * app.inspector.width_ratio).clamp(240.0, screen_width * 0.75);
+                let target_width = (screen_width * active_session.view.inspector.width_ratio)
+                    .clamp(240.0, screen_width * 0.75);
                 let min_sidebar_width = 240.0_f32.min(screen_width * 0.4);
                 let max_sidebar_width = (screen_width * 0.75).max(min_sidebar_width + 100.0);
 
@@ -109,10 +146,10 @@ pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
                         let actual_width = ui.available_width();
                         if actual_width > 50.0 && screen_width > 100.0 {
                             // Cập nhật tỷ lệ khi người dùng chủ động kéo dãn thanh Inspector
-                            app.inspector.width_ratio =
+                            active_session.view.inspector.width_ratio =
                                 (actual_width / screen_width).clamp(0.15, 0.75);
                         }
-                        detail::render_detail(ui, app);
+                        detail::render_detail(ui, active_session, &mut dispatch);
                     });
             }
 
@@ -122,31 +159,42 @@ pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
                         .fill(theme::BG_BASE)
                         .inner_margin(egui::Margin::symmetric(8.0, 4.0)),
                 )
-                .show_inside(ui, |ui| match app.active_tab {
+                .show_inside(ui, |ui| match active_session.view.active_tab {
                     crate::state::ActiveTab::Filtered => {
                         ui.push_id("main_filtered_table_scope", |ui| {
-                            table::render_table(ui, app);
+                            table::render_table(ui, active_session, &mut dispatch);
                         });
                     }
                     crate::state::ActiveTab::Unfiltered => {
                         ui.push_id("unfiltered_table_scope", |ui| {
-                            unfiltered::render_unfiltered_table(ui, app);
+                            unfiltered::render_unfiltered_table(ui, active_session, &mut dispatch);
                         });
                     }
                 });
         });
 
     // Modal Dialog: Launch & Source Parameters
-    modals::render_launch_modal(ctx, app);
+    modals::render_launch_modal(
+        ctx,
+        is_launch_open,
+        &mut app.launch_modal_draft,
+        &active_session.session.source_config,
+        &mut dispatch,
+    );
 
     // Modal Dialog: Table Columns & Ordering
-    modals::render_columns_modal(ctx, app);
+    modals::render_columns_modal(ctx, &mut active_session.view.columns, &mut dispatch);
 
     // Modal Dialog: About uwulog
-    crate::components::render_about_modal(ctx, app);
+    crate::components::render_about_modal(ctx, is_about_open, &mut dispatch);
 
     // Window Resize Border Handles (Hỗ trợ kéo dãn / thu nhỏ 4 góc và 4 cạnh cửa sổ)
     render_window_resize_borders(ctx);
+
+    // Drain and dispatch all pending actions
+    for action in pending_actions {
+        app.dispatch_action(action);
+    }
 }
 
 /// Hỗ trợ kéo dãn / thu nhỏ cửa sổ tùy ý từ 4 góc và 4 cạnh viền màn hình (Edge & Corner Resizing)
