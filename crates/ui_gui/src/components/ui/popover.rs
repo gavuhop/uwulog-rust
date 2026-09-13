@@ -111,7 +111,8 @@ mod tests {
         let ctx = egui::Context::default();
         let trigger_rect = Rect::from_min_size(Pos2::new(100.0, 50.0), egui::vec2(300.0, 32.0));
         let raw_input = egui::RawInput::default();
-        let _ = ctx.run(raw_input, |ctx| {
+        let mut output = ctx.run_ui(raw_input, |ui| {
+            let ctx = ui.ctx();
             let mut captured_row_rect = Rect::NOTHING;
             let _ = PopoverContainer::new("test_popover", trigger_rect)
                 .width(300.0)
@@ -120,11 +121,12 @@ mod tests {
                     let (rect, _) = ui.allocate_exact_size(desired_size, egui::Sense::click());
                     captured_row_rect = rect;
                 });
-            // In egui 0.31, Frame::total_margin() accounts for inner_margin (8.0) + stroke (1.0) on each side (total 9.0 per side).
+            // In egui 0.31+, Frame::total_margin() accounts for inner_margin (8.0) + stroke (1.0) on each side (total 9.0 per side).
             // Inner content is width - 18.0 = 282.0.
             assert_eq!(captured_row_rect.width(), 300.0 - 18.0);
             assert_eq!(captured_row_rect.min.x, 100.0 + 9.0);
             assert_eq!(captured_row_rect.max.x, 100.0 + 300.0 - 9.0);
         });
+        output.textures_delta.clear();
     }
 }

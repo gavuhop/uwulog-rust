@@ -355,7 +355,8 @@ impl UwuGuiApp {
 }
 
 impl eframe::App for UwuGuiApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
         if self.should_quit {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
@@ -363,10 +364,10 @@ impl eframe::App for UwuGuiApp {
 
         self.tick();
         ctx.request_repaint_after(Duration::from_millis(100));
-        crate::views::render_ui(ctx, self);
+        crate::views::render_ui(ui, self);
     }
 
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+    fn on_exit(&mut self) {
         self.save_current_workspace();
         for s in &mut self.workspaces.sessions {
             s.session.stop_source();

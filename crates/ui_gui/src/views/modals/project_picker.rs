@@ -69,7 +69,7 @@ pub fn render_project_row(ui: &mut egui::Ui, config: ProjectRowConfig<'_>) -> Pr
     let mut action_clicked = false;
     let mut action_hovered = false;
 
-    ui.allocate_new_ui(
+    ui.scope_builder(
         egui::UiBuilder::new()
             .max_rect(content_rect)
             .layout(egui::Layout::left_to_right(egui::Align::Center)),

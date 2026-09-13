@@ -63,7 +63,7 @@ impl<'a> ModalContainer<'a> {
         }
 
         // 2. Lớp phủ nền tối (Backdrop scrim)
-        let screen_rect = ctx.screen_rect();
+        let screen_rect = ctx.viewport_rect();
         egui::Area::new(self.id.with("_backdrop"))
             .order(Order::Middle)
             .fixed_pos(screen_rect.min)
@@ -87,7 +87,7 @@ impl<'a> ModalContainer<'a> {
             .order(Order::Foreground)
             .fixed_size(egui::vec2(self.width, 0.0))
             .frame(
-                egui::Frame::window(&ctx.style())
+                egui::Frame::default()
                     .fill(theme::BG_MANTLE)
                     .stroke(Stroke::new(1.0, theme::BG_SURFACE0))
                     .corner_radius(CornerRadius::same(8))

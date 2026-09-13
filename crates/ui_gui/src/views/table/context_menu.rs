@@ -35,7 +35,7 @@ pub fn render_cell_context_menu(
     // 3. Nhóm thao tác Dòng & Toàn cục
     if ui.button("🔍 View in unfiltered stream").clicked() {
         *render_ctx.action = Some(AppAction::OpenUnfilteredStream(Some(menu_ctx.event_id)));
-        ui.close_menu();
+        ui.close();
     }
 
     let highlight_label = if menu_ctx.is_row_highlighted {
@@ -45,12 +45,12 @@ pub fn render_cell_context_menu(
     };
     if ui.button(highlight_label).clicked() {
         *render_ctx.action = Some(AppAction::ToggleRowHighlight(menu_ctx.event_id));
-        ui.close_menu();
+        ui.close();
     }
 
     if render_ctx.has_any_highlights && ui.button("Unhighlight all").clicked() {
         *render_ctx.action = Some(AppAction::ClearAllHighlights);
-        ui.close_menu();
+        ui.close();
     }
 
     ui.separator();

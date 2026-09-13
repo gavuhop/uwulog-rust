@@ -27,7 +27,7 @@ fn render_field_item(
             theme::create_highlighted_layout_job(val, val_color, val_font, ctx.highlighted_terms);
 
         for section in val_job.sections {
-            let slice = &val_job.text[section.byte_range];
+            let slice = &val_job.text[section.byte_range.start.0..section.byte_range.end.0];
             job.append(slice, section.leading_space, section.format);
         }
 

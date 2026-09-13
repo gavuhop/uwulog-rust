@@ -55,9 +55,9 @@ ratatui = "0.28"
 crossterm = "0.28"
 
 # Graphical UI (egui)
-eframe = "0.31"
-egui = "0.31"
-egui_extras = "0.31"
+eframe = "0.36"
+egui = "0.36"
+egui_extras = "0.36"
 rfd = "0.14"
 
 # Internal Workspace Crates

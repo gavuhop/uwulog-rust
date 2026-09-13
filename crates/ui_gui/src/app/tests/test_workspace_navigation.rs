@@ -200,7 +200,7 @@ async fn test_on_exit_saves_current_workspace() {
     app.workspaces.sessions[0].session.name = "ExitTestProj".to_string();
     app.workspaces.sessions[0].view.search.query = "error_query".to_string();
 
-    app.on_exit(None);
+    app.on_exit();
 
     let ws = app
         .workspaces

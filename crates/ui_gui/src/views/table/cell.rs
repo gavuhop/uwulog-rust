@@ -42,22 +42,23 @@ pub fn render_cell(
     let mut text_val = cell_text.as_ref();
 
     let highlighted_terms_ref = ctx.highlighted_terms;
-    let mut layouter = |ui: &egui::Ui, _text: &str, _wrap_width: f32| {
-        let mut job = theme::create_highlighted_layout_job(
-            &cell_text,
-            row_color,
-            egui::FontId::monospace(11.5),
-            highlighted_terms_ref,
-        );
-        job.wrap.max_width = f32::INFINITY;
-        ui.fonts(|f| f.layout_job(job))
-    };
+    let mut layouter =
+        |ui: &egui::Ui, _text: &dyn egui::text_edit::TextBuffer, _wrap_width: f32| {
+            let mut job = theme::create_highlighted_layout_job(
+                &cell_text,
+                row_color,
+                egui::FontId::monospace(11.5),
+                highlighted_terms_ref,
+            );
+            job.wrap.max_width = f32::INFINITY;
+            ui.fonts_mut(|f| f.layout_job(job))
+        };
 
     let edit = egui::TextEdit::singleline(&mut text_val)
         .id(cell_id)
         .font(egui::FontId::monospace(11.5))
         .text_color(row_color)
-        .frame(false)
+        .frame(egui::Frame::NONE)
         .clip_text(true)
         .desired_width(f32::INFINITY)
         .layouter(&mut layouter);

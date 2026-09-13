@@ -17,7 +17,7 @@ pub fn render_window_resize_borders(ctx: &egui::Context) {
         return;
     }
 
-    let screen_rect = ctx.screen_rect();
+    let screen_rect = ctx.viewport_rect();
     let platform = WindowControlsPlatform::current();
     let is_mac = platform == WindowControlsPlatform::MacOs;
 

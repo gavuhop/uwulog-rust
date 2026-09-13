@@ -14,7 +14,7 @@ pub fn render_text_box(
 ) {
     let mut val = text.to_string();
     let highlighted_terms_ref = ctx.highlighted_terms;
-    let mut layouter = |ui: &egui::Ui, _text: &str, wrap_width: f32| {
+    let mut layouter = |ui: &egui::Ui, _text: &dyn egui::text_edit::TextBuffer, wrap_width: f32| {
         let mut job = theme::create_highlighted_layout_job(
             text,
             text_color,
@@ -22,14 +22,14 @@ pub fn render_text_box(
             highlighted_terms_ref,
         );
         job.wrap.max_width = wrap_width;
-        ui.fonts(|f| f.layout_job(job))
+        ui.fonts_mut(|f| f.layout_job(job))
     };
 
     let edit = egui::TextEdit::multiline(&mut val)
         .id(box_id)
         .font(egui::FontId::monospace(11.5))
         .text_color(text_color)
-        .frame(false)
+        .frame(egui::Frame::NONE)
         .desired_width(f32::INFINITY)
         .desired_rows(desired_rows)
         .layouter(&mut layouter);

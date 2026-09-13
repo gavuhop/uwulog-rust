@@ -259,25 +259,25 @@ pub fn apply_theme(ctx: &egui::Context) {
     ctx.set_visuals(create_visuals());
 
     // 3. Typography & Text Styles (Tối ưu độ nét và kích thước đọc thoải mái trên màn hình 1080p/2K/4K)
-    let mut style = (*ctx.style()).clone();
-    style.text_styles = [
-        (TextStyle::Heading, FontId::new(15.0, FontFamily::Monospace)),
-        (TextStyle::Body, FontId::new(12.5, FontFamily::Monospace)),
-        (
-            TextStyle::Monospace,
-            FontId::new(12.5, FontFamily::Monospace),
-        ),
-        (TextStyle::Button, FontId::new(12.0, FontFamily::Monospace)),
-        (TextStyle::Small, FontId::new(11.0, FontFamily::Monospace)),
-    ]
-    .into();
+    ctx.all_styles_mut(|style| {
+        style.text_styles = [
+            (TextStyle::Heading, FontId::new(15.0, FontFamily::Monospace)),
+            (TextStyle::Body, FontId::new(12.5, FontFamily::Monospace)),
+            (
+                TextStyle::Monospace,
+                FontId::new(12.5, FontFamily::Monospace),
+            ),
+            (TextStyle::Button, FontId::new(12.0, FontFamily::Monospace)),
+            (TextStyle::Small, FontId::new(11.0, FontFamily::Monospace)),
+        ]
+        .into();
 
-    style.spacing.item_spacing = egui::vec2(8.0, 6.0);
-    style.spacing.button_padding = egui::vec2(10.0, 5.0);
-    style.spacing.window_margin = egui::Margin::same(12);
-    // Xóa interact_size mặc định để hitbox nút bấm chuẩn xác từng pixel
-    style.spacing.interact_size = egui::Vec2::ZERO;
-    ctx.set_style(style);
+        style.spacing.item_spacing = egui::vec2(8.0, 6.0);
+        style.spacing.button_padding = egui::vec2(10.0, 5.0);
+        style.spacing.window_margin = egui::Margin::same(12);
+        // Xóa interact_size mặc định để hitbox nút bấm chuẩn xác từng pixel
+        style.spacing.interact_size = egui::Vec2::ZERO;
+    });
 }
 
 /// Áp dụng theme (màu nền, màu chữ, Dark Mode) cho thanh tiêu đề gốc của Windows (DWM)
@@ -573,10 +573,11 @@ mod tests {
     fn test_font_glyphs_and_drag_handle() {
         let ctx = egui::Context::default();
         apply_theme(&ctx);
-        let _ = ctx.run(Default::default(), |_ctx| {});
+        let mut output = ctx.run_ui(Default::default(), |_ui| {});
+        output.textures_delta.clear();
 
         // Kiểm tra ký tự checkmark chuẩn '✔' (U+2714) hiển thị được trên mọi hệ thống
-        ctx.fonts(|f| {
+        ctx.fonts_mut(|f| {
             let mono = FontId::monospace(12.0);
             assert!(
                 f.has_glyph(&mono, '✔'),

@@ -41,13 +41,7 @@ pub fn render_log_table(
     let mut last_row_visible = false;
 
     // Đọc thao tác cuộn chuột trước khi vẽ TableBuilder
-    let scroll_delta_y = ui.input(|i| {
-        if i.raw_scroll_delta.y.abs() > 0.0 {
-            i.raw_scroll_delta.y
-        } else {
-            i.smooth_scroll_delta.y
-        }
-    });
+    let scroll_delta_y = ui.input(|i| i.smooth_scroll_delta.y);
     if scroll_delta_y > 0.0 {
         match mode {
             TableMode::Filtered => session.unlatch(),
@@ -101,7 +95,7 @@ pub fn render_log_table(
         .max_by_key(|s| s.chars().count())
         .unwrap_or(default_ts);
 
-    let ts_text_width = ui.fonts(|f| {
+    let ts_text_width = ui.fonts_mut(|f| {
         let job = egui::text::LayoutJob::simple_singleline(
             sample_ts.to_string(),
             egui::FontId::monospace(11.5),

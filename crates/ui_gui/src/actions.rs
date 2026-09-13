@@ -87,10 +87,10 @@ pub fn extract_selected_text(
 
     if let Some(state) = eframe::egui::text_edit::TextEditState::load(ctx, id) {
         if let Some(range) = state.cursor.char_range() {
-            let [min_c, max_c] = range.sorted();
-            if min_c.index < max_c.index {
-                let s = min_c.index;
-                let e = max_c.index;
+            let [min_c, max_c] = range.sorted_cursors();
+            if min_c.index.0 < max_c.index.0 {
+                let s = min_c.index.0;
+                let e = max_c.index.0;
                 let txt: String = full_text
                     .chars()
                     .skip(s)
@@ -130,7 +130,7 @@ pub fn render_filter_actions_menu(
             None => SearchState::format_selection_term(text),
         };
         *ctx.action = Some(AppAction::ApplyFilterTerm(term));
-        ui.close_menu();
+        ui.close();
     }
 
     if ui.button(format!("Exclude \"{}\"", display_text)).clicked() {
@@ -139,7 +139,7 @@ pub fn render_filter_actions_menu(
             None => SearchState::format_selection_term(text),
         };
         *ctx.action = Some(AppAction::ExcludeFilterTerm(term));
-        ui.close_menu();
+        ui.close();
     }
 
     let text_clean = text.trim().to_lowercase();
@@ -151,7 +151,7 @@ pub fn render_filter_actions_menu(
     };
     if ui.button(hl_text).clicked() {
         *ctx.action = Some(AppAction::ToggleTermHighlight(text.to_string()));
-        ui.close_menu();
+        ui.close();
     }
 }
 
@@ -159,7 +159,7 @@ pub fn render_filter_actions_menu(
 pub fn copy_and_close(ui: &mut eframe::egui::Ui, text: &str) {
     if ui.button("Copy value").clicked() {
         ui.ctx().copy_text(text.to_string());
-        ui.close_menu();
+        ui.close();
     }
 }
 

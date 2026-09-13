@@ -16,7 +16,9 @@ use crate::app::UwuGuiApp;
 use crate::theme;
 use eframe::egui;
 
-pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
+pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
+    let ctx = ui.ctx().clone();
+    let ctx = &ctx;
     ctx.set_visuals(theme::create_visuals());
 
     let mut pending_actions: Vec<crate::actions::AppAction> = Vec::new();
@@ -97,16 +99,16 @@ pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
     // Top Panel: Unified 1-Tier Modern Custom Title & Header Bar
     let platform = header::WindowControlsPlatform::current();
 
-    egui::TopBottomPanel::top("header_panel")
+    egui::Panel::top("header_panel")
         .frame(
             egui::Frame::default()
                 .fill(theme::BG_MANTLE)
                 .inner_margin(platform.header_panel_margin())
                 .stroke(egui::Stroke::new(1.0, theme::BG_SURFACE0)),
         )
-        .exact_height(header::TITLEBAR_HEIGHT)
+        .exact_size(header::TITLEBAR_HEIGHT)
         .resizable(false)
-        .show(ctx, |ui| {
+        .show(ui, |ui| {
             header::render_header(ui, active_session, &mut header_cx, &mut dispatch);
         });
 
@@ -117,9 +119,9 @@ pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
                 .fill(theme::BG_BASE)
                 .inner_margin(egui::Margin::ZERO),
         )
-        .show(ctx, |ui| {
+        .show(ui, |ui| {
             if active_session.view.inspector.is_open() {
-                let screen_width = ctx.screen_rect().width();
+                let screen_width = ctx.viewport_rect().width();
                 let panel_id = egui::Id::new("detail_inspector_panel");
 
                 // Nếu tỷ lệ chưa hợp lệ, đặt mặc định 35% chiều rộng màn hình
@@ -137,7 +139,7 @@ pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
                         if let Some(mut state) =
                             d.get_persisted::<egui::containers::panel::PanelState>(panel_id)
                         {
-                            state.rect.min.x = state.rect.max.x - new_width;
+                            state.outer_rect.min.x = state.outer_rect.max.x - new_width;
                             d.insert_persisted(panel_id, state);
                         }
                     });
@@ -149,7 +151,7 @@ pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
                 let min_sidebar_width = 240.0_f32.min(screen_width * 0.4);
                 let max_sidebar_width = (screen_width * 0.75).max(min_sidebar_width + 100.0);
 
-                egui::SidePanel::right("detail_inspector_panel")
+                egui::Panel::right("detail_inspector_panel")
                     .frame(
                         egui::Frame::default()
                             .fill(theme::BG_MANTLE)
@@ -157,10 +159,10 @@ pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
                             .stroke(egui::Stroke::new(1.0, theme::BG_SURFACE0)),
                     )
                     .resizable(true)
-                    .default_width(target_width)
-                    .min_width(min_sidebar_width)
-                    .max_width(max_sidebar_width)
-                    .show_inside(ui, |ui| {
+                    .default_size(target_width)
+                    .min_size(min_sidebar_width)
+                    .max_size(max_sidebar_width)
+                    .show(ui, |ui| {
                         let actual_width = ui.available_width();
                         if actual_width > 50.0 && screen_width > 100.0 {
                             // Cập nhật tỷ lệ khi người dùng chủ động kéo dãn thanh Inspector
@@ -177,7 +179,7 @@ pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
                         .fill(theme::BG_BASE)
                         .inner_margin(egui::Margin::symmetric(8, 4)),
                 )
-                .show_inside(ui, |ui| match active_session.view.active_tab {
+                .show(ui, |ui| match active_session.view.active_tab {
                     crate::state::ActiveTab::Filtered => {
                         ui.push_id("main_filtered_table_scope", |ui| {
                             table::render_table(ui, active_session, &mut dispatch);

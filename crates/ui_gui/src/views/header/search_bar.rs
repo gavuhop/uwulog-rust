@@ -149,11 +149,12 @@ mod tests {
         let mut session = GuiSession::new(ws);
         session.view.search.query = "level:error".to_string();
 
-        let _ = ctx.run(raw_input, |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
+        let mut output = ctx.run_ui(raw_input, |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
                 let mut dispatch = |_| {};
                 render_search_bar(ui, &mut session, &mut dispatch);
             });
         });
+        output.textures_delta.clear();
     }
 }
