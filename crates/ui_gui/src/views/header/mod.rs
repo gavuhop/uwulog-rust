@@ -7,8 +7,9 @@ pub use counter::render_log_counter;
 pub use search_bar::render_search_bar;
 pub use toolbar::render_toolbar;
 pub use window_controls::{
-    render_left_window_controls, render_right_window_controls, render_window_controls,
-    render_window_resize_borders, WindowControlsPlatform, TITLEBAR_HEIGHT,
+    handle_titlebar_drag_interaction, render_left_window_controls, render_right_window_controls,
+    render_titlebar_drag_spacer, render_window_controls, render_window_resize_borders,
+    WindowControlsPlatform, TITLEBAR_HEIGHT,
 };
 
 use crate::actions::AppAction;
@@ -37,6 +38,19 @@ pub fn render_header(
 ) {
     let mut proj_btn_rect = None;
     let mut menu_btn_rect = None;
+
+    // Bất kỳ chỗ trống nào trên thanh Header mà con trỏ chuột trỏ vào đều có thể kéo di chuyển cửa sổ và nhấp đúp để phóng to / thu nhỏ
+    let header_rect = ui.max_rect();
+    let mut bg_response = ui.interact(
+        header_rect,
+        ui.id().with("__header_titlebar_drag_bg"),
+        egui::Sense::click_and_drag(),
+    );
+    bg_response = bg_response.on_hover_cursor(egui::CursorIcon::Default);
+    if bg_response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
+    }
+    handle_titlebar_drag_interaction(ui.ctx(), &bg_response);
 
     let available_w = ui.available_width();
     ui.allocate_ui_with_layout(

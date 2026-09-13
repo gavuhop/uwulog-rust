@@ -72,6 +72,7 @@ impl<'a> PopoverContainer<'a> {
         egui::Area::new(self.id)
             .order(Order::Foreground)
             .fixed_pos(pos)
+            .movable(false)
             .show(ctx, |ui| {
                 egui::Frame::default()
                     .fill(theme::BG_MANTLE)
@@ -85,7 +86,8 @@ impl<'a> PopoverContainer<'a> {
                         color: Color32::from_black_alpha(160),
                     })
                     .show(ui, |ui| {
-                        ui.set_width(self.width);
+                        let inner_width = (self.width - 16.0).max(0.0);
+                        ui.set_width(inner_width);
                         if let Some(h) = self.max_height {
                             ui.set_max_height(h);
                         }
@@ -96,5 +98,31 @@ impl<'a> PopoverContainer<'a> {
         PopoverResponse {
             closed: close_requested,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_popover_outer_width_matches_requested_width() {
+        let ctx = egui::Context::default();
+        let trigger_rect = Rect::from_min_size(Pos2::new(100.0, 50.0), egui::vec2(300.0, 32.0));
+        let raw_input = egui::RawInput::default();
+        let _ = ctx.run(raw_input, |ctx| {
+            let mut captured_row_rect = Rect::NOTHING;
+            let _ = PopoverContainer::new("test_popover", trigger_rect)
+                .width(300.0)
+                .show(ctx, |ui| {
+                    let desired_size = egui::vec2(ui.available_width(), 26.0);
+                    let (rect, _) = ui.allocate_exact_size(desired_size, egui::Sense::click());
+                    captured_row_rect = rect;
+                });
+            // With inner margin 8.0 on each side, inner content is width - 16.0
+            assert_eq!(captured_row_rect.width(), 300.0 - 16.0);
+            assert_eq!(captured_row_rect.min.x, 100.0 + 8.0);
+            assert_eq!(captured_row_rect.max.x, 100.0 + 300.0 - 8.0);
+        });
     }
 }

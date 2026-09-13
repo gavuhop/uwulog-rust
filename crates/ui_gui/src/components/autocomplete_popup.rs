@@ -44,7 +44,7 @@ pub fn render_autocomplete_popup(ctx: &egui::Context, session: &mut GuiSession, 
 
     // Vẽ Floating Dropdown Panel (cách đáy filter box một khoảng thông thoáng để không bị đè viền)
     let dropdown_pos = Pos2::new(input_rect.min.x, input_rect.max.y + 8.0);
-    let dropdown_width = input_rect.width().max(420.0);
+    let dropdown_width = input_rect.width();
     let approx_height = (session.search.autocomplete.suggestions.len() as f32 * 26.0) + 16.0;
 
     let resp = PopoverContainer::new("search_autocomplete_dropdown", input_rect)

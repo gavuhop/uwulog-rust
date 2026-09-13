@@ -143,3 +143,34 @@ pub fn render_right_window_controls(ui: &mut Ui) -> bool {
 pub fn render_window_controls(ui: &mut Ui) {
     render_right_window_controls(ui);
 }
+
+/// Xử lý tương tác kéo di chuyển cửa sổ và nhấp đúp để phóng to / thu nhỏ.
+pub fn handle_titlebar_drag_interaction(
+    ctx: &eframe::egui::Context,
+    response: &eframe::egui::Response,
+) {
+    if response.double_clicked() {
+        let is_maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+        ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Maximized(!is_maximized));
+    } else if response.drag_started() {
+        ctx.send_viewport_cmd(eframe::egui::ViewportCommand::StartDrag);
+    }
+}
+
+/// Vùng đệm titlebar cho phép kéo di chuyển cửa sổ và nhấp đúp để phóng to / thu nhỏ cửa sổ.
+pub fn render_titlebar_drag_spacer(ui: &mut Ui, width: f32) -> eframe::egui::Response {
+    let (_rect, mut response) = ui.allocate_exact_size(
+        eframe::egui::vec2(width.max(0.0), TITLEBAR_HEIGHT),
+        eframe::egui::Sense::click_and_drag(),
+    );
+
+    // Con trỏ chuột trên thanh tiêu đề giữ nguyên dạng mũi tên mặc định của hệ điều hành
+    response = response.on_hover_cursor(eframe::egui::CursorIcon::Default);
+    if response.hovered() {
+        ui.ctx().set_cursor_icon(eframe::egui::CursorIcon::Default);
+    }
+
+    handle_titlebar_drag_interaction(ui.ctx(), &response);
+
+    response
+}

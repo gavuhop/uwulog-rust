@@ -9,7 +9,7 @@ pub fn render_history_popup(ctx: &egui::Context, session: &mut GuiSession, input
     }
 
     let popup_pos = Pos2::new(input_rect.min.x, input_rect.max.y + 8.0);
-    let popup_width = input_rect.width().max(420.0);
+    let popup_width = input_rect.width();
     let entry_count = session.search.history.entries.len().max(1);
     let approx_height = (entry_count as f32 * 28.0) + 48.0;
 

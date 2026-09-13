@@ -84,24 +84,29 @@ pub fn render_search_bar(
     }
 
     // Quick Clear button if query is not empty
-    if !session.view.search.query.is_empty()
-        && crate::components::ui::IconButton::new("✖")
-            .size(24.0)
-            .tooltip("Clear filter")
-            .show(ui)
-            .clicked()
-    {
-        dispatch(AppAction::ClearQuery);
+    let clear_resp = if !session.view.search.query.is_empty() {
+        Some(
+            crate::components::ui::IconButton::new("✖")
+                .size(24.0)
+                .tooltip("Clear filter")
+                .show(ui),
+        )
+    } else {
+        None
+    };
+    if let Some(resp) = &clear_resp {
+        if resp.clicked() {
+            dispatch(AppAction::ClearQuery);
+        }
     }
 
     // Search History Toggle Button (⏱)
-    if crate::components::ui::IconButton::new("⏱")
+    let history_resp = crate::components::ui::IconButton::new("⏱")
         .size(24.0)
         .selected(session.view.search.history.is_open)
         .tooltip("Search history")
-        .show(ui)
-        .clicked()
-    {
+        .show(ui);
+    if history_resp.clicked() {
         let opened = session.view.search.history.toggle_popup();
         if opened {
             session.view.search.autocomplete.is_open = false;
@@ -114,4 +119,41 @@ pub fn render_search_bar(
 
     // Render search history popup dropdown below search box
     crate::components::render_history_popup(ui.ctx(), session, search_rect);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uwu_core_workspace::{SourceConfig, SourceType, WorkspaceLocation, WorkspaceSession};
+
+    #[test]
+    fn test_render_search_bar_layout_and_popups() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let _guard = rt.enter();
+
+        let ctx = egui::Context::default();
+        let raw_input = egui::RawInput::default();
+        let source_config = SourceConfig {
+            source_type: SourceType::Process,
+            command_str: String::new(),
+            file_path: String::new(),
+            working_dir: String::new(),
+            capacity: 100,
+            display_limit: 50,
+        };
+        let ws = WorkspaceSession::new(
+            "Test".to_string(),
+            WorkspaceLocation::local(""),
+            source_config,
+        );
+        let mut session = GuiSession::new(ws);
+        session.view.search.query = "level:error".to_string();
+
+        let _ = ctx.run(raw_input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let mut dispatch = |_| {};
+                render_search_bar(ui, &mut session, &mut dispatch);
+            });
+        });
+    }
 }
