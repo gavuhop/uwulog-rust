@@ -44,6 +44,25 @@ pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
         dispatch(crate::actions::AppAction::CycleSession(true));
     }
 
+    // Phím tắt Zoom UI (Ctrl + '+' / '=' phóng to, Ctrl + '-' thu nhỏ, Ctrl + '0' reset 100%)
+    let (zoom_in, zoom_out, zoom_reset) = ctx.input(|i| {
+        let cmd = i.modifiers.command;
+        (
+            cmd && (i.key_pressed(egui::Key::Plus) || i.key_pressed(egui::Key::Equals)),
+            cmd && i.key_pressed(egui::Key::Minus),
+            cmd && i.key_pressed(egui::Key::Num0),
+        )
+    });
+    if zoom_in {
+        let current = ctx.zoom_factor();
+        ctx.set_zoom_factor((current + 0.1).min(2.5));
+    } else if zoom_out {
+        let current = ctx.zoom_factor();
+        ctx.set_zoom_factor((current - 0.1).max(0.6));
+    } else if zoom_reset {
+        ctx.set_zoom_factor(1.0);
+    }
+
     let is_launch_open = app.is_overlay_open(crate::overlay::OverlayLayer::LaunchModal);
     let is_about_open = app.is_overlay_open(crate::overlay::OverlayLayer::AboutModal);
 
@@ -96,7 +115,7 @@ pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
         .frame(
             egui::Frame::default()
                 .fill(theme::BG_BASE)
-                .inner_margin(egui::Margin::same(0.0)),
+                .inner_margin(egui::Margin::ZERO),
         )
         .show(ctx, |ui| {
             if active_session.view.inspector.is_open() {
@@ -134,7 +153,7 @@ pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
                     .frame(
                         egui::Frame::default()
                             .fill(theme::BG_MANTLE)
-                            .inner_margin(egui::Margin::same(12.0))
+                            .inner_margin(egui::Margin::same(12))
                             .stroke(egui::Stroke::new(1.0, theme::BG_SURFACE0)),
                     )
                     .resizable(true)
@@ -156,7 +175,7 @@ pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
                 .frame(
                     egui::Frame::default()
                         .fill(theme::BG_BASE)
-                        .inner_margin(egui::Margin::symmetric(8.0, 4.0)),
+                        .inner_margin(egui::Margin::symmetric(8, 4)),
                 )
                 .show_inside(ui, |ui| match active_session.view.active_tab {
                     crate::state::ActiveTab::Filtered => {

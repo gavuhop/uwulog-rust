@@ -1,7 +1,7 @@
 use crate::components::ui::PopoverContainer;
 use crate::session::GuiSession;
 use crate::theme;
-use eframe::egui::{self, Color32, FontId, Key, Pos2, Rect, Rounding};
+use eframe::egui::{self, Color32, CornerRadius, FontId, Key, Pos2, Rect};
 
 /// Render Autocomplete Dropdown Popup ngay dưới ô tìm kiếm
 pub fn render_autocomplete_popup(ctx: &egui::Context, session: &mut GuiSession, input_rect: Rect) {
@@ -74,7 +74,8 @@ pub fn render_autocomplete_popup(ctx: &egui::Context, session: &mut GuiSession, 
                     Color32::TRANSPARENT
                 };
 
-                ui.painter().rect_filled(rect, Rounding::same(4.0), row_bg);
+                ui.painter()
+                    .rect_filled(rect, CornerRadius::same(4), row_bg);
 
                 // Vẽ trực tiếp bằng Painter: hoàn toàn như 1 Button thuần túy, không có widget con cướp click hay bôi đen chữ
                 let center_y = rect.center().y;

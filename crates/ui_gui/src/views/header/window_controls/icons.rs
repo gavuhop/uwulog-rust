@@ -1,6 +1,6 @@
 //! Reusable vector drawing routines for window caption icons (Close, Maximize, Restore, Minimize).
 
-use eframe::egui::{self, Color32, Rect, Rounding, Stroke, Ui};
+use eframe::egui::{self, Color32, CornerRadius, Rect, Stroke, Ui};
 
 /// Vẽ icon đóng (✕)
 pub fn draw_close_icon(ui: &mut Ui, rect: Rect, color: Color32) {
@@ -32,7 +32,8 @@ pub fn draw_maximize_icon(ui: &mut Ui, rect: Rect, color: Color32) {
         egui::pos2(center.x - s, center.y - s),
         egui::pos2(center.x + s, center.y + s),
     );
-    ui.painter().rect_stroke(square, Rounding::ZERO, stroke);
+    ui.painter()
+        .rect_stroke(square, CornerRadius::ZERO, stroke, egui::StrokeKind::Inside);
 }
 
 /// Vẽ icon khôi phục (2 ô vuông lồng nhau)
@@ -61,7 +62,12 @@ pub fn draw_restore_icon(ui: &mut Ui, rect: Rect, color: Color32) {
         egui::pos2(center.x - s, center.y - s + offset),
         egui::pos2(center.x + s, center.y + s + offset),
     );
-    ui.painter().rect_stroke(front_rect, Rounding::ZERO, stroke);
+    ui.painter().rect_stroke(
+        front_rect,
+        CornerRadius::ZERO,
+        stroke,
+        egui::StrokeKind::Inside,
+    );
 }
 
 /// Vẽ icon thu nhỏ (dấu gạch ngang —)

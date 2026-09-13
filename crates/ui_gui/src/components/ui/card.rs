@@ -1,5 +1,5 @@
 use crate::theme;
-use eframe::egui::{self, Rounding, Stroke};
+use eframe::egui::{self, Stroke};
 
 pub fn render_card<R>(
     ui: &mut egui::Ui,
@@ -8,8 +8,8 @@ pub fn render_card<R>(
 ) -> egui::Response {
     let frame = egui::Frame::default()
         .fill(theme::BG_BASE)
-        .rounding(Rounding::same(4.0))
-        .inner_margin(egui::Margin::same(10.0))
+        .corner_radius(egui::CornerRadius::same(4))
+        .inner_margin(egui::Margin::same(10))
         .stroke(Stroke::new(1.0, theme::BG_SURFACE0));
 
     frame

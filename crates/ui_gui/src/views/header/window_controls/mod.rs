@@ -57,22 +57,22 @@ impl WindowControlsPlatform {
     pub fn header_panel_margin(&self) -> eframe::egui::Margin {
         match self {
             Self::Windows => eframe::egui::Margin {
-                left: 10.0,
-                right: 0.0,
-                top: 0.0,
-                bottom: 0.0,
+                left: 10,
+                right: 0,
+                top: 0,
+                bottom: 0,
             },
             Self::MacOs => eframe::egui::Margin {
-                left: 12.0,
-                right: 10.0,
-                top: 0.0,
-                bottom: 0.0,
+                left: 12,
+                right: 10,
+                top: 0,
+                bottom: 0,
             },
             Self::Linux => eframe::egui::Margin {
-                left: 10.0,
-                right: 8.0,
-                top: 0.0,
-                bottom: 0.0,
+                left: 10,
+                right: 8,
+                top: 0,
+                bottom: 0,
             },
         }
     }

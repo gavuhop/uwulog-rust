@@ -31,10 +31,10 @@ pub fn render_cell(
     let cell_rect = ui.max_rect();
     if is_row_highlighted {
         ui.painter()
-            .rect_filled(cell_rect, egui::Rounding::ZERO, theme::BG_ROW_HIGHLIGHT);
+            .rect_filled(cell_rect, egui::CornerRadius::ZERO, theme::BG_ROW_HIGHLIGHT);
     } else if is_selected {
         ui.painter()
-            .rect_filled(cell_rect, egui::Rounding::ZERO, theme::BG_ROW_SELECTED);
+            .rect_filled(cell_rect, egui::CornerRadius::ZERO, theme::BG_ROW_SELECTED);
     }
 
     let (cell_text, raw_cell_val) = extract_cell_content(event, col_name);

@@ -1,7 +1,7 @@
 use crate::components::ui::{AppButton, ButtonVariant, PopoverContainer};
 use crate::session::GuiSession;
 use crate::theme;
-use eframe::egui::{self, Color32, FontId, Pos2, Rect, Rounding};
+use eframe::egui::{self, Color32, CornerRadius, FontId, Pos2, Rect};
 
 pub fn render_history_popup(ctx: &egui::Context, session: &mut GuiSession, input_rect: Rect) {
     if !session.search.history.is_open {
@@ -78,7 +78,8 @@ pub fn render_history_popup(ctx: &egui::Context, session: &mut GuiSession, input
                         Color32::TRANSPARENT
                     };
 
-                    ui.painter().rect_filled(rect, Rounding::same(4.0), row_bg);
+                    ui.painter()
+                        .rect_filled(rect, CornerRadius::same(4), row_bg);
 
                     let center_y = rect.center().y;
                     let left_x = rect.min.x + 8.0;

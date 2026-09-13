@@ -5,7 +5,7 @@
 use super::icons;
 use super::CaptionButtonType;
 use crate::theme;
-use eframe::egui::{self, Color32, FontId, Rounding, Sense, Ui};
+use eframe::egui::{self, Color32, CornerRadius, FontId, Sense, Ui};
 
 pub const WINDOW_CONTROL_BTN_WIDTH: f32 = 46.0;
 pub const WINDOW_CONTROL_BTN_HEIGHT: f32 = 32.0;
@@ -21,7 +21,7 @@ fn render_windows_caption_button(
     ui: &mut Ui,
     btn_type: CaptionButtonType,
     has_segoe_font: bool,
-    is_maximized: bool,
+    _is_maximized: bool,
 ) -> egui::Response {
     let size = egui::vec2(WINDOW_CONTROL_BTN_WIDTH, WINDOW_CONTROL_BTN_HEIGHT);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
@@ -55,16 +55,7 @@ fn render_windows_caption_button(
     // Khi ở chế độ Windowed (chưa phóng to), góc trên-phải (NorthEast) của nút Close bo nhẹ (8px)
     // khớp với viền cong cửa sổ của Windows 11.
     // Khi đã phóng to (Maximized) hoặc là các nút Minimize/Maximize, phẳng tuyệt đối (Rounding::ZERO).
-    let rounding = if btn_type == CaptionButtonType::Close && !is_maximized {
-        Rounding {
-            nw: 0.0,
-            ne: 0.0,
-            sw: 0.0,
-            se: 0.0,
-        }
-    } else {
-        Rounding::ZERO
-    };
+    let rounding = CornerRadius::ZERO;
 
     if bg_color != Color32::TRANSPARENT {
         ui.painter().rect_filled(rect, rounding, bg_color);

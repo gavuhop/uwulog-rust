@@ -1,7 +1,7 @@
 //! Zed-style ModalContainer primitive with backdrop scrim, header, body, and action footer.
 
 use crate::theme;
-use eframe::egui::{self, Align2, Color32, Context, Id, Key, Order, Rounding, Stroke, Vec2};
+use eframe::egui::{self, Align2, Color32, Context, CornerRadius, Id, Key, Order, Stroke, Vec2};
 
 pub struct ModalContainer<'a> {
     id: Id,
@@ -71,7 +71,7 @@ impl<'a> ModalContainer<'a> {
                 let (rect, response) =
                     ui.allocate_exact_size(screen_rect.size(), egui::Sense::click());
                 ui.painter()
-                    .rect_filled(rect, Rounding::ZERO, Color32::from_black_alpha(150));
+                    .rect_filled(rect, CornerRadius::ZERO, Color32::from_black_alpha(150));
                 if response.clicked() {
                     close_requested = true;
                 }
@@ -90,12 +90,12 @@ impl<'a> ModalContainer<'a> {
                 egui::Frame::window(&ctx.style())
                     .fill(theme::BG_MANTLE)
                     .stroke(Stroke::new(1.0, theme::BG_SURFACE0))
-                    .rounding(Rounding::same(8.0))
-                    .inner_margin(egui::Margin::same(16.0))
+                    .corner_radius(CornerRadius::same(8))
+                    .inner_margin(egui::Margin::same(16))
                     .shadow(egui::epaint::Shadow {
-                        offset: egui::vec2(0.0, 8.0),
-                        blur: 24.0,
-                        spread: 0.0,
+                        offset: [0, 8],
+                        blur: 24,
+                        spread: 0,
                         color: Color32::from_black_alpha(180),
                     }),
             );

@@ -1,7 +1,8 @@
 use eframe::egui::{
-    self, Color32, FontData, FontDefinitions, FontFamily, FontId, Rounding, Stroke, TextStyle,
+    self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Stroke, TextStyle,
     Visuals,
 };
+use std::sync::Arc;
 
 // Soft Eye-Pleasing Dark Palette (Nord / Tokyo Night Dimmed - Không chói mắt)
 pub const BG_BASE: Color32 = Color32::from_rgb(0x14, 0x16, 0x1f); // #14161f - Nền tối êm mắt
@@ -93,34 +94,34 @@ pub fn create_visuals() -> Visuals {
     visuals.code_bg_color = BG_CRUST;
 
     // Window & Dialog
-    visuals.window_rounding = Rounding::same(6.0);
+    visuals.window_corner_radius = CornerRadius::same(6);
     visuals.window_stroke = Stroke::new(1.0, BG_SURFACE0);
 
     // Non-interactive
     visuals.widgets.noninteractive.bg_fill = BG_BASE;
     visuals.widgets.noninteractive.weak_bg_fill = BG_BASE;
-    visuals.widgets.noninteractive.rounding = Rounding::same(4.0);
+    visuals.widgets.noninteractive.corner_radius = CornerRadius::same(4);
     visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, BG_SURFACE0);
     visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, TEXT_PRIMARY);
 
     // Inactive
     visuals.widgets.inactive.bg_fill = BG_SURFACE0;
     visuals.widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
-    visuals.widgets.inactive.rounding = Rounding::same(4.0);
+    visuals.widgets.inactive.corner_radius = CornerRadius::same(4);
     visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, BG_SURFACE0);
     visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, TEXT_PRIMARY);
 
     // Hovered
     visuals.widgets.hovered.bg_fill = BG_SURFACE1;
     visuals.widgets.hovered.weak_bg_fill = BG_ROW_HOVER;
-    visuals.widgets.hovered.rounding = Rounding::same(4.0);
+    visuals.widgets.hovered.corner_radius = CornerRadius::same(4);
     visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, TEXT_KEY);
     visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, TEXT_PRIMARY);
 
     // Active / Pressed
     visuals.widgets.active.bg_fill = BG_ROW_SELECTED;
     visuals.widgets.active.weak_bg_fill = BG_ROW_SELECTED;
-    visuals.widgets.active.rounding = Rounding::same(4.0);
+    visuals.widgets.active.corner_radius = CornerRadius::same(4);
     visuals.widgets.active.bg_stroke = Stroke::new(1.5, TEXT_KEY);
     visuals.widgets.active.fg_stroke = Stroke::new(1.0, TEXT_PRIMARY);
 
@@ -139,9 +140,10 @@ pub fn apply_theme(ctx: &egui::Context) {
     {
         // Cascadia Code (Windows Terminal font) hoặc Consolas
         if let Ok(data) = std::fs::read("C:\\Windows\\Fonts\\CascadiaCode.ttf") {
-            fonts
-                .font_data
-                .insert("terminal_mono".to_owned(), FontData::from_owned(data));
+            fonts.font_data.insert(
+                "terminal_mono".to_owned(),
+                Arc::new(FontData::from_owned(data)),
+            );
             if let Some(family) = fonts.families.get_mut(&FontFamily::Monospace) {
                 family.insert(0, "terminal_mono".to_owned());
             }
@@ -149,9 +151,10 @@ pub fn apply_theme(ctx: &egui::Context) {
                 family.insert(0, "terminal_mono".to_owned());
             }
         } else if let Ok(data) = std::fs::read("C:\\Windows\\Fonts\\consola.ttf") {
-            fonts
-                .font_data
-                .insert("terminal_mono".to_owned(), FontData::from_owned(data));
+            fonts.font_data.insert(
+                "terminal_mono".to_owned(),
+                Arc::new(FontData::from_owned(data)),
+            );
             if let Some(family) = fonts.families.get_mut(&FontFamily::Monospace) {
                 family.insert(0, "terminal_mono".to_owned());
             }
@@ -172,9 +175,10 @@ pub fn apply_theme(ctx: &egui::Context) {
 
         if let Some(path) = icon_font_path {
             if let Ok(data) = std::fs::read(path) {
-                fonts
-                    .font_data
-                    .insert("segoe_icons".to_owned(), FontData::from_owned(data));
+                fonts.font_data.insert(
+                    "segoe_icons".to_owned(),
+                    Arc::new(FontData::from_owned(data)),
+                );
                 if let Some(family) = fonts.families.get_mut(&FontFamily::Proportional) {
                     family.push("segoe_icons".to_owned());
                 }
@@ -191,22 +195,35 @@ pub fn apply_theme(ctx: &egui::Context) {
 
     #[cfg(target_os = "linux")]
     {
-        // 1. Cố gắng nạp các font Monospace phổ biến trên Linux nếu có
+        // 1. Cố gắng nạp các font Monospace sắc nét, x-height cao phổ biến trên Linux (ưu tiên JetBrains Mono, Source Code Pro, Adwaita Mono, Liberation)
         let mono_candidates = [
-            "/usr/share/fonts/google-noto/NotoSansMono-Regular.ttf",
-            "/usr/share/fonts/truetype/noto/NotoSansMono-Regular.ttf",
+            "/usr/share/fonts/jetbrains-mono-fonts/JetBrainsMono-Medium.otf",
+            "/usr/share/fonts/jetbrains-mono-fonts/JetBrainsMono-Regular.otf",
+            "/usr/share/fonts/truetype/jetbrains-mono/JetBrainsMono-Medium.ttf",
+            "/usr/share/fonts/truetype/jetbrains-mono/JetBrainsMono-Regular.ttf",
+            "/usr/share/fonts/TTF/JetBrainsMono-Medium.ttf",
+            "/usr/share/fonts/TTF/JetBrainsMono-Regular.ttf",
+            "/usr/share/fonts/adobe-source-code-pro-fonts/SourceCodePro-Medium.otf",
+            "/usr/share/fonts/adobe-source-code-pro-fonts/SourceCodePro-Regular.otf",
+            "/usr/share/fonts/adwaita-mono-fonts/AdwaitaMono-Regular.ttf",
+            "/usr/share/fonts/liberation-mono-fonts/LiberationMono-Regular.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
             "/usr/share/fonts/dejavu-sans-mono-fonts/DejaVuSansMono.ttf",
-            "/usr/share/fonts/liberation-mono/LiberationMono-Regular.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
             "/usr/share/fonts/truetype/ubuntu/UbuntuMono-R.ttf",
+            "/usr/share/fonts/google-noto/NotoSansMono-Regular.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSansMono-Regular.ttf",
         ];
         for path in mono_candidates {
             if let Ok(data) = std::fs::read(path) {
-                fonts
-                    .font_data
-                    .insert("linux_mono".to_owned(), FontData::from_owned(data));
+                fonts.font_data.insert(
+                    "linux_mono".to_owned(),
+                    Arc::new(FontData::from_owned(data)),
+                );
                 if let Some(family) = fonts.families.get_mut(&FontFamily::Monospace) {
+                    family.insert(0, "linux_mono".to_owned());
+                }
+                if let Some(family) = fonts.families.get_mut(&FontFamily::Proportional) {
                     family.insert(0, "linux_mono".to_owned());
                 }
                 break;
@@ -223,9 +240,10 @@ pub fn apply_theme(ctx: &egui::Context) {
         ];
         for path in symbol_candidates {
             if let Ok(data) = std::fs::read(path) {
-                fonts
-                    .font_data
-                    .insert("linux_symbols".to_owned(), FontData::from_owned(data));
+                fonts.font_data.insert(
+                    "linux_symbols".to_owned(),
+                    Arc::new(FontData::from_owned(data)),
+                );
                 if let Some(family) = fonts.families.get_mut(&FontFamily::Monospace) {
                     family.push("linux_symbols".to_owned());
                 }
@@ -240,23 +258,23 @@ pub fn apply_theme(ctx: &egui::Context) {
     ctx.set_fonts(fonts);
     ctx.set_visuals(create_visuals());
 
-    // 3. Typography & Text Styles
+    // 3. Typography & Text Styles (Tối ưu độ nét và kích thước đọc thoải mái trên màn hình 1080p/2K/4K)
     let mut style = (*ctx.style()).clone();
     style.text_styles = [
-        (TextStyle::Heading, FontId::new(14.5, FontFamily::Monospace)),
-        (TextStyle::Body, FontId::new(12.0, FontFamily::Monospace)),
+        (TextStyle::Heading, FontId::new(15.0, FontFamily::Monospace)),
+        (TextStyle::Body, FontId::new(12.5, FontFamily::Monospace)),
         (
             TextStyle::Monospace,
-            FontId::new(12.0, FontFamily::Monospace),
+            FontId::new(12.5, FontFamily::Monospace),
         ),
-        (TextStyle::Button, FontId::new(11.5, FontFamily::Monospace)),
-        (TextStyle::Small, FontId::new(10.5, FontFamily::Monospace)),
+        (TextStyle::Button, FontId::new(12.0, FontFamily::Monospace)),
+        (TextStyle::Small, FontId::new(11.0, FontFamily::Monospace)),
     ]
     .into();
 
     style.spacing.item_spacing = egui::vec2(8.0, 6.0);
     style.spacing.button_padding = egui::vec2(10.0, 5.0);
-    style.spacing.window_margin = egui::Margin::same(12.0);
+    style.spacing.window_margin = egui::Margin::same(12);
     // Xóa interact_size mặc định để hitbox nút bấm chuẩn xác từng pixel
     style.spacing.interact_size = egui::Vec2::ZERO;
     ctx.set_style(style);

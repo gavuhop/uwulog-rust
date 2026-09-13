@@ -1,6 +1,6 @@
 use crate::actions::AppAction;
 use crate::theme;
-use eframe::egui::{self, Color32, Rect, Rounding};
+use eframe::egui::{self, Color32, CornerRadius, Rect};
 use std::collections::HashSet;
 use uwu_core_workspace::{SourceType, Workspace, WorkspaceLocation, WorkspaceStore};
 
@@ -60,7 +60,7 @@ pub fn render_project_row(ui: &mut egui::Ui, config: ProjectRowConfig<'_>) -> Pr
 
     if bg_color != Color32::TRANSPARENT {
         ui.painter()
-            .rect_filled(row_rect, Rounding::same(4.0), bg_color);
+            .rect_filled(row_rect, CornerRadius::same(4), bg_color);
     }
 
     let content_rect = row_rect.shrink2(egui::vec2(6.0, 0.0));
@@ -209,7 +209,7 @@ pub fn render_project_picker_popup(
                             egui::RichText::new("Search projects...").color(theme::TEXT_MUTED),
                         )
                         .desired_width(search_w)
-                        .margin(egui::Margin::symmetric(4.0, 3.0));
+                        .margin(egui::Margin::symmetric(4, 3));
                     ui.add(search_edit);
                 });
 

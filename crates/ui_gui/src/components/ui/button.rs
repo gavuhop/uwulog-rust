@@ -1,7 +1,7 @@
 //! Zed-style Button primitives: AppButton, IconButton, TabButton.
 
 use crate::theme;
-use eframe::egui::{self, Color32, Response, Rounding, Stroke, Ui, Vec2};
+use eframe::egui::{self, Color32, CornerRadius, Response, Stroke, Ui, Vec2};
 
 /// Kiểu nút bấm tiêu chuẩn (Regular, Selected, Danger, Success, Ghost, Primary)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -128,9 +128,9 @@ impl<'a> AppButton<'a> {
     /// Render nút bấm lên giao diện với kích thước và hover chuẩn
     pub fn show(self, ui: &mut Ui) -> Response {
         let (font_size, padding_x, height, rounding) = if self.small {
-            (11.0f32, 6.0f32, BUTTON_HEIGHT_SMALL, Rounding::same(3.0))
+            (11.0f32, 6.0f32, BUTTON_HEIGHT_SMALL, CornerRadius::same(3))
         } else {
-            (12.0f32, 8.0f32, BUTTON_HEIGHT_NORMAL, Rounding::same(4.0))
+            (12.0f32, 8.0f32, BUTTON_HEIGHT_NORMAL, CornerRadius::same(4))
         };
 
         let content_text = match (self.icon, self.label) {
@@ -275,7 +275,8 @@ impl<'a> AppButton<'a> {
             }
 
             if bg_color != Color32::TRANSPARENT || stroke.width > 0.0 {
-                ui.painter().rect(rect, rounding, bg_color, stroke);
+                ui.painter()
+                    .rect(rect, rounding, bg_color, stroke, egui::StrokeKind::Inside);
             }
 
             let galley = ui
@@ -466,8 +467,13 @@ impl<'a> TabButton<'a> {
             };
 
             if bg_color != Color32::TRANSPARENT || stroke.width > 0.0 {
-                ui.painter()
-                    .rect(rect, Rounding::same(4.0), bg_color, stroke);
+                ui.painter().rect(
+                    rect,
+                    CornerRadius::same(4),
+                    bg_color,
+                    stroke,
+                    egui::StrokeKind::Inside,
+                );
             }
 
             let galley = ui.painter().layout_no_wrap(title, font_id, text_color);

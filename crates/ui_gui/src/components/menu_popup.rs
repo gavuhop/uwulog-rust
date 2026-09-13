@@ -1,7 +1,7 @@
 use crate::actions::AppAction;
 use crate::overlay::{OverlayLayer, OverlayStack};
 use crate::theme;
-use eframe::egui::{self, Color32, Id, Key, Order, Pos2, Rect, Rounding, Stroke};
+use eframe::egui::{self, Color32, CornerRadius, Id, Key, Order, Pos2, Rect, Stroke};
 
 pub fn render_main_menu_popup(
     ctx: &egui::Context,
@@ -57,8 +57,8 @@ pub fn render_main_menu_popup(
             egui::Frame::default()
                 .fill(theme::BG_MANTLE)
                 .stroke(Stroke::new(1.0, theme::BG_SURFACE0))
-                .rounding(Rounding::same(6.0))
-                .inner_margin(egui::Margin::symmetric(4.0, 4.0))
+                .corner_radius(CornerRadius::same(6))
+                .inner_margin(egui::Margin::symmetric(4, 4))
                 .show(ui, |ui| {
                     ui.set_width(popup_width);
 
@@ -79,7 +79,7 @@ pub fn render_main_menu_popup(
 
                         if bg_color != Color32::TRANSPARENT {
                             ui.painter()
-                                .rect_filled(rect, Rounding::same(4.0), bg_color);
+                                .rect_filled(rect, CornerRadius::same(4), bg_color);
                         }
 
                         // Căn chữ bên trái, thụt vào 8.0px
@@ -196,8 +196,8 @@ pub fn render_main_menu_popup(
                         egui::Frame::default()
                             .fill(theme::BG_MANTLE)
                             .stroke(Stroke::new(1.0, theme::BG_SURFACE0))
-                            .rounding(Rounding::same(6.0))
-                            .inner_margin(egui::Margin::symmetric(4.0, 4.0))
+                            .corner_radius(CornerRadius::same(6))
+                            .inner_margin(egui::Margin::symmetric(4, 4))
                             .show(ui, |ui| {
                                 ui.set_width(submenu_width);
 
@@ -224,7 +224,7 @@ pub fn render_main_menu_popup(
                                         if bg_color != Color32::TRANSPARENT {
                                             ui.painter().rect_filled(
                                                 rect,
-                                                Rounding::same(4.0),
+                                                CornerRadius::same(4),
                                                 bg_color,
                                             );
                                         }

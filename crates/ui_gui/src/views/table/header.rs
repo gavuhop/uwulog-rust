@@ -1,6 +1,6 @@
 use crate::state::{ColumnItem, ColumnState};
 use crate::theme;
-use eframe::egui::{self, Color32, FontId, Pos2, Rounding, Stroke};
+use eframe::egui::{self, Color32, CornerRadius, FontId, Pos2, Stroke};
 
 pub fn render_table_headers(
     header: &mut egui_extras::TableRow<'_, '_>,
@@ -39,11 +39,16 @@ pub fn render_table_headers(
             } else {
                 theme::BG_MANTLE
             };
-            ui.painter().rect_filled(rect, Rounding::ZERO, header_bg);
+            ui.painter()
+                .rect_filled(rect, CornerRadius::ZERO, header_bg);
 
             if is_drop_target && current_dragged.is_some() && !is_dragged {
-                ui.painter()
-                    .rect_stroke(rect, Rounding::ZERO, Stroke::new(2.0, theme::TEXT_KEY));
+                ui.painter().rect_stroke(
+                    rect,
+                    CornerRadius::ZERO,
+                    Stroke::new(2.0, theme::TEXT_KEY),
+                    egui::StrokeKind::Inside,
+                );
             }
 
             let font_id = FontId::monospace(11.0);
@@ -111,14 +116,15 @@ pub fn render_drag_ghost(ui: &egui::Ui, dragged_name: &str, pointer_pos: Pos2) {
 
     painter.rect_filled(
         ghost_rect.expand(2.0),
-        Rounding::same(5.0),
+        CornerRadius::same(5),
         Color32::from_black_alpha(100),
     );
-    painter.rect_filled(ghost_rect, Rounding::same(4.0), theme::BG_MANTLE);
+    painter.rect_filled(ghost_rect, CornerRadius::same(4), theme::BG_MANTLE);
     painter.rect_stroke(
         ghost_rect,
-        Rounding::same(4.0),
+        CornerRadius::same(4),
         Stroke::new(1.5, theme::TEXT_KEY),
+        egui::StrokeKind::Inside,
     );
     theme::draw_drag_handle(
         &painter,

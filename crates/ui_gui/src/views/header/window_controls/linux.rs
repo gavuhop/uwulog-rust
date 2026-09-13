@@ -4,7 +4,7 @@
 use super::icons;
 use super::CaptionButtonType;
 use crate::theme;
-use eframe::egui::{self, Color32, Rounding, Sense, Ui};
+use eframe::egui::{self, Color32, CornerRadius, Sense, Ui};
 
 pub const LINUX_BTN_SIZE: f32 = 24.0;
 pub const LINUX_BTN_SPACING: f32 = 8.0;
@@ -22,7 +22,7 @@ fn render_linux_caption_button(ui: &mut Ui, btn_type: CaptionButtonType) -> egui
     let is_hovered = response.hovered();
     let is_active = response.is_pointer_button_down_on();
 
-    let rounding = Rounding::same(LINUX_BTN_SIZE / 2.0);
+    let rounding = CornerRadius::same((LINUX_BTN_SIZE / 2.0) as u8);
 
     let (bg_color, fg_color) = match btn_type {
         CaptionButtonType::Close => {

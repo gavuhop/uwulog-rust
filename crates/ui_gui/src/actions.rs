@@ -158,7 +158,7 @@ pub fn render_filter_actions_menu(
 /// Copies text to clipboard and closes current context menu.
 pub fn copy_and_close(ui: &mut eframe::egui::Ui, text: &str) {
     if ui.button("Copy value").clicked() {
-        ui.ctx().output_mut(|o| o.copied_text = text.to_string());
+        ui.ctx().copy_text(text.to_string());
         ui.close_menu();
     }
 }

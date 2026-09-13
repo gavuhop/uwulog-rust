@@ -1,7 +1,7 @@
 use crate::actions::AppAction;
 use crate::components::{render_card, AppButton, ButtonVariant, ModalContainer};
 use crate::theme;
-use eframe::egui::{self, Color32, Rounding, Stroke};
+use eframe::egui::{self, Color32, CornerRadius, Stroke};
 use uwu_core_workspace::{SourceConfig, SourceType};
 
 pub fn render_launch_modal(
@@ -105,8 +105,8 @@ pub fn render_launch_modal(
 
                     egui::Frame::default()
                         .fill(theme::BG_CRUST)
-                        .rounding(Rounding::same(5.0))
-                        .inner_margin(egui::Margin::same(2.0))
+                        .corner_radius(CornerRadius::same(5))
+                        .inner_margin(egui::Margin::same(2))
                         .stroke(Stroke::new(1.0, theme::BG_SURFACE0))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
@@ -143,7 +143,13 @@ pub fn render_launch_modal(
                                     theme::TEXT_MUTED
                                 };
 
-                                ui.painter().rect(rect1, Rounding::same(4.0), bg1, stroke1);
+                                ui.painter().rect(
+                                    rect1,
+                                    CornerRadius::same(4),
+                                    bg1,
+                                    stroke1,
+                                    egui::StrokeKind::Inside,
+                                );
                                 ui.painter().text(
                                     rect1.center(),
                                     egui::Align2::CENTER_CENTER,
@@ -183,7 +189,13 @@ pub fn render_launch_modal(
                                     theme::TEXT_MUTED
                                 };
 
-                                ui.painter().rect(rect2, Rounding::same(4.0), bg2, stroke2);
+                                ui.painter().rect(
+                                    rect2,
+                                    CornerRadius::same(4),
+                                    bg2,
+                                    stroke2,
+                                    egui::StrokeKind::Inside,
+                                );
                                 ui.painter().text(
                                     rect2.center(),
                                     egui::Align2::CENTER_CENTER,
@@ -209,7 +221,7 @@ pub fn render_launch_modal(
                                     .color(theme::TEXT_PLACEHOLDER),
                             )
                             .font(egui::TextStyle::Monospace)
-                            .margin(egui::Margin::symmetric(8.0, 6.0));
+                            .margin(egui::Margin::symmetric(8, 6));
                         ui.add_sized([ui.available_width(), 26.0], cmd_edit);
                     } else {
                         ui.label(
@@ -231,7 +243,7 @@ pub fn render_launch_modal(
                                 )
                                 .text_color(theme::TEXT_PRIMARY)
                                 .font(egui::TextStyle::Monospace)
-                                .margin(egui::Margin::symmetric(8.0, 6.0));
+                                .margin(egui::Margin::symmetric(8, 6));
                             ui.add_sized([text_width, 26.0], path_edit);
 
                             let browse_clicked = AppButton::new()

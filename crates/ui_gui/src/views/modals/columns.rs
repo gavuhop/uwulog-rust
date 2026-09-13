@@ -2,7 +2,7 @@ use crate::actions::AppAction;
 use crate::components::render_card;
 use crate::state::ColumnState;
 use crate::theme;
-use eframe::egui::{self, Color32, FontId, Pos2, Rect, Rounding, Stroke};
+use eframe::egui::{self, Color32, CornerRadius, FontId, Pos2, Rect, Stroke};
 
 pub fn render_columns_modal(
     ctx: &egui::Context,
@@ -50,7 +50,7 @@ pub fn render_columns_modal(
                     egui::TextEdit::singleline(&mut columns.filter_query)
                         .hint_text("Filter column keys...")
                         .font(egui::TextStyle::Monospace)
-                        .margin(egui::Margin::symmetric(8.0, 4.0)),
+                        .margin(egui::Margin::symmetric(8, 4)),
                 );
                 if !columns.filter_query.is_empty()
                     && crate::components::ui::IconButton::new("✖")
@@ -119,9 +119,10 @@ pub fn render_columns_modal(
                 };
                 ui.painter().rect(
                     h_rect,
-                    Rounding::same(4.0),
+                    CornerRadius::same(4),
                     h_bg,
                     Stroke::new(1.0, theme::BG_SURFACE1),
+                    egui::StrokeKind::Inside,
                 );
 
                 let h_center_y = h_rect.center().y;
@@ -149,8 +150,13 @@ pub fn render_columns_modal(
                     (Color32::TRANSPARENT, Stroke::new(1.0, theme::TEXT_MUTED))
                 };
 
-                ui.painter()
-                    .rect(check_rect, Rounding::same(3.0), chk_bg, chk_stroke);
+                ui.painter().rect(
+                    check_rect,
+                    CornerRadius::same(3),
+                    chk_bg,
+                    chk_stroke,
+                    egui::StrokeKind::Inside,
+                );
 
                 if all_matching_visible {
                     ui.painter().text(
@@ -304,8 +310,13 @@ pub fn render_columns_modal(
                                 Stroke::new(1.0, theme::BG_SURFACE0)
                             };
 
-                            ui.painter()
-                                .rect(rect, Rounding::same(4.0), bg_color, border_stroke);
+                            ui.painter().rect(
+                                rect,
+                                CornerRadius::same(4),
+                                bg_color,
+                                border_stroke,
+                                egui::StrokeKind::Inside,
+                            );
 
                             let center_y = rect.center().y;
 
@@ -354,9 +365,10 @@ pub fn render_columns_modal(
 
                             ui.painter().rect(
                                 check_rect,
-                                Rounding::same(3.0),
+                                CornerRadius::same(3),
                                 check_bg,
                                 check_stroke,
+                                egui::StrokeKind::Inside,
                             );
 
                             if col_visible {

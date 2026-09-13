@@ -33,7 +33,7 @@ pub fn render_search_bar(
                 .color(theme::TEXT_PLACEHOLDER),
             )
             .font(egui::TextStyle::Monospace)
-            .margin(egui::Margin::symmetric(8.0, 4.0)),
+            .margin(egui::Margin::symmetric(8, 4)),
     );
 
     // Giữ lại con trỏ chuột và focus vào ô input sau khi chọn gợi ý

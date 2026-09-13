@@ -1,7 +1,7 @@
 //! Zed-style Badge and Status indicators: CountBadge, StatusDot.
 
 use crate::theme;
-use eframe::egui::{self, Color32, Pos2, Response, Rounding, Stroke, Ui, Vec2};
+use eframe::egui::{self, Color32, CornerRadius, Pos2, Response, Stroke, Ui, Vec2};
 
 /// Pill badge hiển thị số lượng (log count, items count)
 pub struct CountBadge<'a> {
@@ -59,9 +59,10 @@ impl<'a> CountBadge<'a> {
             if self.framed {
                 ui.painter().rect(
                     rect,
-                    Rounding::same(4.0),
+                    CornerRadius::same(4),
                     self.bg_color,
                     Stroke::new(1.0, theme::BG_SURFACE1),
+                    egui::StrokeKind::Inside,
                 );
             }
 

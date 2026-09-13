@@ -1,7 +1,7 @@
 //! Zed-style PopoverContainer primitive with positioning, click-outside and escape dismiss.
 
 use crate::theme;
-use eframe::egui::{self, Color32, Context, Id, Key, Order, Pos2, Rect, Rounding, Stroke, Ui};
+use eframe::egui::{self, Color32, Context, CornerRadius, Id, Key, Order, Pos2, Rect, Stroke, Ui};
 
 pub struct PopoverContainer<'a> {
     id: Id,
@@ -74,25 +74,26 @@ impl<'a> PopoverContainer<'a> {
             .fixed_pos(pos)
             .movable(false)
             .show(ctx, |ui| {
-                egui::Frame::default()
+                let frame = egui::Frame::default()
                     .fill(theme::BG_MANTLE)
                     .stroke(Stroke::new(1.0, theme::BG_SURFACE0))
-                    .rounding(Rounding::same(6.0))
-                    .inner_margin(egui::Margin::same(8.0))
+                    .corner_radius(CornerRadius::same(6))
+                    .inner_margin(egui::Margin::same(8))
                     .shadow(egui::epaint::Shadow {
-                        offset: egui::vec2(0.0, 4.0),
-                        blur: 16.0,
-                        spread: 0.0,
+                        offset: [0, 4],
+                        blur: 16,
+                        spread: 0,
                         color: Color32::from_black_alpha(160),
-                    })
-                    .show(ui, |ui| {
-                        let inner_width = (self.width - 16.0).max(0.0);
-                        ui.set_width(inner_width);
-                        if let Some(h) = self.max_height {
-                            ui.set_max_height(h);
-                        }
-                        add_contents(ui);
                     });
+                let total_margin = frame.total_margin();
+                frame.show(ui, |ui| {
+                    let inner_width = (self.width - total_margin.sum().x).max(0.0);
+                    ui.set_width(inner_width);
+                    if let Some(h) = self.max_height {
+                        ui.set_max_height(h);
+                    }
+                    add_contents(ui);
+                });
             });
 
         PopoverResponse {
@@ -119,10 +120,11 @@ mod tests {
                     let (rect, _) = ui.allocate_exact_size(desired_size, egui::Sense::click());
                     captured_row_rect = rect;
                 });
-            // With inner margin 8.0 on each side, inner content is width - 16.0
-            assert_eq!(captured_row_rect.width(), 300.0 - 16.0);
-            assert_eq!(captured_row_rect.min.x, 100.0 + 8.0);
-            assert_eq!(captured_row_rect.max.x, 100.0 + 300.0 - 8.0);
+            // In egui 0.31, Frame::total_margin() accounts for inner_margin (8.0) + stroke (1.0) on each side (total 9.0 per side).
+            // Inner content is width - 18.0 = 282.0.
+            assert_eq!(captured_row_rect.width(), 300.0 - 18.0);
+            assert_eq!(captured_row_rect.min.x, 100.0 + 9.0);
+            assert_eq!(captured_row_rect.max.x, 100.0 + 300.0 - 9.0);
         });
     }
 }
