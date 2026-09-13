@@ -87,7 +87,7 @@ pub fn render_project_row(ui: &mut egui::Ui, config: ProjectRowConfig<'_>) -> Pr
             );
 
             if config.is_active {
-                ui.label(egui::RichText::new("✓").size(11.0).color(theme::TEXT_KEY));
+                ui.label(egui::RichText::new("✔").size(11.0).color(theme::TEXT_KEY));
             }
 
             if is_hovered {

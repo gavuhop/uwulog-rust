@@ -156,7 +156,7 @@ pub fn render_columns_modal(
                     ui.painter().text(
                         check_rect.center(),
                         egui::Align2::CENTER_CENTER,
-                        "✓",
+                        "✔",
                         FontId::monospace(11.0),
                         theme::BG_BASE,
                     );
@@ -309,18 +309,16 @@ pub fn render_columns_modal(
 
                             let center_y = rect.center().y;
 
-                            // 1. Drag Grip Icon (⠿)
-                            let grip_x = rect.min.x + 8.0;
-                            ui.painter().text(
-                                Pos2::new(grip_x, center_y),
-                                egui::Align2::LEFT_CENTER,
-                                "⠿",
-                                FontId::monospace(14.0),
-                                if is_dragging_this || resp.hovered() {
-                                    theme::TEXT_KEY
-                                } else {
-                                    theme::TEXT_MUTED
-                                },
+                            // 1. Drag Grip Icon (Vector 6-dot handle)
+                            let grip_color = if is_dragging_this || resp.hovered() {
+                                theme::TEXT_KEY
+                            } else {
+                                theme::TEXT_MUTED
+                            };
+                            theme::draw_drag_handle(
+                                ui.painter(),
+                                Pos2::new(rect.min.x + 12.0, center_y),
+                                grip_color,
                             );
 
                             // 2. Custom Checkbox
@@ -365,7 +363,7 @@ pub fn render_columns_modal(
                                 ui.painter().text(
                                     check_rect.center(),
                                     egui::Align2::CENTER_CENTER,
-                                    "✓",
+                                    "✔",
                                     FontId::monospace(11.0),
                                     theme::BG_BASE,
                                 );

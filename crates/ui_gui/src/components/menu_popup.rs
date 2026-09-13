@@ -251,7 +251,7 @@ pub fn render_main_menu_popup(
                                             ui.painter().text(
                                                 trail_pos,
                                                 egui::Align2::RIGHT_CENTER,
-                                                "✓",
+                                                "✔",
                                                 egui::FontId::monospace(12.0),
                                                 theme::TEXT_KEY,
                                             );

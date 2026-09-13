@@ -69,6 +69,18 @@ pub fn format_number(n: usize) -> String {
     result
 }
 
+/// Vẽ icon drag handle 6 chấm (2 cột x 3 hàng) sắc nét bằng vector painter, không phụ thuộc font chữ hệ thống
+pub fn draw_drag_handle(painter: &egui::Painter, center: egui::Pos2, color: Color32) {
+    let dx = 2.5;
+    let dy = 3.5;
+    let r = 1.25;
+    for &x in &[center.x - dx, center.x + dx] {
+        for &y in &[center.y - dy, center.y, center.y + dy] {
+            painter.circle_filled(egui::pos2(x, y), r, color);
+        }
+    }
+}
+
 pub fn create_visuals() -> Visuals {
     let mut visuals = Visuals::dark();
     visuals.interact_cursor = Some(egui::CursorIcon::PointingHand);
@@ -173,6 +185,54 @@ pub fn apply_theme(ctx: &egui::Context) {
                     FontFamily::Name("segoe_icons".into()),
                     vec!["segoe_icons".to_owned()],
                 );
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        // 1. Cố gắng nạp các font Monospace phổ biến trên Linux nếu có
+        let mono_candidates = [
+            "/usr/share/fonts/google-noto/NotoSansMono-Regular.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSansMono-Regular.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+            "/usr/share/fonts/dejavu-sans-mono-fonts/DejaVuSansMono.ttf",
+            "/usr/share/fonts/liberation-mono/LiberationMono-Regular.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
+            "/usr/share/fonts/truetype/ubuntu/UbuntuMono-R.ttf",
+        ];
+        for path in mono_candidates {
+            if let Ok(data) = std::fs::read(path) {
+                fonts
+                    .font_data
+                    .insert("linux_mono".to_owned(), FontData::from_owned(data));
+                if let Some(family) = fonts.families.get_mut(&FontFamily::Monospace) {
+                    family.insert(0, "linux_mono".to_owned());
+                }
+                break;
+            }
+        }
+
+        // 2. Nạp fallback font chứa ký tự Symbols & Braille (Symbola hoặc Noto Sans Symbols 2)
+        let symbol_candidates = [
+            "/usr/share/fonts/gdouros-symbola/Symbola.ttf",
+            "/usr/share/fonts/google-noto/NotoSansSymbols2-Regular.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf",
+            "/usr/share/fonts/truetype/ancient-scripts/Symbola.ttf",
+            "/usr/share/fonts/google-noto-vf/NotoSansSymbols[wght].ttf",
+        ];
+        for path in symbol_candidates {
+            if let Ok(data) = std::fs::read(path) {
+                fonts
+                    .font_data
+                    .insert("linux_symbols".to_owned(), FontData::from_owned(data));
+                if let Some(family) = fonts.families.get_mut(&FontFamily::Monospace) {
+                    family.push("linux_symbols".to_owned());
+                }
+                if let Some(family) = fonts.families.get_mut(&FontFamily::Proportional) {
+                    family.push("linux_symbols".to_owned());
+                }
+                break;
             }
         }
     }
@@ -489,5 +549,29 @@ mod tests {
         assert_eq!(segments[1].1, TEXT_PRIMARY);
         assert_eq!(segments[2].0, "Green text");
         assert_eq!(segments[2].1, Color32::from_rgb(0xa6, 0xe3, 0xa1));
+    }
+
+    #[test]
+    fn test_font_glyphs_and_drag_handle() {
+        let ctx = egui::Context::default();
+        apply_theme(&ctx);
+        let _ = ctx.run(Default::default(), |_ctx| {});
+
+        // Kiểm tra ký tự checkmark chuẩn '✔' (U+2714) hiển thị được trên mọi hệ thống
+        ctx.fonts(|f| {
+            let mono = FontId::monospace(12.0);
+            assert!(
+                f.has_glyph(&mono, '✔'),
+                "Char '✔' (U+2714) must have a valid glyph in theme monospace font"
+            );
+        });
+
+        // Kiểm tra vector painter cho draw_drag_handle
+        let painter = egui::Painter::new(
+            ctx.clone(),
+            egui::LayerId::new(egui::Order::Foreground, egui::Id::new("test_layer")),
+            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(100.0, 100.0)),
+        );
+        draw_drag_handle(&painter, egui::pos2(12.0, 12.0), TEXT_KEY);
     }
 }

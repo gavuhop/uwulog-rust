@@ -120,11 +120,9 @@ pub fn render_drag_ghost(ui: &egui::Ui, dragged_name: &str, pointer_pos: Pos2) {
         Rounding::same(4.0),
         Stroke::new(1.5, theme::TEXT_KEY),
     );
-    painter.text(
-        Pos2::new(ghost_rect.min.x + 8.0, ghost_rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        "⠿",
-        FontId::monospace(12.0),
+    theme::draw_drag_handle(
+        &painter,
+        Pos2::new(ghost_rect.min.x + 12.0, ghost_rect.center().y),
         theme::TEXT_KEY,
     );
     painter.text(
