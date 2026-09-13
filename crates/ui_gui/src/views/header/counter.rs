@@ -95,6 +95,7 @@ pub fn render_log_counter(ui: &mut egui::Ui, session: &GuiSession) {
     };
 
     crate::components::ui::CountBadge::new(&count_text)
+        .flat()
         .text_color(count_color)
         .tooltip(&count_tooltip)
         .show(ui);

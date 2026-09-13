@@ -1,6 +1,6 @@
 use crate::actions::AppAction;
 use crate::theme;
-use eframe::egui::{self, Rect, Rounding};
+use eframe::egui::{self, Color32, Rect, Rounding};
 use std::collections::HashSet;
 use uwu_core_workspace::{SourceType, Workspace, WorkspaceLocation, WorkspaceStore};
 
@@ -20,6 +20,150 @@ pub struct ProjectPickerArgs<'a> {
     pub active_index: usize,
     pub project_search_query: &'a mut String,
     pub trigger_rect: Rect,
+}
+
+/// Hành động phát sinh khi tương tác với một hàng project trong Project Picker
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProjectRowAction {
+    None,
+    Select,
+    Close,
+}
+
+/// Tham số cấu hình hiển thị cho một hàng project
+pub struct ProjectRowConfig<'a> {
+    pub icon: &'a str,
+    pub label: &'a str,
+    pub is_active: bool,
+    pub location_tooltip: Option<&'a str>,
+    pub action_tooltip: &'a str,
+    pub close_tooltip: &'a str,
+}
+
+/// Render một hàng project (dùng chung cho cả This Window và Recent Projects)
+pub fn render_project_row(ui: &mut egui::Ui, config: ProjectRowConfig<'_>) -> ProjectRowAction {
+    let row_height = 24.0;
+    let row_size = egui::vec2(ui.available_width(), row_height);
+    let (row_rect, mut row_resp) = ui.allocate_exact_size(row_size, egui::Sense::click());
+    row_resp = row_resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+
+    let is_hovered = ui.rect_contains_pointer(row_rect);
+    if is_hovered {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+
+    let bg_color = if is_hovered {
+        theme::BG_ROW_HOVER
+    } else {
+        Color32::TRANSPARENT
+    };
+
+    if bg_color != Color32::TRANSPARENT {
+        ui.painter()
+            .rect_filled(row_rect, Rounding::same(4.0), bg_color);
+    }
+
+    let content_rect = row_rect.shrink2(egui::vec2(6.0, 0.0));
+    let mut close_clicked = false;
+    let mut close_hovered = false;
+    let mut action_clicked = false;
+    let mut action_hovered = false;
+
+    ui.allocate_new_ui(
+        egui::UiBuilder::new()
+            .max_rect(content_rect)
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        |ui| {
+            ui.label(
+                egui::RichText::new(config.icon)
+                    .size(12.0)
+                    .color(theme::TEXT_MUTED),
+            );
+
+            ui.label(
+                egui::RichText::new(config.label)
+                    .size(12.0)
+                    .color(theme::TEXT_PRIMARY),
+            );
+
+            if config.is_active {
+                ui.label(egui::RichText::new("✓").size(11.0).color(theme::TEXT_KEY));
+            }
+
+            if is_hovered {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(2.0, 0.0);
+
+                    // Nút Close '×' (đóng / xóa project)
+                    let (close_rect, close_resp) =
+                        ui.allocate_exact_size(egui::vec2(22.0, row_height), egui::Sense::click());
+                    let close_resp = close_resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+                    close_hovered = close_resp.hovered();
+                    if close_resp.clicked() {
+                        close_clicked = true;
+                    }
+                    close_resp.on_hover_text(config.close_tooltip);
+
+                    let close_color = if close_hovered {
+                        theme::TEXT_PRIMARY
+                    } else {
+                        theme::TEXT_MUTED
+                    };
+                    ui.painter().text(
+                        close_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "×",
+                        egui::FontId::proportional(13.0),
+                        close_color,
+                    );
+
+                    // Nút Action '↗' (switch / open project)
+                    let (act_rect, act_resp) =
+                        ui.allocate_exact_size(egui::vec2(22.0, row_height), egui::Sense::click());
+                    let act_resp = act_resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+                    action_hovered = act_resp.hovered();
+                    if act_resp.clicked() {
+                        action_clicked = true;
+                    }
+                    act_resp.on_hover_text(config.action_tooltip);
+
+                    let act_color = if action_hovered {
+                        theme::TEXT_PRIMARY
+                    } else {
+                        theme::TEXT_MUTED
+                    };
+                    ui.painter().text(
+                        act_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "↗",
+                        egui::FontId::proportional(13.0),
+                        act_color,
+                    );
+                });
+            }
+        },
+    );
+
+    if is_hovered || close_hovered || action_hovered {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+
+    let row_clicked =
+        row_resp.clicked() || (is_hovered && ui.input(|i| i.pointer.primary_clicked()));
+
+    if let Some(tooltip) = config.location_tooltip {
+        if !tooltip.is_empty() && !close_hovered && !action_hovered {
+            row_resp.on_hover_text(format!("{}\nLocation: {}", config.label, tooltip));
+        }
+    }
+
+    if close_clicked {
+        ProjectRowAction::Close
+    } else if action_clicked || row_clicked {
+        ProjectRowAction::Select
+    } else {
+        ProjectRowAction::None
+    }
 }
 
 pub fn render_project_picker_popup(
@@ -59,9 +203,12 @@ pub fn render_project_picker_popup(
                             .size(11.0)
                             .color(theme::TEXT_MUTED),
                     );
+                    let search_w = ui.available_width();
                     let search_edit = egui::TextEdit::singleline(project_search_query)
-                        .hint_text("Search projects...")
-                        .desired_width(popup_width - 36.0)
+                        .hint_text(
+                            egui::RichText::new("Search projects...").color(theme::TEXT_MUTED),
+                        )
+                        .desired_width(search_w)
                         .margin(egui::Margin::symmetric(4.0, 3.0));
                     ui.add(search_edit);
                 });
@@ -99,73 +246,29 @@ pub fn render_project_picker_popup(
                                 continue;
                             }
 
-                            let icon = session.icon;
-                            let tooltip_path = &session.target_summary;
-                            let mut frame = egui::Frame::none()
-                                .rounding(Rounding::same(4.0))
-                                .inner_margin(egui::Margin::symmetric(6.0, 4.0));
+                            let tooltip_loc = if session.target_summary.is_empty() {
+                                None
+                            } else {
+                                Some(session.target_summary.as_str())
+                            };
 
-                            if is_active {
-                                frame = frame.fill(theme::BG_SURFACE0);
+                            let action = render_project_row(
+                                ui,
+                                ProjectRowConfig {
+                                    icon: session.icon,
+                                    label: &name,
+                                    is_active,
+                                    location_tooltip: tooltip_loc,
+                                    action_tooltip: "Switch to this project",
+                                    close_tooltip: "Close and stop project from this window",
+                                },
+                            );
+
+                            match action {
+                                ProjectRowAction::Select => session_to_switch = Some(ix),
+                                ProjectRowAction::Close => session_to_close = Some(ix),
+                                ProjectRowAction::None => {}
                             }
-
-                            frame.show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new(icon).size(12.0));
-
-                                    let label_color = if is_active {
-                                        theme::TEXT_KEY
-                                    } else {
-                                        theme::TEXT_PRIMARY
-                                    };
-
-                                    let name_resp = ui.selectable_label(
-                                        is_active,
-                                        egui::RichText::new(&name)
-                                            .strong()
-                                            .size(12.0)
-                                            .color(label_color),
-                                    );
-
-                                    if name_resp.clicked() {
-                                        session_to_switch = Some(ix);
-                                    }
-
-                                    if !tooltip_path.is_empty() {
-                                        name_resp.on_hover_text(format!(
-                                            "{}\nLocation: {}",
-                                            name, tooltip_path
-                                        ));
-                                    }
-
-                                    ui.with_layout(
-                                        egui::Layout::right_to_left(egui::Align::Center),
-                                        |ui| {
-                                            // Nút Close '✕' để đóng project khỏi window
-                                            let close_resp =
-                                                crate::components::ui::IconButton::new("✕")
-                                                    .size(18.0)
-                                                    .tooltip(
-                                                        "Close and stop project from this window",
-                                                    )
-                                                    .show(ui);
-
-                                            if close_resp.clicked() {
-                                                session_to_close = Some(ix);
-                                            }
-
-                                            if is_active {
-                                                ui.label(
-                                                    egui::RichText::new("✓")
-                                                        .strong()
-                                                        .size(12.0)
-                                                        .color(theme::COLOR_INFO),
-                                                );
-                                            }
-                                        },
-                                    );
-                                });
-                            });
                         }
                     });
 
@@ -232,64 +335,30 @@ pub fn render_project_picker_popup(
                         .max_height(140.0)
                         .show(ui, |ui| {
                             for ws in &filtered_recent {
-                                let icon = ws.icon();
-                                let label_text = ws.display_label();
-                                let tooltip_path = ws.target_summary();
+                                let summary = ws.target_summary();
+                                let tooltip_loc = if summary.is_empty() {
+                                    None
+                                } else {
+                                    Some(summary.as_str())
+                                };
 
-                                let frame = egui::Frame::none()
-                                    .rounding(Rounding::same(4.0))
-                                    .inner_margin(egui::Margin::symmetric(6.0, 3.0));
+                                let action = render_project_row(
+                                    ui,
+                                    ProjectRowConfig {
+                                        icon: ws.icon(),
+                                        label: &ws.display_label(),
+                                        is_active: false,
+                                        location_tooltip: tooltip_loc,
+                                        action_tooltip: "Open in This Window",
+                                        close_tooltip: "Remove from recent list",
+                                    },
+                                );
 
-                                frame.show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.label(egui::RichText::new(icon).size(12.5));
-
-                                        let name_resp = ui.selectable_label(
-                                            false,
-                                            egui::RichText::new(&label_text)
-                                                .size(12.0)
-                                                .color(theme::TEXT_PRIMARY),
-                                        );
-
-                                        if name_resp.clicked() {
-                                            project_to_open = Some(ws.clone());
-                                        }
-
-                                        if !tooltip_path.is_empty() {
-                                            name_resp.on_hover_text(format!(
-                                                "Open Project in This Window:\n{}",
-                                                tooltip_path
-                                            ));
-                                        }
-
-                                        ui.with_layout(
-                                            egui::Layout::right_to_left(egui::Align::Center),
-                                            |ui| {
-                                                // Nút Delete khỏi Recent
-                                                let del_resp =
-                                                    crate::components::ui::IconButton::new("✕")
-                                                        .size(18.0)
-                                                        .tooltip("Remove from recent list")
-                                                        .show(ui);
-
-                                                if del_resp.clicked() {
-                                                    project_to_delete = Some(ws.id);
-                                                }
-
-                                                // Nút Open '↗'
-                                                let open_resp =
-                                                    crate::components::ui::IconButton::new("↗")
-                                                        .size(18.0)
-                                                        .tooltip("Open in This Window")
-                                                        .show(ui);
-
-                                                if open_resp.clicked() {
-                                                    project_to_open = Some(ws.clone());
-                                                }
-                                            },
-                                        );
-                                    });
-                                });
+                                match action {
+                                    ProjectRowAction::Select => project_to_open = Some(ws.clone()),
+                                    ProjectRowAction::Close => project_to_delete = Some(ws.id),
+                                    ProjectRowAction::None => {}
+                                }
                             }
                         });
                 }
@@ -303,16 +372,22 @@ pub fn render_project_picker_popup(
                     .label("Open Local Folder")
                     .icon("📂")
                     .variant(crate::components::ui::ButtonVariant::Ghost)
+                    .align_left()
+                    .full_width()
                     .show(ui)
                     .clicked()
                 {
                     open_local_folder_clicked = true;
                 }
 
+                ui.add_space(2.0);
+
                 crate::components::ui::AppButton::new()
                     .label("Open Remote Folder")
                     .icon("🌐")
                     .variant(crate::components::ui::ButtonVariant::Ghost)
+                    .align_left()
+                    .full_width()
                     .show(ui);
             });
 

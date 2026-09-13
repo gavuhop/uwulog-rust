@@ -39,7 +39,7 @@ pub fn render_header(
         // 1. Menu Icon Button (☰) - Flat style
         let is_menu_open = cx.overlay_stack.is_open(OverlayLayer::MainMenu);
         let menu_resp = crate::components::ui::IconButton::new("☰")
-            .size(22.0)
+            .size(24.0)
             .selected(is_menu_open)
             .tooltip("Open Application Menu")
             .show(ui);
@@ -52,17 +52,16 @@ pub fn render_header(
         // Nhận diện môi trường remote để hiển thị badge
         if let Some(remote) = session.session.location.as_remote() {
             ui.add_space(2.0);
-            let badge = egui::Label::new(
-                egui::RichText::new(format!("{} {}", remote.icon(), remote.display_name()))
-                    .size(11.0)
-                    .strong()
-                    .color(theme::COLOR_INFO),
-            );
-            ui.add(badge).on_hover_text(format!(
+            let remote_text = format!("{} {}", remote.icon(), remote.display_name());
+            let remote_tip = format!(
                 "Connected to {}: {}",
                 remote.connection_type().to_uppercase(),
                 remote.display_name()
-            ));
+            );
+            crate::components::ui::CountBadge::new(&remote_text)
+                .text_color(theme::COLOR_INFO)
+                .tooltip(&remote_tip)
+                .show(ui);
         }
 
         // Project Button
@@ -81,9 +80,21 @@ pub fn render_header(
                 )
             };
 
+            let proj_variant = if is_project_picker_open {
+                crate::components::ui::ButtonVariant::Selected
+            } else {
+                crate::components::ui::ButtonVariant::Ghost
+            };
+
             let proj_resp = crate::components::ui::AppButton::new()
                 .label(&session.session.name)
-                .selected(is_project_picker_open)
+                .variant(proj_variant)
+                .stroke(egui::Stroke::NONE)
+                .text_color(if is_project_picker_open {
+                    theme::TEXT_KEY
+                } else {
+                    theme::TEXT_PRIMARY
+                })
                 .tooltip(&tooltip)
                 .show(ui);
             proj_btn_rect = Some(proj_resp.rect);
@@ -103,11 +114,7 @@ pub fn render_header(
         let is_unfiltered_tab = session.view.active_tab == ActiveTab::Unfiltered;
         let is_filtering = !session.view.search.query.trim().is_empty();
 
-        let filtered_tab_text = if is_filtering {
-            "🔍 Filtered"
-        } else {
-            "🔍 Main"
-        };
+        let filtered_tab_text = if is_filtering { "Filtered" } else { "Main" };
 
         if crate::components::ui::TabButton::new(filtered_tab_text, is_filtered_tab)
             .show(ui)

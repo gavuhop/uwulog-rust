@@ -4,14 +4,14 @@ use eframe::egui::{self, Rounding, Stroke};
 /// Nút điều khiển cửa sổ vector chuẩn Windows (Ẩn / Thu nhỏ, Phóng to / Khôi phục, Đóng)
 pub fn render_window_controls(ui: &mut egui::Ui) {
     let is_maximized = ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
-    let btn_size = egui::vec2(32.0, 22.0);
+    let btn_size = egui::vec2(32.0, 24.0);
 
     // 1. Nút Đóng (✕)
     let (close_rect, close_resp) = ui.allocate_exact_size(btn_size, egui::Sense::click());
     if close_resp.hovered() {
         ui.painter().rect_filled(
             close_rect,
-            Rounding::same(3.0),
+            Rounding::same(4.0),
             egui::Color32::from_rgb(0xe8, 0x11, 0x23),
         );
     }
@@ -44,7 +44,7 @@ pub fn render_window_controls(ui: &mut egui::Ui) {
     let (max_rect, max_resp) = ui.allocate_exact_size(btn_size, egui::Sense::click());
     if max_resp.hovered() {
         ui.painter()
-            .rect_filled(max_rect, Rounding::same(3.0), theme::BG_SURFACE1);
+            .rect_filled(max_rect, Rounding::same(4.0), theme::BG_SURFACE1);
     }
     let max_color = if max_resp.hovered() {
         theme::TEXT_PRIMARY
@@ -91,7 +91,7 @@ pub fn render_window_controls(ui: &mut egui::Ui) {
     let (min_rect, min_resp) = ui.allocate_exact_size(btn_size, egui::Sense::click());
     if min_resp.hovered() {
         ui.painter()
-            .rect_filled(min_rect, Rounding::same(3.0), theme::BG_SURFACE1);
+            .rect_filled(min_rect, Rounding::same(4.0), theme::BG_SURFACE1);
     }
     let min_color = if min_resp.hovered() {
         theme::TEXT_PRIMARY

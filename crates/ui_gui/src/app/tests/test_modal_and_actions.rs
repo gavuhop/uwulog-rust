@@ -156,6 +156,48 @@ async fn test_app_action_columns_modal_flow() {
 }
 
 #[tokio::test]
+async fn test_columns_all_hidden_safe_and_reset() {
+    let mut app = create_test_app();
+
+    // 1. Open modal and hide ALL columns
+    app.dispatch_action(AppAction::OpenColumnsModal);
+    if let Some(ref mut draft) = app.active_session_mut().columns.draft_columns {
+        for col in draft.iter_mut() {
+            col.visible = false;
+        }
+    }
+    assert!(app
+        .active_session()
+        .columns
+        .draft_columns
+        .as_ref()
+        .unwrap()
+        .iter()
+        .all(|c| !c.visible));
+
+    // 2. Apply all hidden columns
+    app.dispatch_action(AppAction::ApplyColumnsModal);
+    assert!(!app.active_session().columns.is_modal_open);
+    assert!(app
+        .active_session()
+        .columns
+        .columns
+        .iter()
+        .all(|c| !c.visible));
+
+    // 3. Reset to defaults restores visibility
+    app.active_session_mut().columns.reset_to_defaults();
+    let visible_count = app
+        .active_session()
+        .columns
+        .columns
+        .iter()
+        .filter(|c| c.visible)
+        .count();
+    assert!(visible_count >= 3);
+}
+
+#[tokio::test]
 async fn test_app_action_select_log_and_switch_tab() {
     let mut app = create_test_app();
 

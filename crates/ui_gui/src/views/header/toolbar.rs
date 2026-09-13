@@ -11,16 +11,14 @@ pub fn render_toolbar(
     dispatch: &mut impl FnMut(AppAction),
 ) {
     // Table Columns & Ordering Modal Button
-    let visible_count = session
-        .view
-        .columns
-        .columns
-        .iter()
-        .filter(|c| c.visible)
-        .count();
-    let col_label = format!("📊 ({visible_count})");
-    if crate::components::ui::AppButton::new()
-        .label(&col_label)
+    let col_variant = if session.view.columns.is_modal_open {
+        crate::components::ui::ButtonVariant::Selected
+    } else {
+        crate::components::ui::ButtonVariant::Default
+    };
+    if crate::components::ui::IconButton::new("📊")
+        .size(24.0)
+        .variant(col_variant)
         .selected(session.view.columns.is_modal_open)
         .tooltip("Configure visible columns and adjust their display order")
         .show(ui)
@@ -33,6 +31,8 @@ pub fn render_toolbar(
 
     // Source Parameters Modal Button
     if crate::components::ui::IconButton::new("⚙")
+        .size(24.0)
+        .variant(crate::components::ui::ButtonVariant::Default)
         .tooltip("Configure engine buffer, display limits & sources")
         .show(ui)
         .clicked()
@@ -45,8 +45,10 @@ pub fn render_toolbar(
     // Stop / Restart Source Button
     if session.session.is_source_running {
         if crate::components::ui::IconButton::new("⏹")
+            .size(24.0)
             .fill(theme::BTN_STOP_BG)
             .stroke(Stroke::new(1.0, theme::BTN_STOP_BORDER))
+            .text_color(theme::COLOR_ERROR)
             .tooltip("Stop running process source")
             .show(ui)
             .clicked()
@@ -54,8 +56,10 @@ pub fn render_toolbar(
             dispatch(AppAction::StopSource);
         }
     } else if crate::components::ui::IconButton::new("🔄")
+        .size(24.0)
         .fill(theme::BTN_RESTART_BG)
         .stroke(Stroke::new(1.0, theme::BTN_RESTART_BORDER))
+        .text_color(theme::COLOR_INFO)
         .tooltip("Clear logs and restart source")
         .show(ui)
         .clicked()
@@ -74,6 +78,7 @@ pub fn render_toolbar(
         };
 
         if crate::components::ui::IconButton::new("📸")
+            .size(24.0)
             .tooltip(snapshot_tooltip)
             .show(ui)
             .clicked()
@@ -108,13 +113,19 @@ pub fn render_toolbar(
         ),
     };
 
-    let (latch_text, latch_bg, latch_border) = if is_live {
-        ("⚓ Live", theme::BTN_LATCHED_BG, theme::BTN_LATCHED_BORDER)
+    let (latch_text, latch_bg, latch_border, latch_fg) = if is_live {
+        (
+            "⚓ Live",
+            theme::BTN_LATCHED_BG,
+            theme::BTN_LATCHED_BORDER,
+            theme::COLOR_INFO,
+        )
     } else {
         (
             "⏸ Paused",
             theme::BTN_UNLATCHED_BG,
             theme::BTN_UNLATCHED_BORDER,
+            theme::COLOR_WARN,
         )
     };
 
@@ -122,6 +133,7 @@ pub fn render_toolbar(
         .label(latch_text)
         .fill(latch_bg)
         .stroke(Stroke::new(1.0, latch_border))
+        .text_color(latch_fg)
         .tooltip(toggle_tooltip)
         .show(ui)
         .clicked()

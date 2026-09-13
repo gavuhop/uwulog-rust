@@ -1,7 +1,7 @@
 use crate::actions::AppAction;
-use crate::components::render_card;
+use crate::components::{render_card, AppButton, ButtonVariant, ModalContainer};
 use crate::theme;
-use eframe::egui;
+use eframe::egui::{self, Color32, Rounding, Stroke};
 use uwu_core_workspace::{SourceConfig, SourceType};
 
 pub fn render_launch_modal(
@@ -21,161 +21,261 @@ pub fn render_launch_modal(
 
     let mut action_to_dispatch: Option<AppAction> = None;
 
-    let resp = crate::components::ui::ModalContainer::new(
-        "launch_modal_window",
-        "Settings & Launch Parameters",
-    )
-    .subtitle("Configure engine buffer, display limits & sources")
-    .width(460.0)
-    .show(
-        ctx,
-        |ui| {
-            let draft = draft.as_mut().unwrap();
+    let resp = ModalContainer::new("launch_modal_window", "Settings & Launch Parameters")
+        .subtitle("Configure engine buffer, display limits & data ingestion sources")
+        .width(500.0)
+        .show(
+            ctx,
+            |ui| {
+                let draft = draft.as_mut().unwrap();
 
-            // Engine Performance Card
-            render_card(ui, "System Engine Performance", |ui| {
-                egui::Grid::new("engine_params_grid")
-                    .num_columns(2)
-                    .spacing([16.0, 8.0])
-                    .show(ui, |ui| {
-                        ui.add(
-                            egui::Label::new(
-                                egui::RichText::new("RingBuffer Capacity (-C / --capacity):")
-                                    .color(theme::TEXT_MUTED),
-                            )
-                            .wrap_mode(egui::TextWrapMode::Extend),
-                        );
-                        ui.add(
-                            egui::DragValue::new(&mut draft.capacity)
-                                .range(1_000..=1_000_000)
-                                .speed(5000),
-                        );
-                        ui.end_row();
+                // 1. System Engine Performance Card
+                render_card(ui, "System Engine Performance", |ui| {
+                    egui::Grid::new("engine_params_grid")
+                        .num_columns(2)
+                        .spacing([16.0, 10.0])
+                        .show(ui, |ui| {
+                            let right_col_w = 130.0;
+                            let spacing_x = 16.0;
+                            let left_col_w =
+                                (ui.available_width() - right_col_w - spacing_x).max(180.0);
 
-                        ui.add(
-                            egui::Label::new(
-                                egui::RichText::new("Display Limit (-n):").color(theme::TEXT_MUTED),
-                            )
-                            .wrap_mode(egui::TextWrapMode::Extend),
-                        );
-                        ui.add(
-                            egui::DragValue::new(&mut draft.display_limit)
-                                .range(100..=50_000)
-                                .speed(500),
-                        );
-                        ui.end_row();
-                    });
-            });
+                            // Row 1: RingBuffer Capacity
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(left_col_w, 24.0),
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| {
+                                    ui.label(
+                                        egui::RichText::new("RingBuffer Capacity (-C):")
+                                            .color(theme::TEXT_PRIMARY),
+                                    )
+                                    .on_hover_text(
+                                        "Maximum log events retained in circular memory buffer",
+                                    );
+                                },
+                            );
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    ui.add_sized(
+                                        [right_col_w, 24.0],
+                                        egui::DragValue::new(&mut draft.capacity)
+                                            .range(1_000..=1_000_000)
+                                            .speed(5000),
+                                    );
+                                },
+                            );
+                            ui.end_row();
 
-            ui.add_space(8.0);
-
-            // Source Selector Card
-            render_card(ui, "Data Ingestion Source", |ui| {
-                ui.horizontal(|ui| {
-                    ui.selectable_value(
-                        &mut draft.source_type,
-                        SourceType::Process,
-                        "Process Exec (-c)",
-                    );
-                    ui.selectable_value(&mut draft.source_type, SourceType::File, "File Tail (-f)");
+                            // Row 2: Display Limit
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(left_col_w, 24.0),
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| {
+                                    ui.label(
+                                        egui::RichText::new("Display Limit (-n):")
+                                            .color(theme::TEXT_PRIMARY),
+                                    )
+                                    .on_hover_text("Maximum log events rendered in the table view");
+                                },
+                            );
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    ui.add_sized(
+                                        [right_col_w, 24.0],
+                                        egui::DragValue::new(&mut draft.display_limit)
+                                            .range(100..=50_000)
+                                            .speed(500),
+                                    );
+                                },
+                            );
+                            ui.end_row();
+                        });
                 });
 
-                ui.add_space(6.0);
+                ui.add_space(10.0);
 
-                if draft.source_type == SourceType::Process {
-                    ui.label(
-                        egui::RichText::new("Command string (executed via sh -c or cmd /C):")
-                            .color(theme::TEXT_MUTED)
-                            .size(11.0),
-                    );
-                    let cmd_edit = egui::TextEdit::singleline(&mut draft.command_str)
-                        .hint_text("e.g. go run main.go or ping 127.0.0.1")
-                        .font(egui::TextStyle::Monospace)
-                        .margin(egui::Margin::symmetric(8.0, 5.0));
-                    ui.add_sized([ui.available_width(), 24.0], cmd_edit);
+                // 2. Data Ingestion Source Card
+                render_card(ui, "Data Ingestion Source", |ui| {
+                    // Segmented Control (Tabs) for Source Selection
+                    let total_width = ui.available_width();
+                    let seg_height = 28.0;
+                    let seg_width = ((total_width - 4.0) * 0.5).floor();
 
-                    ui.add_space(4.0);
-                    ui.label(
-                        egui::RichText::new("Working Directory (optional):")
-                            .color(theme::TEXT_MUTED)
-                            .size(11.0),
-                    );
-                    ui.horizontal(|ui| {
-                        let browse_width = 80.0;
-                        let text_width = (ui.available_width() - browse_width - 8.0).max(100.0);
+                    egui::Frame::default()
+                        .fill(theme::BG_CRUST)
+                        .rounding(Rounding::same(5.0))
+                        .inner_margin(egui::Margin::same(2.0))
+                        .stroke(Stroke::new(1.0, theme::BG_SURFACE0))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing = egui::vec2(2.0, 0.0);
 
-                        let dir_edit = egui::TextEdit::singleline(&mut draft.working_dir)
-                            .hint_text("e.g. D:\\projects\\backend")
+                                // Segment 1: Process Exec (-c)
+                                let is_proc = draft.source_type == SourceType::Process;
+                                let (rect1, resp1) = ui.allocate_exact_size(
+                                    egui::vec2(seg_width, seg_height),
+                                    egui::Sense::click(),
+                                );
+                                if resp1.clicked() {
+                                    draft.source_type = SourceType::Process;
+                                }
+                                if resp1.hovered() {
+                                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                }
+
+                                let bg1 = if is_proc {
+                                    theme::BG_SURFACE1
+                                } else if resp1.hovered() {
+                                    theme::BG_SURFACE0
+                                } else {
+                                    Color32::TRANSPARENT
+                                };
+                                let stroke1 = if is_proc {
+                                    Stroke::new(1.0, theme::TEXT_KEY)
+                                } else {
+                                    Stroke::NONE
+                                };
+                                let text_color1 = if is_proc {
+                                    theme::TEXT_PRIMARY
+                                } else {
+                                    theme::TEXT_MUTED
+                                };
+
+                                ui.painter().rect(rect1, Rounding::same(4.0), bg1, stroke1);
+                                ui.painter().text(
+                                    rect1.center(),
+                                    egui::Align2::CENTER_CENTER,
+                                    "⚡ Process Exec (-c)",
+                                    egui::FontId::proportional(12.0),
+                                    text_color1,
+                                );
+
+                                // Segment 2: File Tail (-f)
+                                let is_file = draft.source_type == SourceType::File;
+                                let (rect2, resp2) = ui.allocate_exact_size(
+                                    egui::vec2(seg_width, seg_height),
+                                    egui::Sense::click(),
+                                );
+                                if resp2.clicked() {
+                                    draft.source_type = SourceType::File;
+                                }
+                                if resp2.hovered() {
+                                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                }
+
+                                let bg2 = if is_file {
+                                    theme::BG_SURFACE1
+                                } else if resp2.hovered() {
+                                    theme::BG_SURFACE0
+                                } else {
+                                    Color32::TRANSPARENT
+                                };
+                                let stroke2 = if is_file {
+                                    Stroke::new(1.0, theme::TEXT_KEY)
+                                } else {
+                                    Stroke::NONE
+                                };
+                                let text_color2 = if is_file {
+                                    theme::TEXT_PRIMARY
+                                } else {
+                                    theme::TEXT_MUTED
+                                };
+
+                                ui.painter().rect(rect2, Rounding::same(4.0), bg2, stroke2);
+                                ui.painter().text(
+                                    rect2.center(),
+                                    egui::Align2::CENTER_CENTER,
+                                    "📄 File Tail (-f)",
+                                    egui::FontId::proportional(12.0),
+                                    text_color2,
+                                );
+                            });
+                        });
+
+                    ui.add_space(10.0);
+
+                    if draft.source_type == SourceType::Process {
+                        ui.label(
+                            egui::RichText::new("Command string:")
+                                .color(theme::TEXT_PRIMARY)
+                                .size(11.5),
+                        );
+                        ui.add_space(4.0);
+                        let cmd_edit = egui::TextEdit::singleline(&mut draft.command_str)
+                            .hint_text(
+                                egui::RichText::new("e.g. go run main.go")
+                                    .color(theme::TEXT_PLACEHOLDER),
+                            )
                             .font(egui::TextStyle::Monospace)
-                            .margin(egui::Margin::symmetric(8.0, 5.0));
-                        ui.add_sized([text_width, 24.0], dir_edit);
+                            .margin(egui::Margin::symmetric(8.0, 6.0));
+                        ui.add_sized([ui.available_width(), 26.0], cmd_edit);
+                    } else {
+                        ui.label(
+                            egui::RichText::new("Log file path:")
+                                .color(theme::TEXT_PRIMARY)
+                                .size(11.5),
+                        );
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            let browse_width = 84.0;
+                            let spacing = ui.spacing().item_spacing.x;
+                            let text_width =
+                                (ui.available_width() - browse_width - spacing).max(100.0);
 
-                        let browse_clicked = crate::components::ui::AppButton::new()
-                            .label("Browse...")
-                            .min_size(egui::vec2(browse_width, 22.0))
-                            .show(ui)
-                            .clicked();
+                            let path_edit = egui::TextEdit::singleline(&mut draft.file_path)
+                                .hint_text(
+                                    egui::RichText::new("e.g. /var/log/app.log")
+                                        .color(theme::TEXT_PLACEHOLDER),
+                                )
+                                .text_color(theme::TEXT_PRIMARY)
+                                .font(egui::TextStyle::Monospace)
+                                .margin(egui::Margin::symmetric(8.0, 6.0));
+                            ui.add_sized([text_width, 26.0], path_edit);
 
-                        if browse_clicked {
-                            if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                                draft.working_dir = path.display().to_string();
+                            let browse_clicked = AppButton::new()
+                                .label("Browse...")
+                                .min_size(egui::vec2(browse_width, 26.0))
+                                .show(ui)
+                                .clicked();
+
+                            if browse_clicked {
+                                if let Some(path) = rfd::FileDialog::new().pick_file() {
+                                    draft.file_path = path.display().to_string();
+                                }
                             }
-                        }
-                    });
-                } else {
-                    ui.label(
-                        egui::RichText::new("Log file path:")
-                            .color(theme::TEXT_MUTED)
-                            .size(11.0),
-                    );
-                    ui.horizontal(|ui| {
-                        let browse_width = 80.0;
-                        let text_width = (ui.available_width() - browse_width - 8.0).max(100.0);
+                        });
+                    }
+                });
+            },
+            Some(|ui: &mut egui::Ui, close_req: &mut bool| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if AppButton::new()
+                        .label("Apply & Restart")
+                        .icon("🚀")
+                        .variant(ButtonVariant::Success)
+                        .min_size(egui::vec2(130.0, 26.0))
+                        .show(ui)
+                        .clicked()
+                        || ui.input(|i| i.key_pressed(egui::Key::Enter))
+                    {
+                        action_to_dispatch = Some(AppAction::ApplyLaunchModal);
+                    }
 
-                        let path_edit = egui::TextEdit::singleline(&mut draft.file_path)
-                            .hint_text("e.g. /var/log/app.log or C:\\logs\\app.log")
-                            .font(egui::TextStyle::Monospace)
-                            .margin(egui::Margin::symmetric(8.0, 5.0));
-                        ui.add_sized([text_width, 24.0], path_edit);
+                    ui.add_space(8.0);
 
-                        let browse_clicked = crate::components::ui::AppButton::new()
-                            .label("Browse...")
-                            .min_size(egui::vec2(browse_width, 22.0))
-                            .show(ui)
-                            .clicked();
-
-                        if browse_clicked {
-                            if let Some(path) = rfd::FileDialog::new().pick_file() {
-                                draft.file_path = path.display().to_string();
-                            }
-                        }
-                    });
-                }
-            });
-        },
-        Some(|ui: &mut egui::Ui, close_req: &mut bool| {
-            if crate::components::ui::AppButton::new()
-                .label("Apply & Restart")
-                .icon("🚀")
-                .variant(crate::components::ui::ButtonVariant::Success)
-                .show(ui)
-                .clicked()
-                || ui.input(|i| i.key_pressed(egui::Key::Enter))
-            {
-                action_to_dispatch = Some(AppAction::ApplyLaunchModal);
-            }
-
-            ui.add_space(4.0);
-
-            if crate::components::ui::AppButton::new()
-                .label("Cancel")
-                .show(ui)
-                .clicked()
-            {
-                *close_req = true;
-            }
-        }),
-    );
+                    if AppButton::new()
+                        .label("Cancel")
+                        .min_size(egui::vec2(80.0, 26.0))
+                        .show(ui)
+                        .clicked()
+                    {
+                        *close_req = true;
+                    }
+                });
+            }),
+        );
 
     if resp.closed {
         action_to_dispatch = Some(AppAction::CloseLaunchModal);

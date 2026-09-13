@@ -67,6 +67,10 @@ pub fn render_log_table(
         .cloned()
         .collect();
 
+    if visible_cols.is_empty() {
+        return;
+    }
+
     let salt_prefix = match mode {
         TableMode::Filtered => "main",
         TableMode::Unfiltered => "unfiltered",

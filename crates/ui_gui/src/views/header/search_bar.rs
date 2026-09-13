@@ -11,7 +11,7 @@ pub fn render_search_bar(
     dispatch: &mut impl FnMut(AppAction),
 ) {
     let button_extras = if !session.view.search.query.is_empty() {
-        52.0
+        56.0
     } else {
         28.0
     };
@@ -19,7 +19,11 @@ pub fn render_search_bar(
     let search_box_width = (available_w - button_extras - 6.0).max(40.0);
 
     let search_id = Id::new("search_query_input");
-    let search_response = ui.add(
+    let search_response = ui.add_sized(
+        [
+            search_box_width,
+            crate::components::ui::button::BUTTON_HEIGHT_NORMAL,
+        ],
         egui::TextEdit::singleline(&mut session.view.search.query)
             .id(search_id)
             .hint_text(
@@ -28,7 +32,6 @@ pub fn render_search_bar(
                 )
                 .color(theme::TEXT_PLACEHOLDER),
             )
-            .desired_width(search_box_width)
             .font(egui::TextStyle::Monospace)
             .margin(egui::Margin::symmetric(8.0, 4.0)),
     );
@@ -83,7 +86,7 @@ pub fn render_search_bar(
     // Quick Clear button if query is not empty
     if !session.view.search.query.is_empty()
         && crate::components::ui::IconButton::new("✖")
-            .size(20.0)
+            .size(24.0)
             .tooltip("Clear filter")
             .show(ui)
             .clicked()
@@ -93,7 +96,7 @@ pub fn render_search_bar(
 
     // Search History Toggle Button (⏱)
     if crate::components::ui::IconButton::new("⏱")
-        .size(22.0)
+        .size(24.0)
         .selected(session.view.search.history.is_open)
         .tooltip("Search history")
         .show(ui)

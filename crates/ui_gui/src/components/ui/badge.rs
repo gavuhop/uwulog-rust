@@ -8,6 +8,7 @@ pub struct CountBadge<'a> {
     text: &'a str,
     text_color: Color32,
     bg_color: Color32,
+    framed: bool,
     tooltip: Option<&'a str>,
 }
 
@@ -17,8 +18,14 @@ impl<'a> CountBadge<'a> {
             text,
             text_color: theme::TEXT_KEY,
             bg_color: theme::BG_SURFACE0,
+            framed: true,
             tooltip: None,
         }
+    }
+
+    pub fn flat(mut self) -> Self {
+        self.framed = false;
+        self
     }
 
     pub fn text_color(mut self, color: Color32) -> Self {
@@ -37,7 +44,7 @@ impl<'a> CountBadge<'a> {
     }
 
     pub fn show(self, ui: &mut Ui) -> Response {
-        let padding = egui::vec2(6.0, 2.0);
+        let padding_x = if self.framed { 7.0 } else { 4.0 };
         let font_size = 11.0;
         let font_id = egui::FontId::monospace(font_size);
 
@@ -45,18 +52,23 @@ impl<'a> CountBadge<'a> {
             .painter()
             .layout_no_wrap(self.text.to_string(), font_id, self.text_color);
 
-        let size = galley.size() + padding * 2.0;
+        let size = egui::vec2(galley.size().x + padding_x * 2.0, 24.0);
         let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
 
         if ui.is_rect_visible(rect) {
-            ui.painter().rect(
-                rect,
-                Rounding::same(size.y * 0.5),
-                self.bg_color,
-                Stroke::new(1.0, theme::BG_SURFACE1),
-            );
+            if self.framed {
+                ui.painter().rect(
+                    rect,
+                    Rounding::same(4.0),
+                    self.bg_color,
+                    Stroke::new(1.0, theme::BG_SURFACE1),
+                );
+            }
 
-            let text_pos = Pos2::new(rect.min.x + padding.x, rect.min.y + padding.y);
+            let text_pos = Pos2::new(
+                rect.min.x + padding_x,
+                rect.center().y - galley.size().y * 0.5,
+            );
             ui.painter().galley(text_pos, galley, self.text_color);
         }
 

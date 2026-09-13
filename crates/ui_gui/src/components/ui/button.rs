@@ -15,6 +15,9 @@ pub enum ButtonVariant {
     Danger,
 }
 
+pub const BUTTON_HEIGHT_NORMAL: f32 = 24.0;
+pub const BUTTON_HEIGHT_SMALL: f32 = 20.0;
+
 /// Nút bấm tổng quát với API dạng Builder (tương tự Button trong Zed UI)
 pub struct AppButton<'a> {
     label: Option<&'a str>,
@@ -24,7 +27,11 @@ pub struct AppButton<'a> {
     small: bool,
     fill_override: Option<Color32>,
     stroke_override: Option<Stroke>,
+    text_color_override: Option<Color32>,
     min_size: Option<Vec2>,
+    min_width: Option<f32>,
+    full_width: bool,
+    align_left: bool,
 }
 
 impl<'a> Default for AppButton<'a> {
@@ -43,7 +50,11 @@ impl<'a> AppButton<'a> {
             small: false,
             fill_override: None,
             stroke_override: None,
+            text_color_override: None,
             min_size: None,
+            min_width: None,
+            full_width: false,
+            align_left: false,
         }
     }
 
@@ -89,55 +100,37 @@ impl<'a> AppButton<'a> {
         self
     }
 
+    pub fn text_color(mut self, color: Color32) -> Self {
+        self.text_color_override = Some(color);
+        self
+    }
+
     pub fn min_size(mut self, size: Vec2) -> Self {
         self.min_size = Some(size);
         self
     }
 
-    /// Render nút bấm lên giao diện
-    pub fn show(self, ui: &mut Ui) -> Response {
-        let (font_size, padding, rounding) = if self.small {
-            (11.0, egui::vec2(6.0, 3.0), Rounding::same(3.0))
-        } else {
-            (12.0, egui::vec2(8.0, 4.0), Rounding::same(4.0))
-        };
+    pub fn min_width(mut self, width: f32) -> Self {
+        self.min_width = Some(width);
+        self
+    }
 
-        let (text_color, bg_color, stroke) = match self.variant {
-            ButtonVariant::Default => (
-                theme::TEXT_PRIMARY,
-                self.fill_override.unwrap_or(theme::BG_SURFACE0),
-                self.stroke_override
-                    .unwrap_or(Stroke::new(1.0, theme::BG_SURFACE1)),
-            ),
-            ButtonVariant::Primary => (
-                Color32::WHITE,
-                self.fill_override.unwrap_or(theme::BG_TEXT_SELECTION),
-                self.stroke_override
-                    .unwrap_or(Stroke::new(1.0, theme::STROKE_TEXT_SELECTION)),
-            ),
-            ButtonVariant::Ghost => (
-                theme::TEXT_PRIMARY,
-                self.fill_override.unwrap_or(Color32::TRANSPARENT),
-                self.stroke_override.unwrap_or(Stroke::NONE),
-            ),
-            ButtonVariant::Selected => (
-                theme::TEXT_KEY,
-                self.fill_override.unwrap_or(theme::BG_SURFACE1),
-                self.stroke_override
-                    .unwrap_or(Stroke::new(1.0, theme::TEXT_KEY)),
-            ),
-            ButtonVariant::Success => (
-                theme::TEXT_PRIMARY,
-                self.fill_override.unwrap_or(theme::BTN_RESTART_BG),
-                self.stroke_override
-                    .unwrap_or(Stroke::new(1.0, theme::BTN_RESTART_BORDER)),
-            ),
-            ButtonVariant::Danger => (
-                theme::TEXT_PRIMARY,
-                self.fill_override.unwrap_or(theme::BTN_STOP_BG),
-                self.stroke_override
-                    .unwrap_or(Stroke::new(1.0, theme::BTN_STOP_BORDER)),
-            ),
+    pub fn full_width(mut self) -> Self {
+        self.full_width = true;
+        self
+    }
+
+    pub fn align_left(mut self) -> Self {
+        self.align_left = true;
+        self
+    }
+
+    /// Render nút bấm lên giao diện với kích thước và hover chuẩn
+    pub fn show(self, ui: &mut Ui) -> Response {
+        let (font_size, padding_x, height, rounding) = if self.small {
+            (11.0f32, 6.0f32, BUTTON_HEIGHT_SMALL, Rounding::same(3.0))
+        } else {
+            (12.0f32, 8.0f32, BUTTON_HEIGHT_NORMAL, Rounding::same(4.0))
         };
 
         let content_text = match (self.icon, self.label) {
@@ -147,26 +140,157 @@ impl<'a> AppButton<'a> {
             (None, None) => String::new(),
         };
 
-        let rich = egui::RichText::new(content_text)
-            .size(font_size)
-            .color(text_color);
+        let font_id = egui::FontId::proportional(font_size);
+        let layout_galley = ui.painter().layout_no_wrap(
+            content_text.clone(),
+            font_id.clone(),
+            Color32::PLACEHOLDER,
+        );
 
-        let mut btn = egui::Button::new(rich)
-            .fill(bg_color)
-            .stroke(stroke)
-            .rounding(rounding);
-
-        if let Some(size) = self.min_size {
-            btn = btn.min_size(size);
+        let min_w = if self.full_width {
+            ui.available_width()
+        } else if let Some(w) = self.min_width {
+            w
         } else {
-            btn = btn.min_size(egui::vec2(0.0, padding.y * 2.0 + font_size));
+            self.min_size.map(|s| s.x).unwrap_or(0.0)
+        };
+        let min_h = self.min_size.map(|s| s.y).unwrap_or(0.0);
+        let desired_w = (layout_galley.size().x + padding_x * 2.0).max(min_w);
+        let desired_h = height.max(min_h);
+
+        let (rect, response) =
+            ui.allocate_exact_size(egui::vec2(desired_w, desired_h), egui::Sense::click());
+
+        if ui.is_rect_visible(rect) {
+            let is_hovered = response.hovered();
+            let is_active = response.is_pointer_button_down_on();
+
+            let (mut text_color, mut bg_color, mut stroke) = match self.variant {
+                ButtonVariant::Default => {
+                    if is_active {
+                        (
+                            theme::TEXT_PRIMARY,
+                            theme::BG_SURFACE1,
+                            Stroke::new(1.0, theme::TEXT_KEY),
+                        )
+                    } else if is_hovered {
+                        (
+                            theme::TEXT_PRIMARY,
+                            theme::BG_SURFACE1,
+                            Stroke::new(1.0, theme::BG_SURFACE1),
+                        )
+                    } else {
+                        (
+                            theme::TEXT_PRIMARY,
+                            theme::BG_SURFACE0,
+                            Stroke::new(1.0, theme::BG_SURFACE1),
+                        )
+                    }
+                }
+                ButtonVariant::Primary => {
+                    if is_active {
+                        (
+                            theme::TEXT_PRIMARY,
+                            theme::BG_TEXT_SELECTION,
+                            Stroke::new(1.5, theme::TEXT_KEY),
+                        )
+                    } else if is_hovered {
+                        (
+                            theme::TEXT_PRIMARY,
+                            theme::STROKE_TEXT_SELECTION,
+                            Stroke::new(1.0, theme::TEXT_KEY),
+                        )
+                    } else {
+                        (
+                            theme::TEXT_PRIMARY,
+                            theme::BG_TEXT_SELECTION,
+                            Stroke::new(1.0, theme::STROKE_TEXT_SELECTION),
+                        )
+                    }
+                }
+                ButtonVariant::Ghost => {
+                    if is_active {
+                        (
+                            theme::TEXT_PRIMARY,
+                            theme::BG_SURFACE1,
+                            Stroke::new(1.0, theme::BG_SURFACE1),
+                        )
+                    } else if is_hovered {
+                        (
+                            theme::TEXT_PRIMARY,
+                            theme::BG_SURFACE0,
+                            Stroke::new(1.0, theme::BG_SURFACE1),
+                        )
+                    } else {
+                        (theme::TEXT_MUTED, Color32::TRANSPARENT, Stroke::NONE)
+                    }
+                }
+                ButtonVariant::Selected => (
+                    theme::TEXT_KEY,
+                    theme::BG_SURFACE1,
+                    Stroke::new(1.0, theme::TEXT_KEY),
+                ),
+                ButtonVariant::Success => {
+                    let border = if is_hovered {
+                        theme::COLOR_INFO
+                    } else {
+                        theme::BTN_RESTART_BORDER
+                    };
+                    (
+                        theme::COLOR_INFO,
+                        theme::BTN_RESTART_BG,
+                        Stroke::new(1.0, border),
+                    )
+                }
+                ButtonVariant::Danger => {
+                    let border = if is_hovered {
+                        theme::COLOR_ERROR
+                    } else {
+                        theme::BTN_STOP_BORDER
+                    };
+                    (
+                        theme::COLOR_ERROR,
+                        theme::BTN_STOP_BG,
+                        Stroke::new(1.0, border),
+                    )
+                }
+            };
+
+            if let Some(fill) = self.fill_override {
+                bg_color = fill;
+            }
+            if let Some(s) = self.stroke_override {
+                stroke = s;
+            }
+            if let Some(tc) = self.text_color_override {
+                text_color = tc;
+            }
+
+            if bg_color != Color32::TRANSPARENT || stroke.width > 0.0 {
+                ui.painter().rect(rect, rounding, bg_color, stroke);
+            }
+
+            let galley = ui
+                .painter()
+                .layout_no_wrap(content_text, font_id, text_color);
+            let text_pos = if self.align_left {
+                egui::pos2(
+                    rect.min.x + padding_x,
+                    rect.center().y - galley.size().y * 0.5,
+                )
+            } else {
+                egui::pos2(
+                    rect.center().x - galley.size().x * 0.5,
+                    rect.center().y - galley.size().y * 0.5,
+                )
+            };
+            ui.painter().galley(text_pos, galley, text_color);
         }
 
-        let resp = ui.add(btn);
         if let Some(tip) = self.tooltip {
-            resp.on_hover_text(tip)
+            response.on_hover_text(tip)
         } else {
-            resp
+            response
         }
     }
 }
@@ -177,8 +301,10 @@ pub struct IconButton<'a> {
     tooltip: Option<&'a str>,
     selected: bool,
     size: f32,
+    variant: ButtonVariant,
     fill_override: Option<Color32>,
     stroke_override: Option<Stroke>,
+    text_color_override: Option<Color32>,
 }
 
 impl<'a> IconButton<'a> {
@@ -188,8 +314,10 @@ impl<'a> IconButton<'a> {
             tooltip: None,
             selected: false,
             size: 24.0,
+            variant: ButtonVariant::Ghost,
             fill_override: None,
             stroke_override: None,
+            text_color_override: None,
         }
     }
 
@@ -200,6 +328,11 @@ impl<'a> IconButton<'a> {
 
     pub fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
+        self
+    }
+
+    pub fn variant(mut self, variant: ButtonVariant) -> Self {
+        self.variant = variant;
         self
     }
 
@@ -218,37 +351,98 @@ impl<'a> IconButton<'a> {
         self
     }
 
+    pub fn text_color(mut self, color: Color32) -> Self {
+        self.text_color_override = Some(color);
+        self
+    }
+
     pub fn show(self, ui: &mut Ui) -> Response {
-        let (text_color, bg_color, stroke) = if self.selected {
-            (
-                theme::TEXT_KEY,
-                self.fill_override.unwrap_or(theme::BG_SURFACE1),
-                self.stroke_override
-                    .unwrap_or(Stroke::new(1.0, theme::TEXT_KEY)),
-            )
-        } else {
-            (
-                theme::TEXT_PRIMARY,
-                self.fill_override.unwrap_or(Color32::TRANSPARENT),
-                self.stroke_override.unwrap_or(Stroke::NONE),
-            )
-        };
+        let (rect, response) = ui.allocate_exact_size(Vec2::splat(self.size), egui::Sense::click());
 
-        let rich = egui::RichText::new(self.icon)
-            .size(self.size * 0.55)
-            .color(text_color);
+        if ui.is_rect_visible(rect) {
+            let is_hovered = response.hovered();
+            let is_active = response.is_pointer_button_down_on();
 
-        let btn = egui::Button::new(rich)
-            .fill(bg_color)
-            .stroke(stroke)
-            .rounding(Rounding::same(4.0))
-            .min_size(Vec2::splat(self.size));
+            let (mut text_color, mut bg_color, mut stroke) = if self.selected {
+                (
+                    theme::TEXT_KEY,
+                    theme::BG_SURFACE1,
+                    Stroke::new(1.0, theme::TEXT_KEY),
+                )
+            } else {
+                match self.variant {
+                    ButtonVariant::Default => {
+                        if is_active {
+                            (
+                                theme::TEXT_PRIMARY,
+                                theme::BG_SURFACE1,
+                                Stroke::new(1.0, theme::TEXT_KEY),
+                            )
+                        } else if is_hovered {
+                            (
+                                theme::TEXT_PRIMARY,
+                                theme::BG_SURFACE1,
+                                Stroke::new(1.0, theme::BG_SURFACE1),
+                            )
+                        } else {
+                            (
+                                theme::TEXT_PRIMARY,
+                                theme::BG_SURFACE0,
+                                Stroke::new(1.0, theme::BG_SURFACE1),
+                            )
+                        }
+                    }
+                    _ => {
+                        if is_active {
+                            (
+                                theme::TEXT_PRIMARY,
+                                theme::BG_SURFACE1,
+                                Stroke::new(1.0, theme::BG_SURFACE1),
+                            )
+                        } else if is_hovered {
+                            (
+                                theme::TEXT_PRIMARY,
+                                theme::BG_SURFACE0,
+                                Stroke::new(1.0, theme::BG_SURFACE1),
+                            )
+                        } else {
+                            (theme::TEXT_MUTED, Color32::TRANSPARENT, Stroke::NONE)
+                        }
+                    }
+                }
+            };
 
-        let resp = ui.add(btn);
+            if let Some(fill) = self.fill_override {
+                bg_color = fill;
+            }
+            if let Some(s) = self.stroke_override {
+                stroke = s;
+            }
+            if let Some(tc) = self.text_color_override {
+                text_color = tc;
+            }
+
+            if bg_color != Color32::TRANSPARENT || stroke.width > 0.0 {
+                ui.painter()
+                    .rect(rect, Rounding::same(4.0), bg_color, stroke);
+            }
+
+            let font_size = (self.size * 0.5).max(11.0);
+            let font_id = egui::FontId::proportional(font_size);
+            let galley = ui
+                .painter()
+                .layout_no_wrap(self.icon.to_string(), font_id, text_color);
+            let text_pos = egui::pos2(
+                rect.center().x - galley.size().x * 0.5,
+                rect.center().y - galley.size().y * 0.5,
+            );
+            ui.painter().galley(text_pos, galley, text_color);
+        }
+
         if let Some(tip) = self.tooltip {
-            resp.on_hover_text(tip)
+            response.on_hover_text(tip)
         } else {
-            resp
+            response
         }
     }
 }
@@ -282,36 +476,62 @@ impl<'a> TabButton<'a> {
     }
 
     pub fn show(self, ui: &mut Ui) -> Response {
-        let text_color = if !self.enabled {
-            theme::TEXT_MUTED
-        } else if self.active {
-            theme::TEXT_KEY
-        } else {
-            theme::TEXT_PRIMARY
-        };
-
-        let fill = if self.active {
-            theme::BG_SURFACE1
-        } else {
-            Color32::TRANSPARENT
-        };
-
         let title = if let Some(count) = self.badge_count {
             format!("{} ({})", self.label, theme::format_number(count))
         } else {
             self.label.to_string()
         };
 
-        let rich = egui::RichText::new(title)
-            .size(11.5)
-            .strong()
-            .color(text_color);
+        let font_id = egui::FontId::proportional(11.5);
+        let layout_galley =
+            ui.painter()
+                .layout_no_wrap(title.clone(), font_id.clone(), Color32::PLACEHOLDER);
 
-        let btn = egui::Button::new(rich)
-            .fill(fill)
-            .stroke(Stroke::NONE)
-            .rounding(Rounding::same(4.0));
+        let padding_x = 8.0;
+        let height = 24.0;
+        let desired_size = egui::vec2(layout_galley.size().x + padding_x * 2.0, height);
+        let (rect, response) = ui.allocate_exact_size(
+            desired_size,
+            if self.enabled {
+                egui::Sense::click()
+            } else {
+                egui::Sense::hover()
+            },
+        );
 
-        ui.add_enabled(self.enabled, btn)
+        if ui.is_rect_visible(rect) {
+            let is_hovered = response.hovered();
+            let is_active = response.is_pointer_button_down_on();
+
+            let (text_color, bg_color, stroke) = if !self.enabled {
+                (theme::TEXT_MUTED, Color32::TRANSPARENT, Stroke::NONE)
+            } else if self.active {
+                (
+                    theme::TEXT_KEY,
+                    theme::BG_SURFACE0,
+                    Stroke::new(1.0, theme::BG_SURFACE1),
+                )
+            } else if is_active {
+                (theme::TEXT_PRIMARY, theme::BG_SURFACE1, Stroke::NONE)
+            } else if is_hovered {
+                (theme::TEXT_PRIMARY, theme::BG_SURFACE0, Stroke::NONE)
+            } else {
+                (theme::TEXT_MUTED, Color32::TRANSPARENT, Stroke::NONE)
+            };
+
+            if bg_color != Color32::TRANSPARENT || stroke.width > 0.0 {
+                ui.painter()
+                    .rect(rect, Rounding::same(4.0), bg_color, stroke);
+            }
+
+            let galley = ui.painter().layout_no_wrap(title, font_id, text_color);
+            let text_pos = egui::pos2(
+                rect.center().x - galley.size().x * 0.5,
+                rect.center().y - galley.size().y * 0.5,
+            );
+            ui.painter().galley(text_pos, galley, text_color);
+        }
+
+        response
     }
 }

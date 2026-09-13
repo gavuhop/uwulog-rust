@@ -8,6 +8,7 @@ pub struct ModalContainer<'a> {
     title: &'a str,
     subtitle: Option<&'a str>,
     width: f32,
+    min_height: Option<f32>,
     max_height: Option<f32>,
 }
 
@@ -22,6 +23,7 @@ impl<'a> ModalContainer<'a> {
             title,
             subtitle: None,
             width: 480.0,
+            min_height: None,
             max_height: None,
         }
     }
@@ -33,6 +35,11 @@ impl<'a> ModalContainer<'a> {
 
     pub fn width(mut self, width: f32) -> Self {
         self.width = width;
+        self
+    }
+
+    pub fn min_height(mut self, height: f32) -> Self {
+        self.min_height = Some(height);
         self
     }
 
@@ -73,6 +80,7 @@ impl<'a> ModalContainer<'a> {
         // 3. Khung cửa sổ Modal nổi ở giữa màn hình
         let mut modal_window = egui::Window::new(self.title)
             .id(self.id)
+            .title_bar(false)
             .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
             .collapsible(false)
             .resizable(false)
@@ -92,35 +100,27 @@ impl<'a> ModalContainer<'a> {
                     }),
             );
 
+        if let Some(h) = self.min_height {
+            modal_window = modal_window.min_height(h);
+        }
+
         if let Some(h) = self.max_height {
             modal_window = modal_window.max_height(h);
         }
 
         modal_window.show(ctx, |ui| {
-            // Header: Title + Subtitle + Close Button
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    ui.label(
-                        egui::RichText::new(self.title)
-                            .strong()
-                            .size(14.0)
-                            .color(theme::TEXT_PRIMARY),
-                    );
-                    if let Some(sub) = self.subtitle {
-                        ui.label(egui::RichText::new(sub).size(11.0).color(theme::TEXT_MUTED));
-                    }
-                });
-
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if super::IconButton::new("✕")
-                        .size(20.0)
-                        .tooltip("Close (Esc)")
-                        .show(ui)
-                        .clicked()
-                    {
-                        close_requested = true;
-                    }
-                });
+            // Header: Title + Subtitle (nút đóng ở góc trên đã được loại bỏ theo thiết kế tối giản)
+            ui.vertical(|ui| {
+                ui.label(
+                    egui::RichText::new(self.title)
+                        .strong()
+                        .size(15.0)
+                        .color(theme::TEXT_PRIMARY),
+                );
+                if let Some(sub) = self.subtitle {
+                    ui.add_space(2.0);
+                    ui.label(egui::RichText::new(sub).size(11.0).color(theme::TEXT_MUTED));
+                }
             });
 
             ui.add_space(8.0);
