@@ -47,8 +47,9 @@ pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
     let is_launch_open = app.is_overlay_open(crate::overlay::OverlayLayer::LaunchModal);
     let is_about_open = app.is_overlay_open(crate::overlay::OverlayLayer::AboutModal);
 
-    let active_index = app.active_index;
+    let active_index = app.workspaces.active_index;
     let session_summaries: Vec<modals::ProjectPickerSessionInfo> = app
+        .workspaces
         .sessions
         .iter()
         .map(|s| modals::ProjectPickerSessionInfo {
@@ -65,14 +66,14 @@ pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
         .collect();
 
     let mut header_cx = header::HeaderContext {
-        overlay_stack: &mut app.overlay_stack,
-        store: &app.store,
+        overlay_stack: &mut app.overlays.stack,
+        store: &app.workspaces.store,
         sessions: &session_summaries,
         active_index,
-        project_search_query: &mut app.project_search_query,
+        project_search_query: &mut app.overlays.project_search_query,
     };
 
-    let active_session = &mut app.sessions[active_index];
+    let active_session = &mut app.workspaces.sessions[active_index];
 
     // Top Panel: Unified 1-Tier Modern Custom Title & Header Bar
     egui::TopBottomPanel::top("header_panel")
@@ -177,7 +178,7 @@ pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
     modals::render_launch_modal(
         ctx,
         is_launch_open,
-        &mut app.launch_modal_draft,
+        &mut app.overlays.launch_modal_draft,
         &active_session.session.source_config,
         &mut dispatch,
     );
@@ -186,7 +187,7 @@ pub fn render_ui(ctx: &egui::Context, app: &mut UwuGuiApp) {
     modals::render_columns_modal(ctx, &mut active_session.view.columns, &mut dispatch);
 
     // Modal Dialog: About uwulog
-    crate::components::render_about_modal(ctx, is_about_open, &mut dispatch);
+    modals::render_about_modal(ctx, is_about_open, &mut dispatch);
 
     // Window Resize Border Handles (Hỗ trợ kéo dãn / thu nhỏ 4 góc và 4 cạnh cửa sổ)
     render_window_resize_borders(ctx);

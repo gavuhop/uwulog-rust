@@ -1,3 +1,9 @@
+pub mod overlay_manager;
+pub mod workspace_manager;
+
+pub use overlay_manager::OverlayManager;
+pub use workspace_manager::WorkspaceManager;
+
 pub use crate::actions::AppAction;
 pub use crate::cli::CliArgs;
 pub use crate::overlay::{OverlayLayer, OverlayStack};
@@ -5,61 +11,149 @@ pub use crate::session::GuiSession;
 pub use crate::state::{ActiveTab, GuiViewState, RAW_STREAM_LIMIT};
 use clap::Parser;
 use eframe::egui;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::runtime::Handle;
 pub use uwu_core_workspace::SourceType;
 use uwu_core_workspace::{
     extract_project_name, SourceConfig, Workspace, WorkspaceSession, WorkspaceStore,
 };
 
+/// Zed-style Unified App Shell: Kết nối WorkspaceManager (quản lý sessions/dữ liệu)
+/// và OverlayManager (quản lý floating palettes/modals) theo kiến trúc phân tầng sạch.
 pub struct UwuGuiApp {
-    pub sessions: Vec<GuiSession>,
-    pub active_index: usize,
-    pub store: WorkspaceStore,
+    pub workspaces: WorkspaceManager,
+    pub overlays: OverlayManager,
     pub rt: Handle,
-    pub launch_modal_draft: Option<SourceConfig>,
-    pub project_search_query: String,
     pub prev_screen_width: f32,
-    pub overlay_stack: OverlayStack,
     pub should_quit: bool,
-}
-
-impl UwuGuiApp {
-    /// Kiểm tra xem một layer có đang mở trên stack hay không
-    #[inline]
-    pub fn is_overlay_open(&self, layer: OverlayLayer) -> bool {
-        self.overlay_stack.is_open(layer)
-    }
-
-    /// Đẩy một layer mới vào đỉnh ngăn xếp nếu chưa có
-    #[inline]
-    pub fn push_overlay(&mut self, layer: OverlayLayer) {
-        self.overlay_stack.push(layer);
-    }
-
-    /// Đóng một layer cụ thể khỏi ngăn xếp
-    #[inline]
-    pub fn close_overlay(&mut self, layer: OverlayLayer) {
-        self.overlay_stack.close(layer);
-    }
 }
 
 impl UwuGuiApp {
     /// Lấy tham chiếu bất biến tới session đang hoạt động
     #[inline]
     pub fn active_session(&self) -> &GuiSession {
-        &self.sessions[self.active_index]
+        self.workspaces.active_session()
     }
 
     /// Lấy tham chiếu khả biến tới session đang hoạt động
     #[inline]
     pub fn active_session_mut(&mut self) -> &mut GuiSession {
-        let idx = self.active_index;
-        &mut self.sessions[idx]
+        self.workspaces.active_session_mut()
     }
-}
 
-impl UwuGuiApp {
+    /// Kiểm tra xem một layer có đang mở trên stack hay không
+    #[inline]
+    pub fn is_overlay_open(&self, layer: OverlayLayer) -> bool {
+        self.overlays.is_open(layer)
+    }
+
+    /// Đẩy một layer mới vào đỉnh ngăn xếp nếu chưa có
+    #[inline]
+    pub fn push_overlay(&mut self, layer: OverlayLayer) {
+        self.overlays.push(layer);
+    }
+
+    /// Đóng một layer cụ thể khỏi ngăn xếp
+    #[inline]
+    pub fn close_overlay(&mut self, layer: OverlayLayer) {
+        self.overlays.close(layer);
+    }
+
+    /// Đóng toàn bộ hệ thống menu chính và submenu liên quan
+    #[inline]
+    pub fn close_main_menu(&mut self) {
+        self.overlays.close_main_menu();
+    }
+
+    /// Đóng popup chuyển dự án và xóa truy vấn tìm kiếm
+    #[inline]
+    pub fn close_project_picker(&mut self) {
+        self.overlays.close_project_picker();
+    }
+
+    /// Đóng lớp giao diện trên cùng theo thứ tự ngăn xếp (Navigation Stack LIFO)
+    #[inline]
+    pub fn dismiss_top_layer(&mut self) -> bool {
+        self.overlays
+            .dismiss_top_layer(self.workspaces.active_session_mut())
+    }
+
+    /// Lưu trạng thái workspace hiện tại vào file lưu trữ cấu hình
+    #[inline]
+    pub fn save_current_workspace(&mut self) {
+        self.workspaces.save_current_workspace();
+    }
+
+    /// Tải cấu hình từ một Workspace đã lưu
+    #[inline]
+    pub fn load_workspace(&mut self, ws: &Workspace) {
+        self.workspaces.load_workspace(ws, &self.rt);
+    }
+
+    /// Chuyển đổi session đang xem sang chỉ mục tương ứng
+    #[inline]
+    pub fn switch_session(&mut self, index: usize) {
+        self.workspaces.switch_session(index);
+    }
+
+    /// Mở hoặc kích hoạt một Workspace từ danh sách lưu trữ
+    #[inline]
+    pub fn open_or_switch_workspace(&mut self, ws: &Workspace) {
+        self.workspaces.open_or_switch_workspace(ws, &self.rt);
+    }
+
+    /// Đóng một tab session cụ thể
+    #[inline]
+    pub fn close_session(&mut self, index: usize) {
+        self.workspaces.close_session(index);
+    }
+
+    /// Chuyển đổi session theo vòng lặp (Next / Prev)
+    #[inline]
+    pub fn cycle_project(&mut self, forward: bool) {
+        self.workspaces.cycle_project(forward);
+    }
+
+    /// Bắt đầu stream nguồn cho session đang hoạt động
+    #[inline]
+    pub fn start_configured_source(&mut self) {
+        self.workspaces.start_configured_source(&self.rt);
+    }
+
+    /// Dừng stream nguồn hiện tại
+    #[inline]
+    pub fn stop_current_source(&mut self) {
+        self.workspaces.stop_current_source();
+    }
+
+    /// Khởi động lại stream nguồn hiện tại
+    #[inline]
+    pub fn restart_current_source(&mut self) {
+        self.workspaces.restart_current_source(&self.rt);
+    }
+
+    /// Chạy tác vụ tải biến môi trường trong nền
+    #[inline]
+    pub fn spawn_load_environment(&mut self) {
+        self.workspaces.spawn_load_environment(&self.rt);
+    }
+
+    /// Cập nhật trạng thái định kỳ cho các sessions
+    #[inline]
+    pub fn tick(&mut self) {
+        self.workspaces.tick(std::time::Instant::now());
+    }
+
+    #[inline]
+    pub fn format_field_term(field: &str, val: &str) -> String {
+        GuiSession::format_field_term(field, val)
+    }
+
+    #[inline]
+    pub fn format_selection_term(text: &str) -> String {
+        GuiSession::format_selection_term(text)
+    }
+
     /// Khởi tạo GuiSession ban đầu từ tham số CLI và lịch sử WorkspaceStore đã lưu
     pub(crate) fn build_initial_session(
         cli: &CliArgs,
@@ -123,29 +217,30 @@ impl UwuGuiApp {
         crate::theme::apply_windows_titlebar_theme(cc);
 
         let cli = CliArgs::parse();
-        let store = WorkspaceStore::load();
+        let mut store = WorkspaceStore::load();
         let (initial_gui_session, has_custom_source, saved_id) =
             Self::build_initial_session(&cli, &store);
 
+        if let (Some(id), false) = (saved_id, has_custom_source) {
+            store.active_workspace_id = Some(id);
+            let _ = store.save();
+        }
+
+        let workspaces = WorkspaceManager::new(initial_gui_session, store);
+        let overlays = OverlayManager::new();
+
         let mut app = Self {
-            sessions: vec![initial_gui_session],
-            active_index: 0,
-            store,
+            workspaces,
+            overlays,
             rt,
-            launch_modal_draft: None,
-            project_search_query: String::new(),
             prev_screen_width: 0.0,
-            overlay_stack: OverlayStack::new(),
             should_quit: false,
         };
 
         // Background task nạp biến môi trường cho session đầu tiên
         app.spawn_load_environment();
 
-        if let (Some(id), false) = (saved_id, has_custom_source) {
-            app.store.active_workspace_id = Some(id);
-            let _ = app.store.save();
-        } else {
+        if saved_id.is_none() || has_custom_source {
             // Tự động lưu workspace mới hoặc cấu hình nguồn mới vào store
             app.save_current_workspace();
         }
@@ -158,78 +253,9 @@ impl UwuGuiApp {
         app
     }
 
-    pub fn switch_session(&mut self, index: usize) {
-        if index < self.sessions.len() {
-            if self.active_index == index {
-                return;
-            }
-            self.active_index = index;
-            self.store.active_workspace_id = Some(self.sessions[index].session.id);
-            let _ = self.store.save();
-            self.active_session_mut().trigger_full_search();
-        }
-    }
-
-    pub fn open_or_switch_workspace(&mut self, ws: &Workspace) {
-        if let Some(pos) = self
-            .sessions
-            .iter()
-            .position(|s| s.session.id == ws.id || s.session.location.is_same(&ws.location))
-        {
-            self.switch_session(pos);
-            return;
-        }
-
-        let cap = self.active_session().session.source_config.capacity;
-        let limit = self.active_session().session.display_limit;
-        let mut gui_session = GuiSession::from_workspace(ws, cap, limit);
-        gui_session.session.spawn_load_environment(&self.rt);
-        self.sessions.push(gui_session);
-        self.switch_session(self.sessions.len() - 1);
-    }
-
-    pub fn close_session(&mut self, index: usize) {
-        if index >= self.sessions.len() {
-            return;
-        }
-
-        let mut removed = self.sessions.remove(index);
-        removed.session.stop_source();
-
-        if self.sessions.is_empty() {
-            let s = WorkspaceSession::new_default(
-                removed.session.source_config.capacity,
-                removed.session.display_limit,
-            );
-            self.sessions.push(GuiSession::new(s));
-            self.active_index = 0;
-        } else if self.active_index > index {
-            self.active_index -= 1;
-        } else if self.active_index >= self.sessions.len() {
-            self.active_index = self.sessions.len() - 1;
-        }
-
-        self.store.active_workspace_id = Some(self.sessions[self.active_index].session.id);
-        let _ = self.store.save();
-        self.active_session_mut().trigger_full_search();
-    }
-
-    pub fn cycle_project(&mut self, forward: bool) {
-        if self.sessions.is_empty() {
-            return;
-        }
-        let n = self.sessions.len();
-        let new_idx = if forward {
-            (self.active_index + 1) % n
-        } else {
-            (self.active_index + n - 1) % n
-        };
-        self.switch_session(new_idx);
-    }
-
     /// Điều phối và thực thi các hành động cấp ứng dụng (Zed-style Command Dispatcher)
     pub fn dispatch_action(&mut self, action: AppAction) {
-        if self.sessions[self.active_index].handle_action(&action) {
+        if self.workspaces.active_session_mut().handle_action(&action) {
             return;
         }
 
@@ -246,27 +272,28 @@ impl UwuGuiApp {
             }
             AppAction::LoadWorkspace(ws) => {
                 self.load_workspace(&ws);
-                if self.launch_modal_draft.is_some() {
-                    self.launch_modal_draft =
+                if self.overlays.launch_modal_draft.is_some() {
+                    self.overlays.launch_modal_draft =
                         Some(self.active_session().session.source_config.clone());
                 }
             }
             AppAction::DeleteWorkspace(id) => {
-                self.store.remove(id);
+                self.workspaces.store.remove(id);
             }
             AppAction::StartSource => self.start_configured_source(),
             AppAction::StopSource => self.stop_current_source(),
             AppAction::RestartSource => self.restart_current_source(),
             AppAction::OpenLaunchModal => {
-                self.launch_modal_draft = Some(self.active_session().session.source_config.clone());
+                self.overlays.launch_modal_draft =
+                    Some(self.active_session().session.source_config.clone());
                 self.push_overlay(OverlayLayer::LaunchModal);
             }
             AppAction::CloseLaunchModal => {
                 self.close_overlay(OverlayLayer::LaunchModal);
-                self.launch_modal_draft = None;
+                self.overlays.launch_modal_draft = None;
             }
             AppAction::ApplyLaunchModal => {
-                if let Some(draft) = self.launch_modal_draft.take() {
+                if let Some(draft) = self.overlays.launch_modal_draft.take() {
                     self.active_session_mut().session.source_config = draft;
                     self.save_current_workspace();
                     self.restart_current_source();
@@ -278,7 +305,7 @@ impl UwuGuiApp {
                 self.save_current_workspace();
                 self.restart_current_source();
                 self.close_overlay(OverlayLayer::LaunchModal);
-                self.launch_modal_draft = None;
+                self.overlays.launch_modal_draft = None;
             }
             AppAction::OpenColumnsModal => {
                 self.active_session_mut().view.columns.open_modal();
@@ -325,124 +352,6 @@ impl UwuGuiApp {
             _ => {}
         }
     }
-
-    /// Đóng toàn bộ hệ thống menu chính và submenu liên quan
-    #[inline]
-    pub fn close_main_menu(&mut self) {
-        self.overlay_stack.close_main_menu();
-    }
-
-    /// Đóng lớp giao diện trên cùng theo thứ tự ngăn xếp (Navigation Stack LIFO)
-    pub fn dismiss_top_layer(&mut self) -> bool {
-        if let Some(top) = self.overlay_stack.pop() {
-            match top {
-                OverlayLayer::MainMenu => {
-                    self.close_overlay(OverlayLayer::ThemeSubmenu);
-                }
-                OverlayLayer::ThemeSubmenu => {}
-                OverlayLayer::AboutModal => {}
-                OverlayLayer::LaunchModal => {
-                    self.launch_modal_draft = None;
-                }
-                OverlayLayer::ProjectPicker => {
-                    self.project_search_query.clear();
-                }
-                OverlayLayer::ColumnsModal => {
-                    self.active_session_mut().view.columns.close_modal();
-                }
-            }
-            true
-        } else if self.active_session().view.search.autocomplete.is_open {
-            self.active_session_mut().view.search.autocomplete.is_open = false;
-            true
-        } else if self.active_session().view.search.history.is_open {
-            self.active_session_mut().view.search.history.close_popup();
-            true
-        } else if self.active_session().view.active_tab == ActiveTab::Unfiltered {
-            self.active_session_mut().close_unfiltered_stream();
-            true
-        } else if self.active_session().view.inspector.selected_log.is_some() {
-            self.active_session_mut().view.inspector.selected_log = None;
-            true
-        } else {
-            false
-        }
-    }
-
-    pub fn close_project_picker(&mut self) {
-        self.close_overlay(OverlayLayer::ProjectPicker);
-        self.project_search_query.clear();
-    }
-
-    pub fn save_current_workspace(&mut self) {
-        let active_idx = self.active_index;
-        let gui_session = &mut self.sessions[active_idx];
-        if gui_session.session.name.trim().is_empty() {
-            gui_session.session.name = "Workspace".to_string();
-        }
-
-        gui_session.session.sync_location();
-
-        let mut ws = gui_session.session.to_workspace();
-        ws.last_query = gui_session.view.search.query.clone();
-        self.store.add_or_update(ws);
-    }
-
-    pub fn load_workspace(&mut self, ws: &Workspace) {
-        let active_idx = self.active_index;
-        let gui_session = &mut self.sessions[active_idx];
-        gui_session.session.apply_workspace(ws);
-        gui_session.view.search.query = ws.last_query.clone();
-        gui_session.session.spawn_load_environment(&self.rt);
-        self.save_current_workspace();
-    }
-
-    pub fn start_configured_source(&mut self) {
-        self.save_current_workspace();
-        let active_idx = self.active_index;
-        self.sessions[active_idx].session.start_source(&self.rt);
-    }
-
-    pub fn stop_current_source(&mut self) {
-        let active_idx = self.active_index;
-        self.sessions[active_idx].session.stop_source();
-    }
-
-    pub fn restart_current_source(&mut self) {
-        self.save_current_workspace();
-        let active_idx = self.active_index;
-        self.sessions[active_idx].session.restart_source(&self.rt);
-        self.sessions[active_idx].view.reset_stream_data();
-        self.active_session_mut().trigger_full_search();
-    }
-
-    pub fn spawn_load_environment(&mut self) {
-        let active_idx = self.active_index;
-        self.sessions[active_idx]
-            .session
-            .spawn_load_environment(&self.rt);
-    }
-
-    pub fn tick(&mut self) {
-        let now = Instant::now();
-        for (idx, s) in self.sessions.iter_mut().enumerate() {
-            if idx == self.active_index {
-                s.tick(now);
-            } else {
-                s.session.tick();
-            }
-        }
-    }
-
-    #[inline]
-    pub fn format_field_term(field: &str, val: &str) -> String {
-        GuiSession::format_field_term(field, val)
-    }
-
-    #[inline]
-    pub fn format_selection_term(text: &str) -> String {
-        GuiSession::format_selection_term(text)
-    }
 }
 
 impl eframe::App for UwuGuiApp {
@@ -459,12 +368,11 @@ impl eframe::App for UwuGuiApp {
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.save_current_workspace();
-        for s in &mut self.sessions {
+        for s in &mut self.workspaces.sessions {
             s.session.stop_source();
         }
     }
 }
 
 #[cfg(test)]
-#[path = "app_tests.rs"]
 mod tests;

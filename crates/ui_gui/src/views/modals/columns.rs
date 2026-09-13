@@ -18,42 +18,30 @@ pub fn render_columns_modal(
     }
 
     let mut action_to_dispatch: Option<AppAction> = None;
+    let mut should_reset_defaults = false;
 
-    egui::Window::new("📊 Table Columns & Ordering")
-        .frame(
-            egui::Frame::window(&ctx.style())
-                .fill(theme::BG_MANTLE)
-                .stroke(Stroke::new(1.0, theme::BG_SURFACE0))
-                .inner_margin(egui::Margin::same(14.0))
-                .rounding(Rounding::same(6.0)),
-        )
-        .collapsible(false)
-        .resizable(false)
-        .min_width(520.0)
-        .max_width(520.0)
-        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-        .show(ctx, |ui| {
-            ui.label(
-                egui::RichText::new("Columns Configuration & Drag-to-Reorder")
-                    .size(14.0)
-                    .strong()
-                    .color(theme::TEXT_KEY),
-            );
-            ui.label(
-                egui::RichText::new(
-                    "Click & drag ⠿ items up or down to reorder columns. Toggle checkboxes to show/hide.",
-                )
-                .size(11.5)
-                .color(theme::TEXT_MUTED),
-            );
-            ui.separator();
-            ui.add_space(6.0);
-
+    let resp = crate::components::ui::ModalContainer::new(
+        "columns_modal_window",
+        "📊 Table Columns & Ordering",
+    )
+    .subtitle("Click & drag ⠿ items up or down to reorder columns. Toggle checkboxes to show/hide.")
+    .width(520.0)
+    .show(
+        ctx,
+        |ui| {
             // Filter search box
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("🔍").size(12.0).color(theme::TEXT_MUTED));
+                ui.label(
+                    egui::RichText::new("🔍")
+                        .size(12.0)
+                        .color(theme::TEXT_MUTED),
+                );
                 let avail_w = ui.available_width();
-                let clear_btn_w = if columns.filter_query.is_empty() { 0.0 } else { 28.0 };
+                let clear_btn_w = if columns.filter_query.is_empty() {
+                    0.0
+                } else {
+                    28.0
+                };
                 let text_w = (avail_w - clear_btn_w - 6.0).max(100.0);
 
                 ui.add_sized(
@@ -63,7 +51,13 @@ pub fn render_columns_modal(
                         .font(egui::TextStyle::Monospace)
                         .margin(egui::Margin::symmetric(8.0, 4.0)),
                 );
-                if !columns.filter_query.is_empty() && ui.button("✖").clicked() {
+                if !columns.filter_query.is_empty()
+                    && crate::components::ui::IconButton::new("✖")
+                        .size(20.0)
+                        .tooltip("Clear filter")
+                        .show(ui)
+                        .clicked()
+                {
                     columns.filter_query.clear();
                 }
             });
@@ -105,10 +99,8 @@ pub fn render_columns_modal(
 
                             let is_dragging_this = columns.dragged_index == Some(idx);
                             let desired_size = egui::vec2(ui.available_width(), 30.0);
-                            let (rect, resp) = ui.allocate_exact_size(
-                                desired_size,
-                                egui::Sense::click_and_drag(),
-                            );
+                            let (rect, resp) =
+                                ui.allocate_exact_size(desired_size, egui::Sense::click_and_drag());
 
                             // Detect drag started
                             if resp.drag_started() {
@@ -152,12 +144,8 @@ pub fn render_columns_modal(
                                 Stroke::new(1.0, theme::BG_SURFACE0)
                             };
 
-                            ui.painter().rect(
-                                rect,
-                                Rounding::same(4.0),
-                                bg_color,
-                                border_stroke,
-                            );
+                            ui.painter()
+                                .rect(rect, Rounding::same(4.0), bg_color, border_stroke);
 
                             let center_y = rect.center().y;
 
@@ -263,8 +251,6 @@ pub fn render_columns_modal(
                                     theme::TEXT_MUTED,
                                 );
                             }
-
-                            ui.add_space(4.0);
                         }
 
                         if let Some(idx) = new_drag_source {
@@ -284,57 +270,49 @@ pub fn render_columns_modal(
                         }
                     });
             });
+        },
+        Some(|ui: &mut egui::Ui, close_req: &mut bool| {
+            if crate::components::ui::AppButton::new()
+                .label("Reset Defaults")
+                .icon("🔄")
+                .tooltip("Reset draft column order and visibility to default")
+                .show(ui)
+                .clicked()
+            {
+                should_reset_defaults = true;
+            }
 
-            ui.add_space(10.0);
-            ui.separator();
-            ui.add_space(6.0);
-
-            // Action buttons
-            ui.horizontal(|ui| {
-                let reset_btn = egui::Button::new(
-                    egui::RichText::new("🔄 Reset Defaults").color(theme::TEXT_PRIMARY),
-                )
-                .fill(theme::BG_SURFACE0)
-                .stroke(Stroke::new(1.0, theme::BG_SURFACE1))
-                .rounding(Rounding::same(4.0));
-
-                if ui
-                    .add(reset_btn)
-                    .on_hover_text("Reset draft column order and visibility to default")
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if crate::components::ui::AppButton::new()
+                    .label("Apply & Done")
+                    .icon("✔")
+                    .variant(crate::components::ui::ButtonVariant::Success)
+                    .show(ui)
                     .clicked()
                 {
-                    columns.reset_draft_to_defaults();
+                    action_to_dispatch = Some(AppAction::ApplyColumnsModal);
                 }
 
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let done_btn = egui::Button::new(
-                        egui::RichText::new("✔ Apply & Done")
-                            .strong()
-                            .color(theme::TEXT_PRIMARY),
-                    )
-                    .fill(theme::BTN_RESTART_BG)
-                    .stroke(Stroke::new(1.0, theme::BTN_RESTART_BORDER))
-                    .rounding(Rounding::same(4.0));
+                ui.add_space(6.0);
 
-                    if ui.add(done_btn).clicked() {
-                        action_to_dispatch = Some(AppAction::ApplyColumnsModal);
-                    }
-
-                    ui.add_space(6.0);
-
-                    let cancel_btn = egui::Button::new(
-                        egui::RichText::new("Cancel").color(theme::TEXT_MUTED),
-                    )
-                    .fill(theme::BG_SURFACE0)
-                    .stroke(Stroke::new(1.0, theme::BG_SURFACE1))
-                    .rounding(Rounding::same(4.0));
-
-                    if ui.add(cancel_btn).clicked() {
-                        action_to_dispatch = Some(AppAction::CloseColumnsModal);
-                    }
-                });
+                if crate::components::ui::AppButton::new()
+                    .label("Cancel")
+                    .show(ui)
+                    .clicked()
+                {
+                    *close_req = true;
+                }
             });
-        });
+        }),
+    );
+
+    if should_reset_defaults {
+        columns.reset_draft_to_defaults();
+    }
+
+    if resp.closed {
+        action_to_dispatch = Some(AppAction::CloseColumnsModal);
+    }
 
     if let Some(action) = action_to_dispatch {
         dispatch(action);

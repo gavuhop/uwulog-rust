@@ -3,7 +3,7 @@ use crate::actions::AppAction;
 use crate::session::GuiSession;
 use crate::state::ActiveTab;
 use crate::theme;
-use eframe::egui::{self, Rounding, Stroke};
+use eframe::egui::{self, Stroke};
 
 pub fn render_toolbar(
     ui: &mut egui::Ui,
@@ -18,23 +18,12 @@ pub fn render_toolbar(
         .iter()
         .filter(|c| c.visible)
         .count();
-    let columns_btn = egui::Button::new(
-        egui::RichText::new(format!("📊 ({visible_count})"))
-            .size(11.5)
-            .strong()
-            .color(theme::TEXT_PRIMARY),
-    )
-    .fill(if session.view.columns.is_modal_open {
-        theme::BG_SURFACE1
-    } else {
-        theme::BG_SURFACE0
-    })
-    .stroke(Stroke::new(1.0, theme::BG_SURFACE1))
-    .rounding(Rounding::same(4.0));
-
-    if ui
-        .add(columns_btn)
-        .on_hover_text("Configure visible columns and adjust their display order")
+    let col_label = format!("📊 ({visible_count})");
+    if crate::components::ui::AppButton::new()
+        .label(&col_label)
+        .selected(session.view.columns.is_modal_open)
+        .tooltip("Configure visible columns and adjust their display order")
+        .show(ui)
         .clicked()
     {
         dispatch(AppAction::OpenColumnsModal);
@@ -43,19 +32,9 @@ pub fn render_toolbar(
     ui.add_space(2.0);
 
     // Source Parameters Modal Button
-    let params_btn = egui::Button::new(
-        egui::RichText::new("⚙")
-            .size(11.5)
-            .strong()
-            .color(theme::TEXT_PRIMARY),
-    )
-    .fill(theme::BG_SURFACE0)
-    .stroke(Stroke::new(1.0, theme::BG_SURFACE1))
-    .rounding(Rounding::same(4.0));
-
-    if ui
-        .add(params_btn)
-        .on_hover_text("Configure engine buffer, display limits & sources")
+    if crate::components::ui::IconButton::new("⚙")
+        .tooltip("Configure engine buffer, display limits & sources")
+        .show(ui)
         .clicked()
     {
         dispatch(AppAction::OpenLaunchModal);
@@ -65,41 +44,23 @@ pub fn render_toolbar(
 
     // Stop / Restart Source Button
     if session.session.is_source_running {
-        let stop_btn = egui::Button::new(
-            egui::RichText::new("⏹")
-                .size(11.5)
-                .color(theme::TEXT_PRIMARY)
-                .strong(),
-        )
-        .fill(theme::BTN_STOP_BG)
-        .stroke(Stroke::new(1.0, theme::BTN_STOP_BORDER))
-        .rounding(Rounding::same(4.0));
-
-        if ui
-            .add(stop_btn)
-            .on_hover_text("Stop running process source")
+        if crate::components::ui::IconButton::new("⏹")
+            .fill(theme::BTN_STOP_BG)
+            .stroke(Stroke::new(1.0, theme::BTN_STOP_BORDER))
+            .tooltip("Stop running process source")
+            .show(ui)
             .clicked()
         {
             dispatch(AppAction::StopSource);
         }
-    } else {
-        let restart_btn = egui::Button::new(
-            egui::RichText::new("🔄")
-                .size(11.5)
-                .color(theme::TEXT_PRIMARY)
-                .strong(),
-        )
+    } else if crate::components::ui::IconButton::new("🔄")
         .fill(theme::BTN_RESTART_BG)
         .stroke(Stroke::new(1.0, theme::BTN_RESTART_BORDER))
-        .rounding(Rounding::same(4.0));
-
-        if ui
-            .add(restart_btn)
-            .on_hover_text("Clear logs and restart source")
-            .clicked()
-        {
-            dispatch(AppAction::RestartSource);
-        }
+        .tooltip("Clear logs and restart source")
+        .show(ui)
+        .clicked()
+    {
+        dispatch(AppAction::RestartSource);
     }
 
     ui.add_space(4.0);
@@ -112,19 +73,9 @@ pub fn render_toolbar(
             "Re-capture the latest surrounding context snapshot from buffer"
         };
 
-        let snapshot_btn = egui::Button::new(
-            egui::RichText::new("📸")
-                .size(11.0)
-                .color(theme::TEXT_PRIMARY)
-                .strong(),
-        )
-        .fill(theme::BG_SURFACE0)
-        .stroke(Stroke::new(1.0, theme::BG_SURFACE1))
-        .rounding(Rounding::same(4.0));
-
-        if ui
-            .add(snapshot_btn)
-            .on_hover_text(snapshot_tooltip)
+        if crate::components::ui::IconButton::new("📸")
+            .tooltip(snapshot_tooltip)
+            .show(ui)
             .clicked()
         {
             if session.view.unfiltered.is_live {
@@ -157,33 +108,24 @@ pub fn render_toolbar(
         ),
     };
 
-    let (latch_text, latch_text_color, latch_bg, latch_border) = if is_live {
-        (
-            "⚓ Live",
-            theme::COLOR_INFO,
-            theme::BTN_LATCHED_BG,
-            theme::BTN_LATCHED_BORDER,
-        )
+    let (latch_text, latch_bg, latch_border) = if is_live {
+        ("⚓ Live", theme::BTN_LATCHED_BG, theme::BTN_LATCHED_BORDER)
     } else {
         (
             "⏸ Paused",
-            theme::COLOR_WARN,
             theme::BTN_UNLATCHED_BG,
             theme::BTN_UNLATCHED_BORDER,
         )
     };
 
-    let latch_btn = egui::Button::new(
-        egui::RichText::new(latch_text)
-            .size(11.5)
-            .color(latch_text_color)
-            .strong(),
-    )
-    .fill(latch_bg)
-    .stroke(Stroke::new(1.0, latch_border))
-    .rounding(Rounding::same(4.0));
-
-    if ui.add(latch_btn).on_hover_text(toggle_tooltip).clicked() {
+    if crate::components::ui::AppButton::new()
+        .label(latch_text)
+        .fill(latch_bg)
+        .stroke(Stroke::new(1.0, latch_border))
+        .tooltip(toggle_tooltip)
+        .show(ui)
+        .clicked()
+    {
         match session.view.active_tab {
             ActiveTab::Filtered => {
                 dispatch(AppAction::ToggleLatch);
@@ -212,39 +154,28 @@ pub fn render_environment_status(
             let spinner_frames = ['◐', '◓', '◑', '◒'];
             let frame_idx = (ui.input(|i| i.time) * 6.0) as usize % spinner_frames.len();
             let spinner_char = spinner_frames[frame_idx];
+            let label = format!("{spinner_char} Env loading...");
 
-            let badge = egui::Button::new(
-                egui::RichText::new(format!("{spinner_char} Env loading..."))
-                    .size(10.5)
-                    .strong()
-                    .color(theme::COLOR_INFO),
-            )
-            .fill(theme::BG_SURFACE0)
-            .stroke(Stroke::new(1.0, theme::BG_SURFACE1))
-            .rounding(Rounding::same(4.0));
-
-            ui.add(badge)
-                .on_hover_text("Loading system environment variables");
+            crate::components::ui::AppButton::new()
+                .label(&label)
+                .small()
+                .tooltip("Loading system environment variables")
+                .show(ui);
             ui.ctx().request_repaint();
         }
         uwu_core_workspace::EnvLoadStatus::Ready { .. }
         | uwu_core_workspace::EnvLoadStatus::Idle => {}
         uwu_core_workspace::EnvLoadStatus::Failed { error } => {
             ui.add_space(2.0);
-            let badge = egui::Button::new(
-                egui::RichText::new("⚠️ env error")
-                    .size(10.5)
-                    .strong()
-                    .color(theme::COLOR_WARN),
-            )
-            .fill(theme::BG_SURFACE0)
-            .stroke(Stroke::new(1.0, theme::COLOR_WARN))
-            .rounding(Rounding::same(4.0));
-
-            let resp = ui.add(badge).on_hover_text(format!(
-                "Lỗi nạp biến môi trường:\n{error}\n• Click để thử lại (Retry)"
-            ));
-            if resp.clicked() {
+            let tooltip = format!("Lỗi nạp biến môi trường:\n{error}\n• Click để thử lại (Retry)");
+            if crate::components::ui::AppButton::new()
+                .label("⚠️ env error")
+                .small()
+                .stroke(Stroke::new(1.0, theme::COLOR_WARN))
+                .tooltip(&tooltip)
+                .show(ui)
+                .clicked()
+            {
                 // Tái nạp môi trường cho session hiện tại
                 dispatch(AppAction::StartSource);
             }

@@ -94,12 +94,10 @@ pub fn render_log_counter(ui: &mut egui::Ui, session: &GuiSession) {
         }
     };
 
-    ui.add(egui::Label::new(
-        egui::RichText::new(count_text)
-            .font(egui::FontId::monospace(11.5))
-            .color(count_color),
-    ))
-    .on_hover_text(count_tooltip);
+    crate::components::ui::CountBadge::new(&count_text)
+        .text_color(count_color)
+        .tooltip(&count_tooltip)
+        .show(ui);
 }
 
 #[inline]

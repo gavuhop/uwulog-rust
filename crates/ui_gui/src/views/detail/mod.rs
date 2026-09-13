@@ -3,9 +3,10 @@ pub mod text_box;
 
 use crate::actions::{ActionContext, AppAction};
 use crate::components::render_card;
+use crate::components::ui::{AppButton, ButtonVariant, TabButton};
 use crate::session::GuiSession;
 use crate::theme;
-use eframe::egui::{self, Id, Rounding, Stroke};
+use eframe::egui::{self, Id};
 use fields::{render_kv_field, render_meta_field};
 use std::collections::HashMap;
 use text_box::render_text_box;
@@ -32,54 +33,29 @@ pub fn render_detail(
             );
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let close_btn = egui::Button::new(
-                    egui::RichText::new("Close")
-                        .size(11.5)
-                        .color(theme::TEXT_PRIMARY),
-                )
-                .fill(theme::BG_SURFACE0)
-                .stroke(Stroke::new(1.0, theme::BG_SURFACE1))
-                .rounding(Rounding::same(4.0));
-
-                if ui.add(close_btn).clicked() {
+                let close_btn = AppButton::new().label("Close").small();
+                if close_btn.show(ui).clicked() {
                     action_to_dispatch = Some(AppAction::SelectLog(None));
                 }
 
                 ui.add_space(4.0);
 
-                let unfil_btn = egui::Button::new(
-                    egui::RichText::new("🔍 Unfiltered")
-                        .size(11.5)
-                        .color(theme::TEXT_PRIMARY),
-                )
-                .fill(theme::BG_SURFACE0)
-                .stroke(Stroke::new(1.0, theme::BG_SURFACE1))
-                .rounding(Rounding::same(4.0));
-
-                if ui
-                    .add(unfil_btn)
-                    .on_hover_text("View surrounding logs in full unfiltered stream")
-                    .clicked()
-                {
+                let unfil_btn = AppButton::new()
+                    .label("Unfiltered")
+                    .icon("🔍")
+                    .small()
+                    .tooltip("View surrounding logs in full unfiltered stream");
+                if unfil_btn.show(ui).clicked() {
                     action_to_dispatch = Some(AppAction::OpenUnfilteredStream(Some(event_id)));
                 }
 
                 ui.add_space(4.0);
 
                 if has_any_highlights {
-                    let unhl_all_btn = egui::Button::new(
-                        egui::RichText::new("Unhighlight all")
-                            .size(11.5)
-                            .color(theme::TEXT_PRIMARY),
-                    )
-                    .fill(theme::BG_SURFACE0)
-                    .stroke(Stroke::new(1.0, theme::BG_SURFACE1))
-                    .rounding(Rounding::same(4.0));
-
-                    if ui.add(unhl_all_btn).clicked() {
+                    let unhl_all_btn = AppButton::new().label("Unhighlight all").small();
+                    if unhl_all_btn.show(ui).clicked() {
                         action_to_dispatch = Some(AppAction::ClearAllHighlights);
                     }
-
                     ui.add_space(4.0);
                 }
 
@@ -89,20 +65,15 @@ pub fn render_detail(
                     "Highlight row"
                 };
 
-                let hl_btn = egui::Button::new(
-                    egui::RichText::new(hl_text)
-                        .size(11.5)
-                        .color(theme::TEXT_PRIMARY),
-                )
-                .fill(if is_highlighted {
-                    theme::BG_ROW_HIGHLIGHT
-                } else {
-                    theme::BG_SURFACE0
-                })
-                .stroke(Stroke::new(1.0, theme::BG_SURFACE1))
-                .rounding(Rounding::same(4.0));
-
-                if ui.add(hl_btn).clicked() {
+                let hl_btn = AppButton::new()
+                    .label(hl_text)
+                    .small()
+                    .variant(if is_highlighted {
+                        ButtonVariant::Primary
+                    } else {
+                        ButtonVariant::Default
+                    });
+                if hl_btn.show(ui).clicked() {
                     action_to_dispatch = Some(AppAction::ToggleRowHighlight(event_id));
                 }
             });
@@ -220,30 +191,7 @@ pub fn render_detail(
 
                     ui.horizontal(|ui| {
                         // 1. Nút "Raw"
-                        let raw_btn = egui::Button::new(
-                            egui::RichText::new("Raw").size(11.0).color(if !is_beauty {
-                                theme::TEXT_KEY
-                            } else {
-                                theme::TEXT_PRIMARY
-                            }),
-                        )
-                        .fill(if !is_beauty {
-                            theme::BG_SURFACE1
-                        } else {
-                            theme::BG_SURFACE0
-                        })
-                        .stroke(Stroke::new(
-                            1.0,
-                            if !is_beauty {
-                                theme::TEXT_KEY
-                            } else {
-                                theme::BG_SURFACE1
-                            },
-                        ))
-                        .rounding(Rounding::same(4.0));
-
-                        let raw_resp = ui.add(raw_btn);
-                        if raw_resp.clicked() {
+                        if TabButton::new("Raw", !is_beauty).show(ui).clicked() {
                             is_beauty = false;
                             ui.data_mut(|d| d.insert_temp(view_mode_id, false));
                         }
@@ -251,33 +199,11 @@ pub fn render_detail(
                         ui.add_space(4.0);
 
                         // 2. Nút "Beauty" (kế bên nút Raw)
-                        let beauty_btn =
-                            egui::Button::new(egui::RichText::new("Beauty").size(11.0).color(
-                                if is_beauty {
-                                    theme::TEXT_KEY
-                                } else if is_json {
-                                    theme::TEXT_PRIMARY
-                                } else {
-                                    theme::TEXT_MUTED
-                                },
-                            ))
-                            .fill(if is_beauty {
-                                theme::BG_SURFACE1
-                            } else {
-                                theme::BG_SURFACE0
-                            })
-                            .stroke(Stroke::new(
-                                1.0,
-                                if is_beauty {
-                                    theme::TEXT_KEY
-                                } else {
-                                    theme::BG_SURFACE1
-                                },
-                            ))
-                            .rounding(Rounding::same(4.0));
-
-                        let beauty_resp = ui.add_enabled(is_json, beauty_btn);
-                        if beauty_resp.clicked() {
+                        if TabButton::new("Beauty", is_beauty)
+                            .enabled(is_json)
+                            .show(ui)
+                            .clicked()
+                        {
                             is_beauty = true;
                             ui.data_mut(|d| d.insert_temp(view_mode_id, true));
                         }
@@ -295,28 +221,15 @@ pub fn render_detail(
                         }
 
                         let copy_label = if is_beauty { "Copy Beauty" } else { "Copy Raw" };
-                        let copy_btn =
-                            egui::Button::new(egui::RichText::new(copy_label).size(11.0).color(
-                                if is_flashing {
-                                    theme::TEXT_KEY
-                                } else {
-                                    theme::TEXT_PRIMARY
-                                },
-                            ))
-                            .fill(if is_flashing {
-                                theme::BG_SURFACE1
+                        let copy_btn = AppButton::new()
+                            .label(copy_label)
+                            .icon("📋")
+                            .small()
+                            .variant(if is_flashing {
+                                ButtonVariant::Primary
                             } else {
-                                theme::BG_SURFACE0
-                            })
-                            .stroke(Stroke::new(
-                                1.0,
-                                if is_flashing {
-                                    theme::TEXT_KEY
-                                } else {
-                                    theme::BG_SURFACE1
-                                },
-                            ))
-                            .rounding(Rounding::same(4.0));
+                                ButtonVariant::Default
+                            });
 
                         let copy_text_val = if is_beauty {
                             event.beauty_display()
@@ -324,7 +237,7 @@ pub fn render_detail(
                             event.raw_display()
                         };
 
-                        if ui.add(copy_btn).clicked() {
+                        if copy_btn.show(ui).clicked() {
                             ui.data_mut(|d| d.insert_temp(copy_id, now));
                             ui.ctx().copy_text(copy_text_val.to_string());
                             ui.ctx().request_repaint();

@@ -2,7 +2,7 @@ use crate::actions::AppAction;
 use crate::session::GuiSession;
 use crate::state::generate_suggestions;
 use crate::theme;
-use eframe::egui::{self, Id, Stroke};
+use eframe::egui::{self, Id};
 use std::time::Instant;
 
 pub fn render_search_bar(
@@ -82,37 +82,21 @@ pub fn render_search_bar(
 
     // Quick Clear button if query is not empty
     if !session.view.search.query.is_empty()
-        && ui
-            .button(
-                egui::RichText::new("✖")
-                    .size(10.5)
-                    .color(theme::TEXT_PRIMARY),
-            )
-            .on_hover_text("Clear filter")
+        && crate::components::ui::IconButton::new("✖")
+            .size(20.0)
+            .tooltip("Clear filter")
+            .show(ui)
             .clicked()
     {
         dispatch(AppAction::ClearQuery);
     }
 
     // Search History Toggle Button (⏱)
-    let history_btn = egui::Button::new(egui::RichText::new("⏱").size(11.0).color(
-        if session.view.search.history.is_open {
-            theme::TEXT_KEY
-        } else {
-            theme::TEXT_MUTED
-        },
-    ))
-    .fill(if session.view.search.history.is_open {
-        theme::BG_SURFACE1
-    } else {
-        theme::BG_SURFACE0
-    })
-    .stroke(Stroke::new(1.0, theme::BG_SURFACE0))
-    .rounding(egui::Rounding::same(4.0));
-
-    if ui
-        .add(history_btn)
-        .on_hover_text("Search history")
+    if crate::components::ui::IconButton::new("⏱")
+        .size(22.0)
+        .selected(session.view.search.history.is_open)
+        .tooltip("Search history")
+        .show(ui)
         .clicked()
     {
         let opened = session.view.search.history.toggle_popup();
