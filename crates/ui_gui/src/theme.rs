@@ -29,8 +29,9 @@ pub const TEXT_KEY: Color32 = Color32::from_rgb(0x78, 0xa0, 0xd4); // #78a0d4 - 
 pub const COLOR_ERROR: Color32 = Color32::from_rgb(0xd9, 0x65, 0x70); // #d96570 - Đỏ san hô mềm (không chói)
 pub const COLOR_WARN: Color32 = Color32::from_rgb(0xd4, 0xa3, 0x59); // #d4a359 - Vàng hổ phách ấm (không chói)
 pub const COLOR_INFO: Color32 = Color32::from_rgb(0x7e, 0xc7, 0x87); // #7ec787 - Xanh lá pastel êm mắt
-#[allow(dead_code)]
 pub const COLOR_DEBUG: Color32 = TEXT_MUTED; // #727a90 - Đồng bộ dịu mắt
+
+pub const FONT_SEGOE_ICONS: &str = "segoe_icons";
 
 pub fn log_color_to_egui(color: uwu_core_schema::LogColor) -> Color32 {
     match color {
@@ -143,6 +144,34 @@ pub fn apply_theme(ctx: &egui::Context) {
             }
             if let Some(family) = fonts.families.get_mut(&FontFamily::Proportional) {
                 family.insert(0, "terminal_mono".to_owned());
+            }
+        }
+
+        // Segoe Fluent Icons (Windows 11) hoặc Segoe MDL2 Assets (Windows 10) cho caption buttons chuẩn Windows
+        let icon_font_path = if std::path::Path::new("C:\\Windows\\Fonts\\SegoeIcons.ttf").exists()
+        {
+            Some("C:\\Windows\\Fonts\\SegoeIcons.ttf")
+        } else if std::path::Path::new("C:\\Windows\\Fonts\\segmdl2.ttf").exists() {
+            Some("C:\\Windows\\Fonts\\segmdl2.ttf")
+        } else {
+            None
+        };
+
+        if let Some(path) = icon_font_path {
+            if let Ok(data) = std::fs::read(path) {
+                fonts
+                    .font_data
+                    .insert("segoe_icons".to_owned(), FontData::from_owned(data));
+                if let Some(family) = fonts.families.get_mut(&FontFamily::Proportional) {
+                    family.push("segoe_icons".to_owned());
+                }
+                if let Some(family) = fonts.families.get_mut(&FontFamily::Monospace) {
+                    family.push("segoe_icons".to_owned());
+                }
+                fonts.families.insert(
+                    FontFamily::Name("segoe_icons".into()),
+                    vec!["segoe_icons".to_owned()],
+                );
             }
         }
     }
