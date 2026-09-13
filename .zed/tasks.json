@@ -1,7 +1,11 @@
 [
   {
     "label": "Pre commit",
-    "command": "cargo fmt --all && cargo clippy --workspace --all-targets --all-features -- -D warnings && cargo nextest run --workspace --status-level none --failure-output never"
+    "command": "cargo fmt --all -- --check"
+  },
+  {
+    "label": "Pre push",
+    "command": "cargo fmt --all -- --check && cargo clippy --workspace --all-targets --all-features -- -D warnings && cargo nextest run --workspace"
   },
   {
     "label": "Check",
