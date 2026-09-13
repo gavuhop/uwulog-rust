@@ -71,6 +71,7 @@ pub fn format_number(n: usize) -> String {
 
 pub fn create_visuals() -> Visuals {
     let mut visuals = Visuals::dark();
+    visuals.interact_cursor = Some(egui::CursorIcon::PointingHand);
 
     visuals.override_text_color = Some(TEXT_PRIMARY);
     visuals.window_fill = BG_MANTLE;
@@ -196,6 +197,8 @@ pub fn apply_theme(ctx: &egui::Context) {
     style.spacing.item_spacing = egui::vec2(8.0, 6.0);
     style.spacing.button_padding = egui::vec2(10.0, 5.0);
     style.spacing.window_margin = egui::Margin::same(12.0);
+    // Xóa interact_size mặc định để hitbox nút bấm chuẩn xác từng pixel
+    style.spacing.interact_size = egui::Vec2::ZERO;
     ctx.set_style(style);
 }
 

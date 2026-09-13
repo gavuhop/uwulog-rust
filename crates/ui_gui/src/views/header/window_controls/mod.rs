@@ -50,18 +50,21 @@ impl WindowControlsPlatform {
         }
     }
 
-    /// Lề panel header tương ứng với từng hệ điều hành
+    /// Lề panel header theo từng hệ điều hành:
+    /// Cả 3 nền tảng đều đặt `top: 0.0, bottom: 0.0` để chiều cao thanh header cố định chính xác 32px (TITLEBAR_HEIGHT).
+    /// Các widget con 24px (Menu, Project, Tabs, Toolbar, Linux buttons) tự động căn giữa dọc hoàn hảo (cách trên 4px, dưới 4px)
+    /// nhờ `Layout::left_to_right(Align::Center)`.
     pub fn header_panel_margin(&self) -> eframe::egui::Margin {
         match self {
-            Self::MacOs => eframe::egui::Margin {
-                left: 14.0,
-                right: 10.0,
-                top: 0.0,
-                bottom: 0.0,
-            },
             Self::Windows => eframe::egui::Margin {
                 left: 10.0,
                 right: 0.0,
+                top: 0.0,
+                bottom: 0.0,
+            },
+            Self::MacOs => eframe::egui::Margin {
+                left: 12.0,
+                right: 10.0,
                 top: 0.0,
                 bottom: 0.0,
             },

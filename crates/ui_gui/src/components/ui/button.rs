@@ -155,10 +155,18 @@ impl<'a> AppButton<'a> {
             self.min_size.map(|s| s.x).unwrap_or(0.0)
         };
         let min_h = self.min_size.map(|s| s.y).unwrap_or(0.0);
-        let desired_w = (layout_galley.size().x + padding_x * 2.0).max(min_w);
-        let desired_h = height.max(min_h);
+        let desired_w = if self.label.is_none() && self.min_size.is_some() {
+            min_w
+        } else {
+            (layout_galley.size().x + padding_x * 2.0).max(min_w)
+        };
+        let desired_h = if self.label.is_none() && self.min_size.is_some() {
+            min_h
+        } else {
+            height.max(min_h)
+        };
 
-        let (rect, response) =
+        let (rect, mut response) =
             ui.allocate_exact_size(egui::vec2(desired_w, desired_h), egui::Sense::click());
 
         if ui.is_rect_visible(rect) {
@@ -288,10 +296,12 @@ impl<'a> AppButton<'a> {
         }
 
         if let Some(tip) = self.tooltip {
-            response.on_hover_text(tip)
-        } else {
-            response
+            response = response.on_hover_text(tip);
         }
+        if response.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        response
     }
 }
 
@@ -357,93 +367,29 @@ impl<'a> IconButton<'a> {
     }
 
     pub fn show(self, ui: &mut Ui) -> Response {
-        let (rect, response) = ui.allocate_exact_size(Vec2::splat(self.size), egui::Sense::click());
+        let mut btn = AppButton::new()
+            .icon(self.icon)
+            .variant(self.variant)
+            .selected(self.selected)
+            .min_size(Vec2::splat(self.size));
 
-        if ui.is_rect_visible(rect) {
-            let is_hovered = response.hovered();
-            let is_active = response.is_pointer_button_down_on();
-
-            let (mut text_color, mut bg_color, mut stroke) = if self.selected {
-                (
-                    theme::TEXT_KEY,
-                    theme::BG_SURFACE1,
-                    Stroke::new(1.0, theme::TEXT_KEY),
-                )
-            } else {
-                match self.variant {
-                    ButtonVariant::Default => {
-                        if is_active {
-                            (
-                                theme::TEXT_PRIMARY,
-                                theme::BG_SURFACE1,
-                                Stroke::new(1.0, theme::TEXT_KEY),
-                            )
-                        } else if is_hovered {
-                            (
-                                theme::TEXT_PRIMARY,
-                                theme::BG_SURFACE1,
-                                Stroke::new(1.0, theme::BG_SURFACE1),
-                            )
-                        } else {
-                            (
-                                theme::TEXT_PRIMARY,
-                                theme::BG_SURFACE0,
-                                Stroke::new(1.0, theme::BG_SURFACE1),
-                            )
-                        }
-                    }
-                    _ => {
-                        if is_active {
-                            (
-                                theme::TEXT_PRIMARY,
-                                theme::BG_SURFACE1,
-                                Stroke::new(1.0, theme::BG_SURFACE1),
-                            )
-                        } else if is_hovered {
-                            (
-                                theme::TEXT_PRIMARY,
-                                theme::BG_SURFACE0,
-                                Stroke::new(1.0, theme::BG_SURFACE1),
-                            )
-                        } else {
-                            (theme::TEXT_MUTED, Color32::TRANSPARENT, Stroke::NONE)
-                        }
-                    }
-                }
-            };
-
-            if let Some(fill) = self.fill_override {
-                bg_color = fill;
-            }
-            if let Some(s) = self.stroke_override {
-                stroke = s;
-            }
-            if let Some(tc) = self.text_color_override {
-                text_color = tc;
-            }
-
-            if bg_color != Color32::TRANSPARENT || stroke.width > 0.0 {
-                ui.painter()
-                    .rect(rect, Rounding::same(4.0), bg_color, stroke);
-            }
-
-            let font_size = (self.size * 0.5).max(11.0);
-            let font_id = egui::FontId::proportional(font_size);
-            let galley = ui
-                .painter()
-                .layout_no_wrap(self.icon.to_string(), font_id, text_color);
-            let text_pos = egui::pos2(
-                rect.center().x - galley.size().x * 0.5,
-                rect.center().y - galley.size().y * 0.5,
-            );
-            ui.painter().galley(text_pos, galley, text_color);
+        if self.size < 24.0 {
+            btn = btn.small();
         }
-
         if let Some(tip) = self.tooltip {
-            response.on_hover_text(tip)
-        } else {
-            response
+            btn = btn.tooltip(tip);
         }
+        if let Some(fill) = self.fill_override {
+            btn = btn.fill(fill);
+        }
+        if let Some(stroke) = self.stroke_override {
+            btn = btn.stroke(stroke);
+        }
+        if let Some(tc) = self.text_color_override {
+            btn = btn.text_color(tc);
+        }
+
+        btn.show(ui)
     }
 }
 
@@ -490,7 +436,7 @@ impl<'a> TabButton<'a> {
         let padding_x = 8.0;
         let height = 24.0;
         let desired_size = egui::vec2(layout_galley.size().x + padding_x * 2.0, height);
-        let (rect, response) = ui.allocate_exact_size(
+        let (rect, mut response) = ui.allocate_exact_size(
             desired_size,
             if self.enabled {
                 egui::Sense::click()
@@ -530,6 +476,13 @@ impl<'a> TabButton<'a> {
                 rect.center().y - galley.size().y * 0.5,
             );
             ui.painter().galley(text_pos, galley, text_color);
+        }
+
+        if self.enabled {
+            response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+            if response.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
         }
 
         response

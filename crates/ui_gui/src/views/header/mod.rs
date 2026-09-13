@@ -43,8 +43,10 @@ pub fn render_header(
         egui::vec2(available_w, TITLEBAR_HEIGHT),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
-            // Nút điều khiển cửa sổ phía bên trái (chỉ render trên macOS theo chuẩn Apple Traffic Lights)
-            render_left_window_controls(ui);
+            // Nút điều khiển cửa sổ phía bên trái (chỉ hiển thị trên macOS theo chuẩn Apple Traffic Lights của Zed)
+            if render_left_window_controls(ui) {
+                ui.add_space(4.0);
+            }
 
             // 1. Menu Icon Button (☰) - Flat style
             let is_menu_open = cx.overlay_stack.is_open(OverlayLayer::MainMenu);
@@ -149,9 +151,11 @@ pub fn render_header(
 
             // 3. Phía bên phải: Window Controls, Toolbar & Search Box
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                // Nút điều khiển cửa sổ
+                // Nút điều khiển cửa sổ phía bên phải (Windows / Linux chuẩn Zed)
                 if render_right_window_controls(ui) {
-                    ui.add_space(8.0);
+                    ui.add_space(4.0);
+                    ui.separator();
+                    ui.add_space(4.0);
                 }
 
                 // Các nút công cụ: Columns modal, Settings, Stop/Restart, Snapshot, Latch, Log counter
