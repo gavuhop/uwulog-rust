@@ -352,11 +352,15 @@ impl WorkspaceSession {
             let path = std::path::PathBuf::from(workdir);
             let start = std::time::Instant::now();
             let res = crate::load_workspace_environment(&path).await;
-            if start.elapsed() < std::time::Duration::from_millis(300) {
-                tokio::time::sleep(std::time::Duration::from_millis(300) - start.elapsed()).await;
-            }
+            // Gửi kết quả vào watch channel NGAY LẬP TỨC để unblock start_source đang chờ watch_rx.
+            // Không để start_source phải đợi thêm 300ms spinner delay.
             if let Ok(envs) = &res {
                 let _ = watch_tx.send_replace(Some(envs.clone()));
+            }
+            // Giữ spinner hiển thị tối thiểu 300ms để người dùng nhìn rõ phản hồi trực quan.
+            // tick() đọc từ kênh `tx` bên dưới nên env_status chỉ chuyển Ready SAU sleep.
+            if start.elapsed() < std::time::Duration::from_millis(300) {
+                tokio::time::sleep(std::time::Duration::from_millis(300) - start.elapsed()).await;
             }
             let _ = tx.send(res.map_err(|e| e.to_string()));
         });
