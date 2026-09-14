@@ -26,6 +26,7 @@ pub struct TextInput<'a> {
     text_color: Option<Color32>,
     password: bool,
     interactive: bool,
+    auto_focus: bool,
 }
 
 pub type AppInput<'a> = TextInput<'a>;
@@ -46,6 +47,7 @@ impl<'a> TextInput<'a> {
             text_color: Some(theme::TEXT_PRIMARY),
             password: false,
             interactive: true,
+            auto_focus: false,
         }
     }
 
@@ -139,6 +141,12 @@ impl<'a> TextInput<'a> {
         self
     }
 
+    /// Tự động focus vào ô input khi vừa xuất hiện (ví dụ khi mở modal)
+    pub fn auto_focus(mut self, auto_focus: bool) -> Self {
+        self.auto_focus = auto_focus;
+        self
+    }
+
     /// Render TextInput lên UI và trả về `Response`
     pub fn show(self, ui: &mut Ui) -> Response {
         let height = self.height.unwrap_or(BUTTON_HEIGHT_NORMAL);
@@ -153,15 +161,15 @@ impl<'a> TextInput<'a> {
             .corner_radius(self.corner_radius)
             .inner_margin(self.margin);
 
+        let id = self.id.unwrap_or_else(|| ui.id().with("__text_input"));
+
         let mut edit = egui::TextEdit::singleline(self.text)
+            .id(id)
             .frame(frame)
             .vertical_align(egui::Align::Center)
             .desired_width(width)
             .margin(self.margin);
 
-        if let Some(id) = self.id {
-            edit = edit.id(id);
-        }
         if let Some(hint) = self.hint_text {
             edit = edit.hint_text(hint);
         }
@@ -178,7 +186,34 @@ impl<'a> TextInput<'a> {
             edit = edit.interactive(false);
         }
 
-        ui.add_sized([width, height], edit)
+        let response = ui.add_sized([width, height], edit);
+
+        if self.auto_focus {
+            let last_frame_id = id.with("__last_seen_frame");
+            let current_frame = ui.ctx().cumulative_pass_nr();
+            let prev_frame = ui.ctx().data_mut(|d| d.get_temp::<u64>(last_frame_id));
+            let is_first_mount = match prev_frame {
+                None => true,
+                Some(prev) => current_frame > prev.saturating_add(1),
+            };
+            ui.ctx()
+                .data_mut(|d| d.insert_temp(last_frame_id, current_frame));
+
+            if is_first_mount {
+                response.request_focus();
+                let mut state =
+                    egui::text_edit::TextEditState::load(ui.ctx(), id).unwrap_or_default();
+                let char_count = self.text.chars().count();
+                state
+                    .cursor
+                    .set_char_range(Some(egui::text::CCursorRange::one(
+                        egui::text::CCursor::new(char_count),
+                    )));
+                state.store(ui.ctx(), id);
+            }
+        }
+
+        response
     }
 }
 
@@ -211,5 +246,12 @@ mod tests {
         let mut text = String::new();
         let input = TextInput::new(&mut text).transparent();
         assert_eq!(input.fill, Some(Color32::TRANSPARENT));
+    }
+
+    #[test]
+    fn test_text_input_auto_focus_option() {
+        let mut text = String::from("query");
+        let input = TextInput::new(&mut text).auto_focus(true);
+        assert!(input.auto_focus);
     }
 }

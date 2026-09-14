@@ -215,7 +215,10 @@ pub fn render_launch_modal(
                                 .size(11.5),
                         );
                         ui.add_space(4.0);
+                        let cmd_id = egui::Id::new("launch_modal_cmd_input");
                         TextInput::new(&mut draft.command_str)
+                            .id(cmd_id)
+                            .auto_focus(true)
                             .hint_text("e.g. go run main.go")
                             .show(ui);
                     } else {
@@ -231,7 +234,10 @@ pub fn render_launch_modal(
                             let text_width =
                                 (ui.available_width() - browse_width - spacing).max(100.0);
 
+                            let path_id = egui::Id::new("launch_modal_path_input");
                             TextInput::new(&mut draft.file_path)
+                                .id(path_id)
+                                .auto_focus(true)
                                 .hint_text("e.g. /var/log/app.log")
                                 .width(text_width)
                                 .show(ui);

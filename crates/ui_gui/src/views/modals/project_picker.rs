@@ -180,9 +180,7 @@ pub fn render_project_picker_popup(
         trigger_rect,
     } = args;
 
-    let just_opened_id = egui::Id::new("project_picker_just_opened");
     if !is_open {
-        ctx.data_mut(|d| d.remove_temp::<bool>(just_opened_id));
         return;
     }
 
@@ -200,29 +198,12 @@ pub fn render_project_picker_popup(
             .show(ctx, |ui| {
                 // 1. Search Box (No stroke, height = BUTTON_HEIGHT_NORMAL, auto-focus on open)
                 let search_id = egui::Id::new("project_picker_search_input");
-                let search_resp = crate::components::ui::TextInput::new(project_search_query)
+                crate::components::ui::TextInput::new(project_search_query)
                     .id(search_id)
+                    .auto_focus(true)
                     .hint_text("Search projects...")
                     .transparent()
                     .show(ui);
-
-                let was_open =
-                    ctx.data_mut(|d| d.get_temp::<bool>(just_opened_id).unwrap_or(false));
-                if !was_open {
-                    ctx.data_mut(|d| d.insert_temp(just_opened_id, true));
-                    search_resp.request_focus();
-                    if let Some(mut state) =
-                        egui::text_edit::TextEditState::load(ui.ctx(), search_id)
-                    {
-                        let char_count = project_search_query.chars().count();
-                        state
-                            .cursor
-                            .set_char_range(Some(egui::text::CCursorRange::one(
-                                egui::text::CCursor::new(char_count),
-                            )));
-                        state.store(ui.ctx(), search_id);
-                    }
-                }
 
                 ui.add_space(2.0);
                 ui.separator();
@@ -406,7 +387,6 @@ pub fn render_project_picker_popup(
             });
 
     if resp.closed {
-        ctx.data_mut(|d| d.remove_temp::<bool>(just_opened_id));
         dispatch(AppAction::CloseProjectPicker);
     }
 

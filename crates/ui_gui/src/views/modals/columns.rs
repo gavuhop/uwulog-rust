@@ -44,7 +44,10 @@ pub fn render_columns_modal(
                     28.0
                 };
                 let text_w = (avail_w - clear_btn_w - 6.0).max(100.0);
+                let search_id = egui::Id::new("columns_modal_filter_input");
                 crate::components::ui::TextInput::new(&mut columns.filter_query)
+                    .id(search_id)
+                    .auto_focus(true)
                     .hint_text("Filter column keys...")
                     .width(text_w)
                     .show(ui);
