@@ -541,12 +541,7 @@ impl SystemEngine {
             *max_ts = 0.0;
         }
         self.total_processed.store(0, Ordering::Relaxed);
-        if let Ok(mut schema_write) = self.schema.write() {
-            schema_write.clear();
-            for field in StandardField::default_columns() {
-                schema_write.insert(field.canonical_name().to_string(), field.field_type());
-            }
-        }
+        self.reset_runtime_detection();
     }
 }
 

@@ -47,5 +47,7 @@ impl GuiViewState {
         self.viewport.last_processed_count = 0;
         self.inspector.selected_log = None;
         self.unfiltered.cached_unfiltered.clear();
+        self.search.autocomplete.is_open = false;
+        self.search.autocomplete.suggestions.clear();
     }
 }

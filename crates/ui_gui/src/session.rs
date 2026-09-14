@@ -99,6 +99,9 @@ impl GuiSession {
         }
 
         if new_logs_arrived {
+            self.view
+                .search
+                .sync_schema(self.session.engine.get_schema_map());
             self.view.viewport.last_processed_count = total_processed;
             self.view.search.last_search_time = now;
         }
