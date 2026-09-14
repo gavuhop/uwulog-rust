@@ -1,7 +1,6 @@
 use crate::actions::AppAction;
 use crate::session::GuiSession;
 use crate::state::generate_suggestions;
-use crate::theme;
 use eframe::egui::{self, Id};
 use std::time::Instant;
 
@@ -19,22 +18,11 @@ pub fn render_search_bar(
     let search_box_width = (available_w - button_extras - 6.0).max(40.0);
 
     let search_id = Id::new("search_query_input");
-    let search_response = ui.add_sized(
-        [
-            search_box_width,
-            crate::components::ui::button::BUTTON_HEIGHT_NORMAL,
-        ],
-        egui::TextEdit::singleline(&mut session.view.search.query)
-            .id(search_id)
-            .hint_text(
-                egui::RichText::new(
-                    "🔍 Filter query (e.g. level:error, status:500, time:now..10m)...",
-                )
-                .color(theme::TEXT_PLACEHOLDER),
-            )
-            .font(egui::TextStyle::Monospace)
-            .margin(egui::Margin::symmetric(8, 4)),
-    );
+    let search_response = crate::components::ui::TextInput::new(&mut session.view.search.query)
+        .id(search_id)
+        .hint_text("🔍 Filter query (e.g. level:error, status:500, time:now..10m)...")
+        .width(search_box_width)
+        .show(ui);
 
     // Giữ lại con trỏ chuột và focus vào ô input sau khi chọn gợi ý
     if session.view.search.autocomplete.just_applied {

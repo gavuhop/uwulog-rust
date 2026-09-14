@@ -5,6 +5,7 @@ use crate::actions::{ActionContext, AppAction};
 use crate::components::render_card;
 use crate::components::ui::{AppButton, ButtonVariant, TabButton};
 use crate::session::GuiSession;
+use crate::state::ActiveTab;
 use crate::theme;
 use eframe::egui::{self, Id};
 use fields::{render_kv_field, render_meta_field};
@@ -22,7 +23,8 @@ pub fn render_detail(
     if let Some(event) = &session.inspector.selected_log {
         let is_highlighted = session.is_row_highlighted(&event.id);
         let event_id = event.id;
-        let has_any_highlights = session.has_any_highlights();
+        let is_filtering = !session.view.search.query.trim().is_empty()
+            && session.view.active_tab == ActiveTab::Filtered;
 
         ui.horizontal(|ui| {
             ui.label(
@@ -33,46 +35,44 @@ pub fn render_detail(
             );
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let close_btn = AppButton::new().label("Close").small();
+                // 1. Close Inspector
+                let close_btn = AppButton::new()
+                    .label("Close")
+                    .small()
+                    .tooltip("Close inspector (Esc)");
                 if close_btn.show(ui).clicked() {
                     action_to_dispatch = Some(AppAction::SelectLog(None));
                 }
 
-                ui.add_space(4.0);
-
-                let unfil_btn = AppButton::new()
-                    .label("Unfiltered")
-                    .icon("🔍")
-                    .small()
-                    .tooltip("View surrounding logs in full unfiltered stream");
-                if unfil_btn.show(ui).clicked() {
-                    action_to_dispatch = Some(AppAction::OpenUnfilteredStream(Some(event_id)));
-                }
-
-                ui.add_space(4.0);
-
-                if has_any_highlights {
-                    let unhl_all_btn = AppButton::new().label("Unhighlight all").small();
-                    if unhl_all_btn.show(ui).clicked() {
-                        action_to_dispatch = Some(AppAction::ClearAllHighlights);
-                    }
+                // 2. View Context in Unfiltered Stream (chỉ hiển thị khi đang có filter)
+                if is_filtering {
                     ui.add_space(4.0);
+                    let locate_btn = AppButton::new()
+                        .label("View context")
+                        .small()
+                        .tooltip("View surrounding logs in full unfiltered stream");
+                    if locate_btn.show(ui).clicked() {
+                        action_to_dispatch = Some(AppAction::OpenUnfilteredStream(Some(event_id)));
+                    }
                 }
 
+                ui.add_space(4.0);
+
+                // 3. Highlight / Unhighlight row (nút chữ toggle, nền màu vàng giống highlight row)
                 let hl_text = if is_highlighted {
                     "Unhighlight row"
                 } else {
                     "Highlight row"
                 };
 
-                let hl_btn = AppButton::new()
-                    .label(hl_text)
-                    .small()
-                    .variant(if is_highlighted {
-                        ButtonVariant::Primary
-                    } else {
-                        ButtonVariant::Default
-                    });
+                let mut hl_btn = AppButton::new().label(hl_text).small();
+                if is_highlighted {
+                    hl_btn = hl_btn
+                        .fill(theme::BG_ROW_HIGHLIGHT)
+                        .text_color(theme::COLOR_WARN);
+                } else {
+                    hl_btn = hl_btn.variant(ButtonVariant::Default);
+                }
                 if hl_btn.show(ui).clicked() {
                     action_to_dispatch = Some(AppAction::ToggleRowHighlight(event_id));
                 }

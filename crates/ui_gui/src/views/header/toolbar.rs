@@ -3,7 +3,7 @@ use crate::actions::AppAction;
 use crate::session::GuiSession;
 use crate::state::ActiveTab;
 use crate::theme;
-use eframe::egui::{self, Stroke};
+use eframe::egui;
 
 pub fn render_toolbar(
     ui: &mut egui::Ui,
@@ -47,7 +47,6 @@ pub fn render_toolbar(
         if crate::components::ui::IconButton::new("⏹")
             .size(24.0)
             .fill(theme::BTN_STOP_BG)
-            .stroke(Stroke::new(1.0, theme::BTN_STOP_BORDER))
             .text_color(theme::COLOR_ERROR)
             .tooltip("Stop running process source")
             .show(ui)
@@ -58,7 +57,6 @@ pub fn render_toolbar(
     } else if crate::components::ui::IconButton::new("🔄")
         .size(24.0)
         .fill(theme::BTN_RESTART_BG)
-        .stroke(Stroke::new(1.0, theme::BTN_RESTART_BORDER))
         .text_color(theme::COLOR_INFO)
         .tooltip("Clear logs and restart source")
         .show(ui)
@@ -113,26 +111,23 @@ pub fn render_toolbar(
         ),
     };
 
-    let (latch_text, latch_bg, latch_border, latch_fg) = if is_live {
-        (
-            "⚓ Live",
-            theme::BTN_LATCHED_BG,
-            theme::BTN_LATCHED_BORDER,
-            theme::COLOR_INFO,
-        )
+    let (latch_text, latch_bg, latch_fg) = if is_live {
+        ("⚓ Live", theme::BTN_LATCHED_BG, theme::COLOR_INFO)
     } else {
-        (
-            "⏸ Paused",
-            theme::BTN_UNLATCHED_BG,
-            theme::BTN_UNLATCHED_BORDER,
-            theme::COLOR_WARN,
-        )
+        ("⏸ Paused", theme::BTN_UNLATCHED_BG, theme::COLOR_WARN)
     };
+
+    let pause_measure = ui.painter().layout_no_wrap(
+        "⏸ Paused".to_string(),
+        egui::FontId::proportional(12.0),
+        egui::Color32::PLACEHOLDER,
+    );
+    let paused_width = (pause_measure.size().x + 16.0).ceil();
 
     if crate::components::ui::AppButton::new()
         .label(latch_text)
+        .min_width(paused_width)
         .fill(latch_bg)
-        .stroke(Stroke::new(1.0, latch_border))
         .text_color(latch_fg)
         .tooltip(toggle_tooltip)
         .show(ui)
@@ -183,7 +178,6 @@ pub fn render_environment_status(
             if crate::components::ui::AppButton::new()
                 .label("⚠️ env error")
                 .small()
-                .stroke(Stroke::new(1.0, theme::COLOR_WARN))
                 .tooltip(&tooltip)
                 .show(ui)
                 .clicked()

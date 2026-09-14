@@ -108,21 +108,21 @@ pub fn create_visuals() -> Visuals {
     visuals.widgets.inactive.bg_fill = BG_SURFACE0;
     visuals.widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
     visuals.widgets.inactive.corner_radius = CornerRadius::same(4);
-    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, BG_SURFACE0);
+    visuals.widgets.inactive.bg_stroke = Stroke::NONE;
     visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, TEXT_PRIMARY);
 
     // Hovered
     visuals.widgets.hovered.bg_fill = BG_SURFACE1;
     visuals.widgets.hovered.weak_bg_fill = BG_ROW_HOVER;
     visuals.widgets.hovered.corner_radius = CornerRadius::same(4);
-    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, TEXT_KEY);
+    visuals.widgets.hovered.bg_stroke = Stroke::NONE;
     visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, TEXT_PRIMARY);
 
     // Active / Pressed
     visuals.widgets.active.bg_fill = BG_ROW_SELECTED;
     visuals.widgets.active.weak_bg_fill = BG_ROW_SELECTED;
     visuals.widgets.active.corner_radius = CornerRadius::same(4);
-    visuals.widgets.active.bg_stroke = Stroke::new(1.5, TEXT_KEY);
+    visuals.widgets.active.bg_stroke = Stroke::NONE;
     visuals.widgets.active.fg_stroke = Stroke::new(1.0, TEXT_PRIMARY);
 
     // Selection (Bôi đen chọn chữ)

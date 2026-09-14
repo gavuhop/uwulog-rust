@@ -3,13 +3,14 @@
 use crate::theme;
 use eframe::egui::{self, Color32, CornerRadius, Response, Stroke, Ui, Vec2};
 
-/// Kiểu nút bấm tiêu chuẩn (Regular, Selected, Danger, Success, Ghost, Primary)
+/// Kiểu nút bấm tiêu chuẩn (Regular, Selected, Danger, Success, Ghost, Primary, Outline)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ButtonVariant {
     #[default]
     Default,
     Primary,
     Ghost,
+    Outline,
     Selected,
     Success,
     Danger,
@@ -100,6 +101,12 @@ impl<'a> AppButton<'a> {
         self
     }
 
+    /// Bật viền tiêu chuẩn cho nút (stroke option)
+    pub fn bordered(mut self) -> Self {
+        self.stroke_override = Some(Stroke::new(1.0, theme::BG_SURFACE1));
+        self
+    }
+
     pub fn text_color(mut self, color: Color32) -> Self {
         self.text_color_override = Some(color);
         self
@@ -173,102 +180,48 @@ impl<'a> AppButton<'a> {
             let is_hovered = response.hovered();
             let is_active = response.is_pointer_button_down_on();
 
-            let (mut text_color, mut bg_color, mut stroke) = match self.variant {
+            let (mut text_color, mut bg_color) = match self.variant {
                 ButtonVariant::Default => {
-                    if is_active {
-                        (
-                            theme::TEXT_PRIMARY,
-                            theme::BG_SURFACE1,
-                            Stroke::new(1.0, theme::TEXT_KEY),
-                        )
-                    } else if is_hovered {
-                        (
-                            theme::TEXT_PRIMARY,
-                            theme::BG_SURFACE1,
-                            Stroke::new(1.0, theme::BG_SURFACE1),
-                        )
+                    if is_active || is_hovered {
+                        (theme::TEXT_PRIMARY, theme::BG_SURFACE1)
                     } else {
-                        (
-                            theme::TEXT_PRIMARY,
-                            theme::BG_SURFACE0,
-                            Stroke::new(1.0, theme::BG_SURFACE1),
-                        )
+                        (theme::TEXT_PRIMARY, theme::BG_SURFACE0)
                     }
                 }
                 ButtonVariant::Primary => {
-                    if is_active {
-                        (
-                            theme::TEXT_PRIMARY,
-                            theme::BG_TEXT_SELECTION,
-                            Stroke::new(1.5, theme::TEXT_KEY),
-                        )
-                    } else if is_hovered {
-                        (
-                            theme::TEXT_PRIMARY,
-                            theme::STROKE_TEXT_SELECTION,
-                            Stroke::new(1.0, theme::TEXT_KEY),
-                        )
+                    if is_hovered {
+                        (theme::TEXT_PRIMARY, theme::STROKE_TEXT_SELECTION)
                     } else {
-                        (
-                            theme::TEXT_PRIMARY,
-                            theme::BG_TEXT_SELECTION,
-                            Stroke::new(1.0, theme::STROKE_TEXT_SELECTION),
-                        )
+                        (theme::TEXT_PRIMARY, theme::BG_TEXT_SELECTION)
                     }
                 }
                 ButtonVariant::Ghost => {
                     if is_active {
-                        (
-                            theme::TEXT_PRIMARY,
-                            theme::BG_SURFACE1,
-                            Stroke::new(1.0, theme::BG_SURFACE1),
-                        )
+                        (theme::TEXT_PRIMARY, theme::BG_SURFACE1)
                     } else if is_hovered {
-                        (
-                            theme::TEXT_PRIMARY,
-                            theme::BG_SURFACE0,
-                            Stroke::new(1.0, theme::BG_SURFACE1),
-                        )
+                        (theme::TEXT_PRIMARY, theme::BG_SURFACE0)
                     } else {
-                        (theme::TEXT_MUTED, Color32::TRANSPARENT, Stroke::NONE)
+                        (theme::TEXT_MUTED, Color32::TRANSPARENT)
                     }
                 }
-                ButtonVariant::Selected => (
-                    theme::TEXT_KEY,
-                    theme::BG_SURFACE1,
-                    Stroke::new(1.0, theme::TEXT_KEY),
-                ),
-                ButtonVariant::Success => {
-                    let border = if is_hovered {
-                        theme::COLOR_INFO
+                ButtonVariant::Outline => {
+                    if is_active {
+                        (theme::TEXT_PRIMARY, theme::BG_SURFACE1)
+                    } else if is_hovered {
+                        (theme::TEXT_PRIMARY, theme::BG_SURFACE0)
                     } else {
-                        theme::BTN_RESTART_BORDER
-                    };
-                    (
-                        theme::COLOR_INFO,
-                        theme::BTN_RESTART_BG,
-                        Stroke::new(1.0, border),
-                    )
+                        (theme::TEXT_MUTED, Color32::TRANSPARENT)
+                    }
                 }
-                ButtonVariant::Danger => {
-                    let border = if is_hovered {
-                        theme::COLOR_ERROR
-                    } else {
-                        theme::BTN_STOP_BORDER
-                    };
-                    (
-                        theme::COLOR_ERROR,
-                        theme::BTN_STOP_BG,
-                        Stroke::new(1.0, border),
-                    )
-                }
+                ButtonVariant::Selected => (theme::TEXT_KEY, theme::BG_SURFACE1),
+                ButtonVariant::Success => (theme::COLOR_INFO, theme::BTN_RESTART_BG),
+                ButtonVariant::Danger => (theme::COLOR_ERROR, theme::BTN_STOP_BG),
             };
+
+            let stroke = self.stroke_override.unwrap_or(Stroke::NONE);
 
             if let Some(fill) = self.fill_override {
                 bg_color = fill;
-            }
-            if let Some(s) = self.stroke_override {
-                stroke = s;
             }
             if let Some(tc) = self.text_color_override {
                 text_color = tc;
@@ -359,6 +312,12 @@ impl<'a> IconButton<'a> {
 
     pub fn stroke(mut self, stroke: Stroke) -> Self {
         self.stroke_override = Some(stroke);
+        self
+    }
+
+    /// Bật viền tiêu chuẩn cho nút icon (stroke option)
+    pub fn bordered(mut self) -> Self {
+        self.stroke_override = Some(Stroke::new(1.0, theme::BG_SURFACE1));
         self
     }
 
@@ -453,11 +412,7 @@ impl<'a> TabButton<'a> {
             let (text_color, bg_color, stroke) = if !self.enabled {
                 (theme::TEXT_MUTED, Color32::TRANSPARENT, Stroke::NONE)
             } else if self.active {
-                (
-                    theme::TEXT_KEY,
-                    theme::BG_SURFACE0,
-                    Stroke::new(1.0, theme::BG_SURFACE1),
-                )
+                (theme::TEXT_KEY, theme::BG_SURFACE0, Stroke::NONE)
             } else if is_active {
                 (theme::TEXT_PRIMARY, theme::BG_SURFACE1, Stroke::NONE)
             } else if is_hovered {

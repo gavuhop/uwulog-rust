@@ -115,7 +115,6 @@ pub fn render_header(
                 let proj_resp = crate::components::ui::AppButton::new()
                     .label(&session.session.name)
                     .variant(proj_variant)
-                    .stroke(egui::Stroke::NONE)
                     .text_color(if is_project_picker_open {
                         theme::TEXT_KEY
                     } else {

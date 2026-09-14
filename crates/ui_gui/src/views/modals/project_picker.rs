@@ -42,8 +42,8 @@ pub struct ProjectRowConfig<'a> {
 
 /// Render một hàng project (dùng chung cho cả This Window và Recent Projects)
 pub fn render_project_row(ui: &mut egui::Ui, config: ProjectRowConfig<'_>) -> ProjectRowAction {
-    let row_height = 24.0;
-    let row_size = egui::vec2(ui.available_width(), row_height);
+    let height = crate::components::ui::button::BUTTON_HEIGHT_NORMAL;
+    let row_size = egui::vec2(ui.available_width(), height);
     let (row_rect, mut row_resp) = ui.allocate_exact_size(row_size, egui::Sense::click());
     row_resp = row_resp.on_hover_cursor(egui::CursorIcon::PointingHand);
 
@@ -96,7 +96,7 @@ pub fn render_project_row(ui: &mut egui::Ui, config: ProjectRowConfig<'_>) -> Pr
 
                     // Nút Close '×' (đóng / xóa project)
                     let (close_rect, close_resp) =
-                        ui.allocate_exact_size(egui::vec2(22.0, row_height), egui::Sense::click());
+                        ui.allocate_exact_size(egui::vec2(22.0, height), egui::Sense::click());
                     let close_resp = close_resp.on_hover_cursor(egui::CursorIcon::PointingHand);
                     close_hovered = close_resp.hovered();
                     if close_resp.clicked() {
@@ -119,7 +119,7 @@ pub fn render_project_row(ui: &mut egui::Ui, config: ProjectRowConfig<'_>) -> Pr
 
                     // Nút Action '↗' (switch / open project)
                     let (act_rect, act_resp) =
-                        ui.allocate_exact_size(egui::vec2(22.0, row_height), egui::Sense::click());
+                        ui.allocate_exact_size(egui::vec2(22.0, height), egui::Sense::click());
                     let act_resp = act_resp.on_hover_cursor(egui::CursorIcon::PointingHand);
                     action_hovered = act_resp.hovered();
                     if act_resp.clicked() {
@@ -180,7 +180,9 @@ pub fn render_project_picker_popup(
         trigger_rect,
     } = args;
 
+    let just_opened_id = egui::Id::new("project_picker_just_opened");
     if !is_open {
+        ctx.data_mut(|d| d.remove_temp::<bool>(just_opened_id));
         return;
     }
 
@@ -196,24 +198,33 @@ pub fn render_project_picker_popup(
             .width(popup_width)
             .max_height(420.0)
             .show(ctx, |ui| {
-                // 1. Search Box
-                ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new("🔍")
-                            .size(11.0)
-                            .color(theme::TEXT_MUTED),
-                    );
-                    let search_w = ui.available_width();
-                    let search_edit = egui::TextEdit::singleline(project_search_query)
-                        .hint_text(
-                            egui::RichText::new("Search projects...").color(theme::TEXT_MUTED),
-                        )
-                        .desired_width(search_w)
-                        .margin(egui::Margin::symmetric(4, 3));
-                    ui.add(search_edit);
-                });
+                // 1. Search Box (No stroke, height = BUTTON_HEIGHT_NORMAL, auto-focus on open)
+                let search_id = egui::Id::new("project_picker_search_input");
+                let search_resp = crate::components::ui::TextInput::new(project_search_query)
+                    .id(search_id)
+                    .hint_text("Search projects...")
+                    .transparent()
+                    .show(ui);
 
-                ui.add_space(6.0);
+                let was_open =
+                    ctx.data_mut(|d| d.get_temp::<bool>(just_opened_id).unwrap_or(false));
+                if !was_open {
+                    ctx.data_mut(|d| d.insert_temp(just_opened_id, true));
+                    search_resp.request_focus();
+                    if let Some(mut state) =
+                        egui::text_edit::TextEditState::load(ui.ctx(), search_id)
+                    {
+                        let char_count = project_search_query.chars().count();
+                        state
+                            .cursor
+                            .set_char_range(Some(egui::text::CCursorRange::one(
+                                egui::text::CCursor::new(char_count),
+                            )));
+                        state.store(ui.ctx(), search_id);
+                    }
+                }
+
+                ui.add_space(2.0);
                 ui.separator();
                 ui.add_space(4.0);
 
@@ -321,14 +332,17 @@ pub fn render_project_picker_popup(
                     .collect();
 
                 if filtered_recent.is_empty() {
-                    ui.add_space(4.0);
-                    ui.label(
-                        egui::RichText::new("No other recent projects")
-                            .italics()
-                            .size(11.0)
-                            .color(theme::TEXT_MUTED),
-                    );
-                    ui.add_space(4.0);
+                    ui.add_space(2.0);
+                    ui.horizontal(|ui| {
+                        ui.add_space(6.0);
+                        ui.label(
+                            egui::RichText::new("No other recent projects")
+                                .italics()
+                                .size(11.0)
+                                .color(theme::TEXT_MUTED),
+                        );
+                    });
+                    ui.add_space(3.0);
                 } else {
                     egui::ScrollArea::vertical()
                         .id_salt("recent_projects_scroll")
@@ -392,6 +406,7 @@ pub fn render_project_picker_popup(
             });
 
     if resp.closed {
+        ctx.data_mut(|d| d.remove_temp::<bool>(just_opened_id));
         dispatch(AppAction::CloseProjectPicker);
     }
 

@@ -44,14 +44,10 @@ pub fn render_columns_modal(
                     28.0
                 };
                 let text_w = (avail_w - clear_btn_w - 6.0).max(100.0);
-
-                ui.add_sized(
-                    [text_w, 24.0],
-                    egui::TextEdit::singleline(&mut columns.filter_query)
-                        .hint_text("Filter column keys...")
-                        .font(egui::TextStyle::Monospace)
-                        .margin(egui::Margin::symmetric(8, 4)),
-                );
+                crate::components::ui::TextInput::new(&mut columns.filter_query)
+                    .hint_text("Filter column keys...")
+                    .width(text_w)
+                    .show(ui);
                 if !columns.filter_query.is_empty()
                     && crate::components::ui::IconButton::new("✖")
                         .size(24.0)

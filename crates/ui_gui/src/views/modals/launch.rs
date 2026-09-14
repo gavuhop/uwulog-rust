@@ -1,5 +1,5 @@
 use crate::actions::AppAction;
-use crate::components::{render_card, AppButton, ButtonVariant, ModalContainer};
+use crate::components::{render_card, AppButton, ButtonVariant, ModalContainer, TextInput};
 use crate::theme;
 use eframe::egui::{self, Color32, CornerRadius, Stroke};
 use uwu_core_workspace::{SourceConfig, SourceType};
@@ -215,14 +215,9 @@ pub fn render_launch_modal(
                                 .size(11.5),
                         );
                         ui.add_space(4.0);
-                        let cmd_edit = egui::TextEdit::singleline(&mut draft.command_str)
-                            .hint_text(
-                                egui::RichText::new("e.g. go run main.go")
-                                    .color(theme::TEXT_PLACEHOLDER),
-                            )
-                            .font(egui::TextStyle::Monospace)
-                            .margin(egui::Margin::symmetric(8, 6));
-                        ui.add_sized([ui.available_width(), 26.0], cmd_edit);
+                        TextInput::new(&mut draft.command_str)
+                            .hint_text("e.g. go run main.go")
+                            .show(ui);
                     } else {
                         ui.label(
                             egui::RichText::new("Log file path:")
@@ -236,19 +231,17 @@ pub fn render_launch_modal(
                             let text_width =
                                 (ui.available_width() - browse_width - spacing).max(100.0);
 
-                            let path_edit = egui::TextEdit::singleline(&mut draft.file_path)
-                                .hint_text(
-                                    egui::RichText::new("e.g. /var/log/app.log")
-                                        .color(theme::TEXT_PLACEHOLDER),
-                                )
-                                .text_color(theme::TEXT_PRIMARY)
-                                .font(egui::TextStyle::Monospace)
-                                .margin(egui::Margin::symmetric(8, 6));
-                            ui.add_sized([text_width, 26.0], path_edit);
+                            TextInput::new(&mut draft.file_path)
+                                .hint_text("e.g. /var/log/app.log")
+                                .width(text_width)
+                                .show(ui);
 
                             let browse_clicked = AppButton::new()
                                 .label("Browse...")
-                                .min_size(egui::vec2(browse_width, 26.0))
+                                .min_size(egui::vec2(
+                                    browse_width,
+                                    crate::components::ui::button::BUTTON_HEIGHT_NORMAL,
+                                ))
                                 .show(ui)
                                 .clicked();
 
