@@ -1,0 +1,156 @@
+name: Release Packages
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. 0.1.0)'
+        required: false
+        default: '0.1.0'
+
+permissions:
+  contents: write
+
+jobs:
+  # ============================================================================
+  # 1. WINDOWS (x64 & ARM64)
+  # ============================================================================
+  build-windows:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        arch: [x64, arm64]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.arch == 'arm64' && 'aarch64-pc-windows-msvc' || 'x86_64-pc-windows-msvc' }}
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress
+
+      - name: Build & Package Windows (${{ matrix.arch }})
+        run: |
+          powershell -ExecutionPolicy Bypass -File packaging/windows/build-windows.ps1 -Architecture ${{ matrix.arch }}
+
+      - name: Upload Windows Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-${{ matrix.arch }}
+          path: |
+            dist/uwulog-setup-${{ matrix.arch }}.exe
+            dist/uwulog-v*-windows-${{ matrix.arch }}.zip
+
+  # ============================================================================
+  # 2. LINUX (x86_64 & aarch64)
+  # ============================================================================
+  build-linux:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            deb_arch: amd64
+            target: x86_64-unknown-linux-gnu
+          - arch: aarch64
+            deb_arch: arm64
+            target: aarch64-unknown-linux-gnu
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libasound2-dev libfontconfig1-dev dpkg-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Cross (for ARM64)
+        if: matrix.arch == 'aarch64'
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build Release Binaries
+        run: |
+          if [ "${{ matrix.arch }}" = "aarch64" ]; then
+            cross build --release --target ${{ matrix.target }} --bin uwu-gui --bin uwu-tui --bin uwu-agent --bin uwulog
+          else
+            cargo build --release --target ${{ matrix.target }} --bin uwu-gui --bin uwu-tui --bin uwu-agent --bin uwulog
+          fi
+
+      - name: Package Linux (${{ matrix.arch }})
+        run: |
+          bash packaging/linux/build-tarball.sh --arch ${{ matrix.arch }} --target ${{ matrix.target }} --skip-build
+          bash packaging/linux/build-deb.sh --arch ${{ matrix.deb_arch }} --target ${{ matrix.target }} --skip-build
+
+      - name: Upload Linux Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: |
+            dist/uwulog-v*-linux-${{ matrix.arch }}.tar.gz
+            dist/uwulog_*_${{ matrix.deb_arch }}.deb
+
+  # ============================================================================
+  # 3. MACOS (Apple Silicon arm64 & Intel x86_64)
+  # ============================================================================
+  build-macos:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            arch: arm64
+            target: aarch64-apple-darwin
+          - os: macos-13
+            arch: x86_64
+            target: x86_64-apple-darwin
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build & Package macOS (${{ matrix.arch }})
+        run: |
+          bash packaging/macos/build-dmg.sh --arch ${{ matrix.arch }} --target ${{ matrix.target }}
+
+      - name: Upload macOS Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}
+          path: dist/UwuLog-v*-macOS-${{ matrix.arch }}.dmg
+
+  # ============================================================================
+  # 4. PUBLISH RELEASE
+  # ============================================================================
+  publish-release:
+    needs: [build-windows, build-linux, build-macos]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*
+          draft: false
+          prerelease: false
+          generate_release_notes: true

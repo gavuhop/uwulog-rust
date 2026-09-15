@@ -1,5 +1,8 @@
 [CmdletBinding()]
 param(
+    [ValidateSet("x64", "arm64", "x86_64", "aarch64", "auto")]
+    [string]$Architecture = "auto",
+    [string]$TargetTriple,
     [switch]$SkipBuild,
     [switch]$Install,
     [switch]$Help
@@ -8,9 +11,19 @@ param(
 $ErrorActionPreference = "Stop"
 
 if ($Help) {
-    Write-Host "Usage: .\build-windows.ps1 [-SkipBuild] [-Install] [-Help]"
-    Write-Host "Builds binaries, packages portable zip, and compiles Inno Setup installer."
+    Write-Host "Usage: .\build-windows.ps1 [-Architecture <x64|arm64|auto>] [-TargetTriple <triple>] [-SkipBuild] [-Install] [-Help]"
+    Write-Host "Builds binaries, packages portable zip, and compiles Inno Setup installer for the target architecture."
     exit 0
+}
+
+# Normalize architecture to x64 or arm64
+$osArch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLower()
+if ($Architecture -eq "auto") {
+    $Architecture = if ($osArch -eq "arm64") { "arm64" } else { "x64" }
+} elseif ($Architecture -eq "x86_64") {
+    $Architecture = "x64"
+} elseif ($Architecture -eq "aarch64") {
+    $Architecture = "arm64"
 }
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -20,6 +33,7 @@ $DistDir = Join-Path $RootDir "dist"
 
 Write-Host "`n========================================================" -ForegroundColor Cyan
 Write-Host " [UWU-LOG] Windows Packaging & Installer Builder" -ForegroundColor Cyan
+Write-Host " Architecture: $Architecture (Host OS: $osArch)" -ForegroundColor Cyan
 Write-Host "========================================================" -ForegroundColor Cyan
 
 # 1. Read Version from crates/ui_gui/Cargo.toml
@@ -29,22 +43,45 @@ $version = if ($versionMatch) { $versionMatch.Matches.Groups[1].Value } else { "
 
 Write-Host "   -> Package Version: $version" -ForegroundColor Green
 
-# 2. Build Release Binaries
+# 2. Determine Cargo Target and Binary Directory
+$cargoTargetArgs = @()
+if ($TargetTriple) {
+    $cargoTargetArgs = @("--target", $TargetTriple)
+    $binDir = Join-Path $RootDir "target\$TargetTriple\release"
+} elseif ($Architecture -eq "arm64" -and $osArch -ne "arm64") {
+    $TargetTriple = "aarch64-pc-windows-msvc"
+    $cargoTargetArgs = @("--target", $TargetTriple)
+    $binDir = Join-Path $RootDir "target\$TargetTriple\release"
+} elseif ($Architecture -eq "x64" -and $osArch -eq "arm64") {
+    $TargetTriple = "x86_64-pc-windows-msvc"
+    $cargoTargetArgs = @("--target", $TargetTriple)
+    $binDir = Join-Path $RootDir "target\$TargetTriple\release"
+} else {
+    $binDir = Join-Path $RootDir "target\release"
+}
+
+# 3. Build Release Binaries
 if (-not $SkipBuild) {
-    Write-Host "`n[1/4] Building release binaries (uwu-gui, uwu-tui, uwu-agent, uwulog)..." -ForegroundColor Yellow
+    Write-Host "`n[1/4] Building release binaries for $Architecture (uwu-gui, uwu-tui, uwu-agent, uwulog)..." -ForegroundColor Yellow
     Push-Location $RootDir
-    cargo build --release --bin uwu-gui --bin uwu-tui --bin uwu-agent --bin uwulog
+    cargo build --release @cargoTargetArgs --bin uwu-gui --bin uwu-tui --bin uwu-agent --bin uwulog
     Pop-Location
 } else {
     Write-Host "`n[1/4] Skipping cargo build (-SkipBuild specified)..." -ForegroundColor Gray
+    # Graceful fallback if binDir doesn't exist yet but target\release does
+    if (-not (Test-Path (Join-Path $binDir "uwu-gui.exe")) -and (Test-Path (Join-Path $RootDir "target\release\uwu-gui.exe"))) {
+        $binDir = Join-Path $RootDir "target\release"
+    }
 }
 
-# 3. Create dist directory
+Write-Host "   -> Using binary directory: $binDir" -ForegroundColor Gray
+
+# 4. Create dist directory
 if (-not (Test-Path $DistDir)) {
     New-Item -ItemType Directory -Force -Path $DistDir | Out-Null
 }
 
-# 4. Code Signing (Optional Hook)
+# 5. Code Signing (Optional Hook)
 $canSign = $false
 $signtool = Get-Command "signtool.exe" -ErrorAction SilentlyContinue
 
@@ -53,10 +90,10 @@ if ($env:WINDOWS_SIGN_CERT -and (Test-Path $env:WINDOWS_SIGN_CERT)) {
         $canSign = $true
         Write-Host "`n[2/4] Code signing certificate detected. Signing binaries..." -ForegroundColor Yellow
         $binariesToSign = @(
-            (Join-Path $RootDir "target\release\uwu-gui.exe"),
-            (Join-Path $RootDir "target\release\uwu-tui.exe"),
-            (Join-Path $RootDir "target\release\uwu-agent.exe"),
-            (Join-Path $RootDir "target\release\uwulog.exe")
+            (Join-Path $binDir "uwu-gui.exe"),
+            (Join-Path $binDir "uwu-tui.exe"),
+            (Join-Path $binDir "uwu-agent.exe"),
+            (Join-Path $binDir "uwulog.exe")
         )
         foreach ($bin in $binariesToSign) {
             Write-Host "      -> Signing $bin"
@@ -69,22 +106,22 @@ if ($env:WINDOWS_SIGN_CERT -and (Test-Path $env:WINDOWS_SIGN_CERT)) {
     Write-Host "`n[2/4] Code signing: No certificate provided (Build unsigned for local test)" -ForegroundColor Gray
 }
 
-# 5. Build Portable ZIP
-Write-Host "`n[3/4] Creating portable ZIP package..." -ForegroundColor Yellow
-$zipTempDir = Join-Path $DistDir "uwulog-v$version-windows-x64"
+# 6. Build Portable ZIP
+Write-Host "`n[3/4] Creating portable ZIP package for $Architecture..." -ForegroundColor Yellow
+$zipTempDir = Join-Path $DistDir "uwulog-v$version-windows-$Architecture"
 if (Test-Path $zipTempDir) {
     Remove-Item -Recurse -Force $zipTempDir
 }
 New-Item -ItemType Directory -Force -Path (Join-Path $zipTempDir "bin") | Out-Null
 
-Copy-Item -Force (Join-Path $RootDir "target\release\uwu-gui.exe") $zipTempDir
-Copy-Item -Force (Join-Path $RootDir "target\release\uwu-tui.exe") $zipTempDir
-Copy-Item -Force (Join-Path $RootDir "target\release\uwu-agent.exe") $zipTempDir
+Copy-Item -Force (Join-Path $binDir "uwu-gui.exe") $zipTempDir
+Copy-Item -Force (Join-Path $binDir "uwu-tui.exe") $zipTempDir
+Copy-Item -Force (Join-Path $binDir "uwu-agent.exe") $zipTempDir
 Copy-Item -Force (Join-Path $RootDir "packaging\assets\icon.ico") $zipTempDir
-Copy-Item -Force (Join-Path $RootDir "target\release\uwulog.exe") (Join-Path $zipTempDir "bin\uwulog.exe")
+Copy-Item -Force (Join-Path $binDir "uwulog.exe") (Join-Path $zipTempDir "bin\uwulog.exe")
 Copy-Item -Force (Join-Path $ScriptDir "bin\*") (Join-Path $zipTempDir "bin")
 
-$zipOutPath = Join-Path $DistDir "uwulog-v$version-windows-x64.zip"
+$zipOutPath = Join-Path $DistDir "uwulog-v$version-windows-$Architecture.zip"
 if (Test-Path $zipOutPath) {
     Remove-Item -Force $zipOutPath
 }
@@ -92,8 +129,8 @@ Compress-Archive -Path "$zipTempDir\*" -DestinationPath $zipOutPath -Force
 Remove-Item -Recurse -Force $zipTempDir
 Write-Host "   -> [OK] Portable ZIP created: $zipOutPath" -ForegroundColor Green
 
-# 6. Compile Inno Setup Installer
-Write-Host "`n[4/4] Compiling Inno Setup installer..." -ForegroundColor Yellow
+# 7. Compile Inno Setup Installer
+Write-Host "`n[4/4] Compiling Inno Setup installer for $Architecture..." -ForegroundColor Yellow
 
 $isccCandidates = @(
     (Join-Path $env:LOCALAPPDATA "Programs\Inno Setup 6\ISCC.exe"),
@@ -121,9 +158,9 @@ if (-not $isccExe) {
 Write-Host "   -> Using Inno Setup: $isccExe" -ForegroundColor Gray
 $issPath = Join-Path $ScriptDir "setup.iss"
 
-& $isccExe "/DAppVersion=$version" "/DSourceDir=$RootDir" "/DOutputDir=$DistDir" "$issPath"
+& $isccExe "/DAppVersion=$version" "/DAppArch=$Architecture" "/DSourceDir=$RootDir" "/DOutputDir=$DistDir" "/DBinDir=$binDir" "$issPath"
 
-$installerPath = Join-Path $DistDir "uwulog-setup-x64.exe"
+$installerPath = Join-Path $DistDir "uwulog-setup-$Architecture.exe"
 if (Test-Path $installerPath) {
     if ($canSign) {
         Write-Host "   -> Signing installer: $installerPath" -ForegroundColor Yellow
@@ -134,8 +171,8 @@ if (Test-Path $installerPath) {
     Write-Host "  BUILD & PACKAGING COMPLETED SUCCESSFULLY!" -ForegroundColor Green
     Write-Host "========================================================" -ForegroundColor Green
     Write-Host "Generated Artifacts in dist/:" -ForegroundColor White
-    Write-Host "   1. Setup Wizard:  $installerPath" -ForegroundColor Cyan
-    Write-Host "   2. Portable ZIP:  $zipOutPath" -ForegroundColor Cyan
+    Write-Host "   1. Setup Wizard ($Architecture):  $installerPath" -ForegroundColor Cyan
+    Write-Host "   2. Portable ZIP ($Architecture):  $zipOutPath" -ForegroundColor Cyan
     Write-Host ""
 
     if ($Install) {

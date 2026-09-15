@@ -6,12 +6,20 @@
   #define AppVersion "0.1.0"
 #endif
 
+#ifndef AppArch
+  #define AppArch "x64"
+#endif
+
 #ifndef SourceDir
   #define SourceDir "..\.."
 #endif
 
 #ifndef OutputDir
   #define OutputDir "..\..\dist"
+#endif
+
+#ifndef BinDir
+  #define BinDir SourceDir + "\target\release"
 #endif
 
 [Setup]
@@ -27,7 +35,15 @@ DefaultDirName={localappdata}\Programs\uwulog
 DefaultGroupName=Uwu Log
 AllowNoIcons=yes
 OutputDir={#OutputDir}
+#if AppArch == "arm64" || AppArch == "aarch64"
+OutputBaseFilename=uwulog-setup-arm64
+ArchitecturesAllowed=arm64
+ArchitecturesInstallIn64BitMode=arm64
+#else
 OutputBaseFilename=uwulog-setup-x64
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
+#endif
 SetupIconFile={#SourceDir}\packaging\assets\icon.ico
 UninstallDisplayIcon={app}\uwu-gui.exe
 Compression=lzma2/ultra64
@@ -37,8 +53,6 @@ ChangesEnvironment=yes
 CloseApplications=yes
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
-ArchitecturesAllowed=x64compatible
-ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0.17763
 
 #if GetEnv("WINDOWS_SIGN_CERT") != ""
@@ -54,11 +68,11 @@ Name: "desktopicon"; Description: "Create a Desktop shortcut"; GroupDescription:
 
 [Files]
 ; Main binaries
-Source: "{#SourceDir}\target\release\uwu-gui.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#SourceDir}\target\release\uwu-tui.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#SourceDir}\target\release\uwu-agent.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#BinDir}\uwu-gui.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#BinDir}\uwu-tui.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#BinDir}\uwu-agent.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; CLI Launchers in bin\ (automatically inherited by WSL via Windows PATH)
-Source: "{#SourceDir}\target\release\uwulog.exe"; DestDir: "{app}\bin"; Flags: ignoreversion
+Source: "{#BinDir}\uwulog.exe"; DestDir: "{app}\bin"; Flags: ignoreversion
 Source: "{#SourceDir}\packaging\windows\bin\uwulog"; DestDir: "{app}\bin"; Flags: ignoreversion
 ; Assets
 Source: "{#SourceDir}\packaging\assets\icon.ico"; DestDir: "{app}"; Flags: ignoreversion
