@@ -1,7 +1,7 @@
 [
   {
     "label": "Pre commit",
-    "command": "cargo fmt --all -- --check"
+    "command": "pre-commit run --all-files"
   },
   {
     "label": "Pre push",

@@ -107,7 +107,8 @@ pub fn render_search_bar(
     crate::components::render_autocomplete_popup(ui.ctx(), session, search_rect);
 
     // Render search history popup dropdown below search box
-    crate::components::render_history_popup(ui.ctx(), session, search_rect);
+    let combined_trigger_rect = search_rect.union(history_resp.rect);
+    crate::components::render_history_popup(ui.ctx(), session, search_rect, combined_trigger_rect);
 }
 
 #[cfg(test)]
@@ -145,5 +146,42 @@ mod tests {
             });
         });
         output.textures_delta.clear();
+    }
+
+    #[test]
+    fn test_search_history_popup_stays_open_on_trigger() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let _guard = rt.enter();
+
+        let ctx = egui::Context::default();
+        let source_config = SourceConfig {
+            source_type: SourceType::Process,
+            command_str: String::new(),
+            file_path: String::new(),
+            working_dir: String::new(),
+            capacity: 100,
+            display_limit: 50,
+        };
+        let ws = WorkspaceSession::new(
+            "Test".to_string(),
+            WorkspaceLocation::local(""),
+            source_config,
+        );
+        let mut session = GuiSession::new(ws);
+        session.view.search.history.is_open = true;
+        session.view.search.history.entries =
+            vec!["level:error".to_string(), "status:500".to_string()];
+
+        let raw_input = egui::RawInput::default();
+        let mut output = ctx.run_ui(raw_input, |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                let mut dispatch = |_| {};
+                render_search_bar(ui, &mut session, &mut dispatch);
+            });
+        });
+        output.textures_delta.clear();
+
+        // History popup should remain open because no outside click occurred
+        assert!(session.view.search.history.is_open);
     }
 }

@@ -3,7 +3,12 @@ use crate::session::GuiSession;
 use crate::theme;
 use eframe::egui::{self, Color32, CornerRadius, FontId, Pos2, Rect};
 
-pub fn render_history_popup(ctx: &egui::Context, session: &mut GuiSession, input_rect: Rect) {
+pub fn render_history_popup(
+    ctx: &egui::Context,
+    session: &mut GuiSession,
+    input_rect: Rect,
+    trigger_rect: Rect,
+) {
     if !session.search.history.is_open {
         return;
     }
@@ -16,7 +21,7 @@ pub fn render_history_popup(ctx: &egui::Context, session: &mut GuiSession, input
     let mut selected_history_item = None;
     let mut clear_all_clicked = false;
 
-    let resp = PopoverContainer::new("search_history_dropdown", input_rect)
+    let resp = PopoverContainer::new("search_history_dropdown", trigger_rect)
         .width(popup_width)
         .custom_pos(popup_pos)
         .max_height(approx_height)
@@ -122,7 +127,7 @@ pub fn render_history_popup(ctx: &egui::Context, session: &mut GuiSession, input
     let popup_rect = Rect::from_min_size(popup_pos, egui::vec2(popup_width, approx_height));
     if ctx.input(|i| {
         i.pointer.hover_pos().is_some_and(|pos| {
-            popup_rect.expand(4.0).contains(pos) || input_rect.expand(2.0).contains(pos)
+            popup_rect.expand(4.0).contains(pos) || trigger_rect.expand(2.0).contains(pos)
         })
     }) {
         ctx.input_mut(|i| i.smooth_scroll_delta = egui::Vec2::ZERO);

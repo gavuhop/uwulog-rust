@@ -192,11 +192,17 @@ impl GuiSession {
 
     pub fn apply_filter_term(&mut self, term: &str) {
         self.view.search.apply_filter_term(term);
+        let q = self.view.search.query.clone();
+        self.view.search.history.record(&q);
+        self.view.search.history.mark_recorded();
         self.trigger_full_search();
     }
 
     pub fn exclude_filter_term(&mut self, term: &str) {
         self.view.search.exclude_filter_term(term);
+        let q = self.view.search.query.clone();
+        self.view.search.history.record(&q);
+        self.view.search.history.mark_recorded();
         self.trigger_full_search();
     }
 

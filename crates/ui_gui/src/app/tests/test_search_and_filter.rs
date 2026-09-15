@@ -46,6 +46,13 @@ async fn test_filter_and_exclude_term() {
         session.search.query,
         "level:error tag:Auth -healthcheck -already_negated"
     );
+
+    // Verify filter terms applied via context menu are recorded to history
+    assert!(!session.search.history.entries.is_empty());
+    assert_eq!(
+        session.search.history.entries[0],
+        "level:error tag:Auth -healthcheck -already_negated"
+    );
 }
 
 #[tokio::test]
