@@ -4,13 +4,18 @@ use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use tokio::io::AsyncWriteExt;
-use tokio::process::Command;
+use uwu_core_util::command::{new_std_command, new_tokio_command};
 
 pub struct WslTransport {
     distro: String,
     working_dir: Option<String>,
     agent_cmd: Option<String>,
     name: String,
+}
+
+#[inline]
+fn new_wsl_cmd() -> tokio::process::Command {
+    new_tokio_command("wsl.exe")
 }
 
 impl WslTransport {
@@ -41,7 +46,7 @@ impl WslTransport {
 
     /// Tự động phát hiện danh sách các WSL Distro đã cài đặt trên máy Windows
     pub fn detect_distros() -> Vec<String> {
-        let output = match std::process::Command::new("wsl.exe")
+        let output = match new_std_command("wsl.exe")
             .arg("--list")
             .arg("--quiet")
             .output()
@@ -113,7 +118,7 @@ impl WslTransport {
 
         // 1. Kiểm tra xem binary đã tồn tại và chạy được chưa
         let check_cmd = format!("{} version", remote_binary_path);
-        let check_output = Command::new("wsl.exe")
+        let check_output = new_wsl_cmd()
             .arg("-d")
             .arg(&self.distro)
             .arg("--cd")
@@ -148,7 +153,7 @@ impl WslTransport {
         if let Some(local_path) = Self::find_local_agent_binary() {
             // Method 1: Upload qua wslpath + cp
             let win_path_str = local_path.to_string_lossy().to_string();
-            let wslpath_out = Command::new("wsl.exe")
+            let wslpath_out = new_wsl_cmd()
                 .arg("-d")
                 .arg(&self.distro)
                 .arg("--cd")
@@ -169,7 +174,7 @@ impl WslTransport {
                         wsl_src, remote_binary_path, remote_binary_path
                     );
 
-                    let cp_status = Command::new("wsl.exe")
+                    let cp_status = new_wsl_cmd()
                         .arg("-d")
                         .arg(&self.distro)
                         .arg("--cd")
@@ -197,7 +202,7 @@ impl WslTransport {
                         remote_binary_path, remote_binary_path
                     );
 
-                    let child = Command::new("wsl.exe")
+                    let child = new_wsl_cmd()
                         .arg("-d")
                         .arg(&self.distro)
                         .arg("--cd")
@@ -221,7 +226,7 @@ impl WslTransport {
             }
 
             // 3. Kiểm tra xác minh lại sau khi upload
-            let recheck = Command::new("wsl.exe")
+            let recheck = new_wsl_cmd()
                 .arg("-d")
                 .arg(&self.distro)
                 .arg("--cd")
@@ -274,7 +279,7 @@ impl RemoteTransport for WslTransport {
             .await
             .unwrap_or_else(|_| "uwu-agent".to_string());
 
-        let mut cmd = Command::new("wsl.exe");
+        let mut cmd = new_wsl_cmd();
         cmd.arg("-d").arg(&self.distro);
         let cd_dir = self
             .working_dir

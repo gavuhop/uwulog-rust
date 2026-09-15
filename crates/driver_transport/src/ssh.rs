@@ -2,7 +2,7 @@ use super::{BoxedRead, BoxedWrite, RemoteTransport};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use std::process::Stdio;
-use tokio::process::Command;
+use uwu_core_util::command::new_tokio_command;
 
 pub struct SshTransport {
     host: String,
@@ -43,7 +43,7 @@ impl RemoteTransport for SshTransport {
     }
 
     async fn spawn_proxy(&self) -> Result<(BoxedRead, BoxedWrite)> {
-        let mut cmd = Command::new("ssh");
+        let mut cmd = new_tokio_command("ssh");
 
         if let Some(port) = self.port {
             cmd.arg("-p").arg(port.to_string());

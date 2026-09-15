@@ -4585,6 +4585,7 @@ name = "uwu-core-util"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "tokio",
 ]
 
 [[package]]
@@ -4633,6 +4634,7 @@ dependencies = [
  "log",
  "tokio",
  "uwu-core-protocol",
+ "uwu-core-util",
 ]
 
 [[package]]

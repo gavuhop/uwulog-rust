@@ -2,10 +2,10 @@ use super::traits::LogSource;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use std::process::Stdio;
-use tokio::process::Command;
 use tokio::sync::mpsc;
 use uwu_core_protocol::RemoteLogSourceSpec;
 use uwu_core_schema::RawLogEntry;
+use uwu_core_util::command::new_tokio_command;
 
 pub type WslTargetMode = RemoteLogSourceSpec;
 
@@ -59,7 +59,7 @@ impl LogSource for WslSource {
     }
 
     async fn start_stream(&self, tx: mpsc::Sender<RawLogEntry>) -> Result<()> {
-        let mut cmd = Command::new("wsl.exe");
+        let mut cmd = new_tokio_command("wsl.exe");
         if !self.distro.trim().is_empty() {
             cmd.arg("-d").arg(&self.distro);
         }

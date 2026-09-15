@@ -1,3 +1,5 @@
+pub mod command;
+
 use chrono::{DateTime, Datelike, Local, TimeZone};
 use std::borrow::Cow;
 use std::time::{SystemTime, UNIX_EPOCH};

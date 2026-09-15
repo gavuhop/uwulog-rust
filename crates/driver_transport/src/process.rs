@@ -2,7 +2,7 @@ use super::{BoxedRead, BoxedWrite, RemoteTransport};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use std::process::Stdio;
-use tokio::process::Command;
+use uwu_core_util::command::new_tokio_command;
 
 pub struct ProcessTransport {
     command: String,
@@ -45,7 +45,7 @@ impl RemoteTransport for ProcessTransport {
     }
 
     async fn spawn_proxy(&self) -> Result<(BoxedRead, BoxedWrite)> {
-        let mut cmd = Command::new(&self.command);
+        let mut cmd = new_tokio_command(&self.command);
         cmd.args(&self.args);
         cmd.stdin(Stdio::piped());
         cmd.stdout(Stdio::piped());

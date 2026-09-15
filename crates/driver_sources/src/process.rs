@@ -2,9 +2,9 @@ use super::traits::LogSource;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use std::process::Stdio;
-use tokio::process::Command;
 use tokio::sync::mpsc;
 use uwu_core_schema::RawLogEntry;
+use uwu_core_util::command::{new_std_command, new_tokio_command};
 
 pub struct ProcessSource {
     command: String,
@@ -54,7 +54,7 @@ impl LogSource for ProcessSource {
     }
 
     async fn start_stream(&self, tx: mpsc::Sender<RawLogEntry>) -> Result<()> {
-        let mut cmd = Command::new(&self.command);
+        let mut cmd = new_tokio_command(&self.command);
         cmd.args(&self.args);
         if let Some(dir) = &self.working_dir {
             if !dir.trim().is_empty() {
@@ -104,7 +104,7 @@ impl LogSource for ProcessSource {
                     #[cfg(target_os = "windows")]
                     if let Some(pid) = child_pid {
                         // Taskkill cưỡng chế diệt cả cây tiến trình con/cháu (Process Tree) trên Windows ngay lập tức
-                        let _ = std::process::Command::new("taskkill")
+                        let _ = new_std_command("taskkill")
                             .args(["/F", "/T", "/PID", &pid.to_string()])
                             .output();
                     }
