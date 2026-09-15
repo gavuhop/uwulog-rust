@@ -31,67 +31,83 @@ pub fn render_launch_modal(
 
                 // 1. System Engine Performance Card
                 render_card(ui, "System Engine Performance", |ui| {
-                    egui::Grid::new("engine_params_grid")
-                        .num_columns(2)
-                        .spacing([16.0, 10.0])
-                        .show(ui, |ui| {
-                            let right_col_w = 130.0;
-                            let spacing_x = 16.0;
-                            let left_col_w =
-                                (ui.available_width() - right_col_w - spacing_x).max(180.0);
+                    ui.scope(|ui| {
+                        let input_stroke = Stroke::new(1.0, theme::BG_SURFACE1);
+                        let widgets = &mut ui.visuals_mut().widgets;
+                        widgets.inactive.bg_stroke = input_stroke;
+                        widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
+                        widgets.inactive.bg_fill = Color32::TRANSPARENT;
 
-                            // Row 1: RingBuffer Capacity
-                            ui.allocate_ui_with_layout(
-                                egui::vec2(left_col_w, 24.0),
-                                egui::Layout::left_to_right(egui::Align::Center),
-                                |ui| {
-                                    ui.label(
+                        widgets.hovered.bg_stroke = input_stroke;
+                        widgets.hovered.weak_bg_fill = Color32::TRANSPARENT;
+                        widgets.hovered.bg_fill = Color32::TRANSPARENT;
+
+                        widgets.active.bg_stroke = input_stroke;
+                        widgets.active.weak_bg_fill = Color32::TRANSPARENT;
+                        widgets.active.bg_fill = Color32::TRANSPARENT;
+
+                        let right_col_w = 130.0;
+
+                        // Row 1: RingBuffer Capacity
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(ui.available_width(), 24.0),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.add(
+                                    egui::Label::new(
                                         egui::RichText::new("RingBuffer Capacity (-C):")
                                             .color(theme::TEXT_PRIMARY),
                                     )
-                                    .on_hover_text(
-                                        "Maximum log events retained in circular memory buffer",
-                                    );
-                                },
-                            );
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    ui.add_sized(
-                                        [right_col_w, 24.0],
-                                        egui::DragValue::new(&mut draft.capacity)
-                                            .range(1_000..=1_000_000)
-                                            .speed(5000),
-                                    );
-                                },
-                            );
-                            ui.end_row();
+                                    .wrap_mode(egui::TextWrapMode::Extend),
+                                )
+                                .on_hover_text(
+                                    "Maximum log events retained in circular memory buffer",
+                                );
 
-                            // Row 2: Display Limit
-                            ui.allocate_ui_with_layout(
-                                egui::vec2(left_col_w, 24.0),
-                                egui::Layout::left_to_right(egui::Align::Center),
-                                |ui| {
-                                    ui.label(
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        ui.add_sized(
+                                            [right_col_w, 24.0],
+                                            egui::DragValue::new(&mut draft.capacity)
+                                                .range(1_000..=1_000_000)
+                                                .speed(5000),
+                                        );
+                                    },
+                                );
+                            },
+                        );
+
+                        ui.add_space(8.0);
+
+                        // Row 2: Display Limit
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(ui.available_width(), 24.0),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.add(
+                                    egui::Label::new(
                                         egui::RichText::new("Display Limit (-n):")
                                             .color(theme::TEXT_PRIMARY),
                                     )
-                                    .on_hover_text("Maximum log events rendered in the table view");
-                                },
-                            );
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    ui.add_sized(
-                                        [right_col_w, 24.0],
-                                        egui::DragValue::new(&mut draft.display_limit)
-                                            .range(100..=50_000)
-                                            .speed(500),
-                                    );
-                                },
-                            );
-                            ui.end_row();
-                        });
+                                    .wrap_mode(egui::TextWrapMode::Extend),
+                                )
+                                .on_hover_text("Maximum log events rendered in the table view");
+
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        ui.add_sized(
+                                            [right_col_w, 24.0],
+                                            egui::DragValue::new(&mut draft.display_limit)
+                                                .range(100..=50_000)
+                                                .speed(500),
+                                        );
+                                    },
+                                );
+                            },
+                        );
+                    });
                 });
 
                 ui.add_space(10.0);
@@ -101,21 +117,20 @@ pub fn render_launch_modal(
                     // Segmented Control (Tabs) for Source Selection
                     let total_width = ui.available_width();
                     let seg_height = 28.0;
-                    let seg_width = ((total_width - 4.0) * 0.5).floor();
+                    let seg_width1 = (total_width * 0.5).floor();
+                    let seg_width2 = total_width - seg_width1;
 
                     egui::Frame::default()
                         .fill(theme::BG_CRUST)
-                        .corner_radius(CornerRadius::same(5))
-                        .inner_margin(egui::Margin::same(2))
-                        .stroke(Stroke::new(1.0, theme::BG_SURFACE0))
+                        .corner_radius(CornerRadius::same(4))
+                        .inner_margin(egui::Margin::ZERO)
                         .show(ui, |ui| {
+                            ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
                             ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing = egui::vec2(2.0, 0.0);
-
                                 // Segment 1: Process Exec (-c)
                                 let is_proc = draft.source_type == SourceType::Process;
                                 let (rect1, resp1) = ui.allocate_exact_size(
-                                    egui::vec2(seg_width, seg_height),
+                                    egui::vec2(seg_width1, seg_height),
                                     egui::Sense::click(),
                                 );
                                 if resp1.clicked() {
@@ -132,24 +147,19 @@ pub fn render_launch_modal(
                                 } else {
                                     Color32::TRANSPARENT
                                 };
-                                let stroke1 = if is_proc {
-                                    Stroke::new(1.0, theme::TEXT_KEY)
-                                } else {
-                                    Stroke::NONE
-                                };
                                 let text_color1 = if is_proc {
                                     theme::TEXT_PRIMARY
                                 } else {
                                     theme::TEXT_MUTED
                                 };
 
-                                ui.painter().rect(
-                                    rect1,
-                                    CornerRadius::same(4),
-                                    bg1,
-                                    stroke1,
-                                    egui::StrokeKind::Inside,
-                                );
+                                let radius1 = CornerRadius {
+                                    nw: 4,
+                                    sw: 4,
+                                    ne: 4,
+                                    se: 4,
+                                };
+                                ui.painter().rect_filled(rect1, radius1, bg1);
                                 let galley1 = ui.painter().layout_no_wrap(
                                     "Process Exec (-c)".to_string(),
                                     egui::FontId::proportional(12.0),
@@ -177,7 +187,7 @@ pub fn render_launch_modal(
                                 // Segment 2: File Tail (-f)
                                 let is_file = draft.source_type == SourceType::File;
                                 let (rect2, resp2) = ui.allocate_exact_size(
-                                    egui::vec2(seg_width, seg_height),
+                                    egui::vec2(seg_width2, seg_height),
                                     egui::Sense::click(),
                                 );
                                 if resp2.clicked() {
@@ -194,24 +204,19 @@ pub fn render_launch_modal(
                                 } else {
                                     Color32::TRANSPARENT
                                 };
-                                let stroke2 = if is_file {
-                                    Stroke::new(1.0, theme::TEXT_KEY)
-                                } else {
-                                    Stroke::NONE
-                                };
                                 let text_color2 = if is_file {
                                     theme::TEXT_PRIMARY
                                 } else {
                                     theme::TEXT_MUTED
                                 };
 
-                                ui.painter().rect(
-                                    rect2,
-                                    CornerRadius::same(4),
-                                    bg2,
-                                    stroke2,
-                                    egui::StrokeKind::Inside,
-                                );
+                                let radius2 = CornerRadius {
+                                    nw: 4,
+                                    sw: 4,
+                                    ne: 4,
+                                    se: 4,
+                                };
+                                ui.painter().rect_filled(rect2, radius2, bg2);
                                 let galley2 = ui.painter().layout_no_wrap(
                                     "File Tail (-f)".to_string(),
                                     egui::FontId::proportional(12.0),
