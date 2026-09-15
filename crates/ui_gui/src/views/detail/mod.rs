@@ -38,7 +38,6 @@ pub fn render_detail(
                 // 1. Close Inspector
                 let close_btn = AppButton::new()
                     .label("Close")
-                    .small()
                     .tooltip("Close inspector (Esc)");
                 if close_btn.show(ui).clicked() {
                     action_to_dispatch = Some(AppAction::SelectLog(None));
@@ -49,7 +48,6 @@ pub fn render_detail(
                     ui.add_space(4.0);
                     let locate_btn = AppButton::new()
                         .label("View context")
-                        .small()
                         .tooltip("View surrounding logs in full unfiltered stream");
                     if locate_btn.show(ui).clicked() {
                         action_to_dispatch = Some(AppAction::OpenUnfilteredStream(Some(event_id)));
@@ -65,7 +63,7 @@ pub fn render_detail(
                     "Highlight row"
                 };
 
-                let mut hl_btn = AppButton::new().label(hl_text).small();
+                let mut hl_btn = AppButton::new().label(hl_text);
                 if is_highlighted {
                     hl_btn = hl_btn
                         .fill(theme::BG_ROW_HIGHLIGHT)
