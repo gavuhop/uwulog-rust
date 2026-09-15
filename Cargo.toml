@@ -13,6 +13,7 @@ members = [
     "crates/ui_tui",
     "crates/ui_gui",
     "crates/benchmarks",
+    "crates/cli",
 ]
 
 [workspace.dependencies]
@@ -72,3 +73,4 @@ uwu-core-engine = { path = "crates/core_engine" }
 uwu-cli-agent = { path = "crates/cli_agent" }
 uwu-ui-tui = { path = "crates/ui_tui" }
 uwu-ui-gui = { path = "crates/ui_gui" }
+uwu-cli = { path = "crates/cli" }

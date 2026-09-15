@@ -3,6 +3,7 @@
 **/*.rs.bk
 *.pdb
 *.exe
+/dist
 
 # IDE & OS
 .vscode/

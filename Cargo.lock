@@ -4478,6 +4478,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "uwu-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+]
+
+[[package]]
 name = "uwu-cli-agent"
 version = "0.1.0"
 dependencies = [

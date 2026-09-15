@@ -1,0 +1,12 @@
+* text=auto eol=lf
+*.sh text eol=lf
+*.iss text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+packaging/windows/bin/uwulog text eol=lf
+packaging/linux/*.sh text eol=lf
+packaging/macos/*.sh text eol=lf
+*.ico binary
+*.icns binary
+*.png binary

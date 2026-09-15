@@ -1,0 +1,25 @@
+#!/usr/bin/env sh
+# ==============================================================================
+# uwulog - Universal CLI launcher for Uwu Log Viewer (Windows & WSL)
+# Compatible with WSL PATH inheritance and Git Bash
+# Modeled after Zed IDE (crates/zed/resources/windows/zed.sh)
+# ==============================================================================
+
+UWU_PATH="$(dirname "$(realpath "$0")")"
+
+if [ -n "$WSL_DISTRO_NAME" ]; then
+    case "$1" in
+        -h|--help|-V|--version|-t|--tui|--wait)
+            "$UWU_PATH/uwulog.exe" --remote "$WSL_DISTRO_NAME" --dir "$PWD" "$@"
+            exit $?
+            ;;
+        *)
+            nohup "$UWU_PATH/uwulog.exe" --remote "$WSL_DISTRO_NAME" --dir "$PWD" "$@" >/dev/null 2>&1 &
+            disown 2>/dev/null || true
+            exit 0
+            ;;
+    esac
+else
+    "$UWU_PATH/uwulog.exe" "$@"
+    exit $?
+fi

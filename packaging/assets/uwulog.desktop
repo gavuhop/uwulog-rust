@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Uwu Log
+Comment=High-performance log viewer & workspace monitor
+Exec=uwu-gui %F
+Icon=uwulog
+Terminal=false
+Type=Application
+Categories=Development;System;Utility;
+Keywords=log;viewer;monitor;wsl;tui;gui;
+StartupWMClass=uwu-gui
+MimeType=text/plain;application/json;
