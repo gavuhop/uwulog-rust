@@ -223,8 +223,7 @@ pub fn render_detail(
                         let copy_label = if is_beauty { "Copy Beauty" } else { "Copy Raw" };
                         let copy_btn = AppButton::new()
                             .label(copy_label)
-                            .icon("📋")
-                            .small()
+                            .icon(crate::components::ui::IconName::Copy)
                             .variant(if is_flashing {
                                 ButtonVariant::Primary
                             } else {

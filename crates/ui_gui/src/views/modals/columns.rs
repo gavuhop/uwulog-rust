@@ -22,9 +22,9 @@ pub fn render_columns_modal(
 
     let resp = crate::components::ui::ModalContainer::new(
         "columns_modal_window",
-        "📊 Table Columns & Ordering",
+        "Table Columns & Ordering",
     )
-    .subtitle("Click & drag ⠿ items to reorder columns. Toggle checkboxes to show/hide.")
+    .subtitle("Click & drag items to reorder columns. Toggle checkboxes to show/hide.")
     .width(560.0)
     .min_height(480.0)
     .show(
@@ -32,11 +32,6 @@ pub fn render_columns_modal(
         |ui| {
             // Filter search box
             ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new("🔍")
-                        .size(12.0)
-                        .color(theme::TEXT_MUTED),
-                );
                 let avail_w = ui.available_width();
                 let clear_btn_w = if columns.filter_query.is_empty() {
                     0.0
@@ -52,11 +47,13 @@ pub fn render_columns_modal(
                     .width(text_w)
                     .show(ui);
                 if !columns.filter_query.is_empty()
-                    && crate::components::ui::IconButton::new("✖")
-                        .size(24.0)
-                        .tooltip("Clear filter")
-                        .show(ui)
-                        .clicked()
+                    && crate::components::ui::IconButton::new(
+                        crate::components::ui::IconName::Close,
+                    )
+                    .size(24.0)
+                    .tooltip("Clear filter")
+                    .show(ui)
+                    .clicked()
                 {
                     columns.filter_query.clear();
                 }
@@ -126,13 +123,15 @@ pub fn render_columns_modal(
 
                 let h_center_y = h_rect.center().y;
 
-                // Header icon (⇅)
+                // Header icon (Grip indicator)
                 let grip_x = h_rect.min.x + 8.0;
-                ui.painter().text(
-                    Pos2::new(grip_x, h_center_y),
-                    egui::Align2::LEFT_CENTER,
-                    "⇅",
-                    FontId::monospace(13.0),
+                let header_grip_rect = Rect::from_center_size(
+                    Pos2::new(h_rect.min.x + 12.0, h_center_y),
+                    egui::vec2(12.0, 12.0),
+                );
+                crate::components::ui::IconName::GripVertical.paint(
+                    ui.painter(),
+                    header_grip_rect,
                     theme::TEXT_MUTED,
                 );
 
@@ -158,19 +157,15 @@ pub fn render_columns_modal(
                 );
 
                 if all_matching_visible {
-                    ui.painter().text(
-                        check_rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        "✔",
-                        FontId::monospace(11.0),
+                    crate::components::ui::IconName::Check.paint(
+                        ui.painter(),
+                        check_rect.shrink(2.5),
                         theme::BG_BASE,
                     );
                 } else if is_partial {
-                    ui.painter().text(
-                        check_rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        "-",
-                        FontId::monospace(13.0),
+                    crate::components::ui::IconName::Dash.paint(
+                        ui.painter(),
+                        check_rect.shrink(2.5),
                         theme::BG_BASE,
                     );
                 }
@@ -325,9 +320,13 @@ pub fn render_columns_modal(
                             } else {
                                 theme::TEXT_MUTED
                             };
-                            theme::draw_drag_handle(
-                                ui.painter(),
+                            let grip_rect = Rect::from_center_size(
                                 Pos2::new(rect.min.x + 12.0, center_y),
+                                egui::vec2(12.0, 12.0),
+                            );
+                            crate::components::ui::IconName::GripVertical.paint(
+                                ui.painter(),
+                                grip_rect,
                                 grip_color,
                             );
 
@@ -371,11 +370,9 @@ pub fn render_columns_modal(
                             );
 
                             if col_visible {
-                                ui.painter().text(
-                                    check_rect.center(),
-                                    egui::Align2::CENTER_CENTER,
-                                    "✔",
-                                    FontId::monospace(11.0),
+                                crate::components::ui::IconName::Check.paint(
+                                    ui.painter(),
+                                    check_rect.shrink(2.5),
                                     theme::BG_BASE,
                                 );
                             }
@@ -445,7 +442,7 @@ pub fn render_columns_modal(
         Some(|ui: &mut egui::Ui, close_req: &mut bool| {
             if crate::components::ui::AppButton::new()
                 .label("Reset Defaults")
-                .icon("🔄")
+                .icon(crate::components::ui::IconName::Restart)
                 .tooltip("Reset draft column order and visibility to default")
                 .show(ui)
                 .clicked()
@@ -456,7 +453,7 @@ pub fn render_columns_modal(
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if crate::components::ui::AppButton::new()
                     .label("Apply & Done")
-                    .icon("✔")
+                    .icon(crate::components::ui::IconName::Check)
                     .variant(crate::components::ui::ButtonVariant::Success)
                     .tooltip("Apply column visibility and ordering changes")
                     .show(ui)

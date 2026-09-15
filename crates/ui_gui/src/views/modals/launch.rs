@@ -150,13 +150,29 @@ pub fn render_launch_modal(
                                     stroke1,
                                     egui::StrokeKind::Inside,
                                 );
-                                ui.painter().text(
-                                    rect1.center(),
-                                    egui::Align2::CENTER_CENTER,
-                                    "⚡ Process Exec (-c)",
+                                let galley1 = ui.painter().layout_no_wrap(
+                                    "Process Exec (-c)".to_string(),
                                     egui::FontId::proportional(12.0),
                                     text_color1,
                                 );
+                                let total_w1 = 14.0 + 6.0 + galley1.size().x;
+                                let icon_r1 = egui::Rect::from_center_size(
+                                    egui::pos2(
+                                        rect1.center().x - total_w1 * 0.5 + 7.0,
+                                        rect1.center().y,
+                                    ),
+                                    egui::vec2(14.0, 14.0),
+                                );
+                                let text_pos1 = egui::pos2(
+                                    rect1.center().x - total_w1 * 0.5 + 20.0,
+                                    rect1.center().y - galley1.size().y * 0.5,
+                                );
+                                crate::components::ui::IconName::Terminal.paint(
+                                    ui.painter(),
+                                    icon_r1,
+                                    text_color1,
+                                );
+                                ui.painter().galley(text_pos1, galley1, text_color1);
 
                                 // Segment 2: File Tail (-f)
                                 let is_file = draft.source_type == SourceType::File;
@@ -196,13 +212,29 @@ pub fn render_launch_modal(
                                     stroke2,
                                     egui::StrokeKind::Inside,
                                 );
-                                ui.painter().text(
-                                    rect2.center(),
-                                    egui::Align2::CENTER_CENTER,
-                                    "📄 File Tail (-f)",
+                                let galley2 = ui.painter().layout_no_wrap(
+                                    "File Tail (-f)".to_string(),
                                     egui::FontId::proportional(12.0),
                                     text_color2,
                                 );
+                                let total_w2 = 14.0 + 6.0 + galley2.size().x;
+                                let icon_r2 = egui::Rect::from_center_size(
+                                    egui::pos2(
+                                        rect2.center().x - total_w2 * 0.5 + 7.0,
+                                        rect2.center().y,
+                                    ),
+                                    egui::vec2(14.0, 14.0),
+                                );
+                                let text_pos2 = egui::pos2(
+                                    rect2.center().x - total_w2 * 0.5 + 20.0,
+                                    rect2.center().y - galley2.size().y * 0.5,
+                                );
+                                crate::components::ui::IconName::File.paint(
+                                    ui.painter(),
+                                    icon_r2,
+                                    text_color2,
+                                );
+                                ui.painter().galley(text_pos2, galley2, text_color2);
                             });
                         });
 
@@ -264,7 +296,7 @@ pub fn render_launch_modal(
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if AppButton::new()
                         .label("Apply & Restart")
-                        .icon("🚀")
+                        .icon(crate::components::ui::IconName::Rocket)
                         .variant(ButtonVariant::Success)
                         .min_size(egui::vec2(130.0, 26.0))
                         .show(ui)

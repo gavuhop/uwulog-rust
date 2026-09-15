@@ -33,7 +33,7 @@ pub fn render_cell_context_menu(
     ui.separator();
 
     // 3. Nhóm thao tác Dòng & Toàn cục
-    if ui.button("🔍 View in unfiltered stream").clicked() {
+    if ui.button("View in unfiltered stream").clicked() {
         *render_ctx.action = Some(AppAction::OpenUnfilteredStream(Some(menu_ctx.event_id)));
         ui.close();
     }

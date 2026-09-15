@@ -98,7 +98,7 @@ if command -v hdiutil >/dev/null 2>&1; then
                    -ov \
                    -format UDZO \
                    "$OUTPUT_DMG"
-    
+
     # Sign DMG if certificate provided
     if [ -n "$APPLE_SIGNING_IDENTITY" ] && command -v codesign >/dev/null 2>&1; then
         echo "-> Signing DMG..."

@@ -1,7 +1,6 @@
-//! Zed-style Button primitives: AppButton, IconButton, TabButton.
-
+use super::icon::{IconName, IconSize};
 use crate::theme;
-use eframe::egui::{self, Color32, CornerRadius, Response, Stroke, Ui, Vec2};
+use eframe::egui::{self, Color32, CornerRadius, Pos2, Rect, Response, Stroke, Ui, Vec2};
 
 /// Kiểu nút bấm tiêu chuẩn (Regular, Selected, Danger, Success, Ghost, Primary, Outline)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -19,10 +18,30 @@ pub enum ButtonVariant {
 pub const BUTTON_HEIGHT_NORMAL: f32 = 24.0;
 pub const BUTTON_HEIGHT_SMALL: f32 = 20.0;
 
+/// Icon được hiển thị trên nút bấm (hỗ trợ cả IconName chuẩn hóa và ký tự text)
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ButtonIcon<'a> {
+    Named(IconName),
+    Glyph(&'a str),
+}
+
+impl From<IconName> for ButtonIcon<'static> {
+    fn from(name: IconName) -> Self {
+        Self::Named(name)
+    }
+}
+
+impl<'a> From<&'a str> for ButtonIcon<'a> {
+    fn from(glyph: &'a str) -> Self {
+        Self::Glyph(glyph)
+    }
+}
+
 /// Nút bấm tổng quát với API dạng Builder (tương tự Button trong Zed UI)
 pub struct AppButton<'a> {
     label: Option<&'a str>,
-    icon: Option<&'a str>,
+    icon: Option<ButtonIcon<'a>>,
+    icon_size: Option<IconSize>,
     tooltip: Option<&'a str>,
     variant: ButtonVariant,
     small: bool,
@@ -46,6 +65,7 @@ impl<'a> AppButton<'a> {
         Self {
             label: None,
             icon: None,
+            icon_size: None,
             tooltip: None,
             variant: ButtonVariant::Default,
             small: false,
@@ -64,8 +84,13 @@ impl<'a> AppButton<'a> {
         self
     }
 
-    pub fn icon(mut self, icon: &'a str) -> Self {
-        self.icon = Some(icon);
+    pub fn icon(mut self, icon: impl Into<ButtonIcon<'a>>) -> Self {
+        self.icon = Some(icon.into());
+        self
+    }
+
+    pub fn icon_size(mut self, size: impl Into<IconSize>) -> Self {
+        self.icon_size = Some(size.into());
         self
     }
 
@@ -140,37 +165,129 @@ impl<'a> AppButton<'a> {
             (12.0f32, 8.0f32, BUTTON_HEIGHT_NORMAL, CornerRadius::same(4))
         };
 
-        let content_text = match (self.icon, self.label) {
-            (Some(icon), Some(label)) => format!("{} {}", icon, label),
-            (Some(icon), None) => icon.to_string(),
-            (None, Some(label)) => label.to_string(),
-            (None, None) => String::new(),
-        };
-
         let font_id = egui::FontId::proportional(font_size);
-        let layout_galley = ui.painter().layout_no_wrap(
-            content_text.clone(),
-            font_id.clone(),
-            Color32::PLACEHOLDER,
-        );
+        let icon_size_px =
+            self.icon_size
+                .map(|s| s.px())
+                .unwrap_or(if self.small { 12.0 } else { 14.0 });
 
-        let min_w = if self.full_width {
-            ui.available_width()
-        } else if let Some(w) = self.min_width {
-            w
-        } else {
-            self.min_size.map(|s| s.x).unwrap_or(0.0)
-        };
-        let min_h = self.min_size.map(|s| s.y).unwrap_or(0.0);
-        let desired_w = if self.label.is_none() && self.min_size.is_some() {
-            min_w
-        } else {
-            (layout_galley.size().x + padding_x * 2.0).max(min_w)
-        };
-        let desired_h = if self.label.is_none() && self.min_size.is_some() {
-            min_h
-        } else {
-            height.max(min_h)
+        let (desired_w, desired_h, label_galley) = match (self.icon, self.label) {
+            (Some(ButtonIcon::Named(_)), Some(label)) => {
+                let galley = ui.painter().layout_no_wrap(
+                    label.to_string(),
+                    font_id.clone(),
+                    Color32::PLACEHOLDER,
+                );
+                let content_w = icon_size_px + 5.0 + galley.size().x;
+                let min_w = if self.full_width {
+                    ui.available_width()
+                } else if let Some(w) = self.min_width {
+                    w
+                } else {
+                    self.min_size.map(|s| s.x).unwrap_or(0.0)
+                };
+                let min_h = self.min_size.map(|s| s.y).unwrap_or(0.0);
+                (
+                    (content_w + padding_x * 2.0).max(min_w),
+                    height.max(min_h),
+                    Some(galley),
+                )
+            }
+            (Some(ButtonIcon::Named(_)), None) => {
+                let min_w = if self.full_width {
+                    ui.available_width()
+                } else if let Some(w) = self.min_width {
+                    w
+                } else {
+                    self.min_size.map(|s| s.x).unwrap_or(0.0)
+                };
+                let min_h = self.min_size.map(|s| s.y).unwrap_or(0.0);
+                let w = if self.min_size.is_some() {
+                    min_w
+                } else {
+                    (icon_size_px + padding_x * 2.0).max(min_w)
+                };
+                let h = if self.min_size.is_some() {
+                    min_h
+                } else {
+                    height.max(min_h)
+                };
+                (w, h, None)
+            }
+            (Some(ButtonIcon::Glyph(g)), Some(label)) => {
+                let content_text = format!("{} {}", g, label);
+                let galley = ui.painter().layout_no_wrap(
+                    content_text,
+                    font_id.clone(),
+                    Color32::PLACEHOLDER,
+                );
+                let min_w = if self.full_width {
+                    ui.available_width()
+                } else if let Some(w) = self.min_width {
+                    w
+                } else {
+                    self.min_size.map(|s| s.x).unwrap_or(0.0)
+                };
+                let min_h = self.min_size.map(|s| s.y).unwrap_or(0.0);
+                (
+                    (galley.size().x + padding_x * 2.0).max(min_w),
+                    height.max(min_h),
+                    Some(galley),
+                )
+            }
+            (Some(ButtonIcon::Glyph(g)), None) => {
+                let galley = ui.painter().layout_no_wrap(
+                    g.to_string(),
+                    font_id.clone(),
+                    Color32::PLACEHOLDER,
+                );
+                let min_w = if self.full_width {
+                    ui.available_width()
+                } else if let Some(w) = self.min_width {
+                    w
+                } else {
+                    self.min_size.map(|s| s.x).unwrap_or(0.0)
+                };
+                let min_h = self.min_size.map(|s| s.y).unwrap_or(0.0);
+                let w = if self.min_size.is_some() {
+                    min_w
+                } else {
+                    (galley.size().x + padding_x * 2.0).max(min_w)
+                };
+                let h = if self.min_size.is_some() {
+                    min_h
+                } else {
+                    height.max(min_h)
+                };
+                (w, h, Some(galley))
+            }
+            (None, Some(label)) => {
+                let galley = ui.painter().layout_no_wrap(
+                    label.to_string(),
+                    font_id.clone(),
+                    Color32::PLACEHOLDER,
+                );
+                let min_w = if self.full_width {
+                    ui.available_width()
+                } else if let Some(w) = self.min_width {
+                    w
+                } else {
+                    self.min_size.map(|s| s.x).unwrap_or(0.0)
+                };
+                let min_h = self.min_size.map(|s| s.y).unwrap_or(0.0);
+                (
+                    (galley.size().x + padding_x * 2.0).max(min_w),
+                    height.max(min_h),
+                    Some(galley),
+                )
+            }
+            (None, None) => {
+                let min_w = self
+                    .min_width
+                    .unwrap_or_else(|| self.min_size.map(|s| s.x).unwrap_or(0.0));
+                let min_h = self.min_size.map(|s| s.y).unwrap_or(0.0);
+                (min_w, min_h, None)
+            }
         };
 
         let (rect, mut response) =
@@ -232,21 +349,52 @@ impl<'a> AppButton<'a> {
                     .rect(rect, rounding, bg_color, stroke, egui::StrokeKind::Inside);
             }
 
-            let galley = ui
-                .painter()
-                .layout_no_wrap(content_text, font_id, text_color);
-            let text_pos = if self.align_left {
-                egui::pos2(
-                    rect.min.x + padding_x,
-                    rect.center().y - galley.size().y * 0.5,
-                )
-            } else {
-                egui::pos2(
-                    rect.center().x - galley.size().x * 0.5,
-                    rect.center().y - galley.size().y * 0.5,
-                )
-            };
-            ui.painter().galley(text_pos, galley, text_color);
+            if let Some(ButtonIcon::Named(icon_name)) = self.icon {
+                if let Some(galley) = label_galley {
+                    let content_w = icon_size_px + 5.0 + galley.size().x;
+                    let (icon_rect, text_pos) = if self.align_left {
+                        let icon_r = Rect::from_center_size(
+                            Pos2::new(rect.min.x + padding_x + icon_size_px * 0.5, rect.center().y),
+                            Vec2::splat(icon_size_px),
+                        );
+                        let text_p = Pos2::new(
+                            rect.min.x + padding_x + icon_size_px + 5.0,
+                            rect.center().y - galley.size().y * 0.5,
+                        );
+                        (icon_r, text_p)
+                    } else {
+                        let start_x = rect.center().x - content_w * 0.5;
+                        let icon_r = Rect::from_center_size(
+                            Pos2::new(start_x + icon_size_px * 0.5, rect.center().y),
+                            Vec2::splat(icon_size_px),
+                        );
+                        let text_p = Pos2::new(
+                            start_x + icon_size_px + 5.0,
+                            rect.center().y - galley.size().y * 0.5,
+                        );
+                        (icon_r, text_p)
+                    };
+                    icon_name.paint(ui.painter(), icon_rect, text_color);
+                    ui.painter().galley(text_pos, galley, text_color);
+                } else {
+                    let icon_rect =
+                        Rect::from_center_size(rect.center(), Vec2::splat(icon_size_px));
+                    icon_name.paint(ui.painter(), icon_rect, text_color);
+                }
+            } else if let Some(galley) = label_galley {
+                let text_pos = if self.align_left {
+                    Pos2::new(
+                        rect.min.x + padding_x,
+                        rect.center().y - galley.size().y * 0.5,
+                    )
+                } else {
+                    Pos2::new(
+                        rect.center().x - galley.size().x * 0.5,
+                        rect.center().y - galley.size().y * 0.5,
+                    )
+                };
+                ui.painter().galley(text_pos, galley, text_color);
+            }
         }
 
         if let Some(tip) = self.tooltip {
@@ -261,7 +409,8 @@ impl<'a> AppButton<'a> {
 
 /// Nút icon vuông vắn chuyên dụng (IconButton trong Zed UI)
 pub struct IconButton<'a> {
-    icon: &'a str,
+    icon: ButtonIcon<'a>,
+    icon_size: Option<IconSize>,
     tooltip: Option<&'a str>,
     selected: bool,
     size: f32,
@@ -272,9 +421,10 @@ pub struct IconButton<'a> {
 }
 
 impl<'a> IconButton<'a> {
-    pub fn new(icon: &'a str) -> Self {
+    pub fn new(icon: impl Into<ButtonIcon<'a>>) -> Self {
         Self {
-            icon,
+            icon: icon.into(),
+            icon_size: None,
             tooltip: None,
             selected: false,
             size: 24.0,
@@ -283,6 +433,11 @@ impl<'a> IconButton<'a> {
             stroke_override: None,
             text_color_override: None,
         }
+    }
+
+    pub fn icon_size(mut self, size: impl Into<IconSize>) -> Self {
+        self.icon_size = Some(size.into());
+        self
     }
 
     pub fn tooltip(mut self, tooltip: &'a str) -> Self {
@@ -333,7 +488,9 @@ impl<'a> IconButton<'a> {
             .selected(self.selected)
             .min_size(Vec2::splat(self.size));
 
-        if self.size < 24.0 {
+        if let Some(is) = self.icon_size {
+            btn = btn.icon_size(is);
+        } else if self.size < 24.0 {
             btn = btn.small();
         }
         if let Some(tip) = self.tooltip {

@@ -87,14 +87,20 @@ pub fn render_project_row(ui: &mut egui::Ui, config: ProjectRowConfig<'_>) -> Pr
             );
 
             if config.is_active {
-                ui.label(egui::RichText::new("✔").size(11.0).color(theme::TEXT_KEY));
+                let (check_r, _) =
+                    ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
+                crate::components::ui::IconName::Check.paint(
+                    ui.painter(),
+                    check_r,
+                    theme::TEXT_KEY,
+                );
             }
 
             if is_hovered {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing = egui::vec2(2.0, 0.0);
 
-                    // Nút Close '×' (đóng / xóa project)
+                    // Nút Close (đóng / xóa project)
                     let (close_rect, close_resp) =
                         ui.allocate_exact_size(egui::vec2(22.0, height), egui::Sense::click());
                     let close_resp = close_resp.on_hover_cursor(egui::CursorIcon::PointingHand);
@@ -109,15 +115,15 @@ pub fn render_project_row(ui: &mut egui::Ui, config: ProjectRowConfig<'_>) -> Pr
                     } else {
                         theme::TEXT_MUTED
                     };
-                    ui.painter().text(
-                        close_rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        "×",
-                        egui::FontId::proportional(13.0),
+                    let close_icon_r =
+                        egui::Rect::from_center_size(close_rect.center(), egui::vec2(12.0, 12.0));
+                    crate::components::ui::IconName::Close.paint(
+                        ui.painter(),
+                        close_icon_r,
                         close_color,
                     );
 
-                    // Nút Action '↗' (switch / open project)
+                    // Nút Action (switch / open project)
                     let (act_rect, act_resp) =
                         ui.allocate_exact_size(egui::vec2(22.0, height), egui::Sense::click());
                     let act_resp = act_resp.on_hover_cursor(egui::CursorIcon::PointingHand);
@@ -132,11 +138,11 @@ pub fn render_project_row(ui: &mut egui::Ui, config: ProjectRowConfig<'_>) -> Pr
                     } else {
                         theme::TEXT_MUTED
                     };
-                    ui.painter().text(
-                        act_rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        "↗",
-                        egui::FontId::proportional(13.0),
+                    let act_icon_r =
+                        egui::Rect::from_center_size(act_rect.center(), egui::vec2(12.0, 12.0));
+                    crate::components::ui::IconName::ExternalLink.paint(
+                        ui.painter(),
+                        act_icon_r,
                         act_color,
                     );
                 });

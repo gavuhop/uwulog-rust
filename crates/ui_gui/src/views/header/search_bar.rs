@@ -20,7 +20,7 @@ pub fn render_search_bar(
     let search_id = Id::new("search_query_input");
     let search_response = crate::components::ui::TextInput::new(&mut session.view.search.query)
         .id(search_id)
-        .hint_text("🔍 Filter query (e.g. level:error, status:500, time:now..10m)...")
+        .hint_text("Filter query (e.g. level:error, status:500, time:now..10m)...")
         .width(search_box_width)
         .show(ui);
 
@@ -74,7 +74,7 @@ pub fn render_search_bar(
     // Quick Clear button if query is not empty
     let clear_resp = if !session.view.search.query.is_empty() {
         Some(
-            crate::components::ui::IconButton::new("✖")
+            crate::components::ui::IconButton::new(crate::components::ui::IconName::Close)
                 .size(24.0)
                 .tooltip("Clear filter")
                 .show(ui),
@@ -88,12 +88,13 @@ pub fn render_search_bar(
         }
     }
 
-    // Search History Toggle Button (⏱)
-    let history_resp = crate::components::ui::IconButton::new("⏱")
-        .size(24.0)
-        .selected(session.view.search.history.is_open)
-        .tooltip("Search history")
-        .show(ui);
+    // Search History Toggle Button
+    let history_resp =
+        crate::components::ui::IconButton::new(crate::components::ui::IconName::History)
+            .size(24.0)
+            .selected(session.view.search.history.is_open)
+            .tooltip("Search history")
+            .show(ui);
     if history_resp.clicked() {
         let opened = session.view.search.history.toggle_popup();
         if opened {

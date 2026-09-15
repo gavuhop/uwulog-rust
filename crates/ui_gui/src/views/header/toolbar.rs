@@ -1,5 +1,6 @@
 use super::counter::render_log_counter;
 use crate::actions::AppAction;
+use crate::components::ui::IconName;
 use crate::session::GuiSession;
 use crate::state::ActiveTab;
 use crate::theme;
@@ -16,7 +17,7 @@ pub fn render_toolbar(
     } else {
         crate::components::ui::ButtonVariant::Default
     };
-    if crate::components::ui::IconButton::new("📊")
+    if crate::components::ui::IconButton::new(IconName::TableColumns)
         .size(24.0)
         .variant(col_variant)
         .selected(session.view.columns.is_modal_open)
@@ -30,7 +31,7 @@ pub fn render_toolbar(
     ui.add_space(2.0);
 
     // Source Parameters Modal Button
-    if crate::components::ui::IconButton::new("⚙")
+    if crate::components::ui::IconButton::new(IconName::Settings)
         .size(24.0)
         .variant(crate::components::ui::ButtonVariant::Default)
         .tooltip("Configure engine buffer, display limits & sources")
@@ -44,7 +45,7 @@ pub fn render_toolbar(
 
     // Stop / Restart Source Button
     if session.session.is_source_running {
-        if crate::components::ui::IconButton::new("⏹")
+        if crate::components::ui::IconButton::new(IconName::Stop)
             .size(24.0)
             .fill(theme::BTN_STOP_BG)
             .text_color(theme::COLOR_ERROR)
@@ -54,7 +55,7 @@ pub fn render_toolbar(
         {
             dispatch(AppAction::StopSource);
         }
-    } else if crate::components::ui::IconButton::new("🔄")
+    } else if crate::components::ui::IconButton::new(IconName::Restart)
         .size(24.0)
         .fill(theme::BTN_RESTART_BG)
         .text_color(theme::COLOR_INFO)
@@ -75,7 +76,7 @@ pub fn render_toolbar(
             "Re-capture the latest surrounding context snapshot from buffer"
         };
 
-        if crate::components::ui::IconButton::new("📸")
+        if crate::components::ui::IconButton::new(IconName::Camera)
             .size(24.0)
             .tooltip(snapshot_tooltip)
             .show(ui)
@@ -111,20 +112,31 @@ pub fn render_toolbar(
         ),
     };
 
-    let (latch_text, latch_bg, latch_fg) = if is_live {
-        ("⚓ Live", theme::BTN_LATCHED_BG, theme::COLOR_INFO)
+    let (latch_icon, latch_text, latch_bg, latch_fg) = if is_live {
+        (
+            IconName::Anchor,
+            "Live",
+            theme::BTN_LATCHED_BG,
+            theme::COLOR_INFO,
+        )
     } else {
-        ("⏸ Paused", theme::BTN_UNLATCHED_BG, theme::COLOR_WARN)
+        (
+            IconName::Pause,
+            "Paused",
+            theme::BTN_UNLATCHED_BG,
+            theme::COLOR_WARN,
+        )
     };
 
     let pause_measure = ui.painter().layout_no_wrap(
-        "⏸ Paused".to_string(),
+        "Paused".to_string(),
         egui::FontId::proportional(12.0),
         egui::Color32::PLACEHOLDER,
     );
-    let paused_width = (pause_measure.size().x + 16.0).ceil();
+    let paused_width = (pause_measure.size().x + 14.0 + 5.0 + 16.0).ceil();
 
     if crate::components::ui::AppButton::new()
+        .icon(latch_icon)
         .label(latch_text)
         .min_width(paused_width)
         .fill(latch_bg)
@@ -176,7 +188,8 @@ pub fn render_environment_status(
             ui.add_space(2.0);
             let tooltip = format!("Lỗi nạp biến môi trường:\n{error}\n• Click để thử lại (Retry)");
             if crate::components::ui::AppButton::new()
-                .label("⚠️ env error")
+                .icon(IconName::AlertTriangle)
+                .label("env error")
                 .small()
                 .tooltip(&tooltip)
                 .show(ui)

@@ -1,6 +1,6 @@
 use crate::state::{ColumnItem, ColumnState};
 use crate::theme;
-use eframe::egui::{self, Color32, CornerRadius, FontId, Pos2, Stroke};
+use eframe::egui::{self, Color32, CornerRadius, FontId, Pos2, Rect, Stroke};
 
 pub fn render_table_headers(
     header: &mut egui_extras::TableRow<'_, '_>,
@@ -58,14 +58,13 @@ pub fn render_table_headers(
                 theme::TEXT_MUTED
             };
 
-            let icon_text = "⠿";
-            let icon_font = FontId::monospace(11.0);
-            let icon_pos = Pos2::new(rect.min.x + 4.0, rect.center().y);
-            ui.painter().text(
-                icon_pos,
-                egui::Align2::LEFT_CENTER,
-                icon_text,
-                icon_font,
+            let grip_rect = Rect::from_center_size(
+                Pos2::new(rect.min.x + 8.0, rect.center().y),
+                egui::vec2(10.0, 10.0),
+            );
+            crate::components::ui::IconName::GripVertical.paint(
+                ui.painter(),
+                grip_rect,
                 theme::TEXT_MUTED,
             );
 

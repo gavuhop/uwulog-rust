@@ -66,7 +66,9 @@ pub fn render_main_menu_popup(
                                             label: &str,
                                             color: Color32,
                                             is_selected: bool,
-                                            trailing_text: Option<(&str, Color32)>|
+                                            trailing_icon: Option<
+                        crate::components::ui::IconName,
+                    >|
                      -> egui::Response {
                         let row_size = egui::vec2(ui.available_width(), 26.0);
                         let (rect, resp) = ui.allocate_exact_size(row_size, egui::Sense::click());
@@ -92,16 +94,13 @@ pub fn render_main_menu_popup(
                             color,
                         );
 
-                        // Icon hoặc text phụ bên phải (như ▶ hoặc ✓)
-                        if let Some((trail, trail_color)) = trailing_text {
-                            let trail_pos = Pos2::new(rect.max.x - 8.0, rect.center().y);
-                            ui.painter().text(
-                                trail_pos,
-                                egui::Align2::RIGHT_CENTER,
-                                trail,
-                                egui::FontId::monospace(11.0),
-                                trail_color,
+                        // Icon phụ bên phải (như ChevronRight)
+                        if let Some(icon) = trailing_icon {
+                            let icon_r = Rect::from_center_size(
+                                Pos2::new(rect.max.x - 12.0, rect.center().y),
+                                egui::vec2(12.0, 12.0),
                             );
+                            icon.paint(ui.painter(), icon_r, theme::TEXT_MUTED);
                         }
 
                         resp
@@ -124,7 +123,7 @@ pub fn render_main_menu_popup(
                         "Theme",
                         theme::TEXT_PRIMARY,
                         is_theme_open,
-                        Some(("▶", theme::TEXT_MUTED)),
+                        Some(crate::components::ui::IconName::ChevronRight),
                     );
 
                     theme_btn_rect = Some(theme_resp.rect);
@@ -246,13 +245,13 @@ pub fn render_main_menu_popup(
                                         );
 
                                         if is_active {
-                                            let trail_pos =
-                                                Pos2::new(rect.max.x - 8.0, rect.center().y);
-                                            ui.painter().text(
-                                                trail_pos,
-                                                egui::Align2::RIGHT_CENTER,
-                                                "✔",
-                                                egui::FontId::monospace(12.0),
+                                            let check_r = Rect::from_center_size(
+                                                Pos2::new(rect.max.x - 12.0, rect.center().y),
+                                                egui::vec2(12.0, 12.0),
+                                            );
+                                            crate::components::ui::IconName::Check.paint(
+                                                ui.painter(),
+                                                check_r,
                                                 theme::TEXT_KEY,
                                             );
                                         }

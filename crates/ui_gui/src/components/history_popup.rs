@@ -23,8 +23,16 @@ pub fn render_history_popup(ctx: &egui::Context, session: &mut GuiSession, input
         .show(ctx, |ui| {
             // Header bar của History Popup
             ui.horizontal(|ui| {
+                let (icon_r, _) =
+                    ui.allocate_exact_size(egui::vec2(13.0, 13.0), egui::Sense::hover());
+                crate::components::ui::IconName::History.paint(
+                    ui.painter(),
+                    icon_r,
+                    theme::TEXT_KEY,
+                );
+                ui.add_space(2.0);
                 ui.label(
-                    egui::RichText::new("⏱ Search History")
+                    egui::RichText::new("Search History")
                         .font(FontId::monospace(12.0))
                         .color(theme::TEXT_KEY)
                         .strong(),
@@ -85,17 +93,19 @@ pub fn render_history_popup(ctx: &egui::Context, session: &mut GuiSession, input
                     let left_x = rect.min.x + 8.0;
 
                     // Icon tìm kiếm nhỏ
-                    ui.painter().text(
-                        Pos2::new(left_x, center_y),
-                        egui::Align2::LEFT_CENTER,
-                        "🔍",
-                        FontId::monospace(10.5),
+                    let icon_r = Rect::from_center_size(
+                        Pos2::new(left_x + 6.0, center_y),
+                        egui::vec2(12.0, 12.0),
+                    );
+                    crate::components::ui::IconName::MagnifyingGlass.paint(
+                        ui.painter(),
+                        icon_r,
                         theme::TEXT_MUTED,
                     );
 
                     // Nội dung câu query
                     ui.painter().text(
-                        Pos2::new(left_x + 20.0, center_y),
+                        Pos2::new(left_x + 18.0, center_y),
                         egui::Align2::LEFT_CENTER,
                         hist_query,
                         FontId::monospace(12.0),

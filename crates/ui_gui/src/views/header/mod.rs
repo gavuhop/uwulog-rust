@@ -62,13 +62,14 @@ pub fn render_header(
                 ui.add_space(4.0);
             }
 
-            // 1. Menu Icon Button (☰) - Flat style
+            // 1. Menu Icon Button - Flat style
             let is_menu_open = cx.overlay_stack.is_open(OverlayLayer::MainMenu);
-            let menu_resp = crate::components::ui::IconButton::new("☰")
-                .size(24.0)
-                .selected(is_menu_open)
-                .tooltip("Open Application Menu")
-                .show(ui);
+            let menu_resp =
+                crate::components::ui::IconButton::new(crate::components::ui::IconName::Menu)
+                    .size(24.0)
+                    .selected(is_menu_open)
+                    .tooltip("Open Application Menu")
+                    .show(ui);
             menu_btn_rect = Some(menu_resp.rect);
 
             if menu_resp.clicked() {
@@ -153,7 +154,7 @@ pub fn render_header(
             if is_filtering || is_unfiltered_tab {
                 ui.add_space(2.0);
 
-                if crate::components::ui::TabButton::new("📄 Raw", is_unfiltered_tab)
+                if crate::components::ui::TabButton::new("Raw", is_unfiltered_tab)
                     .show(ui)
                     .on_hover_text("Switch to Raw Stream view (500 logs buffer)")
                     .clicked()
