@@ -18,12 +18,13 @@ fn main() -> eframe::Result<()> {
     let handle = rt.handle().clone();
     let _guard = rt.enter();
 
-    let icon_data = eframe::icon_data::from_png_bytes(include_bytes!("../../../avatar.png"))
-        .unwrap_or_else(|_| egui::IconData {
-            rgba: vec![0; 4],
-            width: 1,
-            height: 1,
-        });
+    let icon_data =
+        eframe::icon_data::from_png_bytes(include_bytes!("../../../packaging/assets/icon_256.png"))
+            .unwrap_or_else(|_| egui::IconData {
+                rgba: vec![0; 4],
+                width: 1,
+                height: 1,
+            });
 
     let native_options = NativeOptions {
         viewport: egui::ViewportBuilder::default()

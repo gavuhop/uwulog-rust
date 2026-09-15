@@ -12,3 +12,5 @@
 .DS_Store
 *.log
 uwulog/
+__pycache__/
+*.pyc
