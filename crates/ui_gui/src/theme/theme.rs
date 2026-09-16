@@ -87,9 +87,6 @@ impl Theme {
         visuals.selection.bg_fill = self.selection.bg;
         visuals.selection.stroke = Stroke::new(1.0, self.selection.stroke);
 
-        // Text Cursor (con trỏ nhấp nháy trong ô nhập liệu)
-        visuals.text_cursor.stroke = Stroke::new(2.0, self.text.accent);
-
         visuals
     }
 

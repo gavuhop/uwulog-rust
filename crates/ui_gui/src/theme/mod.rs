@@ -216,8 +216,8 @@ mod tests {
                 );
                 assert_eq!(
                     visuals.text_cursor.stroke,
-                    egui::Stroke::new(2.0, Color32::from_rgb(0x78, 0xa0, 0xd4)),
-                    "Text cursor stroke must match Nord Dimmed TEXT_KEY / accent (#78a0d4)"
+                    egui::Stroke::new(2.0, Color32::from_rgb(192, 222, 255)),
+                    "Text cursor stroke must match pre-merge Visuals::dark cursor (#c0deff)"
                 );
 
                 let text_styles = &ui.style().text_styles;
