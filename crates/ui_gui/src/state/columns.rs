@@ -21,9 +21,6 @@ pub struct ColumnState {
     pub header_dragged_name: Option<String>,
     pub header_dragged_width: Option<f32>,
     pub header_drag_offset_x: Option<f32>,
-    pub header_drop_target: Option<String>,
-    pub last_dropped_col: Option<String>,
-    pub drop_flash_time: Option<f64>,
     pub known_keys: HashSet<String>,
     pub table_animations: crate::animation::MoveAnimationManager,
     pub modal_animations: crate::animation::MoveAnimationManager,
@@ -42,9 +39,6 @@ impl Default for ColumnState {
             header_dragged_name: None,
             header_dragged_width: None,
             header_drag_offset_x: None,
-            header_drop_target: None,
-            last_dropped_col: None,
-            drop_flash_time: None,
             known_keys,
             table_animations: crate::animation::MoveAnimationManager::default(),
             modal_animations: crate::animation::MoveAnimationManager::default(),
@@ -88,7 +82,6 @@ impl ColumnState {
         self.header_dragged_name = None;
         self.header_dragged_width = None;
         self.header_drag_offset_x = None;
-        self.header_drop_target = None;
     }
 
     pub fn default_columns() -> Vec<ColumnItem> {

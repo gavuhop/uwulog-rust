@@ -83,12 +83,14 @@ impl MoveAnimationManager {
     }
 
     /// Bắt đầu một animation di chuyển từ `from` đến `to` với thời lượng mặc định
-    pub fn start(&mut self, id: String, from: Pos2, to: Pos2, now: Instant) {
+    pub fn start(&mut self, id: &str, from: Pos2, to: Pos2, now: Instant) {
         if from.distance_sq(to) > 0.25 {
-            self.animations
-                .insert(id, MoveAnimation::new(from, to, self.default_duration, now));
+            self.animations.insert(
+                id.to_string(),
+                MoveAnimation::new(from, to, self.default_duration, now),
+            );
         } else {
-            self.animations.remove(&id);
+            self.animations.remove(id);
         }
     }
 
@@ -117,7 +119,8 @@ impl MoveAnimationManager {
     /// Nếu vị trí logic thay đổi so với frame trước (do swap, reorder),
     /// tự động kích hoạt animation chuyển động mượt từ vị trí cũ sang vị trí mới.
     pub fn track_rect(&mut self, id: &str, current_rect: Rect, now: Instant) -> Rect {
-        if let Some(&prev_rect) = self.previous_rects.get(id) {
+        let prev = self.previous_rects.get(id).copied();
+        if let Some(prev_rect) = prev {
             let dist_sq = prev_rect.min.distance_sq(current_rect.min);
             if dist_sq > 0.25 {
                 // Nếu đang animate dở dang, lấy visual pos hiện thời làm điểm xuất phát mới (tránh giật cục)
@@ -126,10 +129,14 @@ impl MoveAnimationManager {
                 } else {
                     prev_rect.min
                 };
-                self.start(id.to_string(), from, current_rect.min, now);
+                self.start(id, from, current_rect.min, now);
             }
+            if let Some(r) = self.previous_rects.get_mut(id) {
+                *r = current_rect;
+            }
+        } else {
+            self.previous_rects.insert(id.to_string(), current_rect);
         }
-        self.previous_rects.insert(id.to_string(), current_rect);
         self.visual_rect(id, current_rect, now)
     }
 
@@ -213,7 +220,7 @@ mod tests {
         let start = Instant::now();
 
         mgr.start(
-            "col_b".to_string(),
+            "col_b",
             Pos2::new(100.0, 50.0),
             Pos2::new(300.0, 50.0),
             start,

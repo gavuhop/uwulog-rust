@@ -7,8 +7,7 @@ use std::time::Instant;
 /// Hỗ trợ kéo thả theo cơ chế trực quan:
 /// - Khi rê chuột qua cột khác: ô bị chuột đè lên sẽ đổi màu highlight báo hiệu chuẩn bị swap.
 /// - Chỉ khi nào thả chuột ra (mouse released) thì mới thực hiện hoán đổi (swap) vị trí cột.
-/// - Sau khi swap, tự động nội suy chuyển động mượt mà (position interpolation animation)
-///   và phát sáng xác nhận (settle pulse flash).
+/// - Sau khi swap, tự động nội suy chuyển động mượt mà (position interpolation animation).
 pub fn render_table_headers(
     header: &mut egui_extras::TableRow<'_, '_>,
     ctx: &egui::Context,
@@ -68,9 +67,8 @@ pub fn render_table_headers(
         });
     }
 
-    // Cập nhật ô đích được phát hiện trong lúc kéo
+    // Cập nhật trạng thái đang kéo
     if columns.header_dragged_name.is_some() {
-        columns.header_drop_target = detected_drop_target.clone();
         ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
         // Repaint liên tục để phản hồi highlight lập tức theo từng pixel di chuyển của chuột
         ctx.request_repaint();
@@ -80,12 +78,9 @@ pub fn render_table_headers(
     // Chỉ lúc này mới thực hiện hoán đổi (swap) vị trí cột!
     if ctx.input(|i| i.pointer.any_released()) {
         if let Some(dragged_name) = columns.header_dragged_name.take() {
-            let drop_target = columns.header_drop_target.take().or(detected_drop_target);
-            if let Some(ref target) = drop_target {
+            if let Some(ref target) = detected_drop_target {
                 if &dragged_name != target {
                     columns.swap_columns(&dragged_name, target);
-                    columns.last_dropped_col = Some(dragged_name);
-                    columns.drop_flash_time = Some(ctx.input(|i| i.time));
                     ctx.request_repaint();
                 }
             }
@@ -128,7 +123,7 @@ pub fn find_drop_target(
     None
 }
 
-/// Áp dụng position interpolation animation, background highlight, settle pulse,
+/// Áp dụng position interpolation animation, background highlight,
 /// grip icon, tên cột và separator line cho một ô header.
 fn render_header_cell(
     ui: &mut egui::Ui,
@@ -142,7 +137,7 @@ fn render_header_cell(
     // Tự động phát hiện thay đổi vị trí logic (swap/reorder) và lấy visual_rect nội suy chuyển động
     let visual_rect = columns.table_animations.track_rect(col_name, rect, now);
 
-    // 3. Vẽ nền tiêu đề tại vị trí trực quan visual_rect
+    // 1. Vẽ nền tiêu đề tại vị trí trực quan visual_rect
     let header_bg = if is_drop_target {
         // Ô bị swap đè lên: đổi màu sáng rõ rệt báo hiệu chuẩn bị swap
         theme::BG_SURFACE1
@@ -154,7 +149,7 @@ fn render_header_cell(
     ui.painter()
         .rect_filled(visual_rect, CornerRadius::ZERO, header_bg);
 
-    // Báo hiệu trực quan khi ô là drop target (ô bị swap đè lên)
+    // 2. Báo hiệu trực quan khi ô là drop target (ô bị swap đè lên)
     if is_drop_target {
         // Phủ lớp phát sáng màu accent xanh dương pastel dịu mắt
         ui.painter().rect_filled(
@@ -171,10 +166,7 @@ fn render_header_cell(
         );
     }
 
-    // 4. Vẽ hiệu ứng settle pulse phản hồi phát sáng khi cột vừa tiếp đất
-    render_settle_pulse(ui, columns, col_name, visual_rect);
-
-    // 5. Vẽ grip handle
+    // 3. Vẽ grip handle
     let grip_color = if is_drop_target || is_hovered {
         theme::TEXT_KEY
     } else {
@@ -186,7 +178,7 @@ fn render_header_cell(
     );
     crate::components::ui::IconName::GripVertical.paint(ui.painter(), grip_rect, grip_color);
 
-    // 6. Vẽ tên nhãn cột
+    // 4. Vẽ tên nhãn cột
     let font_id = FontId::monospace(11.0);
     let text_color = if is_drop_target {
         theme::TEXT_PRIMARY
@@ -202,7 +194,7 @@ fn render_header_cell(
         text_color,
     );
 
-    // 7. Vẽ vạch phân cách cột
+    // 5. Vẽ vạch phân cách cột
     let line_stroke = Stroke::new(1.0, theme::BG_SURFACE0);
     ui.painter().line_segment(
         [
@@ -211,31 +203,6 @@ fn render_header_cell(
         ],
         line_stroke,
     );
-}
-
-/// Vẽ hiệu ứng xung nhịp phát quang (Settle Pulse Flash) xác nhận cột vừa được thả vào vị trí mới
-fn render_settle_pulse(ui: &mut egui::Ui, columns: &ColumnState, col_name: &str, rect: Rect) {
-    if columns.last_dropped_col.as_deref() == Some(col_name) {
-        if let Some(drop_time) = columns.drop_flash_time {
-            let current_time = ui.input(|i| i.time);
-            let elapsed = current_time - drop_time;
-            if elapsed < 0.35 {
-                let alpha = (1.0 - (elapsed / 0.35) as f32).clamp(0.0, 1.0);
-                ui.painter().rect_filled(
-                    rect,
-                    CornerRadius::ZERO,
-                    theme::TEXT_KEY.gamma_multiply(alpha * 0.28),
-                );
-                ui.painter().rect_stroke(
-                    rect,
-                    CornerRadius::ZERO,
-                    Stroke::new(1.5, theme::TEXT_KEY.gamma_multiply(alpha)),
-                    egui::StrokeKind::Inside,
-                );
-                ui.ctx().request_repaint();
-            }
-        }
-    }
 }
 
 /// Vẽ chip tiêu đề nổi bám theo con trỏ chuột (Floating Drag Ghost Chip)
