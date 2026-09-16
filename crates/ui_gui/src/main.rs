@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"]
 
 pub mod actions;
+pub mod animation;
 pub mod app;
 pub mod cli;
 pub mod components;

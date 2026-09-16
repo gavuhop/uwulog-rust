@@ -19,8 +19,11 @@ pub struct ColumnState {
     pub draft_columns: Option<Vec<ColumnItem>>,
     pub dragged_index: Option<usize>,
     pub header_dragged_name: Option<String>,
-    pub header_drop_target: Option<String>,
+    pub header_dragged_width: Option<f32>,
+    pub header_drag_offset_x: Option<f32>,
     pub known_keys: HashSet<String>,
+    pub table_animations: crate::animation::MoveAnimationManager,
+    pub modal_animations: crate::animation::MoveAnimationManager,
 }
 
 impl Default for ColumnState {
@@ -34,8 +37,11 @@ impl Default for ColumnState {
             draft_columns: None,
             dragged_index: None,
             header_dragged_name: None,
-            header_drop_target: None,
+            header_dragged_width: None,
+            header_drag_offset_x: None,
             known_keys,
+            table_animations: crate::animation::MoveAnimationManager::default(),
+            modal_animations: crate::animation::MoveAnimationManager::default(),
         }
     }
 }
@@ -56,6 +62,7 @@ impl ColumnState {
     pub fn close_modal(&mut self) {
         self.is_modal_open = false;
         self.draft_columns = None;
+        self.clear_modal_drag();
     }
 
     pub fn apply_modal(&mut self) {
@@ -64,6 +71,17 @@ impl ColumnState {
             self.known_keys = self.columns.iter().map(|c| c.name.clone()).collect();
         }
         self.is_modal_open = false;
+        self.clear_modal_drag();
+    }
+
+    pub fn clear_modal_drag(&mut self) {
+        self.dragged_index = None;
+    }
+
+    pub fn clear_header_drag(&mut self) {
+        self.header_dragged_name = None;
+        self.header_dragged_width = None;
+        self.header_drag_offset_x = None;
     }
 
     pub fn default_columns() -> Vec<ColumnItem> {
@@ -102,20 +120,29 @@ impl ColumnState {
 
     pub fn reset_to_defaults(&mut self) {
         self.columns = Self::merge_with_defaults(&self.columns);
-        self.dragged_index = None;
-        self.header_dragged_name = None;
-        self.header_drop_target = None;
+        self.clear_modal_drag();
+        self.clear_header_drag();
         self.known_keys = self.columns.iter().map(|c| c.name.clone()).collect();
     }
 
     pub fn reset_draft_to_defaults(&mut self) {
         let source = self.draft_columns.as_deref().unwrap_or(&self.columns);
         self.draft_columns = Some(Self::merge_with_defaults(source));
-        self.dragged_index = None;
+        self.clear_modal_drag();
     }
 
     pub fn reorder(&mut self, from_idx: usize, to_idx: usize) {
         reorder_vec(&mut self.columns, from_idx, to_idx);
+    }
+
+    pub fn swap_columns(&mut self, col_a: &str, col_b: &str) {
+        let pos_a = self.columns.iter().position(|c| c.name == col_a);
+        let pos_b = self.columns.iter().position(|c| c.name == col_b);
+        if let (Some(a), Some(b)) = (pos_a, pos_b) {
+            if a != b {
+                self.columns.swap(a, b);
+            }
+        }
     }
 
     pub fn reorder_draft(&mut self, from_idx: usize, to_idx: usize) {
@@ -278,5 +305,20 @@ mod tests {
         assert!(draft[1].visible);
         assert_eq!(draft[2].name, "message");
         assert!(draft[2].visible);
+    }
+
+    #[test]
+    fn test_swap_columns() {
+        let mut state = ColumnState::default();
+        // Ban đầu: ["timestamp", "level", "message"]
+        state.swap_columns("timestamp", "level");
+        assert_eq!(state.columns[0].name, "level");
+        assert_eq!(state.columns[1].name, "timestamp");
+        assert_eq!(state.columns[2].name, "message");
+
+        // Swap lại về cũ
+        state.swap_columns("level", "timestamp");
+        assert_eq!(state.columns[0].name, "timestamp");
+        assert_eq!(state.columns[1].name, "level");
     }
 }

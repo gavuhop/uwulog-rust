@@ -233,8 +233,9 @@ pub fn render_columns_modal(
                 let pointer_pos = ui.ctx().pointer_latest_pos();
                 let pointer_released = ui.input(|i| i.pointer.any_released());
 
+                // Nếu nhả chuột: dọn dẹp drag state
                 if pointer_released {
-                    columns.dragged_index = None;
+                    columns.clear_modal_drag();
                 }
 
                 egui::ScrollArea::vertical()
@@ -244,86 +245,84 @@ pub fn render_columns_modal(
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         let mut new_drag_source = None;
-                        let mut target_drop = None;
                         let mut toggle_vis = None;
+                        let mut row_rects: Vec<(usize, Rect, String, bool)> = Vec::new();
 
-                        for idx in 0..total_cols {
+                        let item_h = 32.0;
+                        let spacing = 3.0;
+
+                        // Bước 1: Thu thập toạ độ base của từng dòng matching
+                        for &idx in &matching_indices {
                             let (col_name, col_visible) = {
                                 let item = &columns.draft_columns.as_ref().unwrap()[idx];
                                 (item.name.clone(), item.visible)
                             };
 
-                            if !filter_lower.is_empty()
-                                && !col_name.to_lowercase().contains(&filter_lower)
-                            {
-                                continue;
-                            }
-
-                            let is_dragging_this = columns.dragged_index == Some(idx);
-                            let desired_size = egui::vec2(ui.available_width(), 32.0);
+                            let desired_size = egui::vec2(ui.available_width(), item_h);
                             let (rect, resp) =
                                 ui.allocate_exact_size(desired_size, egui::Sense::click_and_drag());
 
-                            // Detect drag started
                             if resp.drag_started() {
                                 new_drag_source = Some(idx);
                             }
 
-                            // Detect drop target while dragging
-                            if let Some(dragged_idx) = columns.dragged_index {
-                                if dragged_idx != idx {
-                                    if let Some(pos) = pointer_pos {
-                                        if rect.contains(pos) {
-                                            target_drop = Some((dragged_idx, idx));
-                                        }
-                                    }
-                                }
-                            }
+                            row_rects.push((idx, rect, col_name, col_visible));
+                            ui.add_space(spacing);
+                        }
 
-                            // Cursor icon: PointingHand on hover, Grabbing while dragging
-                            if resp.hovered() || is_dragging_this {
-                                if is_dragging_this {
-                                    ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
-                                } else {
-                                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                                }
-                            }
+                        // Kiểm tra và hoán đổi vị trí trực tiếp (Live Swap / Thay thế)
+                        check_and_apply_modal_swap(
+                            columns,
+                            &matching_indices,
+                            &row_rects,
+                            pointer_pos,
+                        );
 
-                            // Background and border styling
-                            let bg_color = if is_dragging_this {
+                        let now = std::time::Instant::now();
+
+                        // Bước 2: Render từng dòng (áp dụng position interpolation animation)
+                        for (idx, rect, col_name, col_visible) in row_rects {
+                            let is_hovered = pointer_pos.is_some_and(|p| rect.contains(p))
+                                && columns.dragged_index.is_none();
+
+                            let is_dragged = columns.dragged_index == Some(idx);
+                            let draw_rect =
+                                columns.modal_animations.track_rect(&col_name, rect, now);
+
+                            let bg_color = if is_dragged {
                                 theme.log.row_selected
-                            } else if resp.hovered() {
+                            } else if is_hovered {
                                 theme.log.row_hover
                             } else {
                                 theme.surfaces.base
                             };
 
-                            let border_stroke = if is_dragging_this {
+                            let border_stroke = if is_dragged {
                                 Stroke::new(1.5, theme.text.accent)
-                            } else if resp.hovered() {
+                            } else if is_hovered {
                                 Stroke::new(1.0, theme.surfaces.surface1)
                             } else {
                                 Stroke::new(1.0, theme.surfaces.surface0)
                             };
 
                             ui.painter().rect(
-                                rect,
+                                draw_rect,
                                 CornerRadius::same(4),
                                 bg_color,
                                 border_stroke,
                                 egui::StrokeKind::Inside,
                             );
 
-                            let center_y = rect.center().y;
+                            let center_y = draw_rect.center().y;
 
-                            // 1. Drag Grip Icon (Vector 6-dot handle)
-                            let grip_color = if is_dragging_this || resp.hovered() {
+                            // 1. Drag Grip Icon (Vector handle)
+                            let grip_color = if is_dragged || is_hovered {
                                 theme.text.accent
                             } else {
                                 theme.text.muted
                             };
                             let grip_rect = Rect::from_center_size(
-                                Pos2::new(rect.min.x + 12.0, center_y),
+                                Pos2::new(draw_rect.min.x + 12.0, center_y),
                                 egui::vec2(12.0, 12.0),
                             );
                             crate::components::ui::IconName::GripVertical.paint(
@@ -333,7 +332,8 @@ pub fn render_columns_modal(
                             );
 
                             // 2. Custom Checkbox
-                            let checkbox_x = grip_x + 20.0;
+                            let row_grip_x = draw_rect.min.x + 8.0;
+                            let checkbox_x = row_grip_x + 20.0;
                             let check_rect = Rect::from_center_size(
                                 Pos2::new(checkbox_x + 8.0, center_y),
                                 egui::vec2(16.0, 16.0),
@@ -394,13 +394,24 @@ pub fn render_columns_modal(
                                 text_color,
                             );
 
-                            // Toggle visibility on clicking row (excluding checkbox which handles its own click)
-                            if resp.clicked() && !check_resp.clicked() {
+                            // Click row to toggle checkbox
+                            let row_resp = ui.interact(
+                                draw_rect,
+                                ui.make_persistent_id(format!("row_interact_{idx}_{col_name}")),
+                                egui::Sense::click(),
+                            );
+                            if row_resp.clicked() && !check_resp.clicked() {
                                 toggle_vis = Some((idx, !col_visible));
                             }
 
-                            // 4. Position / Status badge on the right
-                            let right_x = rect.max.x - 8.0;
+                            if is_dragged {
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                            } else if is_hovered {
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+                            }
+
+                            // 4. Status Badge
+                            let right_x = draw_rect.max.x - 8.0;
                             if col_visible {
                                 let pos_text = format!("Pos #{}", idx + 1);
                                 ui.painter().text(
@@ -419,17 +430,13 @@ pub fn render_columns_modal(
                                     theme.text.muted,
                                 );
                             }
-
-                            ui.add_space(3.0);
                         }
+
+                        // Yêu cầu repaint liên tục khi đang có animation và dọn dẹp sau khi xong
+                        columns.modal_animations.update(ui.ctx(), now);
 
                         if let Some(idx) = new_drag_source {
                             columns.dragged_index = Some(idx);
-                        }
-
-                        if let Some((from, to)) = target_drop {
-                            columns.reorder_draft(from, to);
-                            columns.dragged_index = Some(to);
                             ui.ctx().request_repaint();
                         }
 
@@ -487,5 +494,49 @@ pub fn render_columns_modal(
 
     if let Some(action) = action_to_dispatch {
         dispatch(action);
+    }
+}
+
+/// Kiểm tra xem item đang kéo có đang di chuyển qua vị trí của item khác trong modal không.
+/// Nếu có, lập tức hoán đổi vị trí trực tiếp (Live Swap) trong `draft_columns`.
+fn check_and_apply_modal_swap(
+    columns: &mut ColumnState,
+    matching_indices: &[usize],
+    row_rects: &[(usize, Rect, String, bool)],
+    pointer_pos: Option<egui::Pos2>,
+) {
+    let (Some(drag_idx), Some(pointer)) = (columns.dragged_index, pointer_pos) else {
+        return;
+    };
+
+    let Some(from_match_pos) = matching_indices.iter().position(|&i| i == drag_idx) else {
+        return;
+    };
+
+    let threshold = 6.0;
+
+    // 1. Kéo xuống hàng dưới (swap/thay thế hàng bên dưới)
+    if from_match_pos + 1 < row_rects.len() {
+        let next_rect = row_rects[from_match_pos + 1].1;
+        if pointer.y > next_rect.min.y + threshold {
+            let to_idx = matching_indices[from_match_pos + 1];
+            if let Some(draft) = &mut columns.draft_columns {
+                draft.swap(drag_idx, to_idx);
+                columns.dragged_index = Some(to_idx);
+            }
+            return;
+        }
+    }
+
+    // 2. Kéo lên hàng trên (swap/thay thế hàng bên trên)
+    if from_match_pos > 0 {
+        let prev_rect = row_rects[from_match_pos - 1].1;
+        if pointer.y < prev_rect.max.y - threshold {
+            let to_idx = matching_indices[from_match_pos - 1];
+            if let Some(draft) = &mut columns.draft_columns {
+                draft.swap(drag_idx, to_idx);
+                columns.dragged_index = Some(to_idx);
+            }
+        }
     }
 }
