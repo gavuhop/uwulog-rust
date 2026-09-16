@@ -20,6 +20,9 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     let theme = ui.app_theme();
     let ctx_handle = ui.ctx().clone();
     let ctx = &ctx_handle;
+    let visuals = theme.create_visuals();
+    ctx.set_visuals(visuals.clone());
+    ui.style_mut().visuals = visuals;
 
     let mut pending_actions: Vec<crate::actions::AppAction> = Vec::new();
     let mut dispatch = |action: crate::actions::AppAction| {
