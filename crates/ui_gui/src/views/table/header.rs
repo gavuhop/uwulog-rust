@@ -1,5 +1,5 @@
 use crate::state::{ColumnItem, ColumnState};
-use crate::theme;
+use crate::theme::{self, ActiveTheme};
 use eframe::egui::{self, Color32, CornerRadius, FontId, Pos2, Rect, Stroke};
 
 pub fn render_table_headers(
@@ -13,6 +13,7 @@ pub fn render_table_headers(
 
     for col in visible_cols {
         header.col(|ui| {
+            let theme = ui.app_theme();
             let is_dragged = current_dragged.as_deref() == Some(&col.name);
             let is_drop_target = columns.header_drop_target.as_deref() == Some(&col.name);
 
@@ -33,11 +34,11 @@ pub fn render_table_headers(
             }
 
             let header_bg = if is_dragged {
-                theme::BG_SURFACE1
+                theme.surfaces.surface1
             } else if resp.hovered() {
-                theme::BG_ROW_HOVER
+                theme.log.row_hover
             } else {
-                theme::BG_MANTLE
+                theme.surfaces.mantle
             };
             ui.painter()
                 .rect_filled(rect, CornerRadius::ZERO, header_bg);
@@ -46,16 +47,16 @@ pub fn render_table_headers(
                 ui.painter().rect_stroke(
                     rect,
                     CornerRadius::ZERO,
-                    Stroke::new(2.0, theme::TEXT_KEY),
+                    Stroke::new(2.0, theme.text.accent),
                     egui::StrokeKind::Inside,
                 );
             }
 
             let font_id = FontId::monospace(11.0);
             let text_color = if is_dragged {
-                theme::TEXT_KEY
+                theme.text.accent
             } else {
-                theme::TEXT_MUTED
+                theme.text.muted
             };
 
             let grip_rect = Rect::from_center_size(
@@ -65,7 +66,7 @@ pub fn render_table_headers(
             crate::components::ui::IconName::GripVertical.paint(
                 ui.painter(),
                 grip_rect,
-                theme::TEXT_MUTED,
+                theme.text.muted,
             );
 
             let text_pos = Pos2::new(rect.min.x + 16.0, rect.center().y);
@@ -77,7 +78,7 @@ pub fn render_table_headers(
                 text_color,
             );
 
-            let line_stroke = Stroke::new(1.0, theme::BG_SURFACE0);
+            let line_stroke = Stroke::new(1.0, theme.borders.border);
             ui.painter().line_segment(
                 [
                     Pos2::new(rect.max.x - 1.0, rect.min.y + 3.0),
@@ -113,28 +114,29 @@ pub fn render_drag_ghost(ui: &egui::Ui, dragged_name: &str, pointer_pos: Pos2) {
     let ghost_size = egui::vec2((dragged_name.len() as f32 * 8.0 + 36.0).max(90.0), 26.0);
     let ghost_rect = egui::Rect::from_center_size(pointer_pos, ghost_size);
 
+    let theme = ui.app_theme();
     painter.rect_filled(
         ghost_rect.expand(2.0),
         CornerRadius::same(5),
         Color32::from_black_alpha(100),
     );
-    painter.rect_filled(ghost_rect, CornerRadius::same(4), theme::BG_MANTLE);
+    painter.rect_filled(ghost_rect, CornerRadius::same(4), theme.surfaces.mantle);
     painter.rect_stroke(
         ghost_rect,
         CornerRadius::same(4),
-        Stroke::new(1.5, theme::TEXT_KEY),
+        Stroke::new(1.5, theme.text.accent),
         egui::StrokeKind::Inside,
     );
     theme::draw_drag_handle(
         &painter,
         Pos2::new(ghost_rect.min.x + 12.0, ghost_rect.center().y),
-        theme::TEXT_KEY,
+        theme.text.accent,
     );
     painter.text(
         Pos2::new(ghost_rect.min.x + 22.0, ghost_rect.center().y),
         egui::Align2::LEFT_CENTER,
         dragged_name,
         FontId::monospace(11.5),
-        theme::TEXT_PRIMARY,
+        theme.text.primary,
     );
 }

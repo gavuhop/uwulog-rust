@@ -3,7 +3,7 @@
 //! Inspired by Zed's `crates/ui/src/components/icon.rs`.
 
 use super::names::IconName;
-use crate::theme;
+use crate::theme::ActiveTheme;
 use eframe::egui::{self, Color32, Response, Ui, Vec2};
 
 /// Semantic sizing tokens for UI icons.
@@ -85,7 +85,7 @@ impl Icon {
         let px = self.size.px();
         let (rect, response) = ui.allocate_exact_size(Vec2::splat(px), egui::Sense::hover());
         if ui.is_rect_visible(rect) {
-            let color = self.color.unwrap_or(theme::TEXT_PRIMARY);
+            let color = self.color.unwrap_or_else(|| ui.app_theme().text.primary);
             self.name.paint(ui.painter(), rect, color);
         }
         response

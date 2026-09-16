@@ -54,6 +54,7 @@ pub enum AppAction {
     CloseMainMenu,
     OpenAboutModal,
     CloseAboutModal,
+    SwitchTheme(String),
     QuitApp,
 
     // Global Dismiss / Stack Pop

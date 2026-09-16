@@ -117,7 +117,7 @@ pub fn render_log_table(
         .show(ui, |ui| {
             let mut builder = TableBuilder::new(ui)
                 .id_salt(format!("{}_{}", salt_prefix, table_salt))
-                .striped(true)
+                .striped(false)
                 .resizable(true)
                 .auto_shrink([false, false]);
 

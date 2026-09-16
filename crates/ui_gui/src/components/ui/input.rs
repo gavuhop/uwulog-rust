@@ -1,7 +1,7 @@
 //! Zed-style TextInput primitive: no stroke by default, BUTTON_HEIGHT_NORMAL height.
 
 use super::button::BUTTON_HEIGHT_NORMAL;
-use crate::theme;
+use crate::theme::ActiveTheme;
 use eframe::egui::{
     self, Color32, CornerRadius, FontSelection, Id, Margin, Response, RichText, Stroke, Ui,
 };
@@ -11,15 +11,17 @@ use eframe::egui::{
 /// - Stroke là option (có thể bật thông qua `.stroke(stroke)` hoặc `.bordered()`).
 /// - Chiều cao mặc định kế thừa từ `BUTTON_HEIGHT_NORMAL` (24.0px) của Button component.
 /// - Tự động căn giữa chữ theo trục dọc (`vertical_align(Align::Center)`).
-/// - Màu nền mặc định là `theme::BG_CRUST` (có thể đổi qua `.fill(color)` hoặc `.transparent()`).
+/// - Màu nền mặc định là `theme.surfaces.crust` (có thể đổi qua `.fill(color)` hoặc `.transparent()`).
 pub struct TextInput<'a> {
     text: &'a mut String,
-    hint_text: Option<RichText>,
+    hint_str: Option<String>,
+    hint_rich_text: Option<RichText>,
     id: Option<Id>,
     width: Option<f32>,
     height: Option<f32>,
     fill: Option<Color32>,
     stroke: Option<Stroke>,
+    bordered: bool,
     corner_radius: CornerRadius,
     margin: Margin,
     font: Option<FontSelection>,
@@ -35,31 +37,33 @@ impl<'a> TextInput<'a> {
     pub fn new(text: &'a mut String) -> Self {
         Self {
             text,
-            hint_text: None,
+            hint_str: None,
+            hint_rich_text: None,
             id: None,
             width: None,
             height: None,
-            fill: Some(theme::BG_CRUST),
+            fill: None,
             stroke: None,
+            bordered: false,
             corner_radius: CornerRadius::same(4),
             margin: Margin::symmetric(8, 4),
             font: Some(FontSelection::from(egui::TextStyle::Monospace)),
-            text_color: Some(theme::TEXT_PRIMARY),
+            text_color: None,
             password: false,
             interactive: true,
             auto_focus: false,
         }
     }
 
-    /// Thiết lập placeholder/hint text (tự động áp dụng màu theme::TEXT_PLACEHOLDER)
+    /// Thiết lập placeholder/hint text (tự động áp dụng màu theme.text.placeholder khi render)
     pub fn hint_text(mut self, hint: impl AsRef<str>) -> Self {
-        self.hint_text = Some(RichText::new(hint.as_ref()).color(theme::TEXT_PLACEHOLDER));
+        self.hint_str = Some(hint.as_ref().to_string());
         self
     }
 
     /// Thiết lập placeholder/hint text dạng RichText tùy biến
     pub fn hint_rich_text(mut self, hint: RichText) -> Self {
-        self.hint_text = Some(hint);
+        self.hint_rich_text = Some(hint);
         self
     }
 
@@ -81,7 +85,7 @@ impl<'a> TextInput<'a> {
         self
     }
 
-    /// Thiết lập màu nền (mặc định là `theme::BG_CRUST`)
+    /// Thiết lập màu nền (mặc định là `theme.surfaces.crust`)
     pub fn fill(mut self, fill: Color32) -> Self {
         self.fill = Some(fill);
         self
@@ -99,9 +103,9 @@ impl<'a> TextInput<'a> {
         self
     }
 
-    /// Bật border 1px viền mặc định (`theme::BG_SURFACE1`)
+    /// Bật border 1px viền mặc định (`theme.surfaces.surface1`)
     pub fn bordered(mut self) -> Self {
-        self.stroke = Some(Stroke::new(1.0, theme::BG_SURFACE1));
+        self.bordered = true;
         self
     }
 
@@ -149,11 +153,17 @@ impl<'a> TextInput<'a> {
 
     /// Render TextInput lên UI và trả về `Response`
     pub fn show(self, ui: &mut Ui) -> Response {
+        let theme = ui.app_theme();
         let height = self.height.unwrap_or(BUTTON_HEIGHT_NORMAL);
         let width = self.width.unwrap_or_else(|| ui.available_width());
 
-        let stroke = self.stroke.unwrap_or(Stroke::NONE);
-        let fill = self.fill.unwrap_or(theme::BG_CRUST);
+        let stroke = if self.bordered && self.stroke.is_none() {
+            Stroke::new(1.0, theme.surfaces.surface1)
+        } else {
+            self.stroke.unwrap_or(Stroke::NONE)
+        };
+        let fill = self.fill.unwrap_or(theme.surfaces.crust);
+        let text_color = self.text_color.unwrap_or(theme.text.primary);
 
         let frame = egui::Frame::default()
             .fill(fill)
@@ -168,16 +178,16 @@ impl<'a> TextInput<'a> {
             .frame(frame)
             .vertical_align(egui::Align::Center)
             .desired_width(width)
+            .text_color(text_color)
             .margin(self.margin);
 
-        if let Some(hint) = self.hint_text {
+        if let Some(hint) = self.hint_rich_text {
             edit = edit.hint_text(hint);
+        } else if let Some(hint_str) = self.hint_str {
+            edit = edit.hint_text(RichText::new(hint_str).color(theme.text.placeholder));
         }
         if let Some(font) = self.font {
             edit = edit.font(font);
-        }
-        if let Some(color) = self.text_color {
-            edit = edit.text_color(color);
         }
         if self.password {
             edit = edit.password(true);
@@ -227,9 +237,9 @@ mod tests {
         let input = TextInput::new(&mut text);
         assert_eq!(input.height, None);
         assert_eq!(input.stroke, None);
-        assert_eq!(input.fill, Some(theme::BG_CRUST));
+        assert_eq!(input.fill, None);
         assert_eq!(input.margin, Margin::symmetric(8, 4));
-        assert_eq!(input.text_color, Some(theme::TEXT_PRIMARY));
+        assert_eq!(input.text_color, None);
         assert!(input.font.is_some());
     }
 
@@ -237,8 +247,7 @@ mod tests {
     fn test_text_input_bordered_option() {
         let mut text = String::new();
         let input = TextInput::new(&mut text).bordered();
-        assert!(input.stroke.is_some());
-        assert_eq!(input.stroke.unwrap().width, 1.0);
+        assert!(input.bordered);
     }
 
     #[test]

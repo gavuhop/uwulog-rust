@@ -1,6 +1,6 @@
 use crate::actions::AppAction;
 use crate::components::{render_card, AppButton, ButtonVariant, ModalContainer, TextInput};
-use crate::theme;
+use crate::theme::ActiveTheme;
 use eframe::egui::{self, Color32, CornerRadius, Stroke};
 use uwu_core_workspace::{SourceConfig, SourceType};
 
@@ -27,12 +27,13 @@ pub fn render_launch_modal(
         .show(
             ctx,
             |ui| {
+                let theme = ui.app_theme();
                 let draft = draft.as_mut().unwrap();
 
                 // 1. System Engine Performance Card
                 render_card(ui, "System Engine Performance", |ui| {
                     ui.scope(|ui| {
-                        let input_stroke = Stroke::new(1.0, theme::BG_SURFACE1);
+                        let input_stroke = Stroke::new(1.0, theme.surfaces.surface1);
                         let widgets = &mut ui.visuals_mut().widgets;
                         widgets.inactive.bg_stroke = input_stroke;
                         widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
@@ -56,7 +57,7 @@ pub fn render_launch_modal(
                                 ui.add(
                                     egui::Label::new(
                                         egui::RichText::new("RingBuffer Capacity (-C):")
-                                            .color(theme::TEXT_PRIMARY),
+                                            .color(theme.text.primary),
                                     )
                                     .wrap_mode(egui::TextWrapMode::Extend),
                                 )
@@ -88,7 +89,7 @@ pub fn render_launch_modal(
                                 ui.add(
                                     egui::Label::new(
                                         egui::RichText::new("Display Limit (-n):")
-                                            .color(theme::TEXT_PRIMARY),
+                                            .color(theme.text.primary),
                                     )
                                     .wrap_mode(egui::TextWrapMode::Extend),
                                 )
@@ -121,7 +122,7 @@ pub fn render_launch_modal(
                     let seg_width2 = total_width - seg_width1;
 
                     egui::Frame::default()
-                        .fill(theme::BG_CRUST)
+                        .fill(theme.surfaces.crust)
                         .corner_radius(CornerRadius::same(4))
                         .inner_margin(egui::Margin::ZERO)
                         .show(ui, |ui| {
@@ -141,16 +142,16 @@ pub fn render_launch_modal(
                                 }
 
                                 let bg1 = if is_proc {
-                                    theme::BG_SURFACE1
+                                    theme.surfaces.surface1
                                 } else if resp1.hovered() {
-                                    theme::BG_SURFACE0
+                                    theme.surfaces.surface0
                                 } else {
                                     Color32::TRANSPARENT
                                 };
                                 let text_color1 = if is_proc {
-                                    theme::TEXT_PRIMARY
+                                    theme.text.primary
                                 } else {
-                                    theme::TEXT_MUTED
+                                    theme.text.muted
                                 };
 
                                 let radius1 = CornerRadius {
@@ -198,16 +199,16 @@ pub fn render_launch_modal(
                                 }
 
                                 let bg2 = if is_file {
-                                    theme::BG_SURFACE1
+                                    theme.surfaces.surface1
                                 } else if resp2.hovered() {
-                                    theme::BG_SURFACE0
+                                    theme.surfaces.surface0
                                 } else {
                                     Color32::TRANSPARENT
                                 };
                                 let text_color2 = if is_file {
-                                    theme::TEXT_PRIMARY
+                                    theme.text.primary
                                 } else {
-                                    theme::TEXT_MUTED
+                                    theme.text.muted
                                 };
 
                                 let radius2 = CornerRadius {
@@ -248,7 +249,7 @@ pub fn render_launch_modal(
                     if draft.source_type == SourceType::Process {
                         ui.label(
                             egui::RichText::new("Command string:")
-                                .color(theme::TEXT_PRIMARY)
+                                .color(theme.text.primary)
                                 .size(11.5),
                         );
                         ui.add_space(4.0);
@@ -261,7 +262,7 @@ pub fn render_launch_modal(
                     } else {
                         ui.label(
                             egui::RichText::new("Log file path:")
-                                .color(theme::TEXT_PRIMARY)
+                                .color(theme.text.primary)
                                 .size(11.5),
                         );
                         ui.add_space(4.0);
