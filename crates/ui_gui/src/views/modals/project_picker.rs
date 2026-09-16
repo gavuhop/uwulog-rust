@@ -1,5 +1,5 @@
 use crate::actions::AppAction;
-use crate::theme;
+use crate::theme::ActiveTheme;
 use eframe::egui::{self, Color32, CornerRadius, Rect};
 use std::collections::HashSet;
 use uwu_core_workspace::{SourceType, Workspace, WorkspaceLocation, WorkspaceStore};
@@ -42,6 +42,7 @@ pub struct ProjectRowConfig<'a> {
 
 /// Render một hàng project (dùng chung cho cả This Window và Recent Projects)
 pub fn render_project_row(ui: &mut egui::Ui, config: ProjectRowConfig<'_>) -> ProjectRowAction {
+    let theme = ui.app_theme();
     let height = crate::components::ui::button::BUTTON_HEIGHT_NORMAL;
     let row_size = egui::vec2(ui.available_width(), height);
     let (row_rect, mut row_resp) = ui.allocate_exact_size(row_size, egui::Sense::click());
@@ -53,7 +54,7 @@ pub fn render_project_row(ui: &mut egui::Ui, config: ProjectRowConfig<'_>) -> Pr
     }
 
     let bg_color = if is_hovered {
-        theme::BG_ROW_HOVER
+        theme.log.row_hover
     } else {
         Color32::TRANSPARENT
     };
@@ -77,13 +78,13 @@ pub fn render_project_row(ui: &mut egui::Ui, config: ProjectRowConfig<'_>) -> Pr
             ui.label(
                 egui::RichText::new(config.icon)
                     .size(12.0)
-                    .color(theme::TEXT_MUTED),
+                    .color(theme.text.muted),
             );
 
             ui.label(
                 egui::RichText::new(config.label)
                     .size(12.0)
-                    .color(theme::TEXT_PRIMARY),
+                    .color(theme.text.primary),
             );
 
             if config.is_active {
@@ -92,7 +93,7 @@ pub fn render_project_row(ui: &mut egui::Ui, config: ProjectRowConfig<'_>) -> Pr
                 crate::components::ui::IconName::Check.paint(
                     ui.painter(),
                     check_r,
-                    theme::TEXT_KEY,
+                    theme.text.accent,
                 );
             }
 
@@ -111,9 +112,9 @@ pub fn render_project_row(ui: &mut egui::Ui, config: ProjectRowConfig<'_>) -> Pr
                     close_resp.on_hover_text(config.close_tooltip);
 
                     let close_color = if close_hovered {
-                        theme::TEXT_PRIMARY
+                        theme.text.primary
                     } else {
-                        theme::TEXT_MUTED
+                        theme.text.muted
                     };
                     let close_icon_r =
                         egui::Rect::from_center_size(close_rect.center(), egui::vec2(12.0, 12.0));
@@ -134,9 +135,9 @@ pub fn render_project_row(ui: &mut egui::Ui, config: ProjectRowConfig<'_>) -> Pr
                     act_resp.on_hover_text(config.action_tooltip);
 
                     let act_color = if action_hovered {
-                        theme::TEXT_PRIMARY
+                        theme.text.primary
                     } else {
-                        theme::TEXT_MUTED
+                        theme.text.muted
                     };
                     let act_icon_r =
                         egui::Rect::from_center_size(act_rect.center(), egui::vec2(12.0, 12.0));
@@ -202,6 +203,7 @@ pub fn render_project_picker_popup(
             .width(popup_width)
             .max_height(420.0)
             .show(ctx, |ui| {
+                let theme = ui.app_theme();
                 // 1. Search Box (No stroke, height = BUTTON_HEIGHT_NORMAL, auto-focus on open)
                 let search_id = egui::Id::new("project_picker_search_input");
                 crate::components::ui::TextInput::new(project_search_query)
@@ -222,7 +224,7 @@ pub fn render_project_picker_popup(
                     egui::RichText::new("This Window")
                         .size(11.0)
                         .strong()
-                        .color(theme::TEXT_MUTED),
+                        .color(theme.text.muted),
                 );
                 ui.add_space(2.0);
 
@@ -279,7 +281,7 @@ pub fn render_project_picker_popup(
                     egui::RichText::new("Recent Projects")
                         .size(11.0)
                         .strong()
-                        .color(theme::TEXT_MUTED),
+                        .color(theme.text.muted),
                 );
                 ui.add_space(2.0);
 
@@ -326,7 +328,7 @@ pub fn render_project_picker_popup(
                             egui::RichText::new("No other recent projects")
                                 .italics()
                                 .size(11.0)
-                                .color(theme::TEXT_MUTED),
+                                .color(theme.text.muted),
                         );
                     });
                     ui.add_space(3.0);

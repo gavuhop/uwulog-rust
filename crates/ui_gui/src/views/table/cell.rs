@@ -1,6 +1,6 @@
 use super::context_menu::{render_cell_context_menu, CellMenuContext};
 use crate::actions::ActionContext;
-use crate::theme;
+use crate::theme::ActiveTheme;
 use eframe::egui;
 use uwu_core_schema::LogEvent;
 
@@ -28,13 +28,14 @@ pub fn render_cell(
     is_row_highlighted: bool,
     ctx: &mut ActionContext<'_>,
 ) -> bool {
+    let theme = ui.app_theme();
     let cell_rect = ui.max_rect();
     if is_row_highlighted {
         ui.painter()
-            .rect_filled(cell_rect, egui::CornerRadius::ZERO, theme::BG_ROW_HIGHLIGHT);
+            .rect_filled(cell_rect, egui::CornerRadius::ZERO, theme.log.row_highlight);
     } else if is_selected {
         ui.painter()
-            .rect_filled(cell_rect, egui::CornerRadius::ZERO, theme::BG_ROW_SELECTED);
+            .rect_filled(cell_rect, egui::CornerRadius::ZERO, theme.log.row_selected);
     }
 
     let (cell_text, raw_cell_val) = extract_cell_content(event, col_name);
@@ -44,7 +45,7 @@ pub fn render_cell(
     let highlighted_terms_ref = ctx.highlighted_terms;
     let mut layouter =
         |ui: &egui::Ui, _text: &dyn egui::text_edit::TextBuffer, _wrap_width: f32| {
-            let mut job = theme::create_highlighted_layout_job(
+            let mut job = crate::theme::create_highlighted_layout_job(
                 &cell_text,
                 row_color,
                 egui::FontId::monospace(11.5),

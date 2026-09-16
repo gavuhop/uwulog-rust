@@ -1,7 +1,7 @@
 use crate::components::ui::PopoverContainer;
 use crate::session::GuiSession;
 use crate::state::SuggestionKind;
-use crate::theme;
+use crate::theme::ActiveTheme;
 use eframe::egui::{self, Color32, CornerRadius, FontId, Key, Pos2, Rect};
 
 /// Render Autocomplete Dropdown Popup ngay dưới ô tìm kiếm
@@ -68,6 +68,7 @@ pub fn render_autocomplete_popup(ctx: &egui::Context, session: &mut GuiSession, 
         .custom_pos(dropdown_pos)
         .max_height(approx_height)
         .show(ctx, |ui| {
+            let theme = ui.app_theme();
             ui.spacing_mut().item_spacing.y = 2.0;
             let mut hovered_index = None;
 
@@ -91,7 +92,7 @@ pub fn render_autocomplete_popup(ctx: &egui::Context, session: &mut GuiSession, 
                     }
 
                     let row_bg = if is_selected || resp.hovered() {
-                        theme::BG_ROW_SELECTED
+                        theme.log.row_selected
                     } else {
                         Color32::TRANSPARENT
                     };
@@ -110,7 +111,7 @@ pub fn render_autocomplete_popup(ctx: &egui::Context, session: &mut GuiSession, 
                             egui::Align2::LEFT_CENTER,
                             item.op_symbol,
                             FontId::monospace(11.5),
-                            theme::TEXT_KEY,
+                            theme.text.accent,
                         );
                         left_x += 24.0;
                     }
@@ -121,7 +122,7 @@ pub fn render_autocomplete_popup(ctx: &egui::Context, session: &mut GuiSession, 
                         egui::Align2::LEFT_CENTER,
                         &item.action_name,
                         FontId::monospace(12.0),
-                        theme::TEXT_PRIMARY,
+                        theme.text.primary,
                     );
 
                     // Cột phải: Cú pháp ví dụ in nghiêng
@@ -131,7 +132,7 @@ pub fn render_autocomplete_popup(ctx: &egui::Context, session: &mut GuiSession, 
                         egui::Align2::RIGHT_CENTER,
                         &item.example_syntax,
                         FontId::monospace(11.5),
-                        theme::TEXT_MUTED,
+                        theme.text.muted,
                     );
                 }
             };

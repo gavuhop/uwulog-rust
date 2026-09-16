@@ -3,7 +3,7 @@ use crate::actions::AppAction;
 use crate::components::ui::IconName;
 use crate::session::GuiSession;
 use crate::state::ActiveTab;
-use crate::theme;
+use crate::theme::ActiveTheme;
 use eframe::egui;
 
 pub fn render_toolbar(
@@ -11,6 +11,8 @@ pub fn render_toolbar(
     session: &mut GuiSession,
     dispatch: &mut impl FnMut(AppAction),
 ) {
+    let theme = ui.app_theme();
+
     // Table Columns & Ordering Modal Button
     let col_variant = if session.view.columns.is_modal_open {
         crate::components::ui::ButtonVariant::Selected
@@ -47,8 +49,8 @@ pub fn render_toolbar(
     if session.session.is_source_running {
         if crate::components::ui::IconButton::new(IconName::Stop)
             .size(24.0)
-            .fill(theme::BTN_STOP_BG)
-            .text_color(theme::COLOR_ERROR)
+            .fill(theme.controls.stop_bg)
+            .text_color(theme.status.error)
             .tooltip("Stop running process source")
             .show(ui)
             .clicked()
@@ -57,8 +59,8 @@ pub fn render_toolbar(
         }
     } else if crate::components::ui::IconButton::new(IconName::Restart)
         .size(24.0)
-        .fill(theme::BTN_RESTART_BG)
-        .text_color(theme::COLOR_INFO)
+        .fill(theme.controls.restart_bg)
+        .text_color(theme.status.info)
         .tooltip("Clear logs and restart source")
         .show(ui)
         .clicked()
@@ -116,15 +118,15 @@ pub fn render_toolbar(
         (
             IconName::Anchor,
             "Live",
-            theme::BTN_LATCHED_BG,
-            theme::COLOR_INFO,
+            theme.controls.latched_bg,
+            theme.status.info,
         )
     } else {
         (
             IconName::Pause,
             "Paused",
-            theme::BTN_UNLATCHED_BG,
-            theme::COLOR_WARN,
+            theme.controls.unlatched_bg,
+            theme.status.warning,
         )
     };
 

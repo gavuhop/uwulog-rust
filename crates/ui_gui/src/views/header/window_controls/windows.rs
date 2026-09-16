@@ -4,7 +4,7 @@
 
 use super::icons;
 use super::CaptionButtonType;
-use crate::theme;
+use crate::theme::{self, ActiveTheme};
 use eframe::egui::{self, Color32, CornerRadius, FontId, Sense, Ui};
 
 pub const WINDOW_CONTROL_BTN_WIDTH: f32 = 46.0;
@@ -23,6 +23,7 @@ fn render_windows_caption_button(
     has_segoe_font: bool,
     _is_maximized: bool,
 ) -> egui::Response {
+    let theme = ui.app_theme();
     let size = egui::vec2(WINDOW_CONTROL_BTN_WIDTH, WINDOW_CONTROL_BTN_HEIGHT);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
 
@@ -42,9 +43,9 @@ fn render_windows_caption_button(
         }
         _ => {
             if is_active {
-                theme::BG_SURFACE0 // Pressed state
+                theme.surfaces.surface0 // Pressed state
             } else if is_hovered {
-                theme::BG_SURFACE1 // Hover state (#343a4e)
+                theme.surfaces.surface1 // Hover state (#343a4e)
             } else {
                 Color32::TRANSPARENT
             }
@@ -67,14 +68,14 @@ fn render_windows_caption_button(
             if is_hovered || is_active {
                 Color32::WHITE
             } else {
-                theme::TEXT_MUTED
+                theme.text.muted
             }
         }
         _ => {
             if is_hovered || is_active {
-                theme::TEXT_PRIMARY
+                theme.text.primary
             } else {
-                theme::TEXT_MUTED
+                theme.text.muted
             }
         }
     };

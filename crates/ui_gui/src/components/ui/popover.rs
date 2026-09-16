@@ -1,6 +1,6 @@
 //! Zed-style PopoverContainer primitive with positioning, click-outside and escape dismiss.
 
-use crate::theme;
+use crate::theme::ActiveTheme;
 use eframe::egui::{self, Color32, Context, CornerRadius, Id, Key, Order, Pos2, Rect, Stroke, Ui};
 
 pub struct PopoverContainer<'a> {
@@ -74,9 +74,10 @@ impl<'a> PopoverContainer<'a> {
             .fixed_pos(pos)
             .movable(false)
             .show(ctx, |ui| {
+                let theme = ui.app_theme();
                 let frame = egui::Frame::default()
-                    .fill(theme::BG_MANTLE)
-                    .stroke(Stroke::new(1.0, theme::BG_SURFACE0))
+                    .fill(theme.surfaces.mantle)
+                    .stroke(Stroke::new(1.0, theme.borders.border))
                     .corner_radius(CornerRadius::same(6))
                     .inner_margin(egui::Margin::same(8))
                     .shadow(egui::epaint::Shadow {

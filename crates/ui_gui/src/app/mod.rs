@@ -212,12 +212,22 @@ impl UwuGuiApp {
     }
 
     pub fn new(cc: &eframe::CreationContext<'_>, rt: Handle) -> Self {
+        let cli = CliArgs::parse();
+        let mut store = WorkspaceStore::load();
+
+        // Đảm bảo file template mẫu luôn tồn tại sẵn trong thư mục themes
+        let _ = crate::theme::ensure_template_file();
+
+        if let Some(ref theme_id) = store.active_theme {
+            if !crate::theme::is_builtin_theme(theme_id) {
+                let _ = crate::theme::load_theme_by_id(theme_id);
+            }
+            let _ = crate::theme::set_active_theme(theme_id, &cc.egui_ctx);
+        }
         crate::theme::apply_theme(&cc.egui_ctx);
         #[cfg(target_os = "windows")]
         crate::theme::apply_windows_titlebar_theme(cc);
 
-        let cli = CliArgs::parse();
-        let mut store = WorkspaceStore::load();
         let (initial_gui_session, has_custom_source, saved_id) =
             Self::build_initial_session(&cli, &store);
 
@@ -345,6 +355,10 @@ impl UwuGuiApp {
             AppAction::QuitApp => {
                 self.close_main_menu();
                 self.should_quit = true;
+            }
+            AppAction::SwitchTheme(theme_id) => {
+                self.workspaces.store.active_theme = Some(theme_id);
+                let _ = self.workspaces.store.save();
             }
             AppAction::DismissTopLayer => {
                 self.dismiss_top_layer();

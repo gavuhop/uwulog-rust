@@ -1,5 +1,5 @@
 use crate::state::{ColumnItem, ColumnState};
-use crate::theme;
+use crate::theme::ActiveTheme;
 use eframe::egui::{self, Color32, CornerRadius, FontId, Pos2, Rect, Stroke};
 use std::time::Instant;
 
@@ -134,17 +134,18 @@ fn render_header_cell(
     is_hovered: bool,
     now: Instant,
 ) {
+    let theme = ui.app_theme();
     // Tự động phát hiện thay đổi vị trí logic (swap/reorder) và lấy visual_rect nội suy chuyển động
     let visual_rect = columns.table_animations.track_rect(col_name, rect, now);
 
     // 1. Vẽ nền tiêu đề tại vị trí trực quan visual_rect
     let header_bg = if is_drop_target {
         // Ô bị swap đè lên: đổi màu sáng rõ rệt báo hiệu chuẩn bị swap
-        theme::BG_SURFACE1
+        theme.surfaces.surface1
     } else if is_hovered {
-        theme::BG_ROW_HOVER
+        theme.log.row_hover
     } else {
-        theme::BG_MANTLE
+        theme.surfaces.mantle
     };
     ui.painter()
         .rect_filled(visual_rect, CornerRadius::ZERO, header_bg);
@@ -155,22 +156,22 @@ fn render_header_cell(
         ui.painter().rect_filled(
             visual_rect,
             CornerRadius::ZERO,
-            theme::TEXT_KEY.gamma_multiply(0.22),
+            theme.text.accent.gamma_multiply(0.22),
         );
         // Viền nổi bật báo hiệu vị trí sẽ tiếp đất
         ui.painter().rect_stroke(
             visual_rect,
             CornerRadius::ZERO,
-            Stroke::new(2.0, theme::TEXT_KEY),
+            Stroke::new(2.0, theme.text.accent),
             egui::StrokeKind::Inside,
         );
     }
 
     // 3. Vẽ grip handle
     let grip_color = if is_drop_target || is_hovered {
-        theme::TEXT_KEY
+        theme.text.accent
     } else {
-        theme::TEXT_MUTED
+        theme.text.muted
     };
     let grip_rect = Rect::from_center_size(
         Pos2::new(visual_rect.min.x + 8.0, visual_rect.center().y),
@@ -181,9 +182,9 @@ fn render_header_cell(
     // 4. Vẽ tên nhãn cột
     let font_id = FontId::monospace(11.0);
     let text_color = if is_drop_target {
-        theme::TEXT_PRIMARY
+        theme.text.primary
     } else {
-        theme::TEXT_MUTED
+        theme.text.muted
     };
     let text_pos = Pos2::new(visual_rect.min.x + 16.0, visual_rect.center().y);
     ui.painter().text(
@@ -195,7 +196,7 @@ fn render_header_cell(
     );
 
     // 5. Vẽ vạch phân cách cột
-    let line_stroke = Stroke::new(1.0, theme::BG_SURFACE0);
+    let line_stroke = Stroke::new(1.0, theme.borders.border);
     ui.painter().line_segment(
         [
             Pos2::new(visual_rect.max.x - 1.0, visual_rect.min.y + 3.0),
@@ -219,6 +220,8 @@ pub fn render_drag_ghost(
         egui::Id::new("header_drag_ghost_layer"),
     );
     let painter = ui.ctx().layer_painter(ghost_layer_id);
+    let theme = ui.app_theme();
+
     let ghost_h = 26.0;
     let ghost_w = width.max(30.0);
     let off_x = offset_x.unwrap_or(ghost_w / 2.0).clamp(0.0, ghost_w);
@@ -233,24 +236,24 @@ pub fn render_drag_ghost(
         CornerRadius::same(5),
         Color32::from_black_alpha(130),
     );
-    painter.rect_filled(ghost_rect, CornerRadius::same(4), theme::BG_SURFACE0);
+    painter.rect_filled(ghost_rect, CornerRadius::same(4), theme.surfaces.surface0);
     painter.rect_stroke(
         ghost_rect,
         CornerRadius::same(4),
-        Stroke::new(1.5, theme::TEXT_KEY),
+        Stroke::new(1.5, theme.text.accent),
         egui::StrokeKind::Inside,
     );
     let grip_rect = Rect::from_center_size(
         Pos2::new(ghost_rect.min.x + 8.0, ghost_rect.center().y),
         egui::vec2(10.0, 10.0),
     );
-    crate::components::ui::IconName::GripVertical.paint(&painter, grip_rect, theme::TEXT_KEY);
+    crate::components::ui::IconName::GripVertical.paint(&painter, grip_rect, theme.text.accent);
     painter.text(
         Pos2::new(ghost_rect.min.x + 16.0, ghost_rect.center().y),
         egui::Align2::LEFT_CENTER,
         dragged_name.to_uppercase(),
         FontId::monospace(11.0),
-        theme::TEXT_PRIMARY,
+        theme.text.primary,
     );
 }
 

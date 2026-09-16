@@ -16,7 +16,7 @@ use crate::actions::AppAction;
 use crate::overlay::{OverlayLayer, OverlayStack};
 use crate::session::GuiSession;
 use crate::state::ActiveTab;
-use crate::theme;
+use crate::theme::ActiveTheme;
 use crate::views::modals::ProjectPickerSessionInfo;
 use eframe::egui;
 use uwu_core_workspace::WorkspaceStore;
@@ -36,6 +36,7 @@ pub fn render_header(
     cx: &mut HeaderContext<'_>,
     dispatch: &mut impl FnMut(AppAction),
 ) {
+    let theme = ui.app_theme();
     let mut proj_btn_rect = None;
     let mut menu_btn_rect = None;
 
@@ -86,7 +87,7 @@ pub fn render_header(
                     remote.display_name()
                 );
                 crate::components::ui::CountBadge::new(&remote_text)
-                    .text_color(theme::COLOR_INFO)
+                    .text_color(theme.status.info)
                     .tooltip(&remote_tip)
                     .show(ui);
             }
@@ -117,9 +118,9 @@ pub fn render_header(
                     .label(&session.session.name)
                     .variant(proj_variant)
                     .text_color(if is_project_picker_open {
-                        theme::TEXT_KEY
+                        theme.text.accent
                     } else {
-                        theme::TEXT_PRIMARY
+                        theme.text.primary
                     })
                     .tooltip(&tooltip)
                     .show(ui);

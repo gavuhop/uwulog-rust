@@ -13,13 +13,13 @@ pub use table::render_table;
 pub use unfiltered::render_unfiltered_table;
 
 use crate::app::UwuGuiApp;
-use crate::theme;
+use crate::theme::ActiveTheme;
 use eframe::egui;
 
 pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
-    let ctx = ui.ctx().clone();
-    let ctx = &ctx;
-    ctx.set_visuals(theme::create_visuals());
+    let theme = ui.app_theme();
+    let ctx_handle = ui.ctx().clone();
+    let ctx = &ctx_handle;
 
     let mut pending_actions: Vec<crate::actions::AppAction> = Vec::new();
     let mut dispatch = |action: crate::actions::AppAction| {
@@ -102,9 +102,9 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     egui::Panel::top("header_panel")
         .frame(
             egui::Frame::default()
-                .fill(theme::BG_MANTLE)
+                .fill(theme.surfaces.mantle)
                 .inner_margin(platform.header_panel_margin())
-                .stroke(egui::Stroke::new(1.0, theme::BG_SURFACE0)),
+                .stroke(egui::Stroke::new(1.0, theme.borders.border)),
         )
         .exact_size(header::TITLEBAR_HEIGHT)
         .resizable(false)
@@ -116,7 +116,7 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     egui::CentralPanel::default()
         .frame(
             egui::Frame::default()
-                .fill(theme::BG_BASE)
+                .fill(theme.surfaces.base)
                 .inner_margin(egui::Margin::ZERO),
         )
         .show(ui, |ui| {
@@ -146,6 +146,7 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 }
                 app.prev_screen_width = screen_width;
 
+                // Chiều rộng pixel thực tế
                 let target_width = (screen_width * active_session.view.inspector.width_ratio)
                     .clamp(240.0, screen_width * 0.75);
                 let min_sidebar_width = 240.0_f32.min(screen_width * 0.4);
@@ -154,9 +155,9 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 egui::Panel::right("detail_inspector_panel")
                     .frame(
                         egui::Frame::default()
-                            .fill(theme::BG_MANTLE)
+                            .fill(theme.surfaces.mantle)
                             .inner_margin(egui::Margin::same(12))
-                            .stroke(egui::Stroke::new(1.0, theme::BG_SURFACE0)),
+                            .stroke(egui::Stroke::new(1.0, theme.borders.border)),
                     )
                     .resizable(true)
                     .default_size(target_width)
@@ -176,7 +177,7 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
             egui::CentralPanel::default()
                 .frame(
                     egui::Frame::default()
-                        .fill(theme::BG_BASE)
+                        .fill(theme.surfaces.base)
                         .inner_margin(egui::Margin::symmetric(8, 4)),
                 )
                 .show(ui, |ui| match active_session.view.active_tab {

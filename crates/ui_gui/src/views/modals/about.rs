@@ -1,6 +1,6 @@
 use crate::actions::AppAction;
 use crate::components::ui::{AppButton, ModalContainer};
-use crate::theme;
+use crate::theme::ActiveTheme;
 use eframe::egui::{self, Key};
 
 /// Render modal giới thiệu phiên bản và thông tin ứng dụng uwulog
@@ -18,18 +18,19 @@ pub fn render_about_modal(
         .show(
             ctx,
             |ui| {
+                let theme = ui.app_theme();
                 ui.vertical_centered(|ui| {
                     ui.label(
                         egui::RichText::new("🐱 uwulog")
                             .size(20.0)
                             .strong()
-                            .color(theme::TEXT_KEY),
+                            .color(theme.text.accent),
                     );
                     ui.add_space(2.0);
                     ui.label(
                         egui::RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION")))
                             .size(11.0)
-                            .color(theme::TEXT_MUTED),
+                            .color(theme.text.muted),
                     );
                     ui.add_space(8.0);
                     ui.label(
@@ -37,7 +38,7 @@ pub fn render_about_modal(
                             "High-performance Realtime Log Viewer & Workspace Monitor built with Rust.",
                         )
                         .size(12.0)
-                        .color(theme::TEXT_PRIMARY),
+                        .color(theme.text.primary),
                     );
                 });
             },

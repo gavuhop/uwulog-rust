@@ -1,7 +1,7 @@
 use crate::actions::AppAction;
 use crate::components::render_card;
 use crate::state::ColumnState;
-use crate::theme;
+use crate::theme::ActiveTheme;
 use eframe::egui::{self, Color32, CornerRadius, FontId, Pos2, Rect, Stroke};
 
 pub fn render_columns_modal(
@@ -12,6 +12,8 @@ pub fn render_columns_modal(
     if !columns.is_modal_open {
         return;
     }
+
+    let theme = ctx.app_theme();
 
     if columns.draft_columns.is_none() {
         columns.draft_columns = Some(columns.columns.clone());
@@ -109,15 +111,15 @@ pub fn render_columns_modal(
                 }
 
                 let h_bg = if h_resp.hovered() {
-                    theme::BG_ROW_HOVER
+                    theme.log.row_hover
                 } else {
-                    theme::BG_SURFACE0
+                    theme.surfaces.surface0
                 };
                 ui.painter().rect(
                     h_rect,
                     CornerRadius::same(4),
                     h_bg,
-                    Stroke::new(1.0, theme::BG_SURFACE1),
+                    Stroke::new(1.0, theme.surfaces.surface1),
                     egui::StrokeKind::Inside,
                 );
 
@@ -132,7 +134,7 @@ pub fn render_columns_modal(
                 crate::components::ui::IconName::GripVertical.paint(
                     ui.painter(),
                     header_grip_rect,
-                    theme::TEXT_MUTED,
+                    theme.text.muted,
                 );
 
                 // Master Checkbox at same X as row checkboxes (grip_x + 20.0 = h_rect.min.x + 28.0)
@@ -143,9 +145,9 @@ pub fn render_columns_modal(
                 );
 
                 let (chk_bg, chk_stroke) = if all_matching_visible || is_partial {
-                    (theme::TEXT_KEY, Stroke::new(1.0, theme::TEXT_KEY))
+                    (theme.text.accent, Stroke::new(1.0, theme.text.accent))
                 } else {
-                    (Color32::TRANSPARENT, Stroke::new(1.0, theme::TEXT_MUTED))
+                    (Color32::TRANSPARENT, Stroke::new(1.0, theme.text.muted))
                 };
 
                 ui.painter().rect(
@@ -160,13 +162,13 @@ pub fn render_columns_modal(
                     crate::components::ui::IconName::Check.paint(
                         ui.painter(),
                         check_rect.shrink(2.5),
-                        theme::BG_BASE,
+                        theme.surfaces.base,
                     );
                 } else if is_partial {
                     crate::components::ui::IconName::Dash.paint(
                         ui.painter(),
                         check_rect.shrink(2.5),
-                        theme::BG_BASE,
+                        theme.surfaces.base,
                     );
                 }
 
@@ -190,9 +192,9 @@ pub fn render_columns_modal(
                     label_text,
                     FontId::monospace(12.0),
                     if all_matching_visible || is_partial {
-                        theme::TEXT_PRIMARY
+                        theme.text.primary
                     } else {
-                        theme::TEXT_MUTED
+                        theme.text.muted
                     },
                 );
 
@@ -208,7 +210,7 @@ pub fn render_columns_modal(
                     egui::Align2::RIGHT_CENTER,
                     counter_text,
                     FontId::monospace(11.0),
-                    theme::COLOR_INFO,
+                    theme.status.info,
                 );
 
                 if h_resp.clicked() {
@@ -288,19 +290,19 @@ pub fn render_columns_modal(
                                 columns.modal_animations.track_rect(&col_name, rect, now);
 
                             let bg_color = if is_dragged {
-                                theme::BG_ROW_SELECTED
+                                theme.log.row_selected
                             } else if is_hovered {
-                                theme::BG_ROW_HOVER
+                                theme.log.row_hover
                             } else {
-                                theme::BG_BASE
+                                theme.surfaces.base
                             };
 
                             let border_stroke = if is_dragged {
-                                Stroke::new(1.5, theme::TEXT_KEY)
+                                Stroke::new(1.5, theme.text.accent)
                             } else if is_hovered {
-                                Stroke::new(1.0, theme::BG_SURFACE1)
+                                Stroke::new(1.0, theme.surfaces.surface1)
                             } else {
-                                Stroke::new(1.0, theme::BG_SURFACE0)
+                                Stroke::new(1.0, theme.surfaces.surface0)
                             };
 
                             ui.painter().rect(
@@ -313,11 +315,11 @@ pub fn render_columns_modal(
 
                             let center_y = draw_rect.center().y;
 
-                            // 1. Grip handle
+                            // 1. Drag Grip Icon (Vector handle)
                             let grip_color = if is_dragged || is_hovered {
-                                theme::TEXT_KEY
+                                theme.text.accent
                             } else {
-                                theme::TEXT_MUTED
+                                theme.text.muted
                             };
                             let grip_rect = Rect::from_center_size(
                                 Pos2::new(draw_rect.min.x + 12.0, center_y),
@@ -348,16 +350,16 @@ pub fn render_columns_modal(
                             }
 
                             let check_bg = if col_visible {
-                                theme::TEXT_KEY
+                                theme.text.accent
                             } else {
                                 Color32::TRANSPARENT
                             };
                             let check_stroke = Stroke::new(
                                 1.0,
                                 if col_visible {
-                                    theme::TEXT_KEY
+                                    theme.text.accent
                                 } else {
-                                    theme::TEXT_MUTED
+                                    theme.text.muted
                                 },
                             );
 
@@ -373,16 +375,16 @@ pub fn render_columns_modal(
                                 crate::components::ui::IconName::Check.paint(
                                     ui.painter(),
                                     check_rect.shrink(2.5),
-                                    theme::BG_BASE,
+                                    theme.surfaces.base,
                                 );
                             }
 
                             // 3. Raw Key Name
                             let text_x = checkbox_x + 24.0;
                             let text_color = if col_visible {
-                                theme::TEXT_PRIMARY
+                                theme.text.primary
                             } else {
-                                theme::TEXT_MUTED
+                                theme.text.muted
                             };
                             ui.painter().text(
                                 Pos2::new(text_x, center_y),
@@ -417,7 +419,7 @@ pub fn render_columns_modal(
                                     egui::Align2::RIGHT_CENTER,
                                     pos_text,
                                     FontId::monospace(11.0),
-                                    theme::COLOR_INFO,
+                                    theme.status.info,
                                 );
                             } else {
                                 ui.painter().text(
@@ -425,7 +427,7 @@ pub fn render_columns_modal(
                                     egui::Align2::RIGHT_CENTER,
                                     "Hidden",
                                     FontId::monospace(11.0),
-                                    theme::TEXT_MUTED,
+                                    theme.text.muted,
                                 );
                             }
                         }

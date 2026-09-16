@@ -6,7 +6,7 @@ use crate::components::render_card;
 use crate::components::ui::{AppButton, ButtonVariant, TabButton};
 use crate::session::GuiSession;
 use crate::state::ActiveTab;
-use crate::theme;
+use crate::theme::{self, ActiveTheme};
 use eframe::egui::{self, Id};
 use fields::{render_kv_field, render_meta_field};
 use std::collections::HashMap;
@@ -18,6 +18,7 @@ pub fn render_detail(
     session: &mut GuiSession,
     dispatch: &mut impl FnMut(AppAction),
 ) {
+    let theme = ui.app_theme();
     let mut action_to_dispatch: Option<AppAction> = None;
 
     if let Some(event) = &session.inspector.selected_log {
@@ -31,7 +32,7 @@ pub fn render_detail(
                 egui::RichText::new("Log Inspector")
                     .strong()
                     .size(14.0)
-                    .color(theme::TEXT_KEY),
+                    .color(theme.text.accent),
             );
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -66,8 +67,8 @@ pub fn render_detail(
                 let mut hl_btn = AppButton::new().label(hl_text);
                 if is_highlighted {
                     hl_btn = hl_btn
-                        .fill(theme::BG_ROW_HIGHLIGHT)
-                        .text_color(theme::COLOR_WARN);
+                        .fill(theme.log.row_highlight)
+                        .text_color(theme.status.warning);
                 } else {
                     hl_btn = hl_btn.variant(ButtonVariant::Default);
                 }
@@ -104,7 +105,7 @@ pub fn render_detail(
                         ui,
                         ts_key,
                         &event.timestamp,
-                        theme::TEXT_PRIMARY,
+                        theme.text.primary,
                         true,
                         &mut ctx,
                     );
@@ -258,7 +259,7 @@ pub fn render_detail(
                         ui,
                         Id::new("detail_inspector_raw_box"),
                         &display_str,
-                        theme::TEXT_PRIMARY,
+                        theme.text.primary,
                         if is_beauty { 10 } else { 4 },
                         None,
                         &mut ctx,

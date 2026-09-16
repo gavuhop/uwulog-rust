@@ -1,6 +1,6 @@
 use crate::components::ui::{AppButton, ButtonVariant, PopoverContainer};
 use crate::session::GuiSession;
-use crate::theme;
+use crate::theme::ActiveTheme;
 use eframe::egui::{self, Color32, CornerRadius, FontId, Pos2, Rect};
 
 pub fn render_history_popup(
@@ -26,6 +26,7 @@ pub fn render_history_popup(
         .custom_pos(popup_pos)
         .max_height(approx_height)
         .show(ctx, |ui| {
+            let theme = ui.app_theme();
             // Header bar của History Popup
             ui.horizontal(|ui| {
                 let (icon_r, _) =
@@ -33,13 +34,13 @@ pub fn render_history_popup(
                 crate::components::ui::IconName::History.paint(
                     ui.painter(),
                     icon_r,
-                    theme::TEXT_KEY,
+                    theme.text.accent,
                 );
                 ui.add_space(2.0);
                 ui.label(
                     egui::RichText::new("Search History")
                         .font(FontId::monospace(12.0))
-                        .color(theme::TEXT_KEY)
+                        .color(theme.text.accent)
                         .strong(),
                 );
 
@@ -67,7 +68,7 @@ pub fn render_history_popup(
                     ui.label(
                         egui::RichText::new("No search history yet.")
                             .font(FontId::monospace(11.5))
-                            .color(theme::TEXT_MUTED)
+                            .color(theme.text.muted)
                             .italics(),
                     );
                 });
@@ -86,7 +87,7 @@ pub fn render_history_popup(
                     }
 
                     let row_bg = if resp.hovered() {
-                        theme::BG_ROW_SELECTED
+                        theme.log.row_selected
                     } else {
                         Color32::TRANSPARENT
                     };
@@ -105,7 +106,7 @@ pub fn render_history_popup(
                     crate::components::ui::IconName::MagnifyingGlass.paint(
                         ui.painter(),
                         icon_r,
-                        theme::TEXT_MUTED,
+                        theme.text.muted,
                     );
 
                     // Nội dung câu query
@@ -114,7 +115,7 @@ pub fn render_history_popup(
                         egui::Align2::LEFT_CENTER,
                         hist_query,
                         FontId::monospace(12.0),
-                        theme::TEXT_PRIMARY,
+                        theme.text.primary,
                     );
                 }
             }

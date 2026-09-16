@@ -1,5 +1,5 @@
 use crate::actions::{copy_and_close, render_filter_actions_menu, ActionContext};
-use crate::theme;
+use crate::theme::{self, ActiveTheme};
 use eframe::egui;
 
 fn render_field_item(
@@ -52,22 +52,24 @@ pub fn render_meta_field(
     mono: bool,
     ctx: &mut ActionContext<'_>,
 ) {
+    let theme = ui.app_theme();
     let font_id = if mono {
         egui::FontId::monospace(11.5)
     } else {
         egui::FontId::proportional(12.0)
     };
-    render_field_item(ui, key, val, theme::TEXT_MUTED, val_color, font_id, ctx);
+    render_field_item(ui, key, val, theme.text.muted, val_color, font_id, ctx);
 }
 
 /// Renders a parsed JSON key-value field with syntax coloring, keyword highlighting, and right-click quick filters.
 pub fn render_kv_field(ui: &mut egui::Ui, key: &str, val: &str, ctx: &mut ActionContext<'_>) {
+    let theme = ui.app_theme();
     render_field_item(
         ui,
         key,
         val,
-        theme::TEXT_KEY,
-        theme::TEXT_PRIMARY,
+        theme.text.accent,
+        theme.text.primary,
         egui::FontId::proportional(11.5),
         ctx,
     );

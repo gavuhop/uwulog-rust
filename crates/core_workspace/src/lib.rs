@@ -189,6 +189,8 @@ impl Workspace {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WorkspaceStore {
     pub active_workspace_id: Option<Uuid>,
+    #[serde(default)]
+    pub active_theme: Option<String>,
     pub recent_workspaces: Vec<Workspace>,
 }
 

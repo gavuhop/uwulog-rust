@@ -116,7 +116,7 @@ pub fn render_log_table(
             let ctx = ui.ctx().clone();
             let mut builder = TableBuilder::new(ui)
                 .id_salt(format!("{}_{}", salt_prefix, table_salt))
-                .striped(true)
+                .striped(false)
                 .resizable(true)
                 .auto_shrink([false, false]);
 

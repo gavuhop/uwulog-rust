@@ -3,7 +3,7 @@
 
 use super::icons;
 use super::CaptionButtonType;
-use crate::theme;
+use crate::theme::ActiveTheme;
 use eframe::egui::{self, Color32, CornerRadius, Sense, Ui};
 
 pub const LINUX_BTN_SIZE: f32 = 24.0;
@@ -16,6 +16,7 @@ pub fn total_width() -> f32 {
 }
 
 fn render_linux_caption_button(ui: &mut Ui, btn_type: CaptionButtonType) -> egui::Response {
+    let theme = ui.app_theme();
     let size = egui::vec2(LINUX_BTN_SIZE, LINUX_BTN_SIZE);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
 
@@ -31,16 +32,16 @@ fn render_linux_caption_button(ui: &mut Ui, btn_type: CaptionButtonType) -> egui
             } else if is_hovered {
                 (Color32::from_rgb(0xd9, 0x48, 0x54), Color32::WHITE) // Libadwaita soft red
             } else {
-                (Color32::TRANSPARENT, theme::TEXT_MUTED)
+                (Color32::TRANSPARENT, theme.text.muted)
             }
         }
         _ => {
             if is_active {
-                (theme::BG_SURFACE0, theme::TEXT_PRIMARY)
+                (theme.surfaces.surface0, theme.text.primary)
             } else if is_hovered {
-                (theme::BG_SURFACE1, theme::TEXT_PRIMARY)
+                (theme.surfaces.surface1, theme.text.primary)
             } else {
-                (Color32::TRANSPARENT, theme::TEXT_MUTED)
+                (Color32::TRANSPARENT, theme.text.muted)
             }
         }
     };

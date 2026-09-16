@@ -1,6 +1,6 @@
 //! Zed-style ModalContainer primitive with backdrop scrim, header, body, and action footer.
 
-use crate::theme;
+use crate::theme::ActiveTheme;
 use eframe::egui::{self, Align2, Color32, Context, CornerRadius, Id, Key, Order, Stroke, Vec2};
 
 pub struct ModalContainer<'a> {
@@ -77,6 +77,7 @@ impl<'a> ModalContainer<'a> {
                 }
             });
 
+        let theme = ctx.app_theme();
         // 3. Khung cửa sổ Modal nổi ở giữa màn hình
         let mut modal_window = egui::Window::new(self.title)
             .id(self.id)
@@ -88,8 +89,8 @@ impl<'a> ModalContainer<'a> {
             .fixed_size(egui::vec2(self.width, 0.0))
             .frame(
                 egui::Frame::default()
-                    .fill(theme::BG_MANTLE)
-                    .stroke(Stroke::new(1.0, theme::BG_SURFACE0))
+                    .fill(theme.surfaces.mantle)
+                    .stroke(Stroke::new(1.0, theme.borders.border))
                     .corner_radius(CornerRadius::same(8))
                     .inner_margin(egui::Margin::same(16))
                     .shadow(egui::epaint::Shadow {
@@ -115,11 +116,11 @@ impl<'a> ModalContainer<'a> {
                     egui::RichText::new(self.title)
                         .strong()
                         .size(15.0)
-                        .color(theme::TEXT_PRIMARY),
+                        .color(theme.text.primary),
                 );
                 if let Some(sub) = self.subtitle {
                     ui.add_space(2.0);
-                    ui.label(egui::RichText::new(sub).size(11.0).color(theme::TEXT_MUTED));
+                    ui.label(egui::RichText::new(sub).size(11.0).color(theme.text.muted));
                 }
             });
 

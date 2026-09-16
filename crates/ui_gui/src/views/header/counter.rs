@@ -1,6 +1,6 @@
 use crate::session::GuiSession;
 use crate::state::ActiveTab;
-use crate::theme;
+use crate::theme::{self, ActiveTheme};
 use eframe::egui;
 
 /// Hiển thị bộ đếm số lượng log theo từng trạng thái chuẩn hóa:
@@ -8,6 +8,7 @@ use eframe::egui;
 /// - main (đã lọc):   Live -> số log khớp         | Pause -> số log khớp mới đến / số log khớp tại pause
 /// - Raw:             Live -> số log hiện tại     | Pause -> số log mới đến / số log tại pause
 pub fn render_log_counter(ui: &mut egui::Ui, session: &GuiSession) {
+    let theme = ui.app_theme();
     let is_filtering = !session.view.search.query.trim().is_empty();
 
     let (count_text, count_color, count_tooltip) = match session.view.active_tab {
@@ -22,12 +23,13 @@ pub fn render_log_counter(ui: &mut egui::Ui, session: &GuiSession) {
                     theme::format_number(session.session.engine.total_logs()),
                     theme::format_number(session.session.engine.max_capacity()),
                 );
-                (text, theme::TEXT_MUTED, tooltip)
+                (text, theme.text.muted, tooltip)
             } else {
                 format_paused_stream_counter(
                     "Raw Stream",
                     session.view.unfiltered.snapshot_processed_count as usize,
                     total_now,
+                    theme.text.muted,
                 )
             }
         }
@@ -52,7 +54,7 @@ pub fn render_log_counter(ui: &mut egui::Ui, session: &GuiSession) {
                         theme::format_number(cached_len),
                         theme::format_number(session.session.display_limit),
                     );
-                    (text, theme::TEXT_KEY, tooltip)
+                    (text, theme.text.accent, tooltip)
                 } else {
                     let seen_matched_at_pause = session.view.viewport.pause_snapshot.filtered_seen;
                     let new_matched = session
@@ -68,7 +70,7 @@ pub fn render_log_counter(ui: &mut egui::Ui, session: &GuiSession) {
                         theme::format_number(seen_matched_at_pause),
                         theme::format_number(session.view.viewport.cached_logs.len()),
                     );
-                    (text, theme::TEXT_KEY, tooltip)
+                    (text, theme.text.accent, tooltip)
                 }
             } else {
                 let total_now = session.session.engine.total_processed() as usize;
@@ -82,12 +84,13 @@ pub fn render_log_counter(ui: &mut egui::Ui, session: &GuiSession) {
                         theme::format_number(session.session.engine.max_capacity()),
                         theme::format_number(session.view.viewport.cached_logs.len()),
                     );
-                    (text, theme::TEXT_MUTED, tooltip)
+                    (text, theme.text.muted, tooltip)
                 } else {
                     format_paused_stream_counter(
                         "Main Stream",
                         session.view.viewport.pause_snapshot.global_seen as usize,
                         total_now,
+                        theme.text.muted,
                     )
                 }
             }
@@ -114,6 +117,7 @@ fn format_paused_stream_counter(
     stream_name: &str,
     seen_at_pause: usize,
     total_now: usize,
+    muted_color: egui::Color32,
 ) -> (String, egui::Color32, String) {
     let new_incoming = total_now.saturating_sub(seen_at_pause);
     let text = format_fraction(new_incoming, seen_at_pause);
@@ -123,5 +127,5 @@ fn format_paused_stream_counter(
         theme::format_number(seen_at_pause),
         theme::format_number(total_now),
     );
-    (text, theme::TEXT_MUTED, tooltip)
+    (text, muted_color, tooltip)
 }

@@ -1,13 +1,13 @@
 //! Zed-style Badge and Status indicators: CountBadge, StatusDot.
 
-use crate::theme;
+use crate::theme::ActiveTheme;
 use eframe::egui::{self, Color32, CornerRadius, Pos2, Response, Stroke, Ui, Vec2};
 
 /// Pill badge hiển thị số lượng (log count, items count)
 pub struct CountBadge<'a> {
     text: &'a str,
-    text_color: Color32,
-    bg_color: Color32,
+    text_color: Option<Color32>,
+    bg_color: Option<Color32>,
     framed: bool,
     tooltip: Option<&'a str>,
 }
@@ -16,8 +16,8 @@ impl<'a> CountBadge<'a> {
     pub fn new(text: &'a str) -> Self {
         Self {
             text,
-            text_color: theme::TEXT_KEY,
-            bg_color: theme::BG_SURFACE0,
+            text_color: None,
+            bg_color: None,
             framed: true,
             tooltip: None,
         }
@@ -29,12 +29,12 @@ impl<'a> CountBadge<'a> {
     }
 
     pub fn text_color(mut self, color: Color32) -> Self {
-        self.text_color = color;
+        self.text_color = Some(color);
         self
     }
 
     pub fn bg_color(mut self, color: Color32) -> Self {
-        self.bg_color = color;
+        self.bg_color = Some(color);
         self
     }
 
@@ -44,13 +44,17 @@ impl<'a> CountBadge<'a> {
     }
 
     pub fn show(self, ui: &mut Ui) -> Response {
+        let theme = ui.app_theme();
+        let text_color = self.text_color.unwrap_or(theme.text.accent);
+        let bg_color = self.bg_color.unwrap_or(theme.surfaces.surface0);
+
         let padding_x = if self.framed { 7.0 } else { 4.0 };
         let font_size = 11.0;
         let font_id = egui::FontId::monospace(font_size);
 
         let galley = ui
             .painter()
-            .layout_no_wrap(self.text.to_string(), font_id, self.text_color);
+            .layout_no_wrap(self.text.to_string(), font_id, text_color);
 
         let size = egui::vec2(galley.size().x + padding_x * 2.0, 24.0);
         let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
@@ -60,8 +64,8 @@ impl<'a> CountBadge<'a> {
                 ui.painter().rect(
                     rect,
                     CornerRadius::same(4),
-                    self.bg_color,
-                    Stroke::new(1.0, theme::BG_SURFACE1),
+                    bg_color,
+                    Stroke::new(1.0, theme.surfaces.surface1),
                     egui::StrokeKind::Inside,
                 );
             }
@@ -70,7 +74,7 @@ impl<'a> CountBadge<'a> {
                 rect.min.x + padding_x,
                 rect.center().y - galley.size().y * 0.5,
             );
-            ui.painter().galley(text_pos, galley, self.text_color);
+            ui.painter().galley(text_pos, galley, text_color);
         }
 
         if let Some(tip) = self.tooltip {
