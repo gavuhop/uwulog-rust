@@ -49,9 +49,7 @@ pub fn render_log_table(
         }
     }
 
-    let mut new_header_drag = None;
-    let mut target_header_swap = None;
-    let pointer_pos: Option<Pos2> = ui.input(|i| i.pointer.hover_pos());
+    let pointer_pos: Option<Pos2> = ui.input(|i| i.pointer.latest_pos());
 
     let visible_cols: Vec<ColumnItem> = session
         .columns
@@ -115,6 +113,7 @@ pub fn render_log_table(
         .id_salt(hscroll_id)
         .auto_shrink([false, false])
         .show(ui, |ui| {
+            let ctx = ui.ctx().clone();
             let mut builder = TableBuilder::new(ui)
                 .id_salt(format!("{}_{}", salt_prefix, table_salt))
                 .striped(true)
@@ -171,10 +170,9 @@ pub fn render_log_table(
                 .header(26.0, |mut tbl_header| {
                     render_table_headers(
                         &mut tbl_header,
+                        &ctx,
                         &visible_cols,
                         &mut session.columns,
-                        &mut new_header_drag,
-                        &mut target_header_swap,
                     );
                 })
                 .body(|body| {
@@ -241,30 +239,20 @@ pub fn render_log_table(
         dispatch(action);
     }
 
-    if let Some(name) = new_header_drag {
-        session.columns.header_dragged_name = Some(name);
-    }
-
-    if let Some((from_name, to_name)) = target_header_swap {
-        let from_idx = session
-            .columns
-            .columns
-            .iter()
-            .position(|c| c.name == from_name);
-        let to_idx = session
-            .columns
-            .columns
-            .iter()
-            .position(|c| c.name == to_name);
-        if let (Some(from), Some(to)) = (from_idx, to_idx) {
-            session.columns.reorder(from, to);
-            ui.ctx().request_repaint();
-        }
-    }
-
     if let Some(ref dragged_name) = session.columns.header_dragged_name {
         if let Some(pos) = pointer_pos {
-            render_drag_ghost(ui, dragged_name, pos);
+            let width = session
+                .columns
+                .header_dragged_width
+                .or_else(|| {
+                    visible_cols
+                        .iter()
+                        .find(|c| c.name == *dragged_name)
+                        .map(|c| c.width)
+                })
+                .unwrap_or(100.0);
+            let offset_x = session.columns.header_drag_offset_x;
+            render_drag_ghost(ui, dragged_name, pos, width, offset_x);
         }
     }
 
