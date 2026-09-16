@@ -214,6 +214,11 @@ mod tests {
                     Some(Color32::from_rgb(0xc5, 0xcd, 0xd9)),
                     "Override text color must match Nord Dimmed TEXT_PRIMARY (#c5cdd9)"
                 );
+                assert_eq!(
+                    visuals.text_cursor.stroke,
+                    egui::Stroke::new(2.0, Color32::from_rgb(0x78, 0xa0, 0xd4)),
+                    "Text cursor stroke must match Nord Dimmed TEXT_KEY / accent (#78a0d4)"
+                );
 
                 let text_styles = &ui.style().text_styles;
                 assert_eq!(

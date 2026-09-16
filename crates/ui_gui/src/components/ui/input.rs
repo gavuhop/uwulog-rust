@@ -154,6 +154,7 @@ impl<'a> TextInput<'a> {
     /// Render TextInput lên UI và trả về `Response`
     pub fn show(self, ui: &mut Ui) -> Response {
         let theme = ui.app_theme();
+        ui.visuals_mut().text_cursor.stroke = Stroke::new(2.0, theme.text.accent);
         let height = self.height.unwrap_or(BUTTON_HEIGHT_NORMAL);
         let width = self.width.unwrap_or_else(|| ui.available_width());
 
@@ -262,5 +263,22 @@ mod tests {
         let mut text = String::from("query");
         let input = TextInput::new(&mut text).auto_focus(true);
         assert!(input.auto_focus);
+    }
+
+    #[test]
+    fn test_text_input_cursor_color() {
+        let ctx = egui::Context::default();
+        let mut text = String::from("hello world");
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let theme = ui.app_theme();
+                TextInput::new(&mut text).show(ui);
+                assert_eq!(
+                    ui.visuals().text_cursor.stroke,
+                    Stroke::new(2.0, theme.text.accent)
+                );
+            });
+        });
+        output.textures_delta.clear();
     }
 }
