@@ -81,16 +81,20 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
         .workspaces
         .sessions
         .iter()
-        .map(|s| modals::ProjectPickerSessionInfo {
-            id: s.session.id,
-            name: if s.session.name.is_empty() {
-                "Workspace".to_string()
-            } else {
-                s.session.name.clone()
-            },
-            icon: s.session.icon(),
-            target_summary: s.session.target_summary(),
-            normalized_dir: s.session.location.normalized_dir(),
+        .map(|s| {
+            let icon =
+                modals::icon_for_location(&s.session.location, s.session.source_config.source_type);
+            modals::ProjectPickerSessionInfo {
+                id: s.session.id,
+                name: if s.session.name.is_empty() {
+                    "Workspace".to_string()
+                } else {
+                    s.session.name.clone()
+                },
+                icon,
+                target_summary: s.session.target_summary(),
+                normalized_dir: s.session.location.normalized_dir(),
+            }
         })
         .collect();
 

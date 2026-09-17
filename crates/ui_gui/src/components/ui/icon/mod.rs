@@ -10,6 +10,8 @@ pub mod component;
 pub mod names;
 #[cfg(test)]
 mod tests;
+pub mod vector;
 
 pub use component::{Icon, IconSize};
 pub use names::IconName;
+pub use vector::VectorShape;

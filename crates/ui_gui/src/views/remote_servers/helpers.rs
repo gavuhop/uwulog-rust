@@ -1,3 +1,4 @@
+use crate::components::ui::IconName;
 use crate::theme::ActiveTheme;
 use eframe::egui::{self, Align2, Color32, CornerRadius, Id, Order, Stroke, Vec2};
 use std::collections::HashMap;
@@ -41,7 +42,7 @@ pub fn get_dir_and_suffix(query: &str) -> (String, String) {
 
 /// Helper vẽ 1 hàng action dạng danh sách chuẩn Zed (chuẩn hóa builder pattern)
 pub struct ListItemRow<'a> {
-    pub icon: &'a str,
+    pub icon: IconName,
     pub label: &'a str,
     pub end_slot: Option<&'a str>,
     pub is_muted: bool,
@@ -52,7 +53,7 @@ pub struct ListItemRow<'a> {
 }
 
 impl<'a> ListItemRow<'a> {
-    pub fn new(icon: &'a str, label: &'a str) -> Self {
+    pub fn new(icon: IconName, label: &'a str) -> Self {
         Self {
             icon,
             label,
@@ -125,12 +126,11 @@ impl<'a> ListItemRow<'a> {
                 } else {
                     theme.text.primary
                 };
-                ui.add(
-                    egui::Label::new(egui::RichText::new(self.icon).size(12.0).color(item_color))
-                        .selectable(false),
-                );
+                let (icon_rect, _) =
+                    ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
+                self.icon.paint(ui.painter(), icon_rect, item_color);
 
-                ui.add_space(4.0);
+                ui.add_space(6.0);
 
                 ui.add(
                     egui::Label::new(egui::RichText::new(self.label).size(12.0).color(item_color))

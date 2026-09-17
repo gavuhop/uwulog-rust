@@ -1,4 +1,4 @@
-use crate::components::ui::TextInput;
+use crate::components::ui::{IconName, TextInput};
 use crate::theme::ActiveTheme;
 use eframe::egui::{self, Key};
 use uwu_core_workspace::{
@@ -22,11 +22,12 @@ pub fn render_folder_picker_subview(
     let mut nav_action = RemoteNavAction::None;
     let mut selected_workspace = None;
 
-    // 1. Header: 🐧 <distro_name>
+    // 1. Header: Linux <distro_name>
     ui.horizontal(|ui| {
         ui.add_space(4.0);
-        ui.label(egui::RichText::new("🐧").size(14.0));
-        ui.add_space(2.0);
+        let (icon_r, _) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
+        IconName::Linux.paint(ui.painter(), icon_r, theme.text.primary);
+        ui.add_space(4.0);
         ui.label(
             egui::RichText::new(&folder_state.distro)
                 .strong()
@@ -194,7 +195,7 @@ pub fn render_folder_picker_subview(
             // Mục đầu tiên: ↪ open this directory
             if show_open_this_dir {
                 let is_sel = folder_state.selected_index == current_item_ix;
-                let resp = ListItemRow::new("↪", "open this directory")
+                let resp = ListItemRow::new(IconName::Return, "open this directory")
                     .selected(is_sel)
                     .tooltip(Some(&format!("Open {} as project workspace", dir)))
                     .show(ui);
@@ -214,7 +215,7 @@ pub fn render_folder_picker_subview(
             // Các mục thư mục con: 📁 <folder>
             for folder in &matched_folders {
                 let is_sel = folder_state.selected_index == current_item_ix;
-                let resp = ListItemRow::new("📁", folder)
+                let resp = ListItemRow::new(IconName::Folder, folder)
                     .selected(is_sel)
                     .tooltip(Some(&format!(
                         "Open {} as project (Press Tab to browse subfolders)",

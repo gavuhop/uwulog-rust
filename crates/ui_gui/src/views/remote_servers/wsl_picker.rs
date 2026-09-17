@@ -1,4 +1,4 @@
-use crate::components::ui::AppButton;
+use crate::components::ui::{AppButton, IconName};
 use crate::theme::ActiveTheme;
 use eframe::egui::{self, Key};
 use uwu_core_workspace::WorkspaceStore;
@@ -14,7 +14,8 @@ pub fn render_wsl_picker_subview(ui: &mut egui::Ui, store: &mut WorkspaceStore) 
 
     ui.horizontal(|ui| {
         if AppButton::new()
-            .label("← Back")
+            .label("Back")
+            .icon(IconName::ArrowLeft)
             .variant(crate::components::ui::ButtonVariant::Ghost)
             .show(ui)
             .clicked()
@@ -98,7 +99,7 @@ pub fn render_wsl_picker_subview(ui: &mut egui::Ui, store: &mut WorkspaceStore) 
             .show(ui, |ui| {
                 for (idx, distro) in detected.iter().enumerate() {
                     let is_sel = selected_index == idx;
-                    let resp = ListItemRow::new("🐧", distro)
+                    let resp = ListItemRow::new(IconName::Linux, distro)
                         .selected(is_sel)
                         .tooltip(Some("Add this distro to remote server list"))
                         .show(ui);

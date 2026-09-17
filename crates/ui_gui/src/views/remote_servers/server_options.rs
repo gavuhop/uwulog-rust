@@ -16,11 +16,15 @@ pub fn render_server_options_subview(
     let theme = ui.app_theme();
     let mut nav_action = RemoteNavAction::None;
 
-    // 1. Header: [Icon] [Server Name] (chuẩn Zed: ví dụ 🐧 Ubuntu)
+    // 1. Header: [Icon] [Server Name] (chuẩn Zed: ví dụ Linux Ubuntu, Server SSH)
     ui.horizontal(|ui| {
         ui.add_space(4.0);
-        ui.label(egui::RichText::new(options_state.server.icon()).size(14.0));
-        ui.add_space(2.0);
+        let (icon_r, _) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
+        options_state
+            .server
+            .icon()
+            .paint(ui.painter(), icon_r, theme.text.primary);
+        ui.add_space(4.0);
         ui.label(
             egui::RichText::new(options_state.server.display_name())
                 .strong()

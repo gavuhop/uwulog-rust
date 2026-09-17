@@ -1,4 +1,4 @@
-use crate::components::ui::TextInput;
+use crate::components::ui::{IconName, TextInput};
 use eframe::egui::{self, Key};
 use std::collections::BTreeSet;
 use uwu_core_workspace::{Workspace, WorkspaceStore};
@@ -11,7 +11,6 @@ use super::types::{
     FolderPickerState, RemoteNavAction, RemoteServerKind, RemoteSubView, ServerOptionsState,
 };
 
-/// Hành động của từng mục trong Server List
 #[derive(Debug, Clone, PartialEq)]
 pub enum ServerListAction {
     ConnectSsh,
@@ -25,7 +24,7 @@ pub enum ServerListAction {
 /// Một mục hiển thị trong Server List
 #[derive(Debug, Clone)]
 pub struct ServerListItem {
-    pub icon: &'static str,
+    pub icon: IconName,
     pub label: String,
     pub tooltip: Option<String>,
     pub section_title: Option<String>,
@@ -40,7 +39,7 @@ pub fn collect_server_list_items(filter: &str, store: &WorkspaceStore) -> Vec<Se
     // 1. 3 Nút Action trên cùng (Connect SSH, Dev Container, Add WSL Distro)
     if filter.is_empty() || "connect ssh server".contains(&filter) {
         items.push(ServerListItem {
-            icon: "+",
+            icon: IconName::Plus,
             label: "Connect SSH Server".to_string(),
             tooltip: Some("SSH connection coming soon".to_string()),
             section_title: None,
@@ -50,7 +49,7 @@ pub fn collect_server_list_items(filter: &str, store: &WorkspaceStore) -> Vec<Se
 
     if filter.is_empty() || "connect dev container".contains(&filter) {
         items.push(ServerListItem {
-            icon: "+",
+            icon: IconName::Plus,
             label: "Connect Dev Container".to_string(),
             tooltip: Some("Dev Container connection coming soon".to_string()),
             section_title: None,
@@ -60,7 +59,7 @@ pub fn collect_server_list_items(filter: &str, store: &WorkspaceStore) -> Vec<Se
 
     if filter.is_empty() || "add wsl distro".contains(&filter) {
         items.push(ServerListItem {
-            icon: "+",
+            icon: IconName::Plus,
             label: "Add WSL Distro".to_string(),
             tooltip: Some("Detect and add a local WSL distribution".to_string()),
             section_title: None,
@@ -127,7 +126,7 @@ pub fn collect_server_list_items(filter: &str, store: &WorkspaceStore) -> Vec<Se
             };
 
             items.push(ServerListItem {
-                icon: "📁",
+                icon: IconName::Folder,
                 label: work_dir.to_string(),
                 tooltip: Some(format!("Open project in {}", cluster_title)),
                 section_title: section,
@@ -144,7 +143,7 @@ pub fn collect_server_list_items(filter: &str, store: &WorkspaceStore) -> Vec<Se
             };
 
             items.push(ServerListItem {
-                icon: "+",
+                icon: IconName::FolderOpen,
                 label: "Open Folder".to_string(),
                 tooltip: Some(format!("Open a directory path in {}", cluster_title)),
                 section_title: section,
@@ -160,7 +159,7 @@ pub fn collect_server_list_items(filter: &str, store: &WorkspaceStore) -> Vec<Se
             };
 
             items.push(ServerListItem {
-                icon: "⚙",
+                icon: IconName::Settings,
                 label: "View Server Options".to_string(),
                 tooltip: Some("View server options".to_string()),
                 section_title: section,

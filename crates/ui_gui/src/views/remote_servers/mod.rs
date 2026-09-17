@@ -104,6 +104,7 @@ pub fn render_remote_servers_modal(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::components::ui::IconName;
 
     #[test]
     fn test_calculate_adaptive_scroll_height() {
@@ -252,14 +253,14 @@ mod tests {
     fn test_remote_server_kind_display_and_icon() {
         let wsl = RemoteServerKind::Wsl("Ubuntu-22.04".to_string());
         assert_eq!(wsl.display_name(), "Ubuntu-22.04");
-        assert_eq!(wsl.icon(), "🐧");
+        assert_eq!(wsl.icon(), IconName::Linux);
 
         let ssh = RemoteServerKind::Ssh {
             host: "prod-server".to_string(),
             nickname: None,
         };
         assert_eq!(ssh.display_name(), "prod-server");
-        assert_eq!(ssh.icon(), "🖥");
+        assert_eq!(ssh.icon(), IconName::Server);
 
         let ssh_nick = RemoteServerKind::Ssh {
             host: "prod-server".to_string(),
@@ -269,7 +270,7 @@ mod tests {
 
         let dev_container = RemoteServerKind::DevContainer("rust-env".to_string());
         assert_eq!(dev_container.display_name(), "rust-env");
-        assert_eq!(dev_container.icon(), "📦");
+        assert_eq!(dev_container.icon(), IconName::Box);
     }
 
     #[test]

@@ -1,14 +1,27 @@
 use crate::actions::AppAction;
+use crate::components::ui::IconName;
 use crate::theme::ActiveTheme;
 use eframe::egui::{self, Color32, CornerRadius, Rect};
 use std::collections::HashSet;
+use uwu_core_workspace::remote::RemoteConnectionOptions;
 use uwu_core_workspace::{SourceType, Workspace, WorkspaceLocation, WorkspaceStore};
+
+/// Xác định vector icon tương ứng với cấu hình và vị trí của workspace
+pub fn icon_for_location(location: &WorkspaceLocation, source_type: SourceType) -> IconName {
+    match location {
+        WorkspaceLocation::Remote(RemoteConnectionOptions::Wsl(_)) => IconName::Linux,
+        WorkspaceLocation::Local { .. } => match source_type {
+            SourceType::File => IconName::File,
+            SourceType::Process => IconName::Screen,
+        },
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct ProjectPickerSessionInfo {
     pub id: uuid::Uuid,
     pub name: String,
-    pub icon: &'static str,
+    pub icon: IconName,
     pub target_summary: String,
     pub normalized_dir: String,
 }
@@ -32,11 +45,12 @@ pub enum ProjectRowAction {
 
 /// Tham số cấu hình hiển thị cho một hàng project
 pub struct ProjectRowConfig<'a> {
-    pub icon: &'a str,
+    pub icon: IconName,
     pub label: &'a str,
     pub is_active: bool,
     pub location_tooltip: Option<&'a str>,
-    pub action_tooltip: &'a str,
+    pub action_icon: Option<IconName>,
+    // pub action_tooltip: &'a str,
     pub close_tooltip: &'a str,
 }
 
@@ -76,14 +90,11 @@ pub fn render_project_row(ui: &mut egui::Ui, config: ProjectRowConfig<'_>) -> Pr
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
         |ui| {
             ui.style_mut().interaction.selectable_labels = false;
-            ui.add(
-                egui::Label::new(
-                    egui::RichText::new(config.icon)
-                        .size(12.0)
-                        .color(theme.text.muted),
-                )
-                .selectable(false),
-            );
+            let (icon_rect, _) =
+                ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
+            config.icon.paint(ui.painter(), icon_rect, theme.text.muted);
+
+            ui.add_space(4.0);
 
             ui.add(
                 egui::Label::new(
@@ -133,27 +144,25 @@ pub fn render_project_row(ui: &mut egui::Ui, config: ProjectRowConfig<'_>) -> Pr
                     );
 
                     // Nút Action (switch / open project)
-                    let (act_rect, act_resp) =
-                        ui.allocate_exact_size(egui::vec2(22.0, height), egui::Sense::click());
-                    let act_resp = act_resp.on_hover_cursor(egui::CursorIcon::PointingHand);
-                    action_hovered = act_resp.hovered();
-                    if act_resp.clicked() {
-                        action_clicked = true;
-                    }
-                    act_resp.on_hover_text(config.action_tooltip);
+                    if let Some(action_icon) = config.action_icon {
+                        let (act_rect, act_resp) =
+                            ui.allocate_exact_size(egui::vec2(22.0, height), egui::Sense::click());
+                        let act_resp = act_resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+                        action_hovered = act_resp.hovered();
+                        if act_resp.clicked() {
+                            action_clicked = true;
+                        }
+                        // act_resp.on_hover_text(config.action_tooltip);
 
-                    let act_color = if action_hovered {
-                        theme.text.primary
-                    } else {
-                        theme.text.muted
-                    };
-                    let act_icon_r =
-                        egui::Rect::from_center_size(act_rect.center(), egui::vec2(12.0, 12.0));
-                    crate::components::ui::IconName::ExternalLink.paint(
-                        ui.painter(),
-                        act_icon_r,
-                        act_color,
-                    );
+                        let act_color = if action_hovered {
+                            theme.text.primary
+                        } else {
+                            theme.text.muted
+                        };
+                        let act_icon_r =
+                            egui::Rect::from_center_size(act_rect.center(), egui::vec2(12.0, 12.0));
+                        action_icon.paint(ui.painter(), act_icon_r, act_color);
+                    }
                 });
             }
         },
@@ -268,7 +277,12 @@ pub fn render_project_picker_popup(
                                     label: &name,
                                     is_active,
                                     location_tooltip: tooltip_loc,
-                                    action_tooltip: "Switch to this project",
+                                    action_icon: if is_active {
+                                        None
+                                    } else {
+                                        Some(IconName::ThisWindow)
+                                    },
+                                    // action_tooltip: "Switch to this project",
                                     close_tooltip: "Close and stop project from this window",
                                 },
                             );
@@ -354,14 +368,16 @@ pub fn render_project_picker_popup(
                                     Some(summary.as_str())
                                 };
 
+                                let ws_icon = icon_for_location(&ws.location, ws.source_type);
                                 let action = render_project_row(
                                     ui,
                                     ProjectRowConfig {
-                                        icon: ws.icon(),
+                                        icon: ws_icon,
                                         label: &ws.display_label(),
                                         is_active: false,
                                         location_tooltip: tooltip_loc,
-                                        action_tooltip: "Open in This Window",
+                                        action_icon: Some(IconName::ThisWindow),
+                                        // action_tooltip: "Open in This Window",
                                         close_tooltip: "Remove from recent list",
                                     },
                                 );
@@ -382,7 +398,6 @@ pub fn render_project_picker_popup(
                 // 4. Quick Actions
                 if crate::components::ui::AppButton::new()
                     .label("Open Local Folder")
-                    .icon("📂")
                     .variant(crate::components::ui::ButtonVariant::Ghost)
                     .align_left()
                     .full_width()
@@ -396,7 +411,6 @@ pub fn render_project_picker_popup(
 
                 if crate::components::ui::AppButton::new()
                     .label("Open Remote Folder")
-                    .icon("🌐")
                     .variant(crate::components::ui::ButtonVariant::Ghost)
                     .align_left()
                     .full_width()

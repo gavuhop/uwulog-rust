@@ -80,13 +80,13 @@ pub fn render_header(
             // Nhận diện môi trường remote để hiển thị badge
             if let Some(remote) = session.session.location.as_remote() {
                 ui.add_space(2.0);
-                let remote_text = format!("{} {}", remote.icon(), remote.display_name());
                 let remote_tip = format!(
                     "Connected to {}: {}",
                     remote.connection_type().to_uppercase(),
                     remote.display_name()
                 );
-                crate::components::ui::CountBadge::new(&remote_text)
+                crate::components::ui::CountBadge::new(remote.display_name())
+                    .icon(crate::components::ui::IconName::Linux)
                     .text_color(theme.status.info)
                     .tooltip(&remote_tip)
                     .show(ui);
