@@ -1,4 +1,4 @@
-use crate::overlay::{OverlayLayer, OverlayStack};
+use crate::overlay::{OverlayLayer, OverlayStack, RemoteModalPlacement};
 use crate::session::GuiSession;
 use crate::state::ActiveTab;
 use uwu_core_workspace::SourceConfig;
@@ -8,6 +8,7 @@ pub struct OverlayManager {
     pub stack: OverlayStack,
     pub launch_modal_draft: Option<SourceConfig>,
     pub project_search_query: String,
+    pub remote_placement: RemoteModalPlacement,
 }
 
 impl OverlayManager {
@@ -16,6 +17,7 @@ impl OverlayManager {
             stack: OverlayStack::new(),
             launch_modal_draft: None,
             project_search_query: String::new(),
+            remote_placement: RemoteModalPlacement::TopCenter,
         }
     }
 

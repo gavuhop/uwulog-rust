@@ -77,19 +77,45 @@ pub fn render_header(
                 dispatch(AppAction::ToggleMainMenu);
             }
 
-            // Nhận diện môi trường remote để hiển thị badge
+            // Nhận diện môi trường remote để hiển thị nút Server Name chuẩn Zed (uncolored text + green active indicator dot)
             if let Some(remote) = session.session.location.as_remote() {
                 ui.add_space(2.0);
                 let remote_tip = format!(
-                    "Connected to {}: {}",
+                    "Connected to {}: {}\nSwitch or manage remote servers",
                     remote.connection_type().to_uppercase(),
                     remote.display_name()
                 );
-                crate::components::ui::CountBadge::new(remote.display_name())
-                    .icon(crate::components::ui::IconName::Linux)
-                    .text_color(theme.status.info)
+                let is_remote_open = cx.overlay_stack.is_open(OverlayLayer::RemoteServersModal);
+                let remote_variant = if is_remote_open {
+                    crate::components::ui::ButtonVariant::Selected
+                } else {
+                    crate::components::ui::ButtonVariant::Ghost
+                };
+                let remote_icon = match remote {
+                    uwu_core_workspace::remote::RemoteConnectionOptions::Wsl(_) => {
+                        crate::components::ui::IconName::Linux
+                    }
+                };
+                let remote_resp = crate::components::ui::AppButton::new()
+                    .label(remote.display_name())
+                    .icon(remote_icon)
+                    .status_dot(theme.status.success)
+                    .variant(remote_variant)
+                    .text_color(if is_remote_open {
+                        theme.text.accent
+                    } else {
+                        theme.text.primary
+                    })
                     .tooltip(&remote_tip)
                     .show(ui);
+
+                ui.ctx().data_mut(|d| {
+                    d.insert_temp(egui::Id::new("server_button_rect"), remote_resp.rect);
+                });
+
+                if remote_resp.clicked() {
+                    dispatch(AppAction::ToggleRemoteServersModal);
+                }
             }
 
             // Project Button

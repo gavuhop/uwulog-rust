@@ -21,9 +21,27 @@ pub fn icon_for_location(location: &WorkspaceLocation, source_type: SourceType) 
 pub struct ProjectPickerSessionInfo {
     pub id: uuid::Uuid,
     pub name: String,
+    pub server_name: Option<String>,
     pub icon: IconName,
     pub target_summary: String,
     pub normalized_dir: String,
+}
+
+impl ProjectPickerSessionInfo {
+    pub fn display_label(&self) -> String {
+        format_project_display_label(&self.name, self.server_name.as_deref())
+    }
+}
+
+/// Helper format nhãn hiển thị project kèm tên server (nếu có) trên UI
+pub fn format_project_display_label(name: &str, server_name: Option<&str>) -> String {
+    let base_name = if name.is_empty() { "Workspace" } else { name };
+    if let Some(server) = server_name {
+        if !server.is_empty() {
+            return format!("{} ({})", base_name, server);
+        }
+    }
+    base_name.to_string()
 }
 
 pub struct ProjectPickerArgs<'a> {
@@ -252,14 +270,10 @@ pub fn render_project_picker_popup(
                     .show(ui, |ui| {
                         for (ix, session) in sessions.iter().enumerate() {
                             let is_active = ix == active_index;
-                            let name = if session.name.is_empty() {
-                                "Workspace".to_string()
-                            } else {
-                                session.name.clone()
-                            };
+                            let label = session.display_label();
 
                             if !search_filter.is_empty()
-                                && !name.to_lowercase().contains(&search_filter)
+                                && !label.to_lowercase().contains(&search_filter)
                             {
                                 continue;
                             }
@@ -274,7 +288,7 @@ pub fn render_project_picker_popup(
                                 ui,
                                 ProjectRowConfig {
                                     icon: session.icon,
-                                    label: &name,
+                                    label: &label,
                                     is_active,
                                     location_tooltip: tooltip_loc,
                                     action_icon: if is_active {
@@ -329,11 +343,7 @@ pub fn render_project_picker_popup(
                             true
                         } else {
                             let name = ws.name.as_str();
-                            let remote_info = ws
-                                .location
-                                .as_remote()
-                                .map(|r| r.display_name())
-                                .unwrap_or("");
+                            let remote_info = ws.server_name().unwrap_or("");
                             let dir = ws.location.working_dir();
                             name.to_lowercase().contains(&search_filter)
                                 || remote_info.to_lowercase().contains(&search_filter)
@@ -369,11 +379,13 @@ pub fn render_project_picker_popup(
                                 };
 
                                 let ws_icon = icon_for_location(&ws.location, ws.source_type);
+                                let label =
+                                    format_project_display_label(&ws.name, ws.server_name());
                                 let action = render_project_row(
                                     ui,
                                     ProjectRowConfig {
                                         icon: ws_icon,
-                                        label: &ws.display_label(),
+                                        label: &label,
                                         is_active: false,
                                         location_tooltip: tooltip_loc,
                                         action_icon: Some(IconName::ThisWindow),

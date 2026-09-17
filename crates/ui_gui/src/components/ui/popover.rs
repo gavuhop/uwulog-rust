@@ -84,7 +84,7 @@ impl<'a> PopoverContainer<'a> {
                         offset: [0, 4],
                         blur: 16,
                         spread: 0,
-                        color: Color32::from_black_alpha(160),
+                        color: Color32::from_black_alpha(50),
                     });
                 let total_margin = frame.total_margin();
                 frame.show(ui, |ui| {

@@ -6,6 +6,7 @@ use eframe::egui::{self, Color32, CornerRadius, Pos2, Rect, Response, Stroke, Ui
 pub struct CountBadge<'a> {
     text: &'a str,
     icon: Option<IconName>,
+    status_dot: Option<Color32>,
     text_color: Option<Color32>,
     bg_color: Option<Color32>,
     framed: bool,
@@ -17,6 +18,7 @@ impl<'a> CountBadge<'a> {
         Self {
             text,
             icon: None,
+            status_dot: None,
             text_color: None,
             bg_color: None,
             framed: true,
@@ -26,6 +28,11 @@ impl<'a> CountBadge<'a> {
 
     pub fn icon(mut self, icon: IconName) -> Self {
         self.icon = Some(icon);
+        self
+    }
+
+    pub fn status_dot(mut self, color: Color32) -> Self {
+        self.status_dot = Some(color);
         self
     }
 
@@ -51,7 +58,7 @@ impl<'a> CountBadge<'a> {
 
     pub fn show(self, ui: &mut Ui) -> Response {
         let theme = ui.app_theme();
-        let text_color = self.text_color.unwrap_or(theme.text.accent);
+        let text_color = self.text_color.unwrap_or(theme.text.primary);
         let bg_color = self.bg_color.unwrap_or(theme.surfaces.surface0);
 
         let padding_x = if self.framed { 7.0 } else { 4.0 };
@@ -84,6 +91,16 @@ impl<'a> CountBadge<'a> {
                     Vec2::splat(12.0),
                 );
                 icon.paint(ui.painter(), icon_r, text_color);
+                if let Some(dot_color) = self.status_dot {
+                    let dot_center = Pos2::new(icon_r.max.x - 1.0, icon_r.max.y - 1.5);
+                    let knockout_color = if self.framed {
+                        bg_color
+                    } else {
+                        theme.surfaces.mantle
+                    };
+                    ui.painter().circle_filled(dot_center, 3.0, knockout_color);
+                    ui.painter().circle_filled(dot_center, 2.0, dot_color);
+                }
                 start_x + 16.0
             } else {
                 start_x
@@ -141,5 +158,22 @@ impl<'a> StatusDot<'a> {
         } else {
             response
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_count_badge_status_dot_builder() {
+        let badge = CountBadge::new("Ubuntu")
+            .icon(IconName::Linux)
+            .status_dot(Color32::from_rgb(0, 255, 0));
+
+        assert_eq!(badge.text, "Ubuntu");
+        assert_eq!(badge.icon, Some(IconName::Linux));
+        assert_eq!(badge.status_dot, Some(Color32::from_rgb(0, 255, 0)));
+        assert!(badge.framed);
     }
 }

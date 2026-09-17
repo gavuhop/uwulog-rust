@@ -97,7 +97,7 @@ impl<'a> ModalContainer<'a> {
                         offset: [0, 8],
                         blur: 24,
                         spread: 0,
-                        color: Color32::from_black_alpha(180),
+                        color: Color32::from_black_alpha(50),
                     }),
             );
 

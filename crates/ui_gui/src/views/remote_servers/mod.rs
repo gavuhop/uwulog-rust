@@ -15,6 +15,7 @@ pub use types::*;
 pub use wsl_picker::render_wsl_picker_subview;
 
 use crate::actions::AppAction;
+use crate::overlay::RemoteModalPlacement;
 use eframe::egui::{self, Id};
 use uwu_core_workspace::{Workspace, WorkspaceStore};
 
@@ -22,6 +23,7 @@ use uwu_core_workspace::{Workspace, WorkspaceStore};
 pub fn render_remote_servers_modal(
     ctx: &egui::Context,
     is_open: bool,
+    placement: RemoteModalPlacement,
     store: &mut WorkspaceStore,
     dispatch: &mut impl FnMut(AppAction),
 ) {
@@ -36,6 +38,7 @@ pub fn render_remote_servers_modal(
     let mut nav_action = RemoteNavAction::None;
 
     let closed = RemotePickerContainer::new("remote_servers_picker_container")
+        .placement(placement)
         .width(520.0)
         .max_height(480.0)
         .show(ctx, |ui| match &mut state.subview {
@@ -65,6 +68,8 @@ pub fn render_remote_servers_modal(
     match nav_action {
         RemoteNavAction::Navigate(next) => {
             state.navigate(next);
+            ctx.data_mut(|d| d.insert_temp(state_id, state));
+            return;
         }
         RemoteNavAction::Back => {
             if !state.back() {
@@ -74,6 +79,8 @@ pub fn render_remote_servers_modal(
                 dispatch(AppAction::CloseRemoteServersModal);
                 return;
             }
+            ctx.data_mut(|d| d.insert_temp(state_id, state));
+            return;
         }
         RemoteNavAction::None => {}
     }
@@ -519,5 +526,56 @@ mod tests {
         assert_eq!(state.selected_index, 0);
         assert_eq!(state.subview, RemoteSubView::List);
         assert!(state.history.is_empty());
+    }
+
+    #[test]
+    fn test_remote_picker_container_positioning_and_escape() {
+        let ctx = egui::Context::default();
+
+        // Frame 1: Render container
+        let raw_input = egui::RawInput::default();
+        let mut output = ctx.run_ui(raw_input, |ui| {
+            let closed = RemotePickerContainer::new("test_remote_picker")
+                .width(400.0)
+                .show(ui.ctx(), |ui| {
+                    ui.label("Remote servers content");
+                });
+            assert!(!closed);
+        });
+        output.textures_delta.clear();
+
+        // Frame 2: Escape key press should close
+        let mut esc_input = egui::RawInput::default();
+        esc_input.events.push(egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::default(),
+        });
+        let mut output2 = ctx.run_ui(esc_input, |ui| {
+            let closed = RemotePickerContainer::new("test_remote_picker")
+                .width(400.0)
+                .show(ui.ctx(), |ui| {
+                    ui.label("Remote servers content");
+                });
+            assert!(closed);
+        });
+        output2.textures_delta.clear();
+
+        // Frame 3: TopLeft placement with server_button_rect in ctx.data
+        let btn_rect =
+            egui::Rect::from_min_size(egui::Pos2::new(42.0, 4.0), egui::vec2(100.0, 24.0));
+        ctx.data_mut(|d| d.insert_temp(Id::new("server_button_rect"), btn_rect));
+        let mut output3 = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let closed = RemotePickerContainer::new("test_remote_picker_top_left")
+                .placement(RemoteModalPlacement::TopLeft)
+                .width(400.0)
+                .show(ui.ctx(), |ui| {
+                    ui.label("Remote servers content");
+                });
+            assert!(!closed);
+        });
+        output3.textures_delta.clear();
     }
 }

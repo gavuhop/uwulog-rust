@@ -1,6 +1,6 @@
 use super::test_helpers::create_test_app;
 use crate::actions::AppAction;
-use crate::overlay::OverlayLayer;
+use crate::overlay::{OverlayLayer, RemoteModalPlacement};
 use uwu_core_workspace::{extract_project_name, SourceType, Workspace, WorkspaceLocation};
 
 #[tokio::test]
@@ -160,10 +160,19 @@ async fn test_app_action_remote_servers_modal() {
     app.dispatch_action(AppAction::OpenRemoteServersModal);
     assert!(!app.is_overlay_open(OverlayLayer::ProjectPicker));
     assert!(app.is_overlay_open(OverlayLayer::RemoteServersModal));
+    assert_eq!(
+        app.overlays.remote_placement,
+        RemoteModalPlacement::TopCenter
+    );
 
     // Đóng Remote Servers modal
     app.dispatch_action(AppAction::CloseRemoteServersModal);
     assert!(!app.is_overlay_open(OverlayLayer::RemoteServersModal));
+
+    // Mở Remote Servers modal từ Server Picker trên header -> placement là TopLeft
+    app.dispatch_action(AppAction::ToggleRemoteServersModal);
+    assert!(app.is_overlay_open(OverlayLayer::RemoteServersModal));
+    assert_eq!(app.overlays.remote_placement, RemoteModalPlacement::TopLeft);
 }
 
 #[tokio::test]

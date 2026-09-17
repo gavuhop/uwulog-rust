@@ -25,7 +25,7 @@ pub enum ButtonIcon<'a> {
     Glyph(&'a str),
 }
 
-impl From<IconName> for ButtonIcon<'static> {
+impl<'a> From<IconName> for ButtonIcon<'a> {
     fn from(name: IconName) -> Self {
         Self::Named(name)
     }
@@ -42,6 +42,7 @@ pub struct AppButton<'a> {
     label: Option<&'a str>,
     icon: Option<ButtonIcon<'a>>,
     icon_size: Option<IconSize>,
+    status_dot: Option<Color32>,
     tooltip: Option<&'a str>,
     variant: ButtonVariant,
     small: bool,
@@ -67,6 +68,7 @@ impl<'a> AppButton<'a> {
             label: None,
             icon: None,
             icon_size: None,
+            status_dot: None,
             tooltip: None,
             variant: ButtonVariant::Default,
             small: false,
@@ -98,6 +100,11 @@ impl<'a> AppButton<'a> {
 
     pub fn tooltip(mut self, tooltip: &'a str) -> Self {
         self.tooltip = Some(tooltip);
+        self
+    }
+
+    pub fn status_dot(mut self, color: Color32) -> Self {
+        self.status_dot = Some(color);
         self
     }
 
@@ -382,11 +389,45 @@ impl<'a> AppButton<'a> {
                         (icon_r, text_p)
                     };
                     icon_name.paint(ui.painter(), icon_rect, text_color);
+                    if let Some(dot_color) = self.status_dot {
+                        let dot_radius = (icon_size_px * 0.16).clamp(2.0, 3.0);
+                        let knockout_radius = dot_radius + 1.0;
+                        let dot_center = Pos2::new(
+                            icon_rect.max.x - dot_radius * 0.5,
+                            icon_rect.max.y - dot_radius * 0.8,
+                        );
+                        let knockout_color = if bg_color != Color32::TRANSPARENT {
+                            bg_color
+                        } else {
+                            theme.surfaces.mantle
+                        };
+                        ui.painter()
+                            .circle_filled(dot_center, knockout_radius, knockout_color);
+                        ui.painter()
+                            .circle_filled(dot_center, dot_radius, dot_color);
+                    }
                     ui.painter().galley(text_pos, galley, text_color);
                 } else {
                     let icon_rect =
                         Rect::from_center_size(rect.center(), Vec2::splat(icon_size_px));
                     icon_name.paint(ui.painter(), icon_rect, text_color);
+                    if let Some(dot_color) = self.status_dot {
+                        let dot_radius = (icon_size_px * 0.16).clamp(2.0, 3.0);
+                        let knockout_radius = dot_radius + 1.0;
+                        let dot_center = Pos2::new(
+                            icon_rect.max.x - dot_radius * 0.5,
+                            icon_rect.max.y - dot_radius * 0.8,
+                        );
+                        let knockout_color = if bg_color != Color32::TRANSPARENT {
+                            bg_color
+                        } else {
+                            theme.surfaces.mantle
+                        };
+                        ui.painter()
+                            .circle_filled(dot_center, knockout_radius, knockout_color);
+                        ui.painter()
+                            .circle_filled(dot_center, dot_radius, dot_color);
+                    }
                 }
             } else if let Some(galley) = label_galley {
                 let text_pos = if self.align_left {
@@ -617,5 +658,23 @@ impl<'a> TabButton<'a> {
         }
 
         response
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_app_button_status_dot_builder() {
+        let btn = AppButton::new()
+            .label("Ubuntu")
+            .icon(IconName::Linux)
+            .status_dot(Color32::from_rgb(0, 255, 0));
+
+        assert_eq!(btn.label, Some("Ubuntu"));
+        assert_eq!(btn.icon, Some(ButtonIcon::Named(IconName::Linux)));
+        assert_eq!(btn.status_dot, Some(Color32::from_rgb(0, 255, 0)));
+        assert_eq!(btn.variant, ButtonVariant::Default);
     }
 }

@@ -52,6 +52,7 @@ pub enum AppAction {
     // Remote Servers (WSL)
     OpenRemoteServersModal,
     CloseRemoteServersModal,
+    ToggleRemoteServersModal,
 
     // Main Menu & About
     ToggleMainMenu,
