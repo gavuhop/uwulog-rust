@@ -68,6 +68,11 @@ impl WorkspaceLocation {
         }
     }
 
+    /// Tên của máy chủ remote nếu có (ví dụ: "Ubuntu", "Debian")
+    pub fn server_name(&self) -> Option<&str> {
+        self.as_remote().map(|r| r.display_name())
+    }
+
     /// Cập nhật thư mục làm việc (áp dụng cho cả Local lẫn Remote)
     pub fn set_working_dir(&mut self, dir: impl Into<String>) {
         let dir = dir.into();
@@ -102,7 +107,11 @@ impl WorkspaceLocation {
             (
                 WorkspaceLocation::Local { working_dir: d1 },
                 WorkspaceLocation::Local { working_dir: d2 },
-            ) => normalize_workdir(d1) == normalize_workdir(d2),
+            ) => {
+                let n1 = normalize_workdir(d1);
+                let n2 = normalize_workdir(d2);
+                !n1.is_empty() && n1 == n2
+            }
             (WorkspaceLocation::Remote(r1), WorkspaceLocation::Remote(r2)) => r1.is_same(r2),
             _ => false,
         }
@@ -112,6 +121,30 @@ impl WorkspaceLocation {
 impl std::fmt::Display for WorkspaceLocation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.summary())
+    }
+}
+
+/// Chuẩn hóa tên dự án: loại bỏ hậu tố server "(Ubuntu)" nếu có từ dữ liệu cũ,
+/// fallback về tên thư mục hoặc "Workspace" nếu chuỗi rỗng.
+pub fn sanitize_project_name(name: &str, location: &WorkspaceLocation) -> String {
+    let mut clean = name.trim();
+    if let Some(remote) = location.as_remote() {
+        let suffix = format!(" ({})", remote.display_name());
+        if let Some(stripped) = clean.strip_suffix(&suffix) {
+            clean = stripped.trim();
+        }
+    }
+    if clean.is_empty() {
+        let dir = location.working_dir();
+        if !dir.is_empty() {
+            let extracted = extract_project_name(dir);
+            if !extracted.is_empty() {
+                return extracted;
+            }
+        }
+        "Workspace".to_string()
+    } else {
+        clean.to_string()
     }
 }
 
@@ -135,9 +168,10 @@ impl Workspace {
         location: WorkspaceLocation,
         source_type: SourceType,
     ) -> Self {
+        let clean_name = sanitize_project_name(&name.into(), &location);
         Self {
             id: Uuid::new_v4(),
-            name: name.into(),
+            name: clean_name,
             location,
             source_type,
             command_str: String::new(),
@@ -159,17 +193,9 @@ impl Workspace {
         }
     }
 
-    /// Tên hiển thị kèm distro/remote nếu có (dùng cho title/label)
-    pub fn display_label(&self) -> String {
-        let name = if self.name.is_empty() {
-            "Workspace"
-        } else {
-            &self.name
-        };
-        match &self.location {
-            WorkspaceLocation::Remote(remote) => format!("{} ({})", name, remote.display_name()),
-            WorkspaceLocation::Local { .. } => name.to_string(),
-        }
+    /// Tên của máy chủ remote nếu có (ví dụ: "Ubuntu", "Debian")
+    pub fn server_name(&self) -> Option<&str> {
+        self.location.server_name()
     }
 
     /// Đường dẫn tóm tắt mục tiêu (dùng cho tooltip hoặc subtitle)
@@ -223,7 +249,10 @@ impl WorkspaceStore {
         let path = Self::get_storage_path();
         if path.exists() {
             if let Ok(content) = fs::read_to_string(&path) {
-                if let Ok(store) = serde_json::from_str::<WorkspaceStore>(&content) {
+                if let Ok(mut store) = serde_json::from_str::<WorkspaceStore>(&content) {
+                    for ws in &mut store.recent_workspaces {
+                        ws.name = sanitize_project_name(&ws.name, &ws.location);
+                    }
                     return store;
                 }
             }
@@ -253,12 +282,26 @@ impl WorkspaceStore {
 
     /// Thêm hoặc cập nhật một workspace, tự động sắp xếp theo thời gian mở gần nhất
     pub fn add_or_update(&mut self, mut ws: Workspace) {
+        ws.name = sanitize_project_name(&ws.name, &ws.location);
         ws.last_opened = Utc::now();
         let ws_id = ws.id;
 
-        // Xóa workspace cũ nếu trùng id hoặc trùng tên
-        self.recent_workspaces
-            .retain(|w| w.id != ws_id && w.name != ws.name);
+        // Xóa workspace cũ nếu trùng id hoặc cùng location (hoặc trùng tên nếu local không có working_dir)
+        self.recent_workspaces.retain(|w| {
+            if w.id == ws_id {
+                return false;
+            }
+            if w.location.is_same(&ws.location) {
+                return false;
+            }
+            if w.location.working_dir().is_empty()
+                && ws.location.working_dir().is_empty()
+                && w.name == ws.name
+            {
+                return false;
+            }
+            true
+        });
 
         self.recent_workspaces.insert(0, ws);
         self.active_workspace_id = Some(ws_id);
@@ -515,7 +558,7 @@ mod tests {
             SourceType::Process,
         );
         assert_eq!(local_ws.icon(), "🖥");
-        assert_eq!(local_ws.display_label(), "my-app");
+        assert_eq!(local_ws.server_name(), None);
         assert_eq!(local_ws.target_summary(), "C:\\Projects\\app");
         assert!(!local_ws.location.is_remote());
         assert_eq!(format!("{}", local_ws.location), "C:\\Projects\\app");
@@ -532,7 +575,7 @@ mod tests {
             SourceType::Process,
         );
         assert_eq!(wsl_ws.icon(), "🐧");
-        assert_eq!(wsl_ws.display_label(), "ubuntu-service (Ubuntu-22.04)");
+        assert_eq!(wsl_ws.server_name(), Some("Ubuntu-22.04"));
         assert_eq!(wsl_ws.target_summary(), "/home/user/service (Ubuntu-22.04)");
         assert!(wsl_ws.location.is_remote());
         assert_eq!(
@@ -597,5 +640,43 @@ mod tests {
             .recent_workspaces
             .iter()
             .all(|w| { w.location.as_remote().map(|r| r.display_name()) != Some("Ubuntu") }));
+    }
+
+    #[test]
+    fn test_workspace_project_name_deduplication() {
+        // Test 1: ws.name already has (Ubuntu) suffix -> sanitized in Workspace::new
+        let ws = Workspace::new(
+            "ai-learn-english (Ubuntu)",
+            WorkspaceLocation::remote(WslConnectionOptions::new(
+                "Ubuntu",
+                "/home/truongviet/project/ai-learn-english",
+            )),
+            SourceType::Process,
+        );
+
+        assert_eq!(ws.name, "ai-learn-english");
+        assert_eq!(ws.server_name(), Some("Ubuntu"));
+
+        // Test 2: ws.name does not have suffix
+        let ws2 = Workspace::new(
+            "ai-learn-english",
+            WorkspaceLocation::remote(WslConnectionOptions::new(
+                "Ubuntu",
+                "/home/truongviet/project/ai-learn-english",
+            )),
+            SourceType::Process,
+        );
+
+        assert_eq!(ws2.name, "ai-learn-english");
+        assert_eq!(ws2.server_name(), Some("Ubuntu"));
+
+        // Test 3: Local workspace
+        let ws_local = Workspace::new(
+            "my-app",
+            WorkspaceLocation::local("D:\\projects\\my-app"),
+            SourceType::Process,
+        );
+        assert_eq!(ws_local.name, "my-app");
+        assert_eq!(ws_local.server_name(), None);
     }
 }

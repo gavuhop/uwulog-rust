@@ -1,6 +1,7 @@
 use crate::components::ui::IconName;
+use crate::overlay::RemoteModalPlacement;
 use crate::theme::ActiveTheme;
-use eframe::egui::{self, Align2, Color32, CornerRadius, Id, Order, Stroke, Vec2};
+use eframe::egui::{self, Align2, Color32, CornerRadius, Id, Order, Stroke};
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 use uwu_driver_transport::WslTransport;
@@ -198,12 +199,12 @@ pub fn calculate_adaptive_scroll_height(
     }
 }
 
-/// Container dạng Zed Command Palette nổi giữa màn hình (học theo kiến trúc Area của PopoverContainer và suggestion)
-/// Không bị giới hạn fixed_size của Window trong modal.rs, giúp nội dung co giãn tự nhiên
+/// Container hiển thị danh sách Remote Servers/WSL theo vị trí TopCenter hoặc TopLeft
 pub struct RemotePickerContainer<'a> {
     id: Id,
     width: f32,
     max_height: Option<f32>,
+    placement: RemoteModalPlacement,
     _phantom: std::marker::PhantomData<&'a ()>,
 }
 
@@ -213,8 +214,14 @@ impl<'a> RemotePickerContainer<'a> {
             id: Id::new(id_str),
             width: 520.0,
             max_height: Some(480.0),
+            placement: RemoteModalPlacement::TopCenter,
             _phantom: std::marker::PhantomData,
         }
+    }
+
+    pub fn placement(mut self, placement: RemoteModalPlacement) -> Self {
+        self.placement = placement;
+        self
     }
 
     pub fn width(mut self, width: f32) -> Self {
@@ -230,26 +237,51 @@ impl<'a> RemotePickerContainer<'a> {
     pub fn show(self, ctx: &egui::Context, add_contents: impl FnOnce(&mut egui::Ui)) -> bool {
         let mut close_requested = false;
 
-        // 1. Lớp phủ nền tối mờ toàn màn hình (Backdrop scrim)
-        let screen_rect = ctx.viewport_rect();
-        egui::Area::new(self.id.with("_backdrop"))
-            .order(Order::Middle)
-            .fixed_pos(screen_rect.min)
-            .show(ctx, |ui| {
-                let (rect, response) =
-                    ui.allocate_exact_size(screen_rect.size(), egui::Sense::click());
-                ui.painter()
-                    .rect_filled(rect, CornerRadius::ZERO, Color32::from_black_alpha(150));
-                if response.clicked() {
-                    close_requested = true;
-                }
-            });
+        // Phím Escape để đóng
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            close_requested = true;
+        }
 
-        // 2. Khung modal nổi ở giữa màn hình
+        let modal_rect_id = self.id.with("_modal_rect");
+        let last_modal_rect: Option<egui::Rect> = ctx.data(|d| d.get_temp(modal_rect_id));
+        let server_btn_rect: Option<egui::Rect> =
+            ctx.data(|d| d.get_temp(Id::new("server_button_rect")));
+
+        // Click outside để đóng
+        if ctx.input(|i| i.pointer.any_pressed() || i.pointer.any_click()) {
+            if let Some(click_pos) = ctx.input(|i| i.pointer.interact_pos()) {
+                let in_server_btn = server_btn_rect.is_some_and(|r| r.contains(click_pos));
+                if !in_server_btn {
+                    if let Some(modal_rect) = last_modal_rect {
+                        if !modal_rect.contains(click_pos) {
+                            close_requested = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        let screen_rect = ctx.viewport_rect();
+        let (anchor, offset, max_allowed_h) = match self.placement {
+            RemoteModalPlacement::TopLeft => {
+                let x = server_btn_rect.map_or(38.0, |r| r.min.x);
+                (
+                    Align2::LEFT_TOP,
+                    egui::vec2(x, 38.0),
+                    (screen_rect.height() - 54.0).max(180.0),
+                )
+            }
+            RemoteModalPlacement::TopCenter => (
+                Align2::CENTER_TOP,
+                egui::vec2(0.0, 60.0),
+                (screen_rect.height() - 80.0).max(180.0),
+            ),
+        };
+
         let theme = ctx.app_theme();
-        egui::Area::new(self.id)
+        let area_resp = egui::Area::new(self.id)
             .order(Order::Foreground)
-            .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+            .anchor(anchor, offset)
             .show(ctx, |ui| {
                 let frame = egui::Frame::default()
                     .fill(theme.surfaces.mantle)
@@ -260,7 +292,7 @@ impl<'a> RemotePickerContainer<'a> {
                         offset: [0, 8],
                         blur: 24,
                         spread: 0,
-                        color: Color32::from_black_alpha(180),
+                        color: Color32::from_black_alpha(50),
                     });
 
                 let total_margin = frame.total_margin();
@@ -268,11 +300,13 @@ impl<'a> RemotePickerContainer<'a> {
                     let inner_width = (self.width - total_margin.sum().x).max(0.0);
                     ui.set_width(inner_width);
                     if let Some(h) = self.max_height {
-                        ui.set_max_height(h);
+                        ui.set_max_height(h.min(max_allowed_h));
                     }
                     add_contents(ui);
                 });
             });
+
+        ctx.data_mut(|d| d.insert_temp(modal_rect_id, area_resp.response.rect));
 
         close_requested
     }

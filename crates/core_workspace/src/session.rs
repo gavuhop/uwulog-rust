@@ -75,10 +75,11 @@ impl WorkspaceSession {
         let display_limit = source_config.display_limit;
         let engine = Arc::new(SystemEngine::new(capacity));
         let (env_watch_tx, env_watch_rx) = watch::channel(None);
+        let name = crate::sanitize_project_name(&name.into(), &location);
 
         Self {
             id: Uuid::new_v4(),
-            name: name.into(),
+            name,
             location,
             source_config,
             engine,
@@ -113,13 +114,18 @@ impl WorkspaceSession {
         Self::new(name, WorkspaceLocation::local(working_dir), source_config)
     }
 
+    /// Tên của máy chủ remote nếu có
+    pub fn server_name(&self) -> Option<&str> {
+        self.location.server_name()
+    }
+
     pub fn from_workspace(ws: &Workspace, capacity: usize, display_limit: usize) -> Self {
         let source_config = SourceConfig {
             capacity,
             display_limit,
             ..Default::default()
         };
-        let mut session = Self::new(ws.name.clone(), ws.location.clone(), source_config);
+        let mut session = Self::new(&ws.name, ws.location.clone(), source_config);
         session.id = ws.id;
         session.apply_workspace(ws);
         session
@@ -146,7 +152,7 @@ impl WorkspaceSession {
 
     pub fn to_workspace(&self) -> Workspace {
         let mut ws = Workspace::new(
-            self.name.clone(),
+            &self.name,
             self.location.clone(),
             self.source_config.source_type,
         );

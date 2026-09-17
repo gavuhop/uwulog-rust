@@ -6,7 +6,7 @@ pub use workspace_manager::WorkspaceManager;
 
 pub use crate::actions::AppAction;
 pub use crate::cli::CliArgs;
-pub use crate::overlay::{OverlayLayer, OverlayStack};
+pub use crate::overlay::{OverlayLayer, OverlayStack, RemoteModalPlacement};
 pub use crate::session::GuiSession;
 pub use crate::state::{ActiveTab, GuiViewState, RAW_STREAM_LIMIT};
 use clap::Parser;
@@ -333,16 +333,27 @@ impl UwuGuiApp {
                 if self.is_overlay_open(OverlayLayer::ProjectPicker) {
                     self.close_project_picker();
                 } else {
+                    self.close_overlay(OverlayLayer::RemoteServersModal);
                     self.push_overlay(OverlayLayer::ProjectPicker);
                 }
             }
             AppAction::CloseProjectPicker => self.close_project_picker(),
             AppAction::OpenRemoteServersModal => {
                 self.close_project_picker();
+                self.overlays.remote_placement = RemoteModalPlacement::TopCenter;
                 self.push_overlay(OverlayLayer::RemoteServersModal);
             }
             AppAction::CloseRemoteServersModal => {
                 self.close_overlay(OverlayLayer::RemoteServersModal);
+            }
+            AppAction::ToggleRemoteServersModal => {
+                if self.is_overlay_open(OverlayLayer::RemoteServersModal) {
+                    self.close_overlay(OverlayLayer::RemoteServersModal);
+                } else {
+                    self.close_project_picker();
+                    self.overlays.remote_placement = RemoteModalPlacement::TopLeft;
+                    self.push_overlay(OverlayLayer::RemoteServersModal);
+                }
             }
             AppAction::ToggleMainMenu => {
                 if self.is_overlay_open(OverlayLayer::MainMenu) {

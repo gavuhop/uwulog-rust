@@ -254,14 +254,14 @@ pub fn render_folder_picker_subview(
         };
 
         let folder_name = extract_project_name(&clean_path);
-        let display_title = if clean_path == "/" || clean_path == "~" {
-            format!("WSL ({})", folder_state.distro)
+        let project_name = if clean_path == "/" || clean_path == "~" {
+            folder_state.distro.clone()
         } else {
-            format!("{} ({})", folder_name, folder_state.distro)
+            folder_name
         };
 
         let ws = Workspace::new(
-            display_title,
+            project_name,
             WorkspaceLocation::remote(WslConnectionOptions::new(
                 folder_state.distro.clone(),
                 clean_path,

@@ -17,6 +17,16 @@ pub enum OverlayLayer {
     RemoteServersModal,
 }
 
+/// Vị trí hiển thị của Remote Servers Modal
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RemoteModalPlacement {
+    /// Khi bấm vào server trên header bên trái -> hiển thị ở bên trái kế bên nút
+    TopLeft,
+    /// Khi bấm Open Remote (từ Project Picker hoặc Command Palette) -> hiển thị ở giữa trên màn hình
+    #[default]
+    TopCenter,
+}
+
 /// Ngăn xếp điều hướng tầng hiển thị nổi theo cơ chế LIFO
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct OverlayStack {

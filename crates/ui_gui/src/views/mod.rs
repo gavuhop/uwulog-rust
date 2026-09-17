@@ -86,11 +86,8 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 modals::icon_for_location(&s.session.location, s.session.source_config.source_type);
             modals::ProjectPickerSessionInfo {
                 id: s.session.id,
-                name: if s.session.name.is_empty() {
-                    "Workspace".to_string()
-                } else {
-                    s.session.name.clone()
-                },
+                name: s.session.name.clone(),
+                server_name: s.session.server_name().map(|n| n.to_string()),
                 icon,
                 target_summary: s.session.target_summary(),
                 normalized_dir: s.session.location.normalized_dir(),
@@ -225,6 +222,7 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     remote_servers::render_remote_servers_modal(
         ctx,
         is_remote_open,
+        app.overlays.remote_placement,
         &mut app.workspaces.store,
         &mut dispatch,
     );
