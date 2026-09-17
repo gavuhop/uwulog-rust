@@ -4,7 +4,51 @@ use crate::theme::ActiveTheme;
 use eframe::egui::{self, Align2, Color32, CornerRadius, Id, Order, Stroke};
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
+use uwu_core_workspace::{
+    clean_path, extract_project_name, SourceType, Workspace, WorkspaceLocation,
+    WslConnectionOptions,
+};
 use uwu_driver_transport::WslTransport;
+
+/// Nối đường dẫn Unix (ví dụ: "/home/user" + "project" -> "/home/user/project")
+pub fn join_unix_path(base: &str, child: &str) -> String {
+    let child = child.trim_start_matches('/');
+    if base.ends_with('/') {
+        format!("{}{}", base, child)
+    } else {
+        format!("{}/{}", base, child)
+    }
+}
+
+/// Nối đường dẫn thư mục Unix với dấu gạch chéo ở cuối (ví dụ: "/home/user" + "project" -> "/home/user/project/")
+pub fn join_unix_dir(base: &str, child: &str) -> String {
+    let joined = join_unix_path(base, child);
+    if joined.ends_with('/') {
+        joined
+    } else {
+        format!("{}/", joined)
+    }
+}
+
+/// Khởi tạo workspace remote cho WSL distro kèm đường dẫn làm việc (view helper)
+pub fn create_wsl_workspace(distro: &str, target_dir: &str) -> Workspace {
+    let cleaned = clean_path(target_dir);
+    let clean_dir = if cleaned.is_empty() {
+        "/".to_string()
+    } else {
+        cleaned
+    };
+    let project_name = if clean_dir == "/" || clean_dir == "~" {
+        distro.to_string()
+    } else {
+        extract_project_name(&clean_dir)
+    };
+    Workspace::new(
+        project_name,
+        WorkspaceLocation::remote(WslConnectionOptions::new(distro, clean_dir)),
+        SourceType::Process,
+    )
+}
 
 type DirCacheMap = HashMap<(String, String), Vec<String>>;
 
@@ -24,6 +68,13 @@ pub fn get_cached_or_read_directories(distro: &str, dir: &str) -> Vec<String> {
         cache.insert(key, entries.clone());
     }
     entries
+}
+
+/// Xóa sạch bộ nhớ đệm thư mục từ xa (dùng khi refresh hoặc trong unit tests)
+pub fn clear_dir_cache() {
+    if let Ok(mut cache) = DIR_CACHE.lock() {
+        cache.clear();
+    }
 }
 
 /// Phân rã query nhập đường dẫn thành (parent_dir, suffix) theo chuẩn Unix (giống Zed)
@@ -69,6 +120,11 @@ impl<'a> ListItemRow<'a> {
 
     pub fn end_slot(mut self, end_slot: Option<&'a str>) -> Self {
         self.end_slot = end_slot;
+        self
+    }
+
+    pub fn muted(mut self, muted: bool) -> Self {
+        self.is_muted = muted;
         self
     }
 
@@ -199,6 +255,44 @@ pub fn calculate_adaptive_scroll_height(
     }
 }
 
+/// Điều hướng chỉ số item được chọn qua phím mũi tên Lên/Xuống với cơ chế cuộn vòng (wrap-around)
+pub fn step_selected_index(current: &mut usize, total: usize, key_down: bool, key_up: bool) {
+    if total == 0 {
+        *current = 0;
+        return;
+    }
+    if key_down {
+        *current = if *current + 1 >= total {
+            0
+        } else {
+            *current + 1
+        };
+    }
+    if key_up {
+        *current = if *current == 0 {
+            total - 1
+        } else {
+            *current - 1
+        };
+    }
+    if *current >= total {
+        *current = 0;
+    }
+}
+
+/// Neo con trỏ văn bản vào cuối ô nhập liệu và yêu cầu focus (chuẩn Zed)
+pub fn anchor_cursor_to_end(ctx: &egui::Context, id: egui::Id, text: &str) {
+    let mut text_state = egui::text_edit::TextEditState::load(ctx, id).unwrap_or_default();
+    let char_count = text.chars().count();
+    text_state
+        .cursor
+        .set_char_range(Some(egui::text::CCursorRange::one(
+            egui::text::CCursor::new(char_count),
+        )));
+    text_state.store(ctx, id);
+    ctx.memory_mut(|m| m.request_focus(id));
+}
+
 /// Container hiển thị danh sách Remote Servers/WSL theo vị trí TopCenter hoặc TopLeft
 pub struct RemotePickerContainer<'a> {
     id: Id,
@@ -309,5 +403,47 @@ impl<'a> RemotePickerContainer<'a> {
         ctx.data_mut(|d| d.insert_temp(modal_rect_id, area_resp.response.rect));
 
         close_requested
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_join_unix_path_and_dir() {
+        assert_eq!(
+            join_unix_path("/home/user", "project"),
+            "/home/user/project"
+        );
+        assert_eq!(
+            join_unix_path("/home/user/", "project"),
+            "/home/user/project"
+        );
+        assert_eq!(
+            join_unix_path("/home/user/", "/project"),
+            "/home/user/project"
+        );
+        assert_eq!(
+            join_unix_dir("/home/user", "project"),
+            "/home/user/project/"
+        );
+        assert_eq!(
+            join_unix_dir("/home/user/", "project/"),
+            "/home/user/project/"
+        );
+    }
+
+    #[test]
+    fn test_create_wsl_workspace_and_view_helpers() {
+        let ws1 = create_wsl_workspace("Ubuntu", "/home/user/backend/");
+        assert_eq!(ws1.name, "backend");
+        assert_eq!(ws1.location.working_dir(), "/home/user/backend");
+        assert_eq!(ws1.server_name(), Some("Ubuntu"));
+
+        let ws_root = create_wsl_workspace("Ubuntu", "/");
+        assert_eq!(ws_root.name, "Ubuntu");
+        assert_eq!(ws_root.location.working_dir(), "/");
+        assert_eq!(ws_root.server_name(), Some("Ubuntu"));
     }
 }

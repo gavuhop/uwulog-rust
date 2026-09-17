@@ -5,7 +5,10 @@ pub mod session;
 
 pub use environment::{load_workspace_environment, parse_dot_env, EnvLoadStatus};
 pub use manager::MultiWorkspaceManager;
-pub use remote::{RemoteConnectionOptions, WslConnectionOptions};
+pub use remote::{
+    RemoteConnectionOptions, RemoteProject, ServerConnection, SshConnection, WslConnection,
+    WslConnectionOptions,
+};
 pub use session::{SourceConfig, SourceType, WorkspaceSession};
 pub use uwu_icons::IconName;
 
@@ -220,7 +223,7 @@ pub struct WorkspaceStore {
     pub active_theme: Option<String>,
     pub recent_workspaces: Vec<Workspace>,
     #[serde(default)]
-    pub known_wsl_distros: Vec<String>,
+    pub wsl_connections: Vec<WslConnection>,
 }
 
 impl WorkspaceStore {
@@ -324,33 +327,69 @@ impl WorkspaceStore {
         let _ = self.save();
     }
 
-    /// Thêm một WSL Distro vào danh sách đã kết nối
-    pub fn add_known_wsl_distro(&mut self, distro: impl Into<String>) {
+    /// Tìm kết nối WSL theo tên distro
+    pub fn find_wsl_connection(&self, distro: &str) -> Option<&WslConnection> {
+        let trimmed = distro.trim();
+        self.wsl_connections
+            .iter()
+            .find(|c| c.distro.eq_ignore_ascii_case(trimmed))
+    }
+
+    /// Tìm kết nối WSL dạng mutable theo tên distro
+    pub fn find_wsl_connection_mut(&mut self, distro: &str) -> Option<&mut WslConnection> {
+        let trimmed = distro.trim();
+        self.wsl_connections
+            .iter_mut()
+            .find(|c| c.distro.eq_ignore_ascii_case(trimmed))
+    }
+
+    /// Đảm bảo một kết nối WSL distro tồn tại trong danh sách (tạo mới nếu chưa có)
+    pub fn ensure_wsl_connection(&mut self, distro: impl Into<String>) -> &mut WslConnection {
         let d = distro.into();
-        let trimmed = d.trim();
-        if !trimmed.is_empty()
-            && !self
-                .known_wsl_distros
-                .iter()
-                .any(|existing| existing == trimmed)
+        let trimmed = d.trim().to_string();
+        if let Some(pos) = self
+            .wsl_connections
+            .iter()
+            .position(|c| c.distro.eq_ignore_ascii_case(&trimmed))
         {
-            self.known_wsl_distros.push(trimmed.to_string());
+            &mut self.wsl_connections[pos]
+        } else {
+            self.wsl_connections.push(WslConnection::new(&trimmed));
             let _ = self.save();
+            self.wsl_connections.last_mut().unwrap()
         }
     }
 
-    /// Xóa một WSL Distro khỏi danh sách đã kết nối và xóa các workspace remote thuộc distro đó
-    pub fn remove_known_wsl_distro(&mut self, distro: &str) {
+    /// Xóa một kết nối WSL distro khỏi danh sách và xóa các workspace remote thuộc distro đó
+    pub fn remove_wsl_connection(&mut self, distro: &str) {
         let trimmed = distro.trim();
-        self.known_wsl_distros.retain(|d| d != trimmed);
+        self.wsl_connections
+            .retain(|c| !c.distro.eq_ignore_ascii_case(trimmed));
         self.recent_workspaces.retain(|ws| {
             if let Some(remote) = ws.location.as_remote() {
-                remote.display_name() != trimmed
+                !remote.display_name().eq_ignore_ascii_case(trimmed)
             } else {
                 true
             }
         });
         let _ = self.save();
+    }
+
+    /// Thêm project trực tiếp vào server connection tương ứng (chuẩn Zed)
+    pub fn add_remote_project_to_server(&mut self, distro: &str, path: impl Into<String>) {
+        let server = self.ensure_wsl_connection(distro);
+        if server.add_project(path) {
+            let _ = self.save();
+        }
+    }
+
+    /// Xóa project trực tiếp khỏi server connection tương ứng (chuẩn Zed)
+    pub fn remove_remote_project_from_server(&mut self, distro: &str, path: &str) {
+        if let Some(server) = self.find_wsl_connection_mut(distro) {
+            if server.remove_project(path) {
+                let _ = self.save();
+            }
+        }
     }
 
     /// Tìm workspace theo đường dẫn working directory
@@ -607,11 +646,28 @@ mod tests {
     }
 
     #[test]
-    fn test_workspace_store_remove_known_wsl_distro() {
+    fn test_workspace_store_wsl_connections_crud() {
         let mut store = WorkspaceStore::default();
-        store.add_known_wsl_distro("Ubuntu");
-        store.add_known_wsl_distro("Debian");
-        assert_eq!(store.known_wsl_distros, vec!["Ubuntu", "Debian"]);
+        store.ensure_wsl_connection("Ubuntu");
+        store.ensure_wsl_connection("Debian");
+        assert_eq!(store.wsl_connections.len(), 2);
+        assert_eq!(store.wsl_connections[0].distro, "Ubuntu");
+        assert_eq!(store.wsl_connections[1].distro, "Debian");
+
+        // Thêm project vào Ubuntu
+        store.add_remote_project_to_server("Ubuntu", "/home/user/backend");
+        store.add_remote_project_to_server("Ubuntu", "/home/user/frontend");
+        // Kiểm tra BTreeSet deduplication
+        store.add_remote_project_to_server("Ubuntu", "/home/user/backend");
+
+        let ubuntu = store.find_wsl_connection("Ubuntu").unwrap();
+        assert_eq!(ubuntu.projects.len(), 2);
+        assert!(ubuntu
+            .projects
+            .contains(&RemoteProject::new("/home/user/backend")));
+        assert!(ubuntu
+            .projects
+            .contains(&RemoteProject::new("/home/user/frontend")));
 
         let ws_ubuntu = Workspace::new(
             "ubuntu-app",
@@ -633,9 +689,17 @@ mod tests {
         store.add_or_update(ws_local);
         assert_eq!(store.recent_workspaces.len(), 3);
 
-        // Remove Ubuntu
-        store.remove_known_wsl_distro("Ubuntu");
-        assert_eq!(store.known_wsl_distros, vec!["Debian"]);
+        // Xóa project khỏi Ubuntu
+        store.remove_remote_project_from_server("Ubuntu", "/home/user/frontend");
+        assert_eq!(
+            store.find_wsl_connection("Ubuntu").unwrap().projects.len(),
+            1
+        );
+
+        // Xóa server Ubuntu -> Xóa cả server lẫn workspaces remote thuộc về nó
+        store.remove_wsl_connection("Ubuntu");
+        assert_eq!(store.wsl_connections.len(), 1);
+        assert_eq!(store.wsl_connections[0].distro, "Debian");
         assert_eq!(store.recent_workspaces.len(), 2);
         assert!(store
             .recent_workspaces

@@ -10,7 +10,25 @@ pub struct FolderPickerState {
     pub entries: Vec<String>,
     pub selected_index: usize,
     pub focus_input: bool,
-    pub error: Option<String>,
+}
+
+impl FolderPickerState {
+    pub fn new(
+        distro: impl Into<String>,
+        initial_dir: impl Into<String>,
+        entries: Vec<String>,
+    ) -> Self {
+        let d = distro.into();
+        let init = initial_dir.into();
+        Self {
+            distro: d,
+            path_query: init.clone(),
+            current_dir: init,
+            entries,
+            selected_index: 0,
+            focus_input: true,
+        }
+    }
 }
 
 /// Loại remote server được hỗ trợ trong uwulog (chuẩn Zed: WSL, SSH, DevContainer)

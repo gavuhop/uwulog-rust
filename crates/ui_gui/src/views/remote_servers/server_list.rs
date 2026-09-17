@@ -1,11 +1,11 @@
 use crate::components::ui::{IconName, TextInput};
 use eframe::egui::{self, Key};
-use std::collections::BTreeSet;
-use uwu_core_workspace::{Workspace, WorkspaceStore};
+use uwu_core_workspace::{RemoteProject, Workspace, WorkspaceStore};
 use uwu_driver_transport::WslTransport;
 
 use super::helpers::{
-    get_cached_or_read_directories, render_empty_state, render_section_title, ListItemRow,
+    anchor_cursor_to_end, create_wsl_workspace, get_cached_or_read_directories, render_empty_state,
+    render_section_title, step_selected_index, ListItemRow,
 };
 use super::types::{
     FolderPickerState, RemoteNavAction, RemoteServerKind, RemoteSubView, ServerOptionsState,
@@ -17,6 +17,7 @@ pub enum ServerListAction {
     ConnectDevContainer,
     AddWslDistro,
     OpenWorkspace(Box<Workspace>),
+    OpenRemotePath { distro: String, path: String },
     OpenFolder(String),
     ViewServerOptions(String),
 }
@@ -67,32 +68,9 @@ pub fn collect_server_list_items(filter: &str, store: &WorkspaceStore) -> Vec<Se
         });
     }
 
-    // 2. Thu thập danh sách các Remote Clusters đã kết nối
-    let mut cluster_distros: BTreeSet<String> = BTreeSet::new();
-    for d in &store.known_wsl_distros {
-        cluster_distros.insert(d.clone());
-    }
-    for ws in &store.recent_workspaces {
-        if let Some(remote) = ws.location.as_remote() {
-            cluster_distros.insert(remote.display_name().to_string());
-        }
-    }
-
-    // 3. Hiển thị từng cụm Pack (Cluster)
-    for distro in &cluster_distros {
-        let cluster_title = format!("WSL: {}", distro);
-
-        let cluster_workspaces: Vec<_> = store
-            .recent_workspaces
-            .iter()
-            .filter(|ws| {
-                ws.location
-                    .as_remote()
-                    .map(|r| r.display_name() == distro)
-                    .unwrap_or(false)
-            })
-            .cloned()
-            .collect();
+    // 2. Hiển thị từng Server Connection và các Projects thuộc về nó (duyệt thẳng O(1), chuẩn Zed)
+    for server in &store.wsl_connections {
+        let cluster_title = format!("WSL: {}", server.distro);
 
         let cluster_title_matches =
             !filter.is_empty() && cluster_title.to_lowercase().contains(&filter);
@@ -101,23 +79,23 @@ pub fn collect_server_list_items(filter: &str, store: &WorkspaceStore) -> Vec<Se
         let options_matches =
             filter.is_empty() || "view server options".contains(&filter) || cluster_title_matches;
 
-        let matching_workspaces: Vec<_> = cluster_workspaces
-            .into_iter()
-            .filter(|ws| {
+        let matching_projects: Vec<&RemoteProject> = server
+            .projects
+            .iter()
+            .filter(|p| {
                 filter.is_empty()
                     || cluster_title_matches
-                    || ws.location.working_dir().to_lowercase().contains(&filter)
+                    || p.path.to_lowercase().contains(&filter)
             })
             .collect();
 
-        if matching_workspaces.is_empty() && !open_folder_matches && !options_matches {
+        if matching_projects.is_empty() && !open_folder_matches && !options_matches {
             continue;
         }
 
         let mut is_first = true;
 
-        for ws in matching_workspaces {
-            let work_dir = ws.location.working_dir();
+        for proj in matching_projects {
             let section = if is_first {
                 is_first = false;
                 Some(cluster_title.clone())
@@ -127,10 +105,13 @@ pub fn collect_server_list_items(filter: &str, store: &WorkspaceStore) -> Vec<Se
 
             items.push(ServerListItem {
                 icon: IconName::Folder,
-                label: work_dir.to_string(),
+                label: proj.path.clone(),
                 tooltip: Some(format!("Open project in {}", cluster_title)),
                 section_title: section,
-                action: ServerListAction::OpenWorkspace(Box::new(ws)),
+                action: ServerListAction::OpenRemotePath {
+                    distro: server.distro.clone(),
+                    path: proj.path.clone(),
+                },
             });
         }
 
@@ -147,7 +128,7 @@ pub fn collect_server_list_items(filter: &str, store: &WorkspaceStore) -> Vec<Se
                 label: "Open Folder".to_string(),
                 tooltip: Some(format!("Open a directory path in {}", cluster_title)),
                 section_title: section,
-                action: ServerListAction::OpenFolder(distro.clone()),
+                action: ServerListAction::OpenFolder(server.distro.clone()),
             });
         }
 
@@ -163,7 +144,7 @@ pub fn collect_server_list_items(filter: &str, store: &WorkspaceStore) -> Vec<Se
                 label: "View Server Options".to_string(),
                 tooltip: Some("View server options".to_string()),
                 section_title: section,
-                action: ServerListAction::ViewServerOptions(distro.clone()),
+                action: ServerListAction::ViewServerOptions(server.distro.clone()),
             });
         }
     }
@@ -196,16 +177,7 @@ pub fn render_remote_list_subview(
 
     // Neo con trỏ text vào cuối chuỗi (chuẩn Zed)
     if key_down || key_up {
-        let mut text_state =
-            egui::text_edit::TextEditState::load(ui.ctx(), search_id).unwrap_or_default();
-        let char_count = search_query.chars().count();
-        text_state
-            .cursor
-            .set_char_range(Some(egui::text::CCursorRange::one(
-                egui::text::CCursor::new(char_count),
-            )));
-        text_state.store(ui.ctx(), search_id);
-        ui.ctx().memory_mut(|m| m.request_focus(search_id));
+        anchor_cursor_to_end(ui.ctx(), search_id, search_query);
     }
 
     let prev_query = search_query.clone();
@@ -234,28 +206,8 @@ pub fn render_remote_list_subview(
     let items = collect_server_list_items(search_query, store);
     let total_items = items.len();
 
-    // Đảm bảo selected_index hợp lệ
-    if total_items > 0 && *selected_index >= total_items {
-        *selected_index = 0;
-    }
-
     // Điều hướng cuộn vòng (wrap-around) khi tới cực hạn (chuẩn Zed)
-    if total_items > 0 {
-        if key_down {
-            if *selected_index + 1 >= total_items {
-                *selected_index = 0;
-            } else {
-                *selected_index += 1;
-            }
-        }
-        if key_up {
-            if *selected_index == 0 {
-                *selected_index = total_items - 1;
-            } else {
-                *selected_index -= 1;
-            }
-        }
-    }
+    step_selected_index(selected_index, total_items, key_down, key_up);
 
     // Chỉ đổi selected_index theo chuột khi chuột THỰC SỰ DI CHUYỂN
     let mouse_moved = ui.input(|i| i.pointer.delta() != egui::Vec2::ZERO);
@@ -315,19 +267,16 @@ pub fn render_remote_list_subview(
             ServerListAction::OpenWorkspace(ws) => {
                 selected_workspace = Some(*ws);
             }
+            ServerListAction::OpenRemotePath { distro, path } => {
+                let ws = create_wsl_workspace(&distro, &path);
+                selected_workspace = Some(ws);
+            }
             ServerListAction::OpenFolder(distro) => {
                 let home = WslTransport::resolve_home_dir(&distro);
                 let entries = get_cached_or_read_directories(&distro, &home);
-                nav_action =
-                    RemoteNavAction::Navigate(RemoteSubView::FolderPicker(FolderPickerState {
-                        distro,
-                        path_query: home.clone(),
-                        current_dir: home,
-                        entries,
-                        selected_index: 0,
-                        focus_input: true,
-                        error: None,
-                    }));
+                nav_action = RemoteNavAction::Navigate(RemoteSubView::FolderPicker(
+                    FolderPickerState::new(distro, home, entries),
+                ));
             }
             ServerListAction::ViewServerOptions(distro) => {
                 nav_action =

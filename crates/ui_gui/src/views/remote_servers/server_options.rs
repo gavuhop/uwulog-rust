@@ -2,7 +2,7 @@ use crate::theme::ActiveTheme;
 use eframe::egui::{self, Key};
 use uwu_core_workspace::WorkspaceStore;
 
-use super::helpers::ListItemRow;
+use super::helpers::{step_selected_index, ListItemRow};
 use super::types::{
     RemoteNavAction, RemoteServerKind, ServerOptionAction, ServerOptionItem, ServerOptionsState,
 };
@@ -50,25 +50,12 @@ pub fn render_server_options_subview(
         return RemoteNavAction::Back;
     }
 
-    if total_items > 0 {
-        if key_down {
-            if options_state.selected_index + 1 >= total_items {
-                options_state.selected_index = 0;
-            } else {
-                options_state.selected_index += 1;
-            }
-        }
-        if key_up {
-            if options_state.selected_index == 0 {
-                options_state.selected_index = total_items - 1;
-            } else {
-                options_state.selected_index -= 1;
-            }
-        }
-        if options_state.selected_index >= total_items {
-            options_state.selected_index = 0;
-        }
-    }
+    step_selected_index(
+        &mut options_state.selected_index,
+        total_items,
+        key_down,
+        key_up,
+    );
 
     let mouse_moved = ui.input(|i| i.pointer.delta() != egui::Vec2::ZERO);
     let mut triggered_action = None;
@@ -144,7 +131,7 @@ pub fn render_server_options_subview(
                 if confirmed == rfd::MessageDialogResult::Yes {
                     match &options_state.server {
                         RemoteServerKind::Wsl(distro) => {
-                            store.remove_known_wsl_distro(distro);
+                            store.remove_wsl_connection(distro);
                         }
                         RemoteServerKind::Ssh { .. } => {}
                         RemoteServerKind::DevContainer(_) => {}
