@@ -1,6 +1,7 @@
 pub mod detail;
 pub mod header;
 pub mod modals;
+pub mod remote_servers;
 pub mod table;
 pub mod unfiltered;
 
@@ -29,8 +30,11 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
         pending_actions.push(action);
     };
 
+    let is_remote_open = app.is_overlay_open(crate::app::OverlayLayer::RemoteServersModal);
+
     // Phím Escape: Đóng lớp giao diện trên cùng theo thứ tự ngăn xếp (Chain of Responsibility / Pop Stack)
-    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+    // Lưu ý: Nếu Remote Servers modal đang mở, modal này tự quản lý Back Stack nội bộ và phím Escape
+    if !is_remote_open && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         dispatch(crate::actions::AppAction::DismissTopLayer);
     }
 
@@ -70,6 +74,7 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
 
     let is_launch_open = app.is_overlay_open(crate::overlay::OverlayLayer::LaunchModal);
     let is_about_open = app.is_overlay_open(crate::overlay::OverlayLayer::AboutModal);
+    let is_remote_open = app.is_overlay_open(crate::overlay::OverlayLayer::RemoteServersModal);
 
     let active_index = app.workspaces.active_index;
     let session_summaries: Vec<modals::ProjectPickerSessionInfo> = app
@@ -211,6 +216,14 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
 
     // Modal Dialog: About uwulog
     modals::render_about_modal(ctx, is_about_open, &mut dispatch);
+
+    // Modal Dialog: Remote Projects (WSL)
+    remote_servers::render_remote_servers_modal(
+        ctx,
+        is_remote_open,
+        &mut app.workspaces.store,
+        &mut dispatch,
+    );
 
     // Window Resize Border Handles (Hỗ trợ kéo dãn / thu nhỏ 4 góc và 4 cạnh cửa sổ)
     header::render_window_resize_borders(ctx);

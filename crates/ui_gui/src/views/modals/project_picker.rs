@@ -75,16 +75,24 @@ pub fn render_project_row(ui: &mut egui::Ui, config: ProjectRowConfig<'_>) -> Pr
             .max_rect(content_rect)
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
         |ui| {
-            ui.label(
-                egui::RichText::new(config.icon)
-                    .size(12.0)
-                    .color(theme.text.muted),
+            ui.style_mut().interaction.selectable_labels = false;
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(config.icon)
+                        .size(12.0)
+                        .color(theme.text.muted),
+                )
+                .selectable(false),
             );
 
-            ui.label(
-                egui::RichText::new(config.label)
-                    .size(12.0)
-                    .color(theme.text.primary),
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(config.label)
+                        .size(12.0)
+                        .color(theme.text.primary),
+                )
+                .selectable(false)
+                .truncate(),
             );
 
             if config.is_active {
@@ -197,6 +205,7 @@ pub fn render_project_picker_popup(
     let mut project_to_open = None;
     let mut project_to_delete = None;
     let mut open_local_folder_clicked = false;
+    let mut open_remote_folder_clicked = false;
 
     let resp =
         crate::components::ui::PopoverContainer::new("zed_project_picker_popup", trigger_rect)
@@ -385,13 +394,17 @@ pub fn render_project_picker_popup(
 
                 ui.add_space(2.0);
 
-                crate::components::ui::AppButton::new()
+                if crate::components::ui::AppButton::new()
                     .label("Open Remote Folder")
                     .icon("🌐")
                     .variant(crate::components::ui::ButtonVariant::Ghost)
                     .align_left()
                     .full_width()
-                    .show(ui);
+                    .show(ui)
+                    .clicked()
+                {
+                    open_remote_folder_clicked = true;
+                }
             });
 
     if resp.closed {
@@ -428,5 +441,9 @@ pub fn render_project_picker_popup(
             );
             dispatch(AppAction::OpenWorkspace(ws));
         }
+    }
+
+    if open_remote_folder_clicked {
+        dispatch(AppAction::OpenRemoteServersModal);
     }
 }

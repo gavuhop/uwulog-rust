@@ -10,3 +10,7 @@ async-trait.workspace = true
 anyhow.workspace = true
 log.workspace = true
 uwu-core-util.workspace = true
+serde.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-registry.workspace = true

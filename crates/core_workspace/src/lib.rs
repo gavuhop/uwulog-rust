@@ -192,6 +192,8 @@ pub struct WorkspaceStore {
     #[serde(default)]
     pub active_theme: Option<String>,
     pub recent_workspaces: Vec<Workspace>,
+    #[serde(default)]
+    pub known_wsl_distros: Vec<String>,
 }
 
 impl WorkspaceStore {
@@ -275,6 +277,35 @@ impl WorkspaceStore {
         if self.active_workspace_id == Some(id) {
             self.active_workspace_id = self.recent_workspaces.first().map(|w| w.id);
         }
+        let _ = self.save();
+    }
+
+    /// Thêm một WSL Distro vào danh sách đã kết nối
+    pub fn add_known_wsl_distro(&mut self, distro: impl Into<String>) {
+        let d = distro.into();
+        let trimmed = d.trim();
+        if !trimmed.is_empty()
+            && !self
+                .known_wsl_distros
+                .iter()
+                .any(|existing| existing == trimmed)
+        {
+            self.known_wsl_distros.push(trimmed.to_string());
+            let _ = self.save();
+        }
+    }
+
+    /// Xóa một WSL Distro khỏi danh sách đã kết nối và xóa các workspace remote thuộc distro đó
+    pub fn remove_known_wsl_distro(&mut self, distro: &str) {
+        let trimmed = distro.trim();
+        self.known_wsl_distros.retain(|d| d != trimmed);
+        self.recent_workspaces.retain(|ws| {
+            if let Some(remote) = ws.location.as_remote() {
+                remote.display_name() != trimmed
+            } else {
+                true
+            }
+        });
         let _ = self.save();
     }
 
@@ -529,5 +560,42 @@ mod tests {
             session.target_summary(),
             "/home/user/service2 (Ubuntu-22.04)"
         );
+    }
+
+    #[test]
+    fn test_workspace_store_remove_known_wsl_distro() {
+        let mut store = WorkspaceStore::default();
+        store.add_known_wsl_distro("Ubuntu");
+        store.add_known_wsl_distro("Debian");
+        assert_eq!(store.known_wsl_distros, vec!["Ubuntu", "Debian"]);
+
+        let ws_ubuntu = Workspace::new(
+            "ubuntu-app",
+            WorkspaceLocation::remote(WslConnectionOptions::new("Ubuntu", "/home/user/app")),
+            SourceType::Process,
+        );
+        let ws_debian = Workspace::new(
+            "debian-app",
+            WorkspaceLocation::remote(WslConnectionOptions::new("Debian", "/home/user/app")),
+            SourceType::Process,
+        );
+        let ws_local = Workspace::new(
+            "local-app",
+            WorkspaceLocation::local("C:\\Projects\\local"),
+            SourceType::Process,
+        );
+        store.add_or_update(ws_ubuntu);
+        store.add_or_update(ws_debian);
+        store.add_or_update(ws_local);
+        assert_eq!(store.recent_workspaces.len(), 3);
+
+        // Remove Ubuntu
+        store.remove_known_wsl_distro("Ubuntu");
+        assert_eq!(store.known_wsl_distros, vec!["Debian"]);
+        assert_eq!(store.recent_workspaces.len(), 2);
+        assert!(store
+            .recent_workspaces
+            .iter()
+            .all(|w| { w.location.as_remote().map(|r| r.display_name()) != Some("Ubuntu") }));
     }
 }

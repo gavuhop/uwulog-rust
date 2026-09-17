@@ -67,6 +67,7 @@ impl OverlayManager {
                 OverlayLayer::ColumnsModal => {
                     active_session.view.columns.close_modal();
                 }
+                OverlayLayer::RemoteServersModal => {}
             }
             true
         } else if active_session.view.search.autocomplete.is_open {

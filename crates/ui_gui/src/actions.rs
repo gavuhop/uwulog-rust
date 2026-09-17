@@ -49,6 +49,10 @@ pub enum AppAction {
     ToggleProjectPicker,
     CloseProjectPicker,
 
+    // Remote Servers (WSL)
+    OpenRemoteServersModal,
+    CloseRemoteServersModal,
+
     // Main Menu & About
     ToggleMainMenu,
     CloseMainMenu,

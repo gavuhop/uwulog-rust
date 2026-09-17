@@ -34,9 +34,10 @@ pub enum IconName {
     Play,
     History,
 
-    // Data Sources
+    // Data Sources & Platforms
     Terminal,
     File,
+    Linux,
 }
 
 impl IconName {
@@ -67,6 +68,7 @@ impl IconName {
             Self::History => "history",
             Self::Terminal => "terminal",
             Self::File => "file",
+            Self::Linux => "linux",
         }
     }
 
@@ -95,6 +97,7 @@ impl IconName {
         Self::History,
         Self::Terminal,
         Self::File,
+        Self::Linux,
     ];
 
     /// Returns the raw embedded SVG file contents compiled into the binary.
@@ -123,6 +126,7 @@ impl IconName {
             Self::History => include_str!("../../../../assets/icons/history.svg"),
             Self::Terminal => include_str!("../../../../assets/icons/terminal.svg"),
             Self::File => include_str!("../../../../assets/icons/file.svg"),
+            Self::Linux => include_str!("../../../../assets/icons/linux.svg"),
         }
     }
 
@@ -344,6 +348,17 @@ impl IconName {
                 painter.line_segment([p(11.5, 9.0), p(13.5, 4.5)], stroke);
                 painter.line_segment([p(13.5, 4.5), p(11.5, 2.5)], stroke);
                 painter.circle_filled(p(10.0, 6.0), ((1.1 / 16.0) * w).max(1.0), color);
+            }
+            Self::Linux => {
+                let r_head = ((2.0 / 16.0) * w).max(1.5);
+                painter.circle_stroke(p(8.0, 5.0), r_head, stroke);
+                painter.line_segment([p(7.0, 5.5), p(8.0, 6.5)], stroke);
+                painter.line_segment([p(8.0, 6.5), p(9.0, 5.5)], stroke);
+                painter.line_segment([p(6.0, 6.8), p(4.5, 11.0)], stroke);
+                painter.line_segment([p(10.0, 6.8), p(11.5, 11.0)], stroke);
+                painter.line_segment([p(4.5, 11.0), p(11.5, 11.0)], stroke);
+                painter.line_segment([p(3.5, 13.0), p(6.5, 13.0)], stroke);
+                painter.line_segment([p(9.5, 13.0), p(12.5, 13.0)], stroke);
             }
         }
     }
