@@ -184,19 +184,21 @@ impl KeymapManager {
 
         if active_context != KeyContext::Global {
             for (idx, b) in self.bindings.iter().enumerate().rev() {
-                if &b.action == action && b.context == active_context {
-                    if !is_unbound(&b.keystroke, active_context, idx) {
-                        return Some(b.keystroke);
-                    }
+                if &b.action == action
+                    && b.context == active_context
+                    && !is_unbound(&b.keystroke, active_context, idx)
+                {
+                    return Some(b.keystroke);
                 }
             }
         }
 
         for (idx, b) in self.bindings.iter().enumerate().rev() {
-            if &b.action == action && b.context == KeyContext::Global {
-                if !is_unbound(&b.keystroke, KeyContext::Global, idx) {
-                    return Some(b.keystroke);
-                }
+            if &b.action == action
+                && b.context == KeyContext::Global
+                && !is_unbound(&b.keystroke, KeyContext::Global, idx)
+            {
+                return Some(b.keystroke);
             }
         }
 

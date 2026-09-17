@@ -121,6 +121,9 @@ impl KeyAction {
         match self {
             Self::Dismiss => Some(AppAction::DismissTopLayer),
             Self::Quit => Some(AppAction::QuitApp),
+            Self::ZoomIn => Some(AppAction::ZoomIn),
+            Self::ZoomOut => Some(AppAction::ZoomOut),
+            Self::ResetZoom => Some(AppAction::ResetZoom),
             Self::ToggleProjectPicker => Some(AppAction::ToggleProjectPicker),
             Self::PreviousSession => Some(AppAction::CycleSession(false)),
             Self::NextSession => Some(AppAction::CycleSession(true)),
@@ -128,8 +131,12 @@ impl KeyAction {
             Self::OpenLaunchModal => Some(AppAction::OpenLaunchModal),
             Self::OpenColumnsModal => Some(AppAction::OpenColumnsModal),
             Self::ToggleLatch => Some(AppAction::ToggleLatch),
+            Self::CommitSearch => Some(AppAction::CommitSearch),
             Self::ClearSearch => Some(AppAction::ClearQuery),
-            _ => None,
+            Self::SelectNext => Some(AppAction::AutocompleteNext),
+            Self::SelectPrev => Some(AppAction::AutocompletePrev),
+            Self::ConfirmSelection => Some(AppAction::AutocompleteConfirm),
+            Self::Unbind => None,
         }
     }
 }

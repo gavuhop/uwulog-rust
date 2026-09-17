@@ -5,6 +5,7 @@ pub mod animation;
 pub mod app;
 pub mod cli;
 pub mod components;
+pub mod keymap;
 pub mod overlay;
 pub mod session;
 pub mod state;

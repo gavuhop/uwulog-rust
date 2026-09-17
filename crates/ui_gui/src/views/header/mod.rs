@@ -28,6 +28,7 @@ pub struct HeaderContext<'a> {
     pub sessions: &'a [ProjectPickerSessionInfo],
     pub active_index: usize,
     pub project_search_query: &'a mut String,
+    pub project_shortcut: &'a str,
 }
 
 pub fn render_header(
@@ -118,15 +119,20 @@ pub fn render_header(
             let is_project_picker_open = cx.overlay_stack.is_open(OverlayLayer::ProjectPicker);
             if !session.session.name.is_empty() {
                 let summary = session.session.target_summary();
+                let shortcut_suffix = if cx.project_shortcut.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({})", cx.project_shortcut)
+                };
                 let tooltip = if summary.is_empty() {
                     format!(
-                        "Project: {}\nSwitch or manage workspace projects (Alt+P)",
-                        session.session.name
+                        "Project: {}\nSwitch or manage workspace projects{}",
+                        session.session.name, shortcut_suffix
                     )
                 } else {
                     format!(
-                        "Project: {}\nPath: {}\nSwitch or manage workspace projects (Alt+P)",
-                        session.session.name, summary
+                        "Project: {}\nPath: {}\nSwitch or manage workspace projects{}",
+                        session.session.name, summary, shortcut_suffix
                     )
                 };
 

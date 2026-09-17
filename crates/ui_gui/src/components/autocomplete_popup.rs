@@ -2,7 +2,7 @@ use crate::components::ui::PopoverContainer;
 use crate::session::GuiSession;
 use crate::state::SuggestionKind;
 use crate::theme::ActiveTheme;
-use eframe::egui::{self, Color32, CornerRadius, FontId, Key, Pos2, Rect};
+use eframe::egui::{self, Color32, CornerRadius, FontId, Pos2, Rect};
 
 /// Render Autocomplete Dropdown Popup ngay dưới ô tìm kiếm
 pub fn render_autocomplete_popup(ctx: &egui::Context, session: &mut GuiSession, input_rect: Rect) {
@@ -10,41 +10,16 @@ pub fn render_autocomplete_popup(ctx: &egui::Context, session: &mut GuiSession, 
         return;
     }
 
-    // Xử lý phím điều hướng khi popup đang mở
     let mut item_to_apply = None;
-    let mut navigated_with_keys = false;
-
-    if ctx.input(|i| i.key_pressed(Key::ArrowDown))
-        && !session.search.autocomplete.suggestions.is_empty()
-    {
-        session.search.autocomplete.selected_index = (session.search.autocomplete.selected_index
-            + 1)
-            % session.search.autocomplete.suggestions.len();
-        navigated_with_keys = true;
-    }
-
-    if ctx.input(|i| i.key_pressed(Key::ArrowUp))
-        && !session.search.autocomplete.suggestions.is_empty()
-    {
-        if session.search.autocomplete.selected_index == 0 {
-            session.search.autocomplete.selected_index =
-                session.search.autocomplete.suggestions.len() - 1;
-        } else {
-            session.search.autocomplete.selected_index -= 1;
-        }
-        navigated_with_keys = true;
-    }
-
-    if ctx.input(|i| i.key_pressed(Key::Tab) || i.key_pressed(Key::Enter)) {
-        if let Some(item) = session
-            .search
-            .autocomplete
-            .suggestions
-            .get(session.search.autocomplete.selected_index)
-        {
-            item_to_apply = Some(item.clone());
-        }
-    }
+    let prev_selected_idx: Option<usize> =
+        ctx.data(|d| d.get_temp(egui::Id::new("ac_last_selected")));
+    let selection_changed = prev_selected_idx != Some(session.search.autocomplete.selected_index);
+    ctx.data_mut(|d| {
+        d.insert_temp(
+            egui::Id::new("ac_last_selected"),
+            session.search.autocomplete.selected_index,
+        )
+    });
 
     let is_syntax = session
         .search
@@ -78,7 +53,7 @@ pub fn render_autocomplete_popup(ctx: &egui::Context, session: &mut GuiSession, 
 
                     let desired_size = egui::vec2(ui.available_width(), 26.0);
                     let (rect, resp) = ui.allocate_exact_size(desired_size, egui::Sense::click());
-                    if navigated_with_keys && is_selected {
+                    if selection_changed && is_selected {
                         resp.scroll_to_me(Some(egui::Align::Center));
                     }
 

@@ -64,6 +64,17 @@ pub enum AppAction {
 
     // Global Dismiss / Stack Pop
     DismissTopLayer,
+
+    // Viewport Zoom
+    ZoomIn,
+    ZoomOut,
+    ResetZoom,
+
+    // Autocomplete & Search Navigation
+    CommitSearch,
+    AutocompleteNext,
+    AutocompletePrev,
+    AutocompleteConfirm,
 }
 
 /// Unified render context passed down to subcomponents (tables, detail inspector, cells)

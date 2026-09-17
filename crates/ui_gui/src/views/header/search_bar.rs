@@ -62,15 +62,6 @@ pub fn render_search_bar(
 
     let search_rect = search_response.rect;
 
-    // Lưu lịch sử khi người dùng nhấn Enter để hoàn tất tìm kiếm
-    if (search_response.lost_focus() || search_response.has_focus())
-        && ui.ctx().input(|i| i.key_pressed(egui::Key::Enter))
-    {
-        let q = session.view.search.query.clone();
-        session.view.search.history.record(&q);
-        session.view.search.history.mark_recorded();
-    }
-
     // Quick Clear button if query is not empty
     let clear_resp = if !session.view.search.query.is_empty() {
         Some(
