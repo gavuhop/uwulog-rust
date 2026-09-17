@@ -68,7 +68,8 @@ impl KeymapManager {
         self.bind("enter", KeyAction::CommitSearch, KeyContext::SearchInput);
 
         // --- 4. Remote Servers Modal Context ---
-        self.bind("escape", KeyAction::Dismiss, KeyContext::RemoteServers);
+        // RemoteServersModal tự quản lý Back Stack nội bộ cho phím Escape (FolderPicker/WSL/Options -> ServerList -> Đóng modal)
+        self.unbind("escape", KeyContext::RemoteServers);
     }
 
     /// Thêm một liên kết phím tắt mới. Nếu đã tồn tại, binding thêm sau sẽ có quyền ưu tiên cao hơn.

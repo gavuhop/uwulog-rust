@@ -299,6 +299,7 @@ pub struct RemotePickerContainer<'a> {
     width: f32,
     max_height: Option<f32>,
     placement: RemoteModalPlacement,
+    close_on_escape: bool,
     _phantom: std::marker::PhantomData<&'a ()>,
 }
 
@@ -309,12 +310,18 @@ impl<'a> RemotePickerContainer<'a> {
             width: 520.0,
             max_height: Some(480.0),
             placement: RemoteModalPlacement::TopCenter,
+            close_on_escape: true,
             _phantom: std::marker::PhantomData,
         }
     }
 
     pub fn placement(mut self, placement: RemoteModalPlacement) -> Self {
         self.placement = placement;
+        self
+    }
+
+    pub fn close_on_escape(mut self, close_on_escape: bool) -> Self {
+        self.close_on_escape = close_on_escape;
         self
     }
 
@@ -331,8 +338,8 @@ impl<'a> RemotePickerContainer<'a> {
     pub fn show(self, ctx: &egui::Context, add_contents: impl FnOnce(&mut egui::Ui)) -> bool {
         let mut close_requested = false;
 
-        // Phím Escape để đóng
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        // Phím Escape để đóng (nếu bật cờ close_on_escape)
+        if self.close_on_escape && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             close_requested = true;
         }
 
