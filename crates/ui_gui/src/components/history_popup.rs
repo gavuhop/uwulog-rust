@@ -67,7 +67,7 @@ pub fn render_history_popup(
                     ui.add_space(4.0);
                     ui.label(
                         egui::RichText::new("No search history yet.")
-                            .font(FontId::monospace(11.5))
+                            .font(FontId::monospace(11.0))
                             .color(theme.text.muted)
                             .italics(),
                     );

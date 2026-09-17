@@ -187,10 +187,40 @@ fn render_header_cell(
         theme.text.muted
     };
     let text_pos = Pos2::new(visual_rect.min.x + 16.0, visual_rect.center().y);
+    let full_text = col_name.to_uppercase();
+    let max_w = visual_rect.max.x - text_pos.x - 4.0;
+    let label = if ui
+        .painter()
+        .layout_no_wrap(full_text.clone(), font_id.clone(), text_color)
+        .size()
+        .x
+        > max_w
+    {
+        let char_w = ui
+            .painter()
+            .layout_no_wrap("A".into(), font_id.clone(), text_color)
+            .size()
+            .x;
+        let max_chars = if char_w > 0.0 {
+            (max_w / char_w).floor() as usize
+        } else {
+            0
+        };
+        let count = full_text.chars().count();
+        if count > max_chars && max_chars > 3 {
+            let suffix: String = full_text.chars().skip(count - (max_chars - 3)).collect();
+            let suffix = suffix.trim_start_matches(['.', '/']);
+            format!("...{suffix}")
+        } else {
+            full_text
+        }
+    } else {
+        full_text
+    };
     ui.painter().text(
         text_pos,
         egui::Align2::LEFT_CENTER,
-        col_name.to_uppercase(),
+        label,
         font_id,
         text_color,
     );

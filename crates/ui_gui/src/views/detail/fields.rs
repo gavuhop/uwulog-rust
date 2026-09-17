@@ -17,7 +17,7 @@ fn render_field_item(
             &format!("{}: ", key),
             0.0,
             egui::TextFormat {
-                font_id: egui::FontId::monospace(11.5),
+                font_id: egui::FontId::monospace(12.0),
                 color: key_color,
                 ..Default::default()
             },
@@ -54,7 +54,7 @@ pub fn render_meta_field(
 ) {
     let theme = ui.app_theme();
     let font_id = if mono {
-        egui::FontId::monospace(11.5)
+        egui::FontId::monospace(12.0)
     } else {
         egui::FontId::proportional(12.0)
     };
@@ -70,7 +70,7 @@ pub fn render_kv_field(ui: &mut egui::Ui, key: &str, val: &str, ctx: &mut Action
         val,
         theme.text.accent,
         theme.text.primary,
-        egui::FontId::proportional(11.5),
+        egui::FontId::monospace(12.0),
         ctx,
     );
 }

@@ -48,7 +48,7 @@ pub fn render_cell(
             let mut job = crate::theme::create_highlighted_layout_job(
                 &cell_text,
                 row_color,
-                egui::FontId::monospace(11.5),
+                egui::FontId::monospace(12.0),
                 highlighted_terms_ref,
             );
             job.wrap.max_width = f32::INFINITY;
@@ -57,7 +57,7 @@ pub fn render_cell(
 
     let edit = egui::TextEdit::singleline(&mut text_val)
         .id(cell_id)
-        .font(egui::FontId::monospace(11.5))
+        .font(egui::FontId::monospace(12.0))
         .text_color(row_color)
         .frame(egui::Frame::NONE)
         .clip_text(true)

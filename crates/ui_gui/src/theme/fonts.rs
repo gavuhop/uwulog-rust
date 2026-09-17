@@ -128,14 +128,14 @@ pub fn setup_fonts(ctx: &egui::Context) {
 
     ctx.set_fonts(fonts);
 
-    // Typography & Text Styles (Tối ưu độ nét và kích thước đọc thoải mái)
+    // Typography & Text Styles (Chuẩn hóa font size số nguyên: 12.0, 15.0, 11.0)
     ctx.all_styles_mut(|style| {
         style.text_styles = [
             (TextStyle::Heading, FontId::new(15.0, FontFamily::Monospace)),
-            (TextStyle::Body, FontId::new(12.5, FontFamily::Monospace)),
+            (TextStyle::Body, FontId::new(12.0, FontFamily::Monospace)),
             (
                 TextStyle::Monospace,
-                FontId::new(12.5, FontFamily::Monospace),
+                FontId::new(12.0, FontFamily::Monospace),
             ),
             (TextStyle::Button, FontId::new(12.0, FontFamily::Monospace)),
             (TextStyle::Small, FontId::new(11.0, FontFamily::Monospace)),

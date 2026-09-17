@@ -239,7 +239,7 @@ pub fn render_main_menu_popup(
                                             text_pos,
                                             egui::Align2::LEFT_CENTER,
                                             label,
-                                            egui::FontId::monospace(11.5),
+                                            egui::FontId::monospace(11.0),
                                             text_color,
                                         );
 
@@ -292,7 +292,7 @@ pub fn render_main_menu_popup(
                                             text_pos,
                                             egui::Align2::LEFT_CENTER,
                                             label,
-                                            egui::FontId::monospace(11.5),
+                                            egui::FontId::monospace(11.0),
                                             text_color,
                                         );
 

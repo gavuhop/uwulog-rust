@@ -250,7 +250,7 @@ pub fn render_launch_modal(
                         ui.label(
                             egui::RichText::new("Command string:")
                                 .color(theme.text.primary)
-                                .size(11.5),
+                                .size(12.0),
                         );
                         ui.add_space(4.0);
                         let cmd_id = egui::Id::new("launch_modal_cmd_input");
@@ -263,7 +263,7 @@ pub fn render_launch_modal(
                         ui.label(
                             egui::RichText::new("Log file path:")
                                 .color(theme.text.primary)
-                                .size(11.5),
+                                .size(12.0),
                         );
                         ui.add_space(4.0);
                         ui.horizontal(|ui| {
