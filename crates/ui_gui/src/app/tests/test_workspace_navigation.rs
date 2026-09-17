@@ -147,6 +147,26 @@ async fn test_app_action_project_picker() {
 }
 
 #[tokio::test]
+async fn test_app_action_remote_servers_modal() {
+    let mut app = create_test_app();
+
+    assert!(!app.is_overlay_open(OverlayLayer::RemoteServersModal));
+
+    // Mở Project Picker trước
+    app.dispatch_action(AppAction::ToggleProjectPicker);
+    assert!(app.is_overlay_open(OverlayLayer::ProjectPicker));
+
+    // Mở Remote Servers modal -> tự động đóng Project Picker và mở RemoteServersModal
+    app.dispatch_action(AppAction::OpenRemoteServersModal);
+    assert!(!app.is_overlay_open(OverlayLayer::ProjectPicker));
+    assert!(app.is_overlay_open(OverlayLayer::RemoteServersModal));
+
+    // Đóng Remote Servers modal
+    app.dispatch_action(AppAction::CloseRemoteServersModal);
+    assert!(!app.is_overlay_open(OverlayLayer::RemoteServersModal));
+}
+
+#[tokio::test]
 async fn test_close_and_switch_session_behaviors() {
     let mut app = create_test_app();
     let ws1 = Workspace::new(

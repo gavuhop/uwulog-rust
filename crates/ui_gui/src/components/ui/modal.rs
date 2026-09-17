@@ -110,23 +110,25 @@ impl<'a> ModalContainer<'a> {
         }
 
         modal_window.show(ctx, |ui| {
-            // Header: Title + Subtitle (nút đóng ở góc trên đã được loại bỏ theo thiết kế tối giản)
-            ui.vertical(|ui| {
-                ui.label(
-                    egui::RichText::new(self.title)
-                        .strong()
-                        .size(15.0)
-                        .color(theme.text.primary),
-                );
-                if let Some(sub) = self.subtitle {
-                    ui.add_space(2.0);
-                    ui.label(egui::RichText::new(sub).size(11.0).color(theme.text.muted));
-                }
-            });
+            // Header: Title + Subtitle (chỉ hiển thị nếu title không rỗng)
+            if !self.title.is_empty() {
+                ui.vertical(|ui| {
+                    ui.label(
+                        egui::RichText::new(self.title)
+                            .strong()
+                            .size(15.0)
+                            .color(theme.text.primary),
+                    );
+                    if let Some(sub) = self.subtitle {
+                        ui.add_space(2.0);
+                        ui.label(egui::RichText::new(sub).size(11.0).color(theme.text.muted));
+                    }
+                });
 
-            ui.add_space(8.0);
-            ui.separator();
-            ui.add_space(8.0);
+                ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(8.0);
+            }
 
             // Body
             add_body(ui);

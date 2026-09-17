@@ -337,6 +337,13 @@ impl UwuGuiApp {
                 }
             }
             AppAction::CloseProjectPicker => self.close_project_picker(),
+            AppAction::OpenRemoteServersModal => {
+                self.close_project_picker();
+                self.push_overlay(OverlayLayer::RemoteServersModal);
+            }
+            AppAction::CloseRemoteServersModal => {
+                self.close_overlay(OverlayLayer::RemoteServersModal);
+            }
             AppAction::ToggleMainMenu => {
                 if self.is_overlay_open(OverlayLayer::MainMenu) {
                     self.close_main_menu();

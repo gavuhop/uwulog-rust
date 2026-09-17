@@ -76,6 +76,16 @@ if (-not $SkipBuild) {
 
 Write-Host "   -> Using binary directory: $binDir" -ForegroundColor Gray
 
+# Check for optional bundled prebuilt Linux agents for WSL provisioning
+$linuxAgentX64 = Join-Path $RootDir "agents\uwu-agent-x86_64"
+$linuxAgentArm64 = Join-Path $RootDir "agents\uwu-agent-aarch64"
+if (Test-Path $linuxAgentX64) {
+    Write-Host "   -> Detected bundled Linux Agent (x86_64): $linuxAgentX64" -ForegroundColor Cyan
+}
+if (Test-Path $linuxAgentArm64) {
+    Write-Host "   -> Detected bundled Linux Agent (aarch64): $linuxAgentArm64" -ForegroundColor Cyan
+}
+
 # 4. Create dist directory
 if (-not (Test-Path $DistDir)) {
     New-Item -ItemType Directory -Force -Path $DistDir | Out-Null

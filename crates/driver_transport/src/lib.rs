@@ -7,7 +7,7 @@ use async_trait::async_trait;
 pub use process::ProcessTransport;
 pub use ssh::SshTransport;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, BufReader};
-pub use wsl::WslTransport;
+pub use wsl::{WslArch, WslTransport};
 
 pub type BoxedRead = Box<dyn AsyncRead + Send + Unpin>;
 pub type BoxedWrite = Box<dyn AsyncWrite + Send + Unpin>;

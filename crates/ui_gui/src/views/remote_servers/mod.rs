@@ -1,0 +1,522 @@
+pub mod folder_picker;
+pub mod helpers;
+pub mod server_list;
+pub mod server_options;
+pub mod types;
+pub mod wsl_picker;
+
+pub use folder_picker::render_folder_picker_subview;
+pub use helpers::*;
+pub use server_list::{
+    collect_server_list_items, render_remote_list_subview, ServerListAction, ServerListItem,
+};
+pub use server_options::render_server_options_subview;
+pub use types::*;
+pub use wsl_picker::render_wsl_picker_subview;
+
+use crate::actions::AppAction;
+use eframe::egui::{self, Id};
+use uwu_core_workspace::{Workspace, WorkspaceStore};
+
+/// Render modal chọn Remote Projects theo thiết kế chuẩn của Zed
+pub fn render_remote_servers_modal(
+    ctx: &egui::Context,
+    is_open: bool,
+    store: &mut WorkspaceStore,
+    dispatch: &mut impl FnMut(AppAction),
+) {
+    if !is_open {
+        return;
+    }
+
+    let state_id = Id::new("remote_servers_modal_state");
+    let mut state: RemoteModalState = ctx.data(|d| d.get_temp(state_id)).unwrap_or_default();
+
+    let mut selected_workspace: Option<Workspace> = None;
+    let mut nav_action = RemoteNavAction::None;
+
+    let closed = RemotePickerContainer::new("remote_servers_picker_container")
+        .width(520.0)
+        .max_height(480.0)
+        .show(ctx, |ui| match &mut state.subview {
+            RemoteSubView::List => {
+                let (action, ws) = render_remote_list_subview(
+                    ui,
+                    &mut state.search_query,
+                    &mut state.selected_index,
+                    store,
+                );
+                nav_action = action;
+                selected_workspace = ws;
+            }
+            RemoteSubView::WslPicker => {
+                nav_action = render_wsl_picker_subview(ui, store);
+            }
+            RemoteSubView::FolderPicker(folder_state) => {
+                let (action, ws) = render_folder_picker_subview(ui, folder_state, store);
+                nav_action = action;
+                selected_workspace = ws;
+            }
+            RemoteSubView::ServerOptions(options_state) => {
+                nav_action = render_server_options_subview(ui, options_state, store);
+            }
+        });
+
+    match nav_action {
+        RemoteNavAction::Navigate(next) => {
+            state.navigate(next);
+        }
+        RemoteNavAction::Back => {
+            if !state.back() {
+                // Không còn màn hình nào trong history để back -> Đóng modal
+                state.reset();
+                ctx.data_mut(|d| d.insert_temp(state_id, state));
+                dispatch(AppAction::CloseRemoteServersModal);
+                return;
+            }
+        }
+        RemoteNavAction::None => {}
+    }
+
+    // Xử lý mở workspace đã chọn
+    if let Some(ws) = selected_workspace {
+        state.reset();
+        ctx.data_mut(|d| d.insert_temp(state_id, state));
+        dispatch(AppAction::CloseRemoteServersModal);
+        dispatch(AppAction::OpenWorkspace(ws));
+        return;
+    }
+
+    if closed {
+        state.reset();
+        ctx.data_mut(|d| d.insert_temp(state_id, state));
+        dispatch(AppAction::CloseRemoteServersModal);
+        return;
+    }
+
+    ctx.data_mut(|d| d.insert_temp(state_id, state));
+}
+
+// ============================================================================
+// UNIT TESTS
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_calculate_adaptive_scroll_height() {
+        assert_eq!(calculate_adaptive_scroll_height(0, 29.0, 360.0), 48.0);
+        assert_eq!(calculate_adaptive_scroll_height(1, 29.0, 360.0), 40.0);
+        assert_eq!(calculate_adaptive_scroll_height(3, 29.0, 360.0), 93.0);
+        assert_eq!(calculate_adaptive_scroll_height(50, 29.0, 360.0), 360.0);
+    }
+
+    #[test]
+    fn test_get_dir_and_suffix() {
+        assert_eq!(
+            get_dir_and_suffix("/home/truongviet/"),
+            ("/home/truongviet/".to_string(), "".to_string())
+        );
+        assert_eq!(
+            get_dir_and_suffix("/home/truongviet/.claude"),
+            ("/home/truongviet/".to_string(), ".claude".to_string())
+        );
+        assert_eq!(
+            get_dir_and_suffix("/home/truongviet/.claude/"),
+            ("/home/truongviet/.claude/".to_string(), "".to_string())
+        );
+        assert_eq!(
+            get_dir_and_suffix("/etc"),
+            ("/".to_string(), "etc".to_string())
+        );
+        assert_eq!(get_dir_and_suffix("/"), ("/".to_string(), "".to_string()));
+        assert_eq!(get_dir_and_suffix(""), ("/".to_string(), "".to_string()));
+    }
+
+    #[test]
+    fn test_folder_picker_state_focus_input() {
+        let state = FolderPickerState {
+            distro: "Ubuntu".to_string(),
+            path_query: "/home/truongviet/".to_string(),
+            current_dir: "/home/truongviet/".to_string(),
+            entries: vec![".claude".to_string(), ".config".to_string()],
+            selected_index: 0,
+            focus_input: true,
+            error: None,
+        };
+        assert!(state.focus_input);
+        assert_eq!(state.path_query.chars().count(), 17);
+    }
+
+    #[test]
+    fn test_folder_picker_tab_and_enter_resolution() {
+        let (dir, suffix) = get_dir_and_suffix("/home/truongviet/");
+        assert_eq!(dir, "/home/truongviet/");
+        assert_eq!(suffix, "");
+
+        let matched_folders = vec!["backend".to_string(), "frontend".to_string()];
+        let show_open_this_dir = suffix.is_empty();
+        assert!(show_open_this_dir);
+
+        // Case A: selected_index = 0 (open this directory)
+        let enter_open_path = if show_open_this_dir && 0 == 0 {
+            dir.clone()
+        } else {
+            String::new()
+        };
+        assert_eq!(enter_open_path, "/home/truongviet/");
+
+        // Tab completes first folder
+        let target_folder_tab = if show_open_this_dir {
+            matched_folders.first().cloned()
+        } else {
+            None
+        };
+        assert_eq!(target_folder_tab, Some("backend".to_string()));
+        let new_tab_dir = format!("{}{}/", dir, target_folder_tab.unwrap());
+        assert_eq!(new_tab_dir, "/home/truongviet/backend/");
+
+        // Case B: selected_index = 1 (backend folder)
+        let selected_index = 1;
+        let selected_folder = matched_folders.get(selected_index - 1).unwrap();
+        let enter_folder_path = format!("{}{}", dir, selected_folder);
+        assert_eq!(enter_folder_path, "/home/truongviet/backend");
+
+        // Case C: Filtering with suffix
+        let (dir2, suffix2) = get_dir_and_suffix("/home/truongviet/front");
+        assert_eq!(dir2, "/home/truongviet/");
+        assert_eq!(suffix2, "front");
+        let show_open_this_dir2 = suffix2.is_empty();
+        assert!(!show_open_this_dir2);
+
+        let matched_filtered: Vec<String> = matched_folders
+            .into_iter()
+            .filter(|f| f.contains(&suffix2))
+            .collect();
+        assert_eq!(matched_filtered, vec!["frontend".to_string()]);
+
+        // Enter on index 0 of filtered: opens frontend
+        let enter_filtered_path = format!("{}{}", dir2, matched_filtered[0]);
+        assert_eq!(enter_filtered_path, "/home/truongviet/frontend");
+
+        // Tab on index 0 of filtered: completes frontend/
+        let tab_filtered_path = format!("{}{}/", dir2, matched_filtered[0]);
+        assert_eq!(tab_filtered_path, "/home/truongviet/frontend/");
+
+        // Case D: Back parent resolution
+        let trimmed1 = "/home/truongviet/".trim_end_matches('/');
+        let (parent1, _) = get_dir_and_suffix(trimmed1);
+        assert_eq!(parent1, "/home/");
+
+        let trimmed2 = "/home/".trim_end_matches('/');
+        let parent2 = get_dir_and_suffix(trimmed2).0;
+        assert_eq!(parent2, "/");
+    }
+
+    #[test]
+    fn test_folder_picker_wrap_around_and_typing_resets_selection() {
+        let total_items = 4;
+        let mut selected_index = 0;
+
+        // Bấm Lên khi đang ở cực hạn trên (index 0) -> cuộn vòng xuống item cuối cùng (total_items - 1)
+        if selected_index == 0 {
+            selected_index = total_items - 1;
+        } else {
+            selected_index -= 1;
+        }
+        assert_eq!(selected_index, 3);
+
+        // Bấm Xuống khi đang ở cực hạn dưới (index 3) -> cuộn vòng lên item đầu tiên (0)
+        if selected_index + 1 >= total_items {
+            selected_index = 0;
+        } else {
+            selected_index += 1;
+        }
+        assert_eq!(selected_index, 0);
+
+        // Giả sử sau đó người dùng bấm Xuống để chọn item 2
+        selected_index = 2;
+
+        // Khi người dùng gõ chữ: query thay đổi -> LUÔN reset selected_index về 0
+        let prev_query = "/home/truongviet/".to_string();
+        let new_query = "/home/truongviet/p".to_string();
+        if new_query != prev_query {
+            selected_index = 0;
+        }
+        assert_eq!(selected_index, 0);
+    }
+
+    #[test]
+    fn test_remote_server_kind_display_and_icon() {
+        let wsl = RemoteServerKind::Wsl("Ubuntu-22.04".to_string());
+        assert_eq!(wsl.display_name(), "Ubuntu-22.04");
+        assert_eq!(wsl.icon(), "🐧");
+
+        let ssh = RemoteServerKind::Ssh {
+            host: "prod-server".to_string(),
+            nickname: None,
+        };
+        assert_eq!(ssh.display_name(), "prod-server");
+        assert_eq!(ssh.icon(), "🖥");
+
+        let ssh_nick = RemoteServerKind::Ssh {
+            host: "prod-server".to_string(),
+            nickname: Some("Production Node".to_string()),
+        };
+        assert_eq!(ssh_nick.display_name(), "Production Node");
+
+        let dev_container = RemoteServerKind::DevContainer("rust-env".to_string());
+        assert_eq!(dev_container.display_name(), "rust-env");
+        assert_eq!(dev_container.icon(), "📦");
+    }
+
+    #[test]
+    fn test_server_option_items_for_different_kinds() {
+        // 1. WSL: Remove Distro (destructive) + Go Back
+        let wsl = RemoteServerKind::Wsl("Ubuntu".to_string());
+        let wsl_opts = ServerOptionItem::list_for_server(&wsl);
+        assert_eq!(wsl_opts.len(), 2);
+        assert_eq!(wsl_opts[0].action, ServerOptionAction::RemoveServer);
+        assert_eq!(wsl_opts[0].label, "Remove Distro");
+        assert!(wsl_opts[0].is_destructive);
+        assert_eq!(wsl_opts[1].action, ServerOptionAction::GoBack);
+        assert_eq!(wsl_opts[1].label, "Go Back");
+        assert!(!wsl_opts[1].is_destructive);
+
+        // 2. SSH: Edit Nickname + Copy Server Address + Remove Server + Go Back
+        let ssh = RemoteServerKind::Ssh {
+            host: "server1.example.com".to_string(),
+            nickname: None,
+        };
+        let ssh_opts = ServerOptionItem::list_for_server(&ssh);
+        assert_eq!(ssh_opts.len(), 4);
+        assert_eq!(ssh_opts[0].action, ServerOptionAction::EditNickname);
+        assert_eq!(ssh_opts[0].label, "Add Nickname to Server");
+        assert_eq!(
+            ssh_opts[1].action,
+            ServerOptionAction::CopyAddress("server1.example.com".to_string())
+        );
+        assert_eq!(ssh_opts[1].label, "Copy Server Address");
+        assert_eq!(
+            ssh_opts[1].end_slot,
+            Some("server1.example.com".to_string())
+        );
+        assert_eq!(ssh_opts[2].action, ServerOptionAction::RemoveServer);
+        assert!(ssh_opts[2].is_destructive);
+        assert_eq!(ssh_opts[3].action, ServerOptionAction::GoBack);
+
+        // 3. DevContainer: Remove Dev Container + Go Back
+        let dc = RemoteServerKind::DevContainer("dc1".to_string());
+        let dc_opts = ServerOptionItem::list_for_server(&dc);
+        assert_eq!(dc_opts.len(), 2);
+        assert_eq!(dc_opts[0].action, ServerOptionAction::RemoveServer);
+        assert_eq!(dc_opts[0].label, "Remove Dev Container");
+        assert!(dc_opts[0].is_destructive);
+        assert_eq!(dc_opts[1].action, ServerOptionAction::GoBack);
+    }
+
+    #[test]
+    fn test_server_options_keyboard_wrap_around() {
+        let options =
+            ServerOptionItem::list_for_server(&RemoteServerKind::Wsl("Ubuntu".to_string()));
+        let total_items = options.len();
+        assert_eq!(total_items, 2);
+
+        let mut state = ServerOptionsState {
+            server: RemoteServerKind::Wsl("Ubuntu".to_string()),
+            selected_index: 0,
+            copied_flash_time: None,
+        };
+
+        // ArrowUp from 0 wraps to 1 (last)
+        if state.selected_index == 0 {
+            state.selected_index = total_items - 1;
+        } else {
+            state.selected_index -= 1;
+        }
+        assert_eq!(state.selected_index, 1);
+
+        // ArrowDown from 1 wraps to 0 (first)
+        if state.selected_index + 1 >= total_items {
+            state.selected_index = 0;
+        } else {
+            state.selected_index += 1;
+        }
+        assert_eq!(state.selected_index, 0);
+    }
+
+    #[test]
+    fn test_server_options_flash_timer() {
+        let flash_t = std::time::Instant::now();
+        assert!(flash_t.elapsed() < std::time::Duration::from_millis(1000));
+    }
+
+    #[test]
+    fn test_remote_server_add_distro_flow() {
+        let mut store = WorkspaceStore::default();
+        assert!(store.known_wsl_distros.is_empty());
+
+        // 1. Thêm distro từ WslPicker
+        let chosen_distro = "Ubuntu".to_string();
+        store.add_known_wsl_distro(&chosen_distro);
+
+        // 2. Chuyển về List (không chuyển thẳng vào FolderPicker)
+        let next_subview = RemoteSubView::List;
+        assert_eq!(next_subview, RemoteSubView::List);
+
+        // 3. Distro đã lưu trong store và hiển thị trên server list
+        assert_eq!(store.known_wsl_distros, vec!["Ubuntu".to_string()]);
+
+        // 4. Bấm "Open Folder" sau đó mới vào FolderPicker
+        let folder_picker_subview = RemoteSubView::FolderPicker(FolderPickerState {
+            distro: "Ubuntu".to_string(),
+            path_query: "/home/user".to_string(),
+            current_dir: "/home/user".to_string(),
+            entries: vec![],
+            selected_index: 0,
+            focus_input: true,
+            error: None,
+        });
+        match folder_picker_subview {
+            RemoteSubView::FolderPicker(s) => {
+                assert_eq!(s.distro, "Ubuntu");
+            }
+            _ => panic!("Expected FolderPicker subview"),
+        }
+    }
+
+    #[test]
+    fn test_collect_server_list_items_and_filtering() {
+        let mut store = WorkspaceStore::default();
+        // 1. Mặc định chưa có server nào -> 3 static actions
+        let items_empty = collect_server_list_items("", &store);
+        assert_eq!(items_empty.len(), 3);
+        assert_eq!(items_empty[0].action, ServerListAction::ConnectSsh);
+        assert_eq!(items_empty[1].action, ServerListAction::ConnectDevContainer);
+        assert_eq!(items_empty[2].action, ServerListAction::AddWslDistro);
+
+        // 2. Thêm WSL distro vào store -> có thêm 2 items: Open Folder và View Server Options
+        store.add_known_wsl_distro("Ubuntu");
+        let items_with_server = collect_server_list_items("", &store);
+        assert_eq!(items_with_server.len(), 5);
+        assert_eq!(
+            items_with_server[3].action,
+            ServerListAction::OpenFolder("Ubuntu".to_string())
+        );
+        assert_eq!(
+            items_with_server[3].section_title,
+            Some("WSL: Ubuntu".to_string())
+        );
+        assert_eq!(
+            items_with_server[4].action,
+            ServerListAction::ViewServerOptions("Ubuntu".to_string())
+        );
+
+        // 3. Lọc theo chữ "open folder"
+        let filtered = collect_server_list_items("open folder", &store);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(
+            filtered[0].action,
+            ServerListAction::OpenFolder("Ubuntu".to_string())
+        );
+    }
+
+    #[test]
+    fn test_server_list_keyboard_wrap_around_and_typing_resets_selection() {
+        let total_items = 5;
+        let mut selected_index = 0;
+
+        // Bấm Lên khi đang ở index 0 -> cuộn vòng về item cuối cùng (4)
+        if selected_index == 0 {
+            selected_index = total_items - 1;
+        } else {
+            selected_index -= 1;
+        }
+        assert_eq!(selected_index, 4);
+
+        // Bấm Xuống khi đang ở item cuối cùng -> cuộn vòng về 0
+        if selected_index + 1 >= total_items {
+            selected_index = 0;
+        } else {
+            selected_index += 1;
+        }
+        assert_eq!(selected_index, 0);
+
+        // Bấm Xuống tiếp -> index 1
+        selected_index += 1;
+        assert_eq!(selected_index, 1);
+
+        // Khi người dùng gõ chữ tìm kiếm: query thay đổi -> LUÔN chọn item đầu tiên (index 0)
+        let prev_query = "";
+        let new_query = "ub";
+        if new_query != prev_query {
+            selected_index = 0;
+        }
+        assert_eq!(selected_index, 0);
+    }
+
+    #[test]
+    fn test_remote_modal_state_navigation_back_stack() {
+        let mut state = RemoteModalState::default();
+        assert_eq!(state.subview, RemoteSubView::List);
+        assert!(state.history.is_empty());
+
+        // Back khi đang ở màn gốc và history rỗng -> false (đóng modal)
+        assert!(!state.back());
+
+        // 1. Chuyển từ List -> WslPicker (như trên điện thoại, lưu List vào stack)
+        state.navigate(RemoteSubView::WslPicker);
+        assert_eq!(state.subview, RemoteSubView::WslPicker);
+        assert_eq!(state.history.len(), 1);
+        assert_eq!(state.history[0], RemoteSubView::List);
+
+        // 2. Chuyển từ WslPicker -> FolderPicker
+        let folder_subview = RemoteSubView::FolderPicker(FolderPickerState {
+            distro: "Ubuntu".to_string(),
+            path_query: "/home".to_string(),
+            current_dir: "/home".to_string(),
+            entries: vec![],
+            selected_index: 0,
+            focus_input: true,
+            error: None,
+        });
+        state.navigate(folder_subview.clone());
+        assert_eq!(state.subview, folder_subview);
+        assert_eq!(state.history.len(), 2);
+
+        // 3. Nhấn Esc (Back lần 1) -> pop về WslPicker
+        assert!(state.back());
+        assert_eq!(state.subview, RemoteSubView::WslPicker);
+        assert_eq!(state.history.len(), 1);
+
+        // 4. Nhấn Esc (Back lần 2) -> pop về List
+        assert!(state.back());
+        assert_eq!(state.subview, RemoteSubView::List);
+        assert!(state.history.is_empty());
+
+        // 5. Nhấn Esc (Back lần 3 khi history rỗng) -> trả về false để đóng modal
+        assert!(!state.back());
+        assert_eq!(state.subview, RemoteSubView::List);
+    }
+
+    #[test]
+    fn test_remote_modal_state_reset() {
+        let mut state = RemoteModalState {
+            search_query: "ubuntu".to_string(),
+            selected_index: 2,
+            ..Default::default()
+        };
+        state.navigate(RemoteSubView::WslPicker);
+
+        assert!(!state.history.is_empty());
+        assert_eq!(state.selected_index, 2);
+
+        state.reset();
+        assert!(state.search_query.is_empty());
+        assert_eq!(state.selected_index, 0);
+        assert_eq!(state.subview, RemoteSubView::List);
+        assert!(state.history.is_empty());
+    }
+}

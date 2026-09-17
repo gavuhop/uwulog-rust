@@ -76,6 +76,25 @@ Source: "{#BinDir}\uwulog.exe"; DestDir: "{app}\bin"; Flags: ignoreversion
 Source: "{#SourceDir}\packaging\windows\bin\uwulog"; DestDir: "{app}\bin"; Flags: ignoreversion
 ; Assets
 Source: "{#SourceDir}\packaging\assets\icon.ico"; DestDir: "{app}"; Flags: ignoreversion
+; Prebuilt Linux Agents for WSL provisioning (x86_64 & aarch64)
+#if FileExists(SourceDir + "\agents\uwu-agent-x86_64")
+Source: "{#SourceDir}\agents\uwu-agent-x86_64"; DestDir: "{app}\agents"; Flags: ignoreversion
+#endif
+#if FileExists(SourceDir + "\agents\uwu-agent-aarch64")
+Source: "{#SourceDir}\agents\uwu-agent-aarch64"; DestDir: "{app}\agents"; Flags: ignoreversion
+#endif
+#if FileExists(BinDir + "\agents\uwu-agent-x86_64")
+Source: "{#BinDir}\agents\uwu-agent-x86_64"; DestDir: "{app}\agents"; Flags: ignoreversion
+#endif
+#if FileExists(BinDir + "\agents\uwu-agent-aarch64")
+Source: "{#BinDir}\agents\uwu-agent-aarch64"; DestDir: "{app}\agents"; Flags: ignoreversion
+#endif
+#if FileExists(SourceDir + "\target\x86_64-unknown-linux-musl\release\uwu-agent")
+Source: "{#SourceDir}\target\x86_64-unknown-linux-musl\release\uwu-agent"; DestDir: "{app}\agents"; DestName: "uwu-agent-x86_64"; Flags: ignoreversion
+#endif
+#if FileExists(SourceDir + "\target\aarch64-unknown-linux-musl\release\uwu-agent")
+Source: "{#SourceDir}\target\aarch64-unknown-linux-musl\release\uwu-agent"; DestDir: "{app}\agents"; DestName: "uwu-agent-aarch64"; Flags: ignoreversion
+#endif
 
 [Icons]
 Name: "{group}\Uwu Log"; Filename: "{app}\uwu-gui.exe"; IconFilename: "{app}\icon.ico"
