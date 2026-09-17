@@ -12,6 +12,7 @@ members = [
     "crates/cli_agent",
     "crates/ui_tui",
     "crates/ui_gui",
+    "crates/icons",
     "crates/benchmarks",
     "crates/cli",
 ]
@@ -74,4 +75,5 @@ uwu-core-engine = { path = "crates/core_engine" }
 uwu-cli-agent = { path = "crates/cli_agent" }
 uwu-ui-tui = { path = "crates/ui_tui" }
 uwu-ui-gui = { path = "crates/ui_gui" }
+uwu-icons = { path = "crates/icons" }
 uwu-cli = { path = "crates/cli" }

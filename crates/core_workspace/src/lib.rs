@@ -7,6 +7,7 @@ pub use environment::{load_workspace_environment, parse_dot_env, EnvLoadStatus};
 pub use manager::MultiWorkspaceManager;
 pub use remote::{RemoteConnectionOptions, WslConnectionOptions};
 pub use session::{SourceConfig, SourceType, WorkspaceSession};
+pub use uwu_icons::IconName;
 
 #[allow(unused_imports)]
 use anyhow::Context;
@@ -61,9 +62,9 @@ impl WorkspaceLocation {
         }
     }
 
-    pub fn icon(&self) -> &'static str {
+    pub fn icon(&self) -> IconName {
         match self {
-            WorkspaceLocation::Local { .. } => "🖥",
+            WorkspaceLocation::Local { .. } => IconName::Screen,
             WorkspaceLocation::Remote(remote) => remote.icon(),
         }
     }
@@ -183,12 +184,12 @@ impl Workspace {
     }
 
     /// Icon đại diện cho loại workspace (Remote, File, hoặc Process)
-    pub fn icon(&self) -> &'static str {
+    pub fn icon(&self) -> IconName {
         match &self.location {
             WorkspaceLocation::Remote(remote) => remote.icon(),
             WorkspaceLocation::Local { .. } => match self.source_type {
-                SourceType::File => "📄",
-                SourceType::Process => "🖥",
+                SourceType::File => IconName::File,
+                SourceType::Process => IconName::Screen,
             },
         }
     }
@@ -546,7 +547,7 @@ mod tests {
         assert_eq!(deserialized_wsl.source_type, SourceType::Process);
         assert!(deserialized_wsl.location.is_remote());
         assert_eq!(deserialized_wsl.location.display_name(), "Ubuntu");
-        assert_eq!(deserialized_wsl.location.icon(), "🐧");
+        assert_eq!(deserialized_wsl.location.icon(), IconName::Linux);
         assert_eq!(deserialized_wsl.location.working_dir(), "/home/user");
     }
 
@@ -557,7 +558,7 @@ mod tests {
             WorkspaceLocation::local("C:\\Projects\\app"),
             SourceType::Process,
         );
-        assert_eq!(local_ws.icon(), "🖥");
+        assert_eq!(local_ws.icon(), IconName::Screen);
         assert_eq!(local_ws.server_name(), None);
         assert_eq!(local_ws.target_summary(), "C:\\Projects\\app");
         assert!(!local_ws.location.is_remote());
@@ -574,7 +575,7 @@ mod tests {
             )),
             SourceType::Process,
         );
-        assert_eq!(wsl_ws.icon(), "🐧");
+        assert_eq!(wsl_ws.icon(), IconName::Linux);
         assert_eq!(wsl_ws.server_name(), Some("Ubuntu-22.04"));
         assert_eq!(wsl_ws.target_summary(), "/home/user/service (Ubuntu-22.04)");
         assert!(wsl_ws.location.is_remote());
@@ -591,10 +592,10 @@ mod tests {
             WorkspaceLocation::local("C:\\Logs"),
             SourceType::File,
         );
-        assert_eq!(file_ws.icon(), "📄");
+        assert_eq!(file_ws.icon(), IconName::File);
 
         let session = WorkspaceSession::from_workspace(&wsl_ws, 100, 50);
-        assert_eq!(session.icon(), "🐧");
+        assert_eq!(session.icon(), IconName::Linux);
         assert_eq!(
             session.location.as_remote().map(|r| r.display_name()),
             Some("Ubuntu-22.04")

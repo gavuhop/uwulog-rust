@@ -378,7 +378,7 @@ pub fn render_project_picker_popup(
                                     Some(summary.as_str())
                                 };
 
-                                let ws_icon = icon_for_location(&ws.location, ws.source_type);
+                                let ws_icon = ws.icon();
                                 let label =
                                     format_project_display_label(&ws.name, ws.server_name());
                                 let action = render_project_row(

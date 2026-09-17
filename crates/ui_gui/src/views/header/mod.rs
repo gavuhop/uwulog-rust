@@ -91,11 +91,7 @@ pub fn render_header(
                 } else {
                     crate::components::ui::ButtonVariant::Ghost
                 };
-                let remote_icon = match remote {
-                    uwu_core_workspace::remote::RemoteConnectionOptions::Wsl(_) => {
-                        crate::components::ui::IconName::Linux
-                    }
-                };
+                let remote_icon = remote.icon();
                 let remote_resp = crate::components::ui::AppButton::new()
                     .label(remote.display_name())
                     .icon(remote_icon)

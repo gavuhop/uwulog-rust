@@ -1,10 +1,24 @@
 //! The reusable `Icon` component for egui layouts.
-//!
-//! Inspired by Zed's `crates/ui/src/components/icon.rs`.
 
-use super::names::IconName;
-use crate::theme::ActiveTheme;
-use eframe::egui::{self, Color32, Response, Ui, Vec2};
+use crate::vector::get_icon_shapes;
+use crate::IconName;
+use egui::{self, Color32, Rect, Response, Stroke, Ui, Vec2};
+
+/// Renders the vector geometry of an icon directly onto `painter` inside `rect`.
+pub fn paint_icon(name: IconName, painter: &egui::Painter, rect: Rect, color: Color32) {
+    let w = rect.width();
+    let h = rect.height();
+    if w <= 0.0 || h <= 0.0 {
+        return;
+    }
+
+    let stroke_w = ((1.2 / 16.0) * w).clamp(1.0, 2.5);
+    let stroke = Stroke::new(stroke_w, color);
+
+    for shape in get_icon_shapes(name) {
+        shape.paint(painter, rect, stroke, color);
+    }
+}
 
 /// Semantic sizing tokens for UI icons.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -64,6 +78,12 @@ impl Icon {
         }
     }
 
+    /// Static renderer: Renders vector geometry of `name` directly onto `painter` inside `rect`.
+    #[inline]
+    pub fn paint(name: IconName, painter: &egui::Painter, rect: Rect, color: Color32) {
+        paint_icon(name, painter, rect, color);
+    }
+
     pub fn size(mut self, size: impl Into<IconSize>) -> Self {
         self.size = size.into();
         self
@@ -74,10 +94,10 @@ impl Icon {
         self
     }
 
-    /// Renders the icon directly onto an existing `egui::Rect` using the current painter.
-    pub fn paint(&self, ui: &mut Ui, rect: egui::Rect, fallback_color: Color32) {
+    /// Renders this icon instance onto an existing `egui::Rect` using the painter.
+    pub fn paint_at(&self, painter: &egui::Painter, rect: Rect, fallback_color: Color32) {
         let draw_color = self.color.unwrap_or(fallback_color);
-        self.name.paint(ui.painter(), rect, draw_color);
+        paint_icon(self.name, painter, rect, draw_color);
     }
 
     /// Allocates exact size for the icon and renders it within the `Ui`.
@@ -85,8 +105,8 @@ impl Icon {
         let px = self.size.px();
         let (rect, response) = ui.allocate_exact_size(Vec2::splat(px), egui::Sense::hover());
         if ui.is_rect_visible(rect) {
-            let color = self.color.unwrap_or_else(|| ui.app_theme().text.primary);
-            self.name.paint(ui.painter(), rect, color);
+            let color = self.color.unwrap_or_else(|| ui.visuals().text_color());
+            paint_icon(self.name, ui.painter(), rect, color);
         }
         response
     }
