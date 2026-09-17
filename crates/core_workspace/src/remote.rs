@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 /// Cấu hình kết nối Remote (WSL, tương lai: SSH, Dev Container / Docker...)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -121,6 +122,105 @@ impl std::fmt::Display for WslConnectionOptions {
 impl From<WslConnectionOptions> for RemoteConnectionOptions {
     fn from(opts: WslConnectionOptions) -> Self {
         Self::Wsl(opts)
+    }
+}
+
+/// Một dự án từ xa (tương đương `RemoteProject` trong Zed settings)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct RemoteProject {
+    pub path: String,
+}
+
+impl RemoteProject {
+    pub fn new(path: impl Into<String>) -> Self {
+        Self { path: path.into() }
+    }
+}
+
+impl std::fmt::Display for RemoteProject {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.path)
+    }
+}
+
+/// Cấu hình kết nối WSL chứa trực tiếp danh sách project của distro đó (chuẩn `WslConnection` của Zed)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WslConnection {
+    pub distro: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
+    #[serde(default)]
+    pub projects: BTreeSet<RemoteProject>,
+}
+
+impl WslConnection {
+    pub fn new(distro: impl Into<String>) -> Self {
+        Self {
+            distro: distro.into(),
+            user: None,
+            projects: BTreeSet::new(),
+        }
+    }
+
+    pub fn with_user(mut self, user: impl Into<String>) -> Self {
+        self.user = Some(user.into());
+        self
+    }
+
+    /// Thêm project vào server, trả về true nếu project mới được thêm vào tập hợp
+    pub fn add_project(&mut self, path: impl Into<String>) -> bool {
+        self.projects.insert(RemoteProject::new(path))
+    }
+
+    /// Xóa project khỏi server, trả về true nếu project tồn tại và bị xóa
+    pub fn remove_project(&mut self, path: &str) -> bool {
+        self.projects.remove(&RemoteProject::new(path))
+    }
+}
+
+/// Cấu hình kết nối SSH chứa danh sách project (chuẩn `SshConnection` của Zed)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SshConnection {
+    pub host: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nickname: Option<String>,
+    #[serde(default)]
+    pub projects: BTreeSet<RemoteProject>,
+}
+
+impl SshConnection {
+    pub fn new(host: impl Into<String>) -> Self {
+        Self {
+            host: host.into(),
+            port: None,
+            username: None,
+            nickname: None,
+            projects: BTreeSet::new(),
+        }
+    }
+}
+
+/// Enum đa hình đại diện cho một kết nối Server (tương đương `Connection` trong Zed)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ServerConnection {
+    Wsl(WslConnection),
+    Ssh(SshConnection),
+}
+
+impl From<WslConnection> for ServerConnection {
+    fn from(conn: WslConnection) -> Self {
+        Self::Wsl(conn)
+    }
+}
+
+impl From<SshConnection> for ServerConnection {
+    fn from(conn: SshConnection) -> Self {
+        Self::Ssh(conn)
     }
 }
 

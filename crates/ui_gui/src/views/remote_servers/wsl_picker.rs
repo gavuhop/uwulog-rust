@@ -4,8 +4,8 @@ use eframe::egui::{self, Key};
 use uwu_core_workspace::WorkspaceStore;
 use uwu_driver_transport::WslTransport;
 
-use super::helpers::{calculate_adaptive_scroll_height, ListItemRow};
-use super::types::{RemoteNavAction, RemoteSubView};
+use super::helpers::{calculate_adaptive_scroll_height, step_selected_index, ListItemRow};
+use super::types::RemoteNavAction;
 
 /// Subview 2: Chọn WSL Distribution để thêm
 pub fn render_wsl_picker_subview(ui: &mut egui::Ui, store: &mut WorkspaceStore) -> RemoteNavAction {
@@ -67,23 +67,7 @@ pub fn render_wsl_picker_subview(ui: &mut egui::Ui, store: &mut WorkspaceStore) 
         let sel_id = ui.id().with("wsl_picker_selected_index");
         let mut selected_index: usize = ui.data(|d| d.get_temp(sel_id)).unwrap_or(0);
 
-        if key_down {
-            if selected_index + 1 >= detected.len() {
-                selected_index = 0;
-            } else {
-                selected_index += 1;
-            }
-        }
-        if key_up {
-            if selected_index == 0 {
-                selected_index = detected.len().saturating_sub(1);
-            } else {
-                selected_index -= 1;
-            }
-        }
-        if selected_index >= detected.len() {
-            selected_index = 0;
-        }
+        step_selected_index(&mut selected_index, detected.len(), key_down, key_up);
 
         let mut chosen_distro = None;
         if key_enter {
@@ -120,9 +104,9 @@ pub fn render_wsl_picker_subview(ui: &mut egui::Ui, store: &mut WorkspaceStore) 
         ui.data_mut(|d| d.insert_temp(sel_id, selected_index));
 
         if let Some(distro) = chosen_distro {
-            store.add_known_wsl_distro(&distro);
-            // Sau khi thêm server, lưu vào store và chuyển về danh sách server chính (lưu lịch sử)
-            nav_action = RemoteNavAction::Navigate(RemoteSubView::List);
+            store.ensure_wsl_connection(&distro);
+            // Sau khi thêm distro, quay trở về danh sách server chính (pop màn hình WslPicker khỏi history)
+            nav_action = RemoteNavAction::Back;
         }
     }
 

@@ -1,14 +1,12 @@
 use crate::components::ui::{IconName, TextInput};
 use crate::theme::ActiveTheme;
 use eframe::egui::{self, Key};
-use uwu_core_workspace::{
-    extract_project_name, SourceType, Workspace, WorkspaceLocation, WorkspaceStore,
-    WslConnectionOptions,
-};
+use uwu_core_workspace::{Workspace, WorkspaceStore};
 
 use super::helpers::{
-    calculate_adaptive_scroll_height, get_cached_or_read_directories, get_dir_and_suffix,
-    render_empty_state, ListItemRow,
+    anchor_cursor_to_end, calculate_adaptive_scroll_height, create_wsl_workspace,
+    get_cached_or_read_directories, get_dir_and_suffix, join_unix_dir, join_unix_path,
+    render_empty_state, step_selected_index, ListItemRow,
 };
 use super::types::{FolderPickerState, RemoteNavAction};
 
@@ -53,16 +51,7 @@ pub fn render_folder_picker_subview(
     // Neo con trỏ text vào cuối chuỗi (chuẩn Zed)
     if folder_state.focus_input || key_down || key_up {
         folder_state.focus_input = false;
-        let mut text_state =
-            egui::text_edit::TextEditState::load(ui.ctx(), input_id).unwrap_or_default();
-        let char_count = folder_state.path_query.chars().count();
-        text_state
-            .cursor
-            .set_char_range(Some(egui::text::CCursorRange::one(
-                egui::text::CCursor::new(char_count),
-            )));
-        text_state.store(ui.ctx(), input_id);
-        ui.ctx().memory_mut(|m| m.request_focus(input_id));
+        anchor_cursor_to_end(ui.ctx(), input_id, &folder_state.path_query);
     }
 
     let prev_query = folder_state.path_query.clone();
@@ -110,30 +99,15 @@ pub fn render_folder_picker_subview(
         matched_folders.len()
     };
 
-    if total_items > 0 && folder_state.selected_index >= total_items {
-        folder_state.selected_index = 0;
-    }
+    step_selected_index(
+        &mut folder_state.selected_index,
+        total_items,
+        key_down,
+        key_up,
+    );
 
     let mut action_open_dir: Option<String> = None;
     let mut action_enter_folder: Option<String> = None;
-
-    // Điều hướng cuộn vòng (wrap-around) khi tới cực hạn (chuẩn Zed)
-    if total_items > 0 {
-        if key_down {
-            if folder_state.selected_index + 1 >= total_items {
-                folder_state.selected_index = 0;
-            } else {
-                folder_state.selected_index += 1;
-            }
-        }
-        if key_up {
-            if folder_state.selected_index == 0 {
-                folder_state.selected_index = total_items - 1;
-            } else {
-                folder_state.selected_index -= 1;
-            }
-        }
-    }
 
     // Phím Tab: Điền thư mục đang chọn vào đường dẫn (chuẩn Zed)
     if key_tab {
@@ -157,20 +131,10 @@ pub fn render_folder_picker_subview(
             if folder_state.selected_index == 0 {
                 action_open_dir = Some(dir.clone());
             } else if let Some(folder) = matched_folders.get(folder_state.selected_index - 1) {
-                let full_path = if dir.ends_with('/') {
-                    format!("{}{}", dir, folder)
-                } else {
-                    format!("{}/{}", dir, folder)
-                };
-                action_open_dir = Some(full_path);
+                action_open_dir = Some(join_unix_path(&dir, folder));
             }
         } else if let Some(folder) = matched_folders.get(folder_state.selected_index) {
-            let full_path = if dir.ends_with('/') {
-                format!("{}{}", dir, folder)
-            } else {
-                format!("{}/{}", dir, folder)
-            };
-            action_open_dir = Some(full_path);
+            action_open_dir = Some(join_unix_path(&dir, folder));
         } else if !folder_state.path_query.trim().is_empty() {
             action_open_dir = Some(folder_state.path_query.trim().to_string());
         }
@@ -229,12 +193,7 @@ pub fn render_folder_picker_subview(
                     resp.scroll_to_me(Some(egui::Align::Center));
                 }
                 if resp.clicked() {
-                    let full_path = if dir.ends_with('/') {
-                        format!("{}{}", dir, folder)
-                    } else {
-                        format!("{}/{}", dir, folder)
-                    };
-                    action_open_dir = Some(full_path);
+                    action_open_dir = Some(join_unix_path(&dir, folder));
                 }
                 current_item_ix += 1;
                 ui.add_space(1.0);
@@ -247,37 +206,12 @@ pub fn render_folder_picker_subview(
 
     // Thực thi mở thư mục được chọn
     if let Some(target_dir) = action_open_dir {
-        let clean_path = if target_dir.trim().is_empty() {
-            "/".to_string()
-        } else {
-            target_dir.trim().to_string()
-        };
-
-        let folder_name = extract_project_name(&clean_path);
-        let project_name = if clean_path == "/" || clean_path == "~" {
-            folder_state.distro.clone()
-        } else {
-            folder_name
-        };
-
-        let ws = Workspace::new(
-            project_name,
-            WorkspaceLocation::remote(WslConnectionOptions::new(
-                folder_state.distro.clone(),
-                clean_path,
-            )),
-            SourceType::Process,
-        );
-
-        store.add_known_wsl_distro(&folder_state.distro);
+        let ws = create_wsl_workspace(&folder_state.distro, &target_dir);
+        store.add_remote_project_to_server(&folder_state.distro, &target_dir);
         store.add_or_update(ws.clone());
         selected_workspace = Some(ws);
     } else if let Some(folder) = action_enter_folder {
-        let new_dir = if dir.ends_with('/') {
-            format!("{}{}/", dir, folder)
-        } else {
-            format!("{}/{}/", dir, folder)
-        };
+        let new_dir = join_unix_dir(&dir, &folder);
         folder_state.current_dir = new_dir.clone();
         folder_state.path_query = new_dir.clone();
         folder_state.entries = get_cached_or_read_directories(&folder_state.distro, &new_dir);

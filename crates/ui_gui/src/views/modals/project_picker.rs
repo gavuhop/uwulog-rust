@@ -3,19 +3,7 @@ use crate::components::ui::IconName;
 use crate::theme::ActiveTheme;
 use eframe::egui::{self, Color32, CornerRadius, Rect};
 use std::collections::HashSet;
-use uwu_core_workspace::remote::RemoteConnectionOptions;
 use uwu_core_workspace::{SourceType, Workspace, WorkspaceLocation, WorkspaceStore};
-
-/// Xác định vector icon tương ứng với cấu hình và vị trí của workspace
-pub fn icon_for_location(location: &WorkspaceLocation, source_type: SourceType) -> IconName {
-    match location {
-        WorkspaceLocation::Remote(RemoteConnectionOptions::Wsl(_)) => IconName::Linux,
-        WorkspaceLocation::Local { .. } => match source_type {
-            SourceType::File => IconName::File,
-            SourceType::Process => IconName::Screen,
-        },
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct ProjectPickerSessionInfo {
