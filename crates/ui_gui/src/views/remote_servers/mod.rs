@@ -16,7 +16,7 @@ pub use wsl_picker::render_wsl_picker_subview;
 
 use crate::actions::AppAction;
 use crate::overlay::RemoteModalPlacement;
-use eframe::egui::{self, Id};
+use eframe::egui;
 use uwu_core_workspace::{Workspace, WorkspaceStore};
 
 /// Render modal chọn Remote Projects theo thiết kế chuẩn của Zed
@@ -31,7 +31,7 @@ pub fn render_remote_servers_modal(
         return;
     }
 
-    let state_id = Id::new("remote_servers_modal_state");
+    let state_id = egui::Id::new("remote_servers_modal_state");
     let mut state: RemoteModalState = ctx.data(|d| d.get_temp(state_id)).unwrap_or_default();
 
     let mut selected_workspace: Option<Workspace> = None;
@@ -41,6 +41,7 @@ pub fn render_remote_servers_modal(
         .placement(placement)
         .width(520.0)
         .max_height(480.0)
+        .close_on_escape(false)
         .show(ctx, |ui| match &mut state.subview {
             RemoteSubView::List => {
                 let (action, ws) = render_remote_list_subview(
@@ -590,7 +591,7 @@ mod tests {
         // Frame 3: TopLeft placement with server_button_rect in ctx.data
         let btn_rect =
             egui::Rect::from_min_size(egui::Pos2::new(42.0, 4.0), egui::vec2(100.0, 24.0));
-        ctx.data_mut(|d| d.insert_temp(Id::new("server_button_rect"), btn_rect));
+        ctx.data_mut(|d| d.insert_temp(egui::Id::new("server_button_rect"), btn_rect));
         let mut output3 = ctx.run_ui(egui::RawInput::default(), |ui| {
             let closed = RemotePickerContainer::new("test_remote_picker_top_left")
                 .placement(RemoteModalPlacement::TopLeft)

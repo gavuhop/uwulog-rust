@@ -176,6 +176,161 @@ async fn test_app_action_remote_servers_modal() {
 }
 
 #[tokio::test]
+async fn test_remote_servers_modal_escape_back_navigation() {
+    use crate::views::remote_servers::render_remote_servers_modal;
+    use crate::views::remote_servers::types::{
+        FolderPickerState, RemoteModalState, RemoteServerKind, RemoteSubView, ServerOptionsState,
+    };
+
+    let ctx = egui::Context::default();
+    let state_id = egui::Id::new("remote_servers_modal_state");
+    let mut store = uwu_core_workspace::WorkspaceStore::default();
+
+    // 1. Khởi tạo state đang ở WslPicker (đã navigate từ List)
+    let mut state = RemoteModalState::default();
+    state.navigate(RemoteSubView::WslPicker);
+    ctx.data_mut(|d| d.insert_temp(state_id, state));
+
+    // 2. Mô phỏng phím Escape khi đang ở WslPicker
+    let mut esc_input = egui::RawInput::default();
+    esc_input.events.push(egui::Event::Key {
+        key: egui::Key::Escape,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::default(),
+    });
+
+    let mut closed_dispatched = false;
+    let mut out1 = ctx.run_ui(esc_input, |ui| {
+        render_remote_servers_modal(
+            ui.ctx(),
+            true,
+            RemoteModalPlacement::TopCenter,
+            &mut store,
+            &mut |action| {
+                if matches!(action, AppAction::CloseRemoteServersModal) {
+                    closed_dispatched = true;
+                }
+            },
+        );
+    });
+    out1.textures_delta.clear();
+
+    // Modal KHÔNG được đóng, mà phải quay về List!
+    assert!(!closed_dispatched);
+    let state_after: RemoteModalState = ctx.data(|d| d.get_temp(state_id)).unwrap();
+    assert_eq!(state_after.subview, RemoteSubView::List);
+    assert!(state_after.history.is_empty());
+
+    // 3. Khởi tạo state đang ở FolderPicker (đã navigate từ List)
+    let mut state = RemoteModalState::default();
+    state.navigate(RemoteSubView::FolderPicker(FolderPickerState::new(
+        "Ubuntu",
+        "/home",
+        vec![],
+    )));
+    ctx.data_mut(|d| d.insert_temp(state_id, state));
+
+    let mut esc_input = egui::RawInput::default();
+    esc_input.events.push(egui::Event::Key {
+        key: egui::Key::Escape,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::default(),
+    });
+
+    let mut closed_dispatched = false;
+    let mut out2 = ctx.run_ui(esc_input, |ui| {
+        render_remote_servers_modal(
+            ui.ctx(),
+            true,
+            RemoteModalPlacement::TopCenter,
+            &mut store,
+            &mut |action| {
+                if matches!(action, AppAction::CloseRemoteServersModal) {
+                    closed_dispatched = true;
+                }
+            },
+        );
+    });
+    out2.textures_delta.clear();
+
+    // Modal KHÔNG được đóng, mà phải quay về List!
+    assert!(!closed_dispatched);
+    let state_after: RemoteModalState = ctx.data(|d| d.get_temp(state_id)).unwrap();
+    assert_eq!(state_after.subview, RemoteSubView::List);
+
+    // 4. Khởi tạo state đang ở ServerOptions (đã navigate từ List)
+    let mut state = RemoteModalState::default();
+    state.navigate(RemoteSubView::ServerOptions(ServerOptionsState {
+        server: RemoteServerKind::Wsl("Ubuntu".to_string()),
+        selected_index: 0,
+        copied_flash_time: None,
+    }));
+    ctx.data_mut(|d| d.insert_temp(state_id, state));
+
+    let mut esc_input = egui::RawInput::default();
+    esc_input.events.push(egui::Event::Key {
+        key: egui::Key::Escape,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::default(),
+    });
+
+    let mut closed_dispatched = false;
+    let mut out3 = ctx.run_ui(esc_input, |ui| {
+        render_remote_servers_modal(
+            ui.ctx(),
+            true,
+            RemoteModalPlacement::TopCenter,
+            &mut store,
+            &mut |action| {
+                if matches!(action, AppAction::CloseRemoteServersModal) {
+                    closed_dispatched = true;
+                }
+            },
+        );
+    });
+    out3.textures_delta.clear();
+
+    // Modal KHÔNG được đóng, mà phải quay về List!
+    assert!(!closed_dispatched);
+    let state_after: RemoteModalState = ctx.data(|d| d.get_temp(state_id)).unwrap();
+    assert_eq!(state_after.subview, RemoteSubView::List);
+
+    // 5. Khi đang ở List (history rỗng), nhấn Escape -> phải dispatch CloseRemoteServersModal!
+    let mut esc_input = egui::RawInput::default();
+    esc_input.events.push(egui::Event::Key {
+        key: egui::Key::Escape,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::default(),
+    });
+
+    let mut closed_dispatched = false;
+    let mut out4 = ctx.run_ui(esc_input, |ui| {
+        render_remote_servers_modal(
+            ui.ctx(),
+            true,
+            RemoteModalPlacement::TopCenter,
+            &mut store,
+            &mut |action| {
+                if matches!(action, AppAction::CloseRemoteServersModal) {
+                    closed_dispatched = true;
+                }
+            },
+        );
+    });
+    out4.textures_delta.clear();
+
+    assert!(closed_dispatched);
+}
+
+#[tokio::test]
 async fn test_close_and_switch_session_behaviors() {
     let mut app = create_test_app();
     let ws1 = Workspace::new(
