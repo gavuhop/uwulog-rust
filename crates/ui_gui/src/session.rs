@@ -333,6 +333,48 @@ impl GuiSession {
                 self.focus_in_main_and_clear_filter();
                 true
             }
+            AppAction::CommitSearch => {
+                let q = self.view.search.query.clone();
+                self.view.search.history.record(&q);
+                self.view.search.history.mark_recorded();
+                true
+            }
+            AppAction::AutocompleteNext
+                if self.view.search.autocomplete.is_open
+                    && !self.view.search.autocomplete.suggestions.is_empty() =>
+            {
+                self.view.search.autocomplete.selected_index =
+                    (self.view.search.autocomplete.selected_index + 1)
+                        % self.view.search.autocomplete.suggestions.len();
+                true
+            }
+            AppAction::AutocompletePrev
+                if self.view.search.autocomplete.is_open
+                    && !self.view.search.autocomplete.suggestions.is_empty() =>
+            {
+                if self.view.search.autocomplete.selected_index == 0 {
+                    self.view.search.autocomplete.selected_index =
+                        self.view.search.autocomplete.suggestions.len() - 1;
+                } else {
+                    self.view.search.autocomplete.selected_index -= 1;
+                }
+                true
+            }
+            AppAction::AutocompleteConfirm if self.view.search.autocomplete.is_open => {
+                if let Some(item) = self
+                    .view
+                    .search
+                    .autocomplete
+                    .suggestions
+                    .get(self.view.search.autocomplete.selected_index)
+                    .cloned()
+                {
+                    self.apply_autocomplete_suggestion(&item);
+                    true
+                } else {
+                    false
+                }
+            }
             _ => false,
         }
     }

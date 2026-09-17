@@ -23,6 +23,7 @@ use uwu_core_workspace::{
 pub struct UwuGuiApp {
     pub workspaces: WorkspaceManager,
     pub overlays: OverlayManager,
+    pub keymap: crate::keymap::KeymapManager,
     pub rt: Handle,
     pub prev_screen_width: f32,
     pub should_quit: bool,
@@ -45,6 +46,62 @@ impl UwuGuiApp {
     #[inline]
     pub fn is_overlay_open(&self, layer: OverlayLayer) -> bool {
         self.overlays.is_open(layer)
+    }
+
+    /// Tự động suy luận KeyContext hiện tại dựa trên Overlay Stack, Autocomplete Popup và trạng thái Focus (chuẩn Zed Dispatch Tree)
+    pub fn resolve_active_key_context(&self, ctx: &egui::Context) -> crate::keymap::KeyContext {
+        if self.is_overlay_open(OverlayLayer::RemoteServersModal) {
+            crate::keymap::KeyContext::RemoteServers
+        } else if self.active_session().view.search.autocomplete.is_open {
+            crate::keymap::KeyContext::Autocomplete
+        } else if self.is_overlay_open(OverlayLayer::LaunchModal)
+            || self.is_overlay_open(OverlayLayer::AboutModal)
+            || self.is_overlay_open(OverlayLayer::ColumnsModal)
+            || self.is_overlay_open(OverlayLayer::ProjectPicker)
+        {
+            crate::keymap::KeyContext::Modal
+        } else if ctx.memory(|m| m.has_focus(egui::Id::new("search_query_input"))) {
+            crate::keymap::KeyContext::SearchInput
+        } else {
+            crate::keymap::KeyContext::Global
+        }
+    }
+
+    /// Bộ điều phối phím tắt tập trung tại đầu mỗi Frame (Centralized Key Event Pipeline)
+    pub fn handle_keybindings(
+        &mut self,
+        ctx: &egui::Context,
+        dispatch: &mut impl FnMut(AppAction),
+    ) {
+        let active_context = self.resolve_active_key_context(ctx);
+        if let Some(key_action) = self.keymap.process_input(ctx, active_context) {
+            match key_action {
+                crate::keymap::KeyAction::ZoomIn => {
+                    let current = ctx.zoom_factor();
+                    ctx.set_zoom_factor((current + 0.1).min(2.5));
+                }
+                crate::keymap::KeyAction::ZoomOut => {
+                    let current = ctx.zoom_factor();
+                    ctx.set_zoom_factor((current - 0.1).max(0.6));
+                }
+                crate::keymap::KeyAction::ResetZoom => {
+                    ctx.set_zoom_factor(1.0);
+                }
+                _ => {
+                    if let Some(app_action) = key_action.to_app_action() {
+                        dispatch(app_action);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Lấy nhãn phím tắt định dạng thân thiện cho UI (như "Alt+P", "Ctrl+PageUp")
+    #[inline]
+    pub fn keystroke_text_for(&self, action: &crate::keymap::KeyAction) -> String {
+        self.keymap
+            .get_label_for_action(action, crate::keymap::KeyContext::Global)
+            .unwrap_or_default()
     }
 
     /// Đẩy một layer mới vào đỉnh ngăn xếp nếu chưa có
@@ -239,9 +296,15 @@ impl UwuGuiApp {
         let workspaces = WorkspaceManager::new(initial_gui_session, store);
         let overlays = OverlayManager::new();
 
+        let mut keymap = crate::keymap::KeymapManager::new();
+        // Đảm bảo file cấu hình mẫu và nạp cấu hình phím tắt của người dùng nếu có
+        let _ = crate::keymap::ensure_sample_config_file(None);
+        let _ = crate::keymap::load_user_keymap(&mut keymap, None);
+
         let mut app = Self {
             workspaces,
             overlays,
+            keymap,
             rt,
             prev_screen_width: 0.0,
             should_quit: false,

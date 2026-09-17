@@ -75,8 +75,7 @@ impl Keystroke {
         let mut mac_cmd = false;
 
         // Xử lý trường hợp đặc biệt: chuỗi kết thúc bằng dấu trừ (như "ctrl--", "alt--", hoặc chỉ "-")
-        let (tokens, key_part) = if trimmed.ends_with("--") {
-            let prefix = &trimmed[..trimmed.len() - 2];
+        let (tokens, key_part) = if let Some(prefix) = trimmed.strip_suffix("--") {
             let parts: Vec<&str> = prefix.split('-').filter(|p| !p.is_empty()).collect();
             (parts, "-")
         } else if trimmed == "-" {

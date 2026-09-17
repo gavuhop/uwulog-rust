@@ -30,47 +30,8 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
         pending_actions.push(action);
     };
 
-    let is_remote_open = app.is_overlay_open(crate::app::OverlayLayer::RemoteServersModal);
-
-    // Phím Escape: Đóng lớp giao diện trên cùng theo thứ tự ngăn xếp (Chain of Responsibility / Pop Stack)
-    // Lưu ý: Nếu Remote Servers modal đang mở, modal này tự quản lý Back Stack nội bộ và phím Escape
-    if !is_remote_open && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-        dispatch(crate::actions::AppAction::DismissTopLayer);
-    }
-
-    // Phím tắt mở Project Picker (Alt+P hoặc Ctrl+Alt+O)
-    if ctx.input(|i| i.modifiers.alt && i.key_pressed(egui::Key::P))
-        || ctx.input(|i| i.modifiers.command && i.modifiers.alt && i.key_pressed(egui::Key::O))
-    {
-        dispatch(crate::actions::AppAction::ToggleProjectPicker);
-    }
-
-    // Phím tắt chuyển project trong This Window (Ctrl+PageUp / Ctrl+PageDown)
-    if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::PageUp)) {
-        dispatch(crate::actions::AppAction::CycleSession(false));
-    }
-    if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::PageDown)) {
-        dispatch(crate::actions::AppAction::CycleSession(true));
-    }
-
-    // Phím tắt Zoom UI (Ctrl + '+' / '=' phóng to, Ctrl + '-' thu nhỏ, Ctrl + '0' reset 100%)
-    let (zoom_in, zoom_out, zoom_reset) = ctx.input(|i| {
-        let cmd = i.modifiers.command;
-        (
-            cmd && (i.key_pressed(egui::Key::Plus) || i.key_pressed(egui::Key::Equals)),
-            cmd && i.key_pressed(egui::Key::Minus),
-            cmd && i.key_pressed(egui::Key::Num0),
-        )
-    });
-    if zoom_in {
-        let current = ctx.zoom_factor();
-        ctx.set_zoom_factor((current + 0.1).min(2.5));
-    } else if zoom_out {
-        let current = ctx.zoom_factor();
-        ctx.set_zoom_factor((current - 0.1).max(0.6));
-    } else if zoom_reset {
-        ctx.set_zoom_factor(1.0);
-    }
+    // Điều phối phím tắt tập trung qua KeymapManager (Zed-style Frame Dispatch Pipeline)
+    app.handle_keybindings(ctx, &mut dispatch);
 
     let is_launch_open = app.is_overlay_open(crate::overlay::OverlayLayer::LaunchModal);
     let is_about_open = app.is_overlay_open(crate::overlay::OverlayLayer::AboutModal);
@@ -94,12 +55,14 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
         })
         .collect();
 
+    let project_shortcut = app.keystroke_text_for(&crate::keymap::KeyAction::ToggleProjectPicker);
     let mut header_cx = header::HeaderContext {
         overlay_stack: &mut app.overlays.stack,
         store: &app.workspaces.store,
         sessions: &session_summaries,
         active_index,
         project_search_query: &mut app.overlays.project_search_query,
+        project_shortcut: &project_shortcut,
     };
 
     let active_session = &mut app.workspaces.sessions[active_index];
