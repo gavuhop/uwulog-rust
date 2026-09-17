@@ -36,3 +36,5 @@ raw-window-handle = "0.6"
 
 [build-dependencies]
 winresource = "0.1.31"
+roxmltree = "0.21"
+svgtypes = "0.16"

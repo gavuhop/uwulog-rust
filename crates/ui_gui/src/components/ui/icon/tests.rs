@@ -90,3 +90,109 @@ fn test_icon_sizes() {
     assert_eq!(IconSize::XLarge.px(), 24.0);
     assert_eq!(IconSize::Custom(18.5).px(), 18.5);
 }
+
+#[test]
+fn test_all_icon_variants_have_compiled_vector_shapes() {
+    for icon in IconName::ALL {
+        let shapes = icon.vector_shapes();
+        assert!(
+            !shapes.is_empty(),
+            "Icon {icon:?} must have at least one compiled VectorShape"
+        );
+
+        for (idx, shape) in shapes.iter().enumerate() {
+            match shape {
+                crate::components::ui::icon::VectorShape::StrokedPath {
+                    points,
+                    stroke_width,
+                }
+                | crate::components::ui::icon::VectorShape::StrokedClosedPath {
+                    points,
+                    stroke_width,
+                } => {
+                    assert!(
+                        points.len() >= 2,
+                        "Icon {icon:?} shape #{idx} path must have >= 2 points"
+                    );
+                    assert!(stroke_width.is_finite() && *stroke_width > 0.0);
+                    for pt in *points {
+                        assert!(
+                            pt.0.is_finite() && pt.1.is_finite(),
+                            "Icon {icon:?} shape #{idx} point {pt:?} must be finite"
+                        );
+                    }
+                }
+                crate::components::ui::icon::VectorShape::FilledPolygon { points, opacity } => {
+                    assert!(
+                        points.len() >= 3,
+                        "Icon {icon:?} shape #{idx} polygon must have >= 3 points"
+                    );
+                    assert!(opacity.is_finite() && *opacity > 0.0);
+                    for pt in *points {
+                        assert!(
+                            pt.0.is_finite() && pt.1.is_finite(),
+                            "Icon {icon:?} shape #{idx} point {pt:?} must be finite"
+                        );
+                    }
+                }
+                crate::components::ui::icon::VectorShape::StrokedCircle {
+                    cx,
+                    cy,
+                    r,
+                    stroke_width,
+                } => {
+                    assert!(cx.is_finite() && cy.is_finite() && r.is_finite() && *r > 0.0);
+                    assert!(stroke_width.is_finite() && *stroke_width > 0.0);
+                }
+                crate::components::ui::icon::VectorShape::FilledCircle { cx, cy, r, opacity } => {
+                    assert!(cx.is_finite() && cy.is_finite() && r.is_finite() && *r > 0.0);
+                    assert!(opacity.is_finite() && *opacity > 0.0);
+                }
+                crate::components::ui::icon::VectorShape::StrokedRect {
+                    min_x,
+                    min_y,
+                    max_x,
+                    max_y,
+                    corner_r,
+                    stroke_width,
+                } => {
+                    assert!(
+                        min_x.is_finite()
+                            && min_y.is_finite()
+                            && max_x.is_finite()
+                            && max_y.is_finite()
+                            && corner_r.is_finite()
+                    );
+                    assert!(stroke_width.is_finite() && *stroke_width > 0.0);
+                }
+                crate::components::ui::icon::VectorShape::FilledRect {
+                    min_x,
+                    min_y,
+                    max_x,
+                    max_y,
+                    corner_r,
+                    opacity,
+                } => {
+                    assert!(
+                        min_x.is_finite()
+                            && min_y.is_finite()
+                            && max_x.is_finite()
+                            && max_y.is_finite()
+                            && corner_r.is_finite()
+                    );
+                    assert!(opacity.is_finite() && *opacity > 0.0);
+                }
+                crate::components::ui::icon::VectorShape::LineSegment {
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                    stroke_width,
+                } => {
+                    assert!(x1.is_finite() && y1.is_finite() && x2.is_finite() && y2.is_finite());
+                    assert!(stroke_width.is_finite() && *stroke_width > 0.0);
+                }
+            }
+        }
+    }
+}

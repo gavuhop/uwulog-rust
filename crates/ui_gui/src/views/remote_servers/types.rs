@@ -1,3 +1,4 @@
+use crate::components::ui::IconName;
 use std::time::Instant;
 
 /// Trạng thái của hộp thoại chọn thư mục WSL/Remote
@@ -32,11 +33,11 @@ impl RemoteServerKind {
         }
     }
 
-    pub fn icon(&self) -> &'static str {
+    pub fn icon(&self) -> IconName {
         match self {
-            RemoteServerKind::Wsl(_) => "🐧",
-            RemoteServerKind::Ssh { .. } => "🖥",
-            RemoteServerKind::DevContainer(_) => "📦",
+            RemoteServerKind::Wsl(_) => IconName::Linux,
+            RemoteServerKind::Ssh { .. } => IconName::Server,
+            RemoteServerKind::DevContainer(_) => IconName::Box,
         }
     }
 }
@@ -57,7 +58,7 @@ pub enum ServerOptionAction {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerOptionItem {
     pub action: ServerOptionAction,
-    pub icon: &'static str,
+    pub icon: IconName,
     pub label: String,
     pub end_slot: Option<String>,
     pub is_destructive: bool,
@@ -70,14 +71,14 @@ impl ServerOptionItem {
             RemoteServerKind::Wsl(_) => vec![
                 Self {
                     action: ServerOptionAction::RemoveServer,
-                    icon: "🗑",
+                    icon: IconName::Trash,
                     label: "Remove Distro".to_string(),
                     end_slot: None,
                     is_destructive: true,
                 },
                 Self {
                     action: ServerOptionAction::GoBack,
-                    icon: "←",
+                    icon: IconName::ArrowLeft,
                     label: "Go Back".to_string(),
                     end_slot: None,
                     is_destructive: false,
@@ -92,28 +93,28 @@ impl ServerOptionItem {
                 vec![
                     Self {
                         action: ServerOptionAction::EditNickname,
-                        icon: "✏",
+                        icon: IconName::Pencil,
                         label: nickname_label.to_string(),
                         end_slot: None,
                         is_destructive: false,
                     },
                     Self {
                         action: ServerOptionAction::CopyAddress(host.clone()),
-                        icon: "📋",
+                        icon: IconName::Copy,
                         label: "Copy Server Address".to_string(),
                         end_slot: Some(host.clone()),
                         is_destructive: false,
                     },
                     Self {
                         action: ServerOptionAction::RemoveServer,
-                        icon: "🗑",
+                        icon: IconName::Trash,
                         label: "Remove Server".to_string(),
                         end_slot: None,
                         is_destructive: true,
                     },
                     Self {
                         action: ServerOptionAction::GoBack,
-                        icon: "←",
+                        icon: IconName::ArrowLeft,
                         label: "Go Back".to_string(),
                         end_slot: None,
                         is_destructive: false,
@@ -123,14 +124,14 @@ impl ServerOptionItem {
             RemoteServerKind::DevContainer(_) => vec![
                 Self {
                     action: ServerOptionAction::RemoveServer,
-                    icon: "🗑",
+                    icon: IconName::Trash,
                     label: "Remove Dev Container".to_string(),
                     end_slot: None,
                     is_destructive: true,
                 },
                 Self {
                     action: ServerOptionAction::GoBack,
-                    icon: "←",
+                    icon: IconName::ArrowLeft,
                     label: "Go Back".to_string(),
                     end_slot: None,
                     is_destructive: false,
