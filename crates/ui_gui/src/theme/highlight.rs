@@ -168,7 +168,7 @@ mod tests {
         let job = create_highlighted_layout_job_with_theme(
             "this is a warning and ERROR message",
             theme.text.primary,
-            FontId::monospace(11.5),
+            FontId::monospace(12.0),
             &terms,
             &theme,
         );

@@ -598,7 +598,7 @@ impl<'a> TabButton<'a> {
             self.label.to_string()
         };
 
-        let font_id = egui::FontId::proportional(11.5);
+        let font_id = egui::FontId::proportional(11.0);
         let layout_galley =
             ui.painter()
                 .layout_no_wrap(title.clone(), font_id.clone(), Color32::PLACEHOLDER);

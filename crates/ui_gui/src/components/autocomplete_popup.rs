@@ -110,7 +110,7 @@ pub fn render_autocomplete_popup(ctx: &egui::Context, session: &mut GuiSession, 
                             Pos2::new(left_x, center_y),
                             egui::Align2::LEFT_CENTER,
                             item.op_symbol,
-                            FontId::monospace(11.5),
+                            FontId::monospace(11.0),
                             theme.text.accent,
                         );
                         left_x += 24.0;
@@ -131,7 +131,7 @@ pub fn render_autocomplete_popup(ctx: &egui::Context, session: &mut GuiSession, 
                         Pos2::new(right_x, center_y),
                         egui::Align2::RIGHT_CENTER,
                         &item.example_syntax,
-                        FontId::monospace(11.5),
+                        FontId::monospace(11.0),
                         theme.text.muted,
                     );
                 }

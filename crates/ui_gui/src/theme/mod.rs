@@ -223,9 +223,9 @@ mod tests {
                 let text_styles = &ui.style().text_styles;
                 assert_eq!(
                     text_styles.get(&egui::TextStyle::Monospace).unwrap().size,
-                    12.5
+                    12.0
                 );
-                assert_eq!(text_styles.get(&egui::TextStyle::Body).unwrap().size, 12.5);
+                assert_eq!(text_styles.get(&egui::TextStyle::Body).unwrap().size, 12.0);
                 assert_eq!(
                     text_styles.get(&egui::TextStyle::Heading).unwrap().size,
                     15.0

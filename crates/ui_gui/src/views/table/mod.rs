@@ -96,7 +96,7 @@ pub fn render_log_table(
     let ts_text_width = ui.fonts_mut(|f| {
         let job = egui::text::LayoutJob::simple_singleline(
             sample_ts.to_string(),
-            egui::FontId::monospace(11.5),
+            egui::FontId::monospace(12.0),
             egui::Color32::WHITE,
         );
         f.layout_job(job).size().x
@@ -118,6 +118,7 @@ pub fn render_log_table(
                 .id_salt(format!("{}_{}", salt_prefix, table_salt))
                 .striped(false)
                 .resizable(true)
+                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                 .auto_shrink([false, false]);
 
             for col in &visible_cols {
