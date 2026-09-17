@@ -82,8 +82,7 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
         .sessions
         .iter()
         .map(|s| {
-            let icon =
-                modals::icon_for_location(&s.session.location, s.session.source_config.source_type);
+            let icon = s.session.icon();
             modals::ProjectPickerSessionInfo {
                 id: s.session.id,
                 name: s.session.name.clone(),

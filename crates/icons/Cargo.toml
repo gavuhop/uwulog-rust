@@ -1,0 +1,12 @@
+[package]
+name = "uwu-icons"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true }
+egui = { workspace = true }
+
+[build-dependencies]
+roxmltree = "0.21"
+svgtypes = "0.16"

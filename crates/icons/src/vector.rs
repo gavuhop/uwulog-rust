@@ -2,8 +2,8 @@
 //!
 //! Generated at compile-time by `build.rs` from `assets/icons/*.svg`.
 
-use super::names::IconName;
-use eframe::egui::{self, Color32, CornerRadius, Pos2, Rect, Stroke};
+use crate::IconName;
+use egui::{self, Color32, CornerRadius, Pos2, Rect, Stroke};
 
 /// A compiled vector shape primitive representing an icon path or geometric element.
 #[derive(Debug, Clone, Copy, PartialEq)]

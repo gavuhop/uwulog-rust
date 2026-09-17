@@ -4621,6 +4621,7 @@ dependencies = [
  "uwu-core-schema",
  "uwu-driver-sources",
  "uwu-driver-transport",
+ "uwu-icons",
 ]
 
 [[package]]
@@ -4659,6 +4660,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "uwu-icons"
+version = "0.1.0"
+dependencies = [
+ "egui",
+ "roxmltree",
+ "serde",
+ "svgtypes",
+]
+
+[[package]]
 name = "uwu-ui-gui"
 version = "0.1.0"
 dependencies = [
@@ -4670,10 +4681,8 @@ dependencies = [
  "egui_extras",
  "raw-window-handle",
  "rfd",
- "roxmltree",
  "serde",
  "serde_json",
- "svgtypes",
  "tokio",
  "uuid",
  "uwu-core-engine",
@@ -4682,6 +4691,7 @@ dependencies = [
  "uwu-core-workspace",
  "uwu-driver-sources",
  "uwu-driver-transport",
+ "uwu-icons",
  "windows-sys 0.59.0",
  "winresource",
 ]

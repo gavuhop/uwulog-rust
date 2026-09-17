@@ -38,9 +38,9 @@ impl RemoteConnectionOptions {
     }
 
     /// Biểu tượng đại diện cho môi trường remote
-    pub fn icon(&self) -> &'static str {
+    pub fn icon(&self) -> uwu_icons::IconName {
         match self {
-            RemoteConnectionOptions::Wsl(_) => "🐧",
+            RemoteConnectionOptions::Wsl(_) => uwu_icons::IconName::Linux,
         }
     }
 
@@ -59,8 +59,7 @@ impl RemoteConnectionOptions {
             format!("{} ({})", dir, self.display_name())
         } else {
             format!(
-                "{} {} ({})",
-                self.icon(),
+                "{} ({})",
                 self.connection_type().to_uppercase(),
                 self.display_name()
             )

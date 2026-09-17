@@ -407,12 +407,12 @@ impl WorkspaceSession {
     }
 
     /// Icon đại diện cho nguồn log của session (Remote, File, Command)
-    pub fn icon(&self) -> &'static str {
+    pub fn icon(&self) -> uwu_icons::IconName {
         match &self.location {
             WorkspaceLocation::Remote(remote) => remote.icon(),
             WorkspaceLocation::Local { .. } => match self.source_config.source_type {
-                SourceType::File => "📄",
-                SourceType::Process => "🖥",
+                SourceType::File => uwu_icons::IconName::File,
+                SourceType::Process => uwu_icons::IconName::Screen,
             },
         }
     }
