@@ -1,5 +1,6 @@
+use crate::keymap::{KeyAction, KeyContext, KeymapManager};
 use crate::theme::ActiveTheme;
-use eframe::egui::{self, Key};
+use eframe::egui;
 use uwu_core_workspace::WorkspaceStore;
 
 use super::helpers::{step_selected_index, ListItemRow};
@@ -11,6 +12,7 @@ use super::types::{
 pub fn render_server_options_subview(
     ui: &mut egui::Ui,
     options_state: &mut ServerOptionsState,
+    keymap: &KeymapManager,
     store: &mut WorkspaceStore,
 ) -> RemoteNavAction {
     let theme = ui.app_theme();
@@ -40,11 +42,12 @@ pub fn render_server_options_subview(
     let options = ServerOptionItem::list_for_server(&options_state.server);
     let total_items = options.len();
 
-    // Tiêu thụ phím điều hướng bàn phím chuẩn Zed
-    let key_down = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::ArrowDown));
-    let key_up = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::ArrowUp));
-    let key_enter = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Enter));
-    let key_escape = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape));
+    // Tiêu thụ Semantic Actions thông qua KeymapManager
+    let action = keymap.consume_input(ui, KeyContext::RemoteServers);
+    let key_down = action == Some(KeyAction::SelectNext);
+    let key_up = action == Some(KeyAction::SelectPrev);
+    let key_enter = action == Some(KeyAction::ConfirmSelection);
+    let key_escape = action == Some(KeyAction::Back);
 
     if key_escape {
         return RemoteNavAction::Back;

@@ -1,7 +1,7 @@
 use crate::actions::AppAction;
 use crate::overlay::{OverlayLayer, OverlayStack};
 use crate::theme::ActiveTheme;
-use eframe::egui::{self, Color32, CornerRadius, Id, Key, Order, Pos2, Rect, Stroke};
+use eframe::egui::{self, Color32, CornerRadius, Id, Order, Pos2, Rect, Stroke};
 
 pub fn render_main_menu_popup(
     ctx: &egui::Context,
@@ -10,11 +10,6 @@ pub fn render_main_menu_popup(
     trigger_rect: Rect,
 ) {
     if !overlay_stack.is_open(OverlayLayer::MainMenu) {
-        return;
-    }
-
-    if ctx.input(|i| i.key_pressed(Key::Escape)) {
-        dispatch(AppAction::CloseMainMenu);
         return;
     }
 

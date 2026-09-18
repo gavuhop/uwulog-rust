@@ -171,6 +171,7 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
         is_launch_open,
         &mut app.overlays.launch_modal_draft,
         &active_session.session.source_config,
+        &app.keymap,
         &mut dispatch,
     );
 
@@ -178,13 +179,14 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     modals::render_columns_modal(ctx, &mut active_session.view.columns, &mut dispatch);
 
     // Modal Dialog: About uwulog
-    modals::render_about_modal(ctx, is_about_open, &mut dispatch);
+    modals::render_about_modal(ctx, is_about_open, &app.keymap, &mut dispatch);
 
     // Modal Dialog: Remote Projects (WSL)
     remote_servers::render_remote_servers_modal(
         ctx,
         is_remote_open,
         app.overlays.remote_placement,
+        &app.keymap,
         &mut app.workspaces.store,
         &mut dispatch,
     );

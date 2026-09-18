@@ -1,12 +1,14 @@
 use crate::actions::AppAction;
 use crate::components::ui::{AppButton, ModalContainer};
+use crate::keymap::{KeyAction, KeyContext, KeymapManager};
 use crate::theme::ActiveTheme;
-use eframe::egui::{self, Key};
+use eframe::egui;
 
 /// Render modal giới thiệu phiên bản và thông tin ứng dụng uwulog
 pub fn render_about_modal(
     ctx: &egui::Context,
     is_open: bool,
+    keymap: &KeymapManager,
     dispatch: &mut impl FnMut(AppAction),
 ) {
     if !is_open {
@@ -48,7 +50,8 @@ pub fn render_about_modal(
                         .label("Close")
                         .show(ui)
                         .clicked()
-                        || ui.input(|i| i.key_pressed(Key::Enter))
+                        || keymap.consume_input(ui, KeyContext::Modal)
+                            == Some(KeyAction::ConfirmSelection)
                     {
                         *close_req = true;
                     }

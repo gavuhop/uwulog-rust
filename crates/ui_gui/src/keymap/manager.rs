@@ -68,8 +68,18 @@ impl KeymapManager {
         self.bind("enter", KeyAction::CommitSearch, KeyContext::SearchInput);
 
         // --- 4. Remote Servers Modal Context ---
-        // RemoteServersModal tự quản lý Back Stack nội bộ cho phím Escape (FolderPicker/WSL/Options -> ServerList -> Đóng modal)
-        self.unbind("escape", KeyContext::RemoteServers);
+        self.bind("escape", KeyAction::Back, KeyContext::RemoteServers);
+        self.bind("down", KeyAction::SelectNext, KeyContext::RemoteServers);
+        self.bind("up", KeyAction::SelectPrev, KeyContext::RemoteServers);
+        self.bind(
+            "enter",
+            KeyAction::ConfirmSelection,
+            KeyContext::RemoteServers,
+        );
+        self.bind("tab", KeyAction::TabComplete, KeyContext::RemoteServers);
+
+        // --- 5. Modal Dialogs Context ---
+        self.bind("enter", KeyAction::ConfirmSelection, KeyContext::Modal);
     }
 
     /// Thêm một liên kết phím tắt mới. Nếu đã tồn tại, binding thêm sau sẽ có quyền ưu tiên cao hơn.
@@ -110,12 +120,12 @@ impl KeymapManager {
         ctx.input(|input| self.resolve_action(input, active_context))
     }
 
-    /// Resolve action từ `egui::InputState`
-    pub fn resolve_action(
-        &self,
+    /// Tìm binding đầu tiên khớp với InputState trong context hiện tại (hoặc Global fallback).
+    pub fn resolve_binding<'a>(
+        &'a self,
         input: &egui::InputState,
         active_context: KeyContext,
-    ) -> Option<KeyAction> {
+    ) -> Option<(&'a KeyAction, &'a Keystroke)> {
         // Bước 1: Ưu tiên context cụ thể hiện tại (nếu khác Global)
         if active_context != KeyContext::Global {
             for binding in self.bindings.iter().rev() {
@@ -123,7 +133,7 @@ impl KeymapManager {
                     if binding.action == KeyAction::Unbind {
                         return None;
                     }
-                    return Some(binding.action.clone());
+                    return Some((&binding.action, &binding.keystroke));
                 }
             }
         }
@@ -134,11 +144,21 @@ impl KeymapManager {
                 if binding.action == KeyAction::Unbind {
                     return None;
                 }
-                return Some(binding.action.clone());
+                return Some((&binding.action, &binding.keystroke));
             }
         }
 
         None
+    }
+
+    /// Resolve action từ `egui::InputState`
+    pub fn resolve_action(
+        &self,
+        input: &egui::InputState,
+        active_context: KeyContext,
+    ) -> Option<KeyAction> {
+        self.resolve_binding(input, active_context)
+            .map(|(act, _)| act.clone())
     }
 
     /// Tiêu thụ sự kiện phím (Consume Key) trên `egui::Ui` để tránh phím lan truyền xuống các control bên dưới.
@@ -148,24 +168,50 @@ impl KeymapManager {
         ui: &mut egui::Ui,
         active_context: KeyContext,
     ) -> Option<KeyAction> {
-        // Kiểm tra xem có action nào khớp không
-        let action = ui.input(|input| self.resolve_action(input, active_context));
+        let matched = ui.input(|input| {
+            self.resolve_binding(input, active_context)
+                .map(|(act, ks)| (act.clone(), *ks))
+        });
 
-        if let Some(ref act) = action {
-            // Tìm keystroke tương ứng để consume
-            if let Some(keystroke) = self.find_keystroke_for_action(act, active_context) {
-                let modifiers = egui::Modifiers {
-                    alt: keystroke.alt,
-                    ctrl: keystroke.ctrl,
-                    shift: keystroke.shift,
-                    mac_cmd: keystroke.mac_cmd,
-                    command: keystroke.ctrl || keystroke.mac_cmd,
-                };
-                ui.input_mut(|i| i.consume_key(modifiers, keystroke.key));
-            }
+        if let Some((action, keystroke)) = matched {
+            let modifiers = egui::Modifiers {
+                alt: keystroke.alt,
+                ctrl: keystroke.ctrl,
+                shift: keystroke.shift,
+                mac_cmd: keystroke.mac_cmd,
+                command: keystroke.ctrl || keystroke.mac_cmd,
+            };
+            ui.input_mut(|i| i.consume_key(modifiers, keystroke.key));
+            Some(action)
+        } else {
+            None
         }
+    }
 
-        action
+    /// Tiêu thụ sự kiện phím (Consume Key) trực tiếp trên `egui::Context`.
+    pub fn consume_input_ctx(
+        &self,
+        ctx: &egui::Context,
+        active_context: KeyContext,
+    ) -> Option<KeyAction> {
+        let matched = ctx.input(|input| {
+            self.resolve_binding(input, active_context)
+                .map(|(act, ks)| (act.clone(), *ks))
+        });
+
+        if let Some((action, keystroke)) = matched {
+            let modifiers = egui::Modifiers {
+                alt: keystroke.alt,
+                ctrl: keystroke.ctrl,
+                shift: keystroke.shift,
+                mac_cmd: keystroke.mac_cmd,
+                command: keystroke.ctrl || keystroke.mac_cmd,
+            };
+            ctx.input_mut(|i| i.consume_key(modifiers, keystroke.key));
+            Some(action)
+        } else {
+            None
+        }
     }
 
     /// Tìm keystroke đầu tiên khớp với action trong context (hoặc Global fallback), loại trừ các phím đã bị unbind sau đó.

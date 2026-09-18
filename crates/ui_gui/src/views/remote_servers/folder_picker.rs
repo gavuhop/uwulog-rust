@@ -1,6 +1,7 @@
 use crate::components::ui::{IconName, TextInput};
+use crate::keymap::{KeyAction, KeyContext, KeymapManager};
 use crate::theme::ActiveTheme;
-use eframe::egui::{self, Key};
+use eframe::egui;
 use uwu_core_workspace::{Workspace, WorkspaceStore};
 
 use super::helpers::{
@@ -14,6 +15,7 @@ use super::types::{FolderPickerState, RemoteNavAction};
 pub fn render_folder_picker_subview(
     ui: &mut egui::Ui,
     folder_state: &mut FolderPickerState,
+    keymap: &KeymapManager,
     store: &mut WorkspaceStore,
 ) -> (RemoteNavAction, Option<Workspace>) {
     let theme = ui.app_theme();
@@ -38,12 +40,13 @@ pub fn render_folder_picker_subview(
     ui.separator();
     ui.add_space(4.0);
 
-    // Tiêu thụ các phím điều hướng TRƯỚC HẾT để TextInput không nhận ArrowUp/ArrowDown làm con trỏ nhảy về pos 0
-    let key_down = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::ArrowDown));
-    let key_up = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::ArrowUp));
-    let key_tab = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Tab));
-    let key_enter = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Enter));
-    let key_escape = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape));
+    // Tiêu thụ Semantic Actions thông qua KeymapManager
+    let action = keymap.consume_input(ui, KeyContext::RemoteServers);
+    let key_down = action == Some(KeyAction::SelectNext);
+    let key_up = action == Some(KeyAction::SelectPrev);
+    let key_tab = action == Some(KeyAction::TabComplete);
+    let key_enter = action == Some(KeyAction::ConfirmSelection);
+    let key_escape = action == Some(KeyAction::Back);
 
     // 2. Thanh nhập đường dẫn hiện tại
     let input_id = egui::Id::new("remote_folder_picker_path_input");

@@ -1,5 +1,6 @@
 use crate::components::ui::{IconName, TextInput};
-use eframe::egui::{self, Key};
+use crate::keymap::{KeyAction, KeyContext, KeymapManager};
+use eframe::egui;
 use uwu_core_workspace::{RemoteProject, Workspace, WorkspaceStore};
 use uwu_driver_transport::WslTransport;
 
@@ -157,16 +158,18 @@ pub fn render_remote_list_subview(
     ui: &mut egui::Ui,
     search_query: &mut String,
     selected_index: &mut usize,
+    keymap: &KeymapManager,
     store: &WorkspaceStore,
 ) -> (RemoteNavAction, Option<Workspace>) {
     let mut nav_action = RemoteNavAction::None;
     let mut selected_workspace = None;
 
-    // Tiêu thụ các phím điều hướng TRƯỚC TIÊN để TextInput không nhận ArrowUp/ArrowDown làm con trỏ nhảy về pos 0
-    let key_down = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::ArrowDown));
-    let key_up = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::ArrowUp));
-    let key_enter = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Enter));
-    let key_escape = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape));
+    // Tiêu thụ Semantic Actions thông qua KeymapManager
+    let action = keymap.consume_input(ui, KeyContext::RemoteServers);
+    let key_down = action == Some(KeyAction::SelectNext);
+    let key_up = action == Some(KeyAction::SelectPrev);
+    let key_enter = action == Some(KeyAction::ConfirmSelection);
+    let key_escape = action == Some(KeyAction::Back);
 
     if key_escape {
         return (RemoteNavAction::Back, None);

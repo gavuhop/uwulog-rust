@@ -48,22 +48,35 @@ impl UwuGuiApp {
         self.overlays.is_open(layer)
     }
 
-    /// Tự động suy luận KeyContext hiện tại dựa trên Overlay Stack, Autocomplete Popup và trạng thái Focus (chuẩn Zed Dispatch Tree)
+    /// Lấy ngữ cảnh phím tắt hiện tại dựa trên Overlay Stack và trạng thái session (chuẩn Zed Dispatch Tree)
+    pub fn current_key_context(&self) -> crate::keymap::KeyContext {
+        match self.overlays.stack.top() {
+            Some(OverlayLayer::RemoteServersModal) => crate::keymap::KeyContext::RemoteServers,
+            Some(OverlayLayer::LaunchModal)
+            | Some(OverlayLayer::AboutModal)
+            | Some(OverlayLayer::ColumnsModal)
+            | Some(OverlayLayer::ProjectPicker)
+            | Some(OverlayLayer::MainMenu)
+            | Some(OverlayLayer::ThemeSubmenu) => crate::keymap::KeyContext::Modal,
+            None => {
+                if self.active_session().view.search.autocomplete.is_open {
+                    crate::keymap::KeyContext::Autocomplete
+                } else {
+                    crate::keymap::KeyContext::Global
+                }
+            }
+        }
+    }
+
+    /// Tự động suy luận KeyContext hiện tại dựa trên Overlay Stack, Autocomplete Popup và trạng thái Focus
     pub fn resolve_active_key_context(&self, ctx: &egui::Context) -> crate::keymap::KeyContext {
-        if self.is_overlay_open(OverlayLayer::RemoteServersModal) {
-            crate::keymap::KeyContext::RemoteServers
-        } else if self.active_session().view.search.autocomplete.is_open {
-            crate::keymap::KeyContext::Autocomplete
-        } else if self.is_overlay_open(OverlayLayer::LaunchModal)
-            || self.is_overlay_open(OverlayLayer::AboutModal)
-            || self.is_overlay_open(OverlayLayer::ColumnsModal)
-            || self.is_overlay_open(OverlayLayer::ProjectPicker)
+        let base = self.current_key_context();
+        if base == crate::keymap::KeyContext::Global
+            && ctx.memory(|m| m.has_focus(egui::Id::new("search_query_input")))
         {
-            crate::keymap::KeyContext::Modal
-        } else if ctx.memory(|m| m.has_focus(egui::Id::new("search_query_input"))) {
             crate::keymap::KeyContext::SearchInput
         } else {
-            crate::keymap::KeyContext::Global
+            base
         }
     }
 
@@ -74,7 +87,14 @@ impl UwuGuiApp {
         dispatch: &mut impl FnMut(AppAction),
     ) {
         let active_context = self.resolve_active_key_context(ctx);
-        if let Some(key_action) = self.keymap.process_input(ctx, active_context) {
+
+        // Với RemoteServersModal: các subviews tự tiêu thụ Action (SelectNext, SelectPrev, ConfirmSelection, Back, TabComplete)
+        // trong lúc render UI qua keymap.consume_input.
+        if active_context == crate::keymap::KeyContext::RemoteServers {
+            return;
+        }
+
+        if let Some(key_action) = self.keymap.consume_input_ctx(ctx, active_context) {
             match key_action {
                 crate::keymap::KeyAction::ZoomIn => {
                     let current = ctx.zoom_factor();
