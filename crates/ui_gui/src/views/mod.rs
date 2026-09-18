@@ -176,7 +176,12 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     );
 
     // Modal Dialog: Table Columns & Ordering
-    modals::render_columns_modal(ctx, &mut active_session.view.columns, &mut dispatch);
+    modals::render_columns_modal(
+        ctx,
+        &mut active_session.view.columns,
+        &app.keymap,
+        &mut dispatch,
+    );
 
     // Modal Dialog: About uwulog
     modals::render_about_modal(ctx, is_about_open, &app.keymap, &mut dispatch);
