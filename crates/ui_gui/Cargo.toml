@@ -14,6 +14,7 @@ uwu-driver-sources.workspace = true
 uwu-driver-transport.workspace = true
 uwu-core-schema.workspace = true
 uwu-core-util.workspace = true
+uwu-core-keymap.workspace = true
 uwu-icons.workspace = true
 tokio.workspace = true
 anyhow.workspace = true

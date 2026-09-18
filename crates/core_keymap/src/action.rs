@@ -1,9 +1,8 @@
-//! Semantic Action Registry (Tầng 2 - Command Pattern).
+//! Semantic Action Registry (Tầng 3 - Command Pattern).
 
-use crate::actions::AppAction;
 use serde::{Deserialize, Serialize};
 
-/// Danh mục các hành động (Actions) có thể được gán phím tắt trong `uwulog`.
+/// Danh mục các hành động ngữ nghĩa (Semantic Actions) có thể được gán phím tắt trong `uwulog`.
 /// Định dạng tên canonical dạng `namespace::Action` tương tự như Zed Editor.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum KeyAction {
@@ -133,30 +132,46 @@ impl KeyAction {
             Self::Unbind => "unbind",
         }
     }
+}
 
-    /// Chuyển đổi sang `AppAction` nếu action này thuộc quyền xử lý của hàng đợi ứng dụng chính.
-    pub fn to_app_action(&self) -> Option<AppAction> {
-        match self {
-            Self::Dismiss => Some(AppAction::DismissTopLayer),
-            Self::Quit => Some(AppAction::QuitApp),
-            Self::ZoomIn => Some(AppAction::ZoomIn),
-            Self::ZoomOut => Some(AppAction::ZoomOut),
-            Self::ResetZoom => Some(AppAction::ResetZoom),
-            Self::ToggleProjectPicker => Some(AppAction::ToggleProjectPicker),
-            Self::PreviousSession => Some(AppAction::CycleSession(false)),
-            Self::NextSession => Some(AppAction::CycleSession(true)),
-            Self::ToggleRemoteServers => Some(AppAction::ToggleRemoteServersModal),
-            Self::OpenLaunchModal => Some(AppAction::OpenLaunchModal),
-            Self::OpenColumnsModal => Some(AppAction::OpenColumnsModal),
-            Self::ToggleLatch => Some(AppAction::ToggleLatch),
-            Self::CommitSearch => Some(AppAction::CommitSearch),
-            Self::ClearSearch => Some(AppAction::ClearQuery),
-            Self::SelectNext => Some(AppAction::AutocompleteNext),
-            Self::SelectPrev => Some(AppAction::AutocompletePrev),
-            Self::ConfirmSelection => Some(AppAction::AutocompleteConfirm),
-            Self::Back => None,
-            Self::TabComplete => None,
-            Self::Unbind => None,
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_action_parse_and_canonical_name() {
+        assert_eq!(
+            KeyAction::parse("workspace::ToggleProjectPicker"),
+            Some(KeyAction::ToggleProjectPicker)
+        );
+        assert_eq!(
+            KeyAction::parse("ToggleProjectPicker"),
+            Some(KeyAction::ToggleProjectPicker)
+        );
+        assert_eq!(
+            KeyAction::parse("window::Dismiss"),
+            Some(KeyAction::Dismiss)
+        );
+        assert_eq!(
+            KeyAction::parse("autocomplete::Confirm"),
+            Some(KeyAction::ConfirmSelection)
+        );
+        assert_eq!(KeyAction::parse("menu::Back"), Some(KeyAction::Back));
+        assert_eq!(KeyAction::parse("unbind"), Some(KeyAction::Unbind));
+
+        assert_eq!(
+            KeyAction::ToggleProjectPicker.canonical_name(),
+            "workspace::ToggleProjectPicker"
+        );
+        assert_eq!(KeyAction::Dismiss.canonical_name(), "window::Dismiss");
+    }
+
+    #[test]
+    fn test_action_serde() {
+        let action = KeyAction::ToggleProjectPicker;
+        let json = serde_json::to_string(&action).unwrap();
+        assert_eq!(json, "\"workspace::ToggleProjectPicker\"");
+        let deserialized: KeyAction = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, action);
     }
 }
