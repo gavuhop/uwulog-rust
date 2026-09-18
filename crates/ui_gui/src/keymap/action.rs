@@ -49,6 +49,12 @@ pub enum KeyAction {
     #[serde(rename = "autocomplete::Confirm")]
     ConfirmSelection,
 
+    // Navigation & Editing
+    #[serde(rename = "menu::Back")]
+    Back,
+    #[serde(rename = "picker::TabComplete")]
+    TabComplete,
+
     // Đặc biệt: Hủy gán phím tắt (Unbind)
     #[serde(rename = "unbind")]
     Unbind,
@@ -79,9 +85,18 @@ impl KeyAction {
             "search::Commit" | "CommitSearch" => Some(Self::CommitSearch),
             "search::Clear" | "ClearSearch" => Some(Self::ClearSearch),
 
-            "autocomplete::SelectNext" | "SelectNext" => Some(Self::SelectNext),
-            "autocomplete::SelectPrev" | "SelectPrev" => Some(Self::SelectPrev),
-            "autocomplete::Confirm" | "ConfirmSelection" => Some(Self::ConfirmSelection),
+            "autocomplete::SelectNext" | "SelectNext" | "menu::SelectNext" => {
+                Some(Self::SelectNext)
+            }
+            "autocomplete::SelectPrev" | "SelectPrev" | "menu::SelectPrev" => {
+                Some(Self::SelectPrev)
+            }
+            "autocomplete::Confirm" | "ConfirmSelection" | "menu::Confirm" => {
+                Some(Self::ConfirmSelection)
+            }
+
+            "menu::Back" | "modal::Back" | "window::Back" | "Back" => Some(Self::Back),
+            "picker::TabComplete" | "tab::Complete" | "TabComplete" => Some(Self::TabComplete),
 
             "unbind" | "Unbind" => Some(Self::Unbind),
             _ => None,
@@ -112,6 +127,9 @@ impl KeyAction {
             Self::SelectPrev => "autocomplete::SelectPrev",
             Self::ConfirmSelection => "autocomplete::Confirm",
 
+            Self::Back => "menu::Back",
+            Self::TabComplete => "picker::TabComplete",
+
             Self::Unbind => "unbind",
         }
     }
@@ -136,6 +154,8 @@ impl KeyAction {
             Self::SelectNext => Some(AppAction::AutocompleteNext),
             Self::SelectPrev => Some(AppAction::AutocompletePrev),
             Self::ConfirmSelection => Some(AppAction::AutocompleteConfirm),
+            Self::Back => None,
+            Self::TabComplete => None,
             Self::Unbind => None,
         }
     }

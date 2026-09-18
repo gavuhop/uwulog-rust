@@ -62,6 +62,12 @@ impl OverlayStack {
         self.close(OverlayLayer::ThemeSubmenu);
     }
 
+    /// Lấy layer trên đỉnh ngăn xếp (LIFO) mà không gỡ bỏ
+    #[inline]
+    pub fn top(&self) -> Option<OverlayLayer> {
+        self.layers.last().copied()
+    }
+
     /// Lấy và gỡ layer trên đỉnh ngăn xếp (LIFO)
     pub fn pop(&mut self) -> Option<OverlayLayer> {
         self.layers.pop()

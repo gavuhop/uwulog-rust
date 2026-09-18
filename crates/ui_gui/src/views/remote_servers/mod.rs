@@ -15,6 +15,7 @@ pub use types::*;
 pub use wsl_picker::render_wsl_picker_subview;
 
 use crate::actions::AppAction;
+use crate::keymap::KeymapManager;
 use crate::overlay::RemoteModalPlacement;
 use eframe::egui;
 use uwu_core_workspace::{Workspace, WorkspaceStore};
@@ -24,6 +25,7 @@ pub fn render_remote_servers_modal(
     ctx: &egui::Context,
     is_open: bool,
     placement: RemoteModalPlacement,
+    keymap: &KeymapManager,
     store: &mut WorkspaceStore,
     dispatch: &mut impl FnMut(AppAction),
 ) {
@@ -48,21 +50,22 @@ pub fn render_remote_servers_modal(
                     ui,
                     &mut state.search_query,
                     &mut state.selected_index,
+                    keymap,
                     store,
                 );
                 nav_action = action;
                 selected_workspace = ws;
             }
             RemoteSubView::WslPicker => {
-                nav_action = render_wsl_picker_subview(ui, store);
+                nav_action = render_wsl_picker_subview(ui, keymap, store);
             }
             RemoteSubView::FolderPicker(folder_state) => {
-                let (action, ws) = render_folder_picker_subview(ui, folder_state, store);
+                let (action, ws) = render_folder_picker_subview(ui, folder_state, keymap, store);
                 nav_action = action;
                 selected_workspace = ws;
             }
             RemoteSubView::ServerOptions(options_state) => {
-                nav_action = render_server_options_subview(ui, options_state, store);
+                nav_action = render_server_options_subview(ui, options_state, keymap, store);
             }
         });
 

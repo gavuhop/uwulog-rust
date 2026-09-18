@@ -185,6 +185,7 @@ async fn test_remote_servers_modal_escape_back_navigation() {
     let ctx = egui::Context::default();
     let state_id = egui::Id::new("remote_servers_modal_state");
     let mut store = uwu_core_workspace::WorkspaceStore::default();
+    let keymap = crate::keymap::KeymapManager::new();
 
     // 1. Khởi tạo state đang ở WslPicker (đã navigate từ List)
     let mut state = RemoteModalState::default();
@@ -207,6 +208,7 @@ async fn test_remote_servers_modal_escape_back_navigation() {
             ui.ctx(),
             true,
             RemoteModalPlacement::TopCenter,
+            &keymap,
             &mut store,
             &mut |action| {
                 if matches!(action, AppAction::CloseRemoteServersModal) {
@@ -247,6 +249,7 @@ async fn test_remote_servers_modal_escape_back_navigation() {
             ui.ctx(),
             true,
             RemoteModalPlacement::TopCenter,
+            &keymap,
             &mut store,
             &mut |action| {
                 if matches!(action, AppAction::CloseRemoteServersModal) {
@@ -286,6 +289,7 @@ async fn test_remote_servers_modal_escape_back_navigation() {
             ui.ctx(),
             true,
             RemoteModalPlacement::TopCenter,
+            &keymap,
             &mut store,
             &mut |action| {
                 if matches!(action, AppAction::CloseRemoteServersModal) {
@@ -317,6 +321,7 @@ async fn test_remote_servers_modal_escape_back_navigation() {
             ui.ctx(),
             true,
             RemoteModalPlacement::TopCenter,
+            &keymap,
             &mut store,
             &mut |action| {
                 if matches!(action, AppAction::CloseRemoteServersModal) {

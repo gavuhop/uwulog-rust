@@ -96,3 +96,71 @@ fn test_keymap_context_aware_input_processing() {
     let action = app.keymap.process_input(&ctx, KeyContext::Global);
     assert_eq!(action, Some(KeyAction::Dismiss));
 }
+
+#[test]
+fn test_keymap_remote_servers_and_modal_context() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let _guard = rt.enter();
+    let mut app = create_test_app();
+    let ctx = eframe::egui::Context::default();
+
+    // 1. Mở RemoteServersModal
+    app.push_overlay(OverlayLayer::RemoteServersModal);
+    assert_eq!(app.current_key_context(), KeyContext::RemoteServers);
+
+    // 2. Escape trong RemoteServers phải map sang KeyAction::Back (thay vì Dismiss)
+    let mut esc_input = RawInput::default();
+    esc_input.events.push(eframe::egui::Event::Key {
+        key: Key::Escape,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    });
+    let mut out = ctx.run_ui(esc_input, |_| {});
+    out.textures_delta.clear();
+    let action = app.keymap.process_input(&ctx, KeyContext::RemoteServers);
+    assert_eq!(action, Some(KeyAction::Back));
+
+    // 3. Down trong RemoteServers phải map sang KeyAction::SelectNext
+    let mut down_input = RawInput::default();
+    down_input.events.push(eframe::egui::Event::Key {
+        key: Key::ArrowDown,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    });
+    let mut out2 = ctx.run_ui(down_input, |_| {});
+    out2.textures_delta.clear();
+    let action = app.keymap.process_input(&ctx, KeyContext::RemoteServers);
+    assert_eq!(action, Some(KeyAction::SelectNext));
+
+    // 4. Tab trong RemoteServers phải map sang KeyAction::TabComplete
+    let mut tab_input = RawInput::default();
+    tab_input.events.push(eframe::egui::Event::Key {
+        key: Key::Tab,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    });
+    let mut out3 = ctx.run_ui(tab_input, |_| {});
+    out3.textures_delta.clear();
+    let action = app.keymap.process_input(&ctx, KeyContext::RemoteServers);
+    assert_eq!(action, Some(KeyAction::TabComplete));
+
+    // 5. Enter trong Modal context (Launch/About) map sang ConfirmSelection
+    let mut enter_input = RawInput::default();
+    enter_input.events.push(eframe::egui::Event::Key {
+        key: Key::Enter,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    });
+    let mut out4 = ctx.run_ui(enter_input, |_| {});
+    out4.textures_delta.clear();
+    let action = app.keymap.process_input(&ctx, KeyContext::Modal);
+    assert_eq!(action, Some(KeyAction::ConfirmSelection));
+}

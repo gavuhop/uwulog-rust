@@ -1,6 +1,7 @@
 use crate::components::ui::{AppButton, IconName};
+use crate::keymap::{KeyAction, KeyContext, KeymapManager};
 use crate::theme::ActiveTheme;
-use eframe::egui::{self, Key};
+use eframe::egui;
 use uwu_core_workspace::WorkspaceStore;
 use uwu_driver_transport::WslTransport;
 
@@ -8,7 +9,11 @@ use super::helpers::{calculate_adaptive_scroll_height, step_selected_index, List
 use super::types::RemoteNavAction;
 
 /// Subview 2: Chọn WSL Distribution để thêm
-pub fn render_wsl_picker_subview(ui: &mut egui::Ui, store: &mut WorkspaceStore) -> RemoteNavAction {
+pub fn render_wsl_picker_subview(
+    ui: &mut egui::Ui,
+    keymap: &KeymapManager,
+    store: &mut WorkspaceStore,
+) -> RemoteNavAction {
     let theme = ui.app_theme();
     let mut nav_action = RemoteNavAction::None;
 
@@ -36,11 +41,12 @@ pub fn render_wsl_picker_subview(ui: &mut egui::Ui, store: &mut WorkspaceStore) 
     ui.separator();
     ui.add_space(6.0);
 
-    // Tiêu thụ phím điều hướng bàn phím
-    let key_down = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::ArrowDown));
-    let key_up = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::ArrowUp));
-    let key_enter = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Enter));
-    let key_escape = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape));
+    // Tiêu thụ Semantic Actions thông qua KeymapManager
+    let action = keymap.consume_input(ui, KeyContext::RemoteServers);
+    let key_down = action == Some(KeyAction::SelectNext);
+    let key_up = action == Some(KeyAction::SelectPrev);
+    let key_enter = action == Some(KeyAction::ConfirmSelection);
+    let key_escape = action == Some(KeyAction::Back);
 
     if key_escape {
         return RemoteNavAction::Back;

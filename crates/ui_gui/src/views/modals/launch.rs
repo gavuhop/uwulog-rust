@@ -1,5 +1,6 @@
 use crate::actions::AppAction;
 use crate::components::{render_card, AppButton, ButtonVariant, ModalContainer, TextInput};
+use crate::keymap::{KeyAction, KeyContext, KeymapManager};
 use crate::theme::ActiveTheme;
 use eframe::egui::{self, Color32, CornerRadius, Stroke};
 use uwu_core_workspace::{SourceConfig, SourceType};
@@ -9,6 +10,7 @@ pub fn render_launch_modal(
     is_open: bool,
     draft: &mut Option<SourceConfig>,
     current_config: &SourceConfig,
+    keymap: &KeymapManager,
     dispatch: &mut impl FnMut(AppAction),
 ) {
     if !is_open {
@@ -307,7 +309,8 @@ pub fn render_launch_modal(
                         .min_size(egui::vec2(130.0, 26.0))
                         .show(ui)
                         .clicked()
-                        || ui.input(|i| i.key_pressed(egui::Key::Enter))
+                        || keymap.consume_input(ui, KeyContext::Modal)
+                            == Some(KeyAction::ConfirmSelection)
                     {
                         action_to_dispatch = Some(AppAction::ApplyLaunchModal);
                     }
