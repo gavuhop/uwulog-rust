@@ -1,5 +1,6 @@
 use crate::actions::AppAction;
 use crate::components::render_card;
+use crate::keymap::{KeyAction, KeyContext, KeymapManager};
 use crate::state::ColumnState;
 use crate::theme::ActiveTheme;
 use eframe::egui::{self, Color32, CornerRadius, FontId, Pos2, Rect, Stroke};
@@ -7,6 +8,7 @@ use eframe::egui::{self, Color32, CornerRadius, FontId, Pos2, Rect, Stroke};
 pub fn render_columns_modal(
     ctx: &egui::Context,
     columns: &mut ColumnState,
+    keymap: &KeymapManager,
     dispatch: &mut impl FnMut(AppAction),
 ) {
     if !columns.is_modal_open {
@@ -467,6 +469,8 @@ pub fn render_columns_modal(
                     .tooltip("Apply column visibility and ordering changes")
                     .show(ui)
                     .clicked()
+                    || keymap.consume_input(ui, KeyContext::Modal)
+                        == Some(KeyAction::ConfirmSelection)
                 {
                     action_to_dispatch = Some(AppAction::ApplyColumnsModal);
                 }

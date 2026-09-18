@@ -107,6 +107,24 @@ impl UwuGuiApp {
                 crate::keymap::KeyAction::ResetZoom => {
                     ctx.set_zoom_factor(1.0);
                 }
+                crate::keymap::KeyAction::ConfirmSelection => match active_context {
+                    crate::keymap::KeyContext::Modal => match self.overlays.stack.top() {
+                        Some(OverlayLayer::LaunchModal) => {
+                            dispatch(AppAction::ApplyLaunchModal);
+                        }
+                        Some(OverlayLayer::ColumnsModal) => {
+                            dispatch(AppAction::ApplyColumnsModal);
+                        }
+                        Some(OverlayLayer::AboutModal) => {
+                            dispatch(AppAction::CloseAboutModal);
+                        }
+                        _ => {}
+                    },
+                    crate::keymap::KeyContext::Autocomplete => {
+                        dispatch(AppAction::AutocompleteConfirm);
+                    }
+                    _ => {}
+                },
                 _ => {
                     if let Some(app_action) = key_action.to_app_action() {
                         dispatch(app_action);
