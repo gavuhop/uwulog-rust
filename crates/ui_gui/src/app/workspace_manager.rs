@@ -62,6 +62,7 @@ impl WorkspaceManager {
         gui_session.session.spawn_load_environment(rt);
         self.sessions.push(gui_session);
         self.switch_session(self.sessions.len() - 1);
+        self.store.add_or_update(ws.clone());
     }
 
     /// Đóng một tab session cụ thể

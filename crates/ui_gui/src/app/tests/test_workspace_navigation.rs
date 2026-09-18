@@ -400,3 +400,71 @@ async fn test_on_exit_saves_current_workspace() {
     assert!(ws.is_some());
     assert_eq!(ws.unwrap().last_query, "error_query");
 }
+
+#[tokio::test]
+async fn test_project_picker_and_server_list_consistency() {
+    let mut app = create_test_app();
+
+    // 1. Thêm một project trực tiếp vào server connection (wsl_connections)
+    app.workspaces
+        .store
+        .add_remote_project_to_server("Ubuntu", "/home/user/backend");
+
+    // Server list có project này
+    let server_items = crate::views::remote_servers::server_list::collect_server_list_items(
+        "",
+        &app.workspaces.store,
+    );
+    assert!(server_items
+        .iter()
+        .any(|it| it.label == "/home/user/backend"));
+
+    // 2. Mở project này qua open_or_switch_workspace (như khi chọn từ server list)
+    let ws = crate::views::remote_servers::helpers::create_remote_workspace(
+        "Ubuntu",
+        "/home/user/backend",
+    );
+    app.open_or_switch_workspace(&ws);
+
+    // Kiểm tra đã được lưu ngay vào recent_workspaces
+    assert!(app
+        .workspaces
+        .store
+        .recent_workspaces
+        .iter()
+        .any(|w| w.location.working_dir() == "/home/user/backend"));
+
+    // 3. Đóng session này
+    let active_idx = app.workspaces.active_index;
+    app.close_session(active_idx);
+
+    // Project vẫn còn lưu trong recent_workspaces sau khi đóng session
+    let saved_ws = app
+        .workspaces
+        .store
+        .recent_workspaces
+        .iter()
+        .find(|w| w.location.working_dir() == "/home/user/backend")
+        .cloned();
+    assert!(saved_ws.is_some());
+
+    // 4. Xóa project khỏi store (như khi bấm X trong Project Picker)
+    let ws_id = saved_ws.unwrap().id;
+    app.workspaces.store.remove(ws_id);
+
+    // Đảm bảo đã đồng bộ xóa khỏi cả recent_workspaces lẫn wsl_connections
+    assert!(!app
+        .workspaces
+        .store
+        .recent_workspaces
+        .iter()
+        .any(|w| w.location.working_dir() == "/home/user/backend"));
+
+    let server_items_after = crate::views::remote_servers::server_list::collect_server_list_items(
+        "",
+        &app.workspaces.store,
+    );
+    assert!(!server_items_after
+        .iter()
+        .any(|it| it.label == "/home/user/backend"));
+}

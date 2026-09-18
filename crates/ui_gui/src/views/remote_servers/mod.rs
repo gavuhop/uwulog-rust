@@ -460,7 +460,7 @@ mod tests {
         assert_eq!(
             items_with_project[3].action,
             ServerListAction::OpenRemotePath {
-                distro: "Ubuntu".to_string(),
+                server: "Ubuntu".to_string(),
                 path: "/home/user/backend".to_string(),
             }
         );
