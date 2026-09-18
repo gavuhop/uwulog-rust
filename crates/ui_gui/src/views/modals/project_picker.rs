@@ -314,9 +314,32 @@ pub fn render_project_picker_popup(
                 let open_dirs: HashSet<_> =
                     sessions.iter().map(|s| s.normalized_dir.clone()).collect();
 
-                let filtered_recent: Vec<_> = store
-                    .recent_workspaces
-                    .iter()
+                let mut all_recent = store.recent_workspaces.clone();
+                // Duyệt các kết nối server (WSL, SSH, Container...) để tổng hợp đầy đủ remote projects
+                for conn in &store.wsl_connections {
+                    for proj in &conn.projects {
+                        let clean = uwu_core_workspace::normalize_workdir(&proj.path);
+                        let exists = all_recent.iter().any(|ws| {
+                            if let Some(remote) = ws.location.as_remote() {
+                                remote.display_name().eq_ignore_ascii_case(&conn.distro)
+                                    && ws.location.normalized_dir() == clean
+                            } else {
+                                false
+                            }
+                        });
+                        if !exists {
+                            all_recent.push(
+                                crate::views::remote_servers::helpers::create_remote_workspace(
+                                    &conn.distro,
+                                    &proj.path,
+                                ),
+                            );
+                        }
+                    }
+                }
+
+                let filtered_recent: Vec<_> = all_recent
+                    .into_iter()
                     .filter(|ws| {
                         // Bỏ qua nếu đã mở trong window hiện tại
                         if open_ids.contains(&ws.id) {
@@ -338,7 +361,6 @@ pub fn render_project_picker_popup(
                                 || dir.to_lowercase().contains(&search_filter)
                         }
                     })
-                    .cloned()
                     .collect();
 
                 if filtered_recent.is_empty() {

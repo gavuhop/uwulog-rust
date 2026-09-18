@@ -5,8 +5,8 @@ use uwu_core_workspace::{RemoteProject, Workspace, WorkspaceStore};
 use uwu_driver_transport::WslTransport;
 
 use super::helpers::{
-    anchor_cursor_to_end, create_wsl_workspace, get_cached_or_read_directories, render_empty_state,
-    render_section_title, step_selected_index, ListItemRow,
+    anchor_cursor_to_end, create_remote_workspace, get_cached_or_read_directories,
+    render_empty_state, render_section_title, step_selected_index, ListItemRow,
 };
 use super::types::{
     FolderPickerState, RemoteNavAction, RemoteServerKind, RemoteSubView, ServerOptionsState,
@@ -18,7 +18,7 @@ pub enum ServerListAction {
     ConnectDevContainer,
     AddWslDistro,
     OpenWorkspace(Box<Workspace>),
-    OpenRemotePath { distro: String, path: String },
+    OpenRemotePath { server: String, path: String },
     OpenFolder(String),
     ViewServerOptions(String),
 }
@@ -110,7 +110,7 @@ pub fn collect_server_list_items(filter: &str, store: &WorkspaceStore) -> Vec<Se
                 tooltip: Some(format!("Open project in {}", cluster_title)),
                 section_title: section,
                 action: ServerListAction::OpenRemotePath {
-                    distro: server.distro.clone(),
+                    server: server.distro.clone(),
                     path: proj.path.clone(),
                 },
             });
@@ -270,8 +270,8 @@ pub fn render_remote_list_subview(
             ServerListAction::OpenWorkspace(ws) => {
                 selected_workspace = Some(*ws);
             }
-            ServerListAction::OpenRemotePath { distro, path } => {
-                let ws = create_wsl_workspace(&distro, &path);
+            ServerListAction::OpenRemotePath { server, path } => {
+                let ws = create_remote_workspace(&server, &path);
                 selected_workspace = Some(ws);
             }
             ServerListAction::OpenFolder(distro) => {

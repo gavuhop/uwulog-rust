@@ -257,6 +257,7 @@ impl WorkspaceStore {
                     for ws in &mut store.recent_workspaces {
                         ws.name = sanitize_project_name(&ws.name, &ws.location);
                     }
+                    store.sync_remote_projects();
                     return store;
                 }
             }
@@ -318,9 +319,14 @@ impl WorkspaceStore {
         let _ = self.save();
     }
 
-    /// Xóa một workspace theo ID
+    /// Xóa một workspace theo ID (nếu là remote workspace, tự động đồng bộ gỡ khỏi server connection)
     pub fn remove(&mut self, id: Uuid) {
-        self.recent_workspaces.retain(|w| w.id != id);
+        if let Some(pos) = self.recent_workspaces.iter().position(|w| w.id == id) {
+            let ws = self.recent_workspaces.remove(pos);
+            if let Some(remote) = ws.location.as_remote() {
+                self.remove_remote_project_from_server(remote.display_name(), remote.working_dir());
+            }
+        }
         if self.active_workspace_id == Some(id) {
             self.active_workspace_id = self.recent_workspaces.first().map(|w| w.id);
         }
@@ -375,18 +381,27 @@ impl WorkspaceStore {
         let _ = self.save();
     }
 
-    /// Thêm project trực tiếp vào server connection tương ứng (chuẩn Zed)
-    pub fn add_remote_project_to_server(&mut self, distro: &str, path: impl Into<String>) {
-        let server = self.ensure_wsl_connection(distro);
+    /// Thêm project trực tiếp vào server connection tương ứng (WSL, SSH, Container...)
+    pub fn add_remote_project_to_server(&mut self, server_name: &str, path: impl Into<String>) {
+        let server = self.ensure_wsl_connection(server_name);
         if server.add_project(path) {
             let _ = self.save();
         }
     }
 
-    /// Xóa project trực tiếp khỏi server connection tương ứng (chuẩn Zed)
-    pub fn remove_remote_project_from_server(&mut self, distro: &str, path: &str) {
-        if let Some(server) = self.find_wsl_connection_mut(distro) {
+    /// Xóa project trực tiếp khỏi server connection tương ứng (WSL, SSH, Container...)
+    pub fn remove_remote_project_from_server(&mut self, server_name: &str, path: &str) {
+        if let Some(server) = self.find_wsl_connection_mut(server_name) {
             if server.remove_project(path) {
+                let clean = normalize_workdir(path);
+                self.recent_workspaces.retain(|w| {
+                    if let Some(remote) = w.location.as_remote() {
+                        !(remote.display_name().eq_ignore_ascii_case(server_name)
+                            && w.location.normalized_dir() == clean)
+                    } else {
+                        true
+                    }
+                });
                 let _ = self.save();
             }
         }
@@ -416,6 +431,35 @@ impl WorkspaceStore {
             self.recent_workspaces.iter().find(|w| w.id == id)
         } else {
             self.recent_workspaces.first()
+        }
+    }
+
+    /// Đồng bộ các dự án remote giữa `wsl_connections` và `recent_workspaces`
+    /// TODO: Dùng cho ssh, container ...
+    pub fn sync_remote_projects(&mut self) {
+        for conn in &self.wsl_connections {
+            for proj in &conn.projects {
+                let clean = normalize_workdir(&proj.path);
+                let exists = self.recent_workspaces.iter().any(|ws| {
+                    if let Some(remote) = ws.location.as_remote() {
+                        remote.display_name().eq_ignore_ascii_case(&conn.distro)
+                            && ws.location.normalized_dir() == clean
+                    } else {
+                        false
+                    }
+                });
+                if !exists {
+                    let ws = Workspace::new(
+                        extract_project_name(&proj.path),
+                        WorkspaceLocation::remote(WslConnectionOptions::new(
+                            &conn.distro,
+                            &proj.path,
+                        )),
+                        SourceType::Process,
+                    );
+                    self.recent_workspaces.push(ws);
+                }
+            }
         }
     }
 }

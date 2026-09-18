@@ -5,8 +5,8 @@ use eframe::egui::{self, Align2, Color32, CornerRadius, Id, Order, Stroke};
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 use uwu_core_workspace::{
-    clean_path, extract_project_name, SourceType, Workspace, WorkspaceLocation,
-    WslConnectionOptions,
+    clean_path, extract_project_name, RemoteConnectionOptions, SourceType, Workspace,
+    WorkspaceLocation,
 };
 use uwu_driver_transport::WslTransport;
 
@@ -30,8 +30,8 @@ pub fn join_unix_dir(base: &str, child: &str) -> String {
     }
 }
 
-/// Khởi tạo workspace remote cho WSL distro kèm đường dẫn làm việc (view helper)
-pub fn create_wsl_workspace(distro: &str, target_dir: &str) -> Workspace {
+/// Khởi tạo workspace remote cho server (WSL, SSH, Container...) kèm đường dẫn làm việc (view helper)
+pub fn create_remote_workspace(server_name: &str, target_dir: &str) -> Workspace {
     let cleaned = clean_path(target_dir);
     let clean_dir = if cleaned.is_empty() {
         "/".to_string()
@@ -39,16 +39,19 @@ pub fn create_wsl_workspace(distro: &str, target_dir: &str) -> Workspace {
         cleaned
     };
     let project_name = if clean_dir == "/" || clean_dir == "~" {
-        distro.to_string()
+        server_name.to_string()
     } else {
         extract_project_name(&clean_dir)
     };
     Workspace::new(
         project_name,
-        WorkspaceLocation::remote(WslConnectionOptions::new(distro, clean_dir)),
+        WorkspaceLocation::remote(RemoteConnectionOptions::parse(server_name, clean_dir)),
         SourceType::Process,
     )
 }
+
+/// Alias tương thích ngược
+pub use create_remote_workspace as create_wsl_workspace;
 
 type DirCacheMap = HashMap<(String, String), Vec<String>>;
 
