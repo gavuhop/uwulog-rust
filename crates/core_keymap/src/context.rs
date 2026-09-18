@@ -1,4 +1,4 @@
-//! Hierarchical Context Engine (Tầng 3 - Context-Aware Resolver).
+//! Hierarchical Context Engine (Tầng 2 - Context-Aware Resolver).
 
 use serde::{Deserialize, Serialize};
 
@@ -52,5 +52,33 @@ impl KeyContext {
             Self::Modal => "Modal",
             Self::RemoteServers => "RemoteServers",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_context_parse_and_as_str() {
+        assert_eq!(KeyContext::parse("global"), Some(KeyContext::Global));
+        assert_eq!(KeyContext::parse("table"), Some(KeyContext::Table));
+        assert_eq!(
+            KeyContext::parse("search_input"),
+            Some(KeyContext::SearchInput)
+        );
+        assert_eq!(
+            KeyContext::parse("autocomplete"),
+            Some(KeyContext::Autocomplete)
+        );
+        assert_eq!(KeyContext::parse("modal"), Some(KeyContext::Modal));
+        assert_eq!(KeyContext::parse("wsl"), Some(KeyContext::RemoteServers));
+        assert_eq!(
+            KeyContext::parse("remoteservers"),
+            Some(KeyContext::RemoteServers)
+        );
+
+        assert_eq!(KeyContext::Global.as_str(), "Global");
+        assert_eq!(KeyContext::Modal.as_str(), "Modal");
     }
 }

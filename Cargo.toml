@@ -10,6 +10,7 @@ members = [
     "crates/core_workspace",
     "crates/core_engine",
     "crates/cli_agent",
+    "crates/core_keymap",
     "crates/ui_tui",
     "crates/ui_gui",
     "crates/icons",
@@ -72,6 +73,7 @@ uwu-driver-transport = { path = "crates/driver_transport" }
 uwu-driver-sources = { path = "crates/driver_sources" }
 uwu-core-workspace = { path = "crates/core_workspace" }
 uwu-core-engine = { path = "crates/core_engine" }
+uwu-core-keymap = { path = "crates/core_keymap" }
 uwu-cli-agent = { path = "crates/cli_agent" }
 uwu-ui-tui = { path = "crates/ui_tui" }
 uwu-ui-gui = { path = "crates/ui_gui" }

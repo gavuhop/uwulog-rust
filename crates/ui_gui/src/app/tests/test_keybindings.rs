@@ -1,6 +1,6 @@
 use super::test_helpers::create_test_app;
 use crate::actions::AppAction;
-use crate::keymap::{KeyAction, KeyContext, KeymapConfigFile};
+use crate::keymap::{KeyAction, KeyActionExt, KeyContext, KeymapConfigFile};
 use crate::overlay::OverlayLayer;
 use eframe::egui::{Key, Modifiers, RawInput};
 

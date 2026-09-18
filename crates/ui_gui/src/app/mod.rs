@@ -6,6 +6,7 @@ pub use workspace_manager::WorkspaceManager;
 
 pub use crate::actions::AppAction;
 pub use crate::cli::CliArgs;
+use crate::keymap::KeyActionExt;
 pub use crate::overlay::{OverlayLayer, OverlayStack, RemoteModalPlacement};
 pub use crate::session::GuiSession;
 pub use crate::state::{ActiveTab, GuiViewState, RAW_STREAM_LIMIT};

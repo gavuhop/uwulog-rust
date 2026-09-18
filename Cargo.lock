@@ -4579,6 +4579,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "uwu-core-keymap"
+version = "0.1.0"
+dependencies = [
+ "crossterm",
+ "egui",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "uwu-core-protocol"
 version = "0.1.0"
 dependencies = [
@@ -4686,6 +4696,7 @@ dependencies = [
  "tokio",
  "uuid",
  "uwu-core-engine",
+ "uwu-core-keymap",
  "uwu-core-schema",
  "uwu-core-util",
  "uwu-core-workspace",

@@ -1,7 +1,8 @@
-//! KeymapManager & Hierarchical Fall-through Resolver (Tầng 3).
+//! KeymapManager & Hierarchical Fall-through Resolver (Tầng 2 & 3).
 
-use super::{action::KeyAction, context::KeyContext, keystroke::Keystroke};
-use eframe::egui;
+use crate::action::KeyAction;
+use crate::context::KeyContext;
+use crate::keystroke::Keystroke;
 
 /// Một liên kết phím tắt (Key Binding) gồm: Tổ hợp phím, Hành động và Ngữ cảnh.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -108,112 +109,6 @@ impl KeymapManager {
         &self.bindings
     }
 
-    /// Khớp phím bấm từ `egui::Context` theo thứ tự phân cấp ngữ cảnh (Hierarchical Fall-through):
-    /// 1. Tìm trong `active_context` từ dưới lên (LIFO - phím nạp sau đè phím trước).
-    /// 2. Nếu không có hoặc ngữ cảnh là `Global`, kiểm tra tiếp trong `KeyContext::Global`.
-    /// 3. Nếu gặp `KeyAction::Unbind`, dừng lại và không kích hoạt hành động nào.
-    pub fn process_input(
-        &self,
-        ctx: &egui::Context,
-        active_context: KeyContext,
-    ) -> Option<KeyAction> {
-        ctx.input(|input| self.resolve_action(input, active_context))
-    }
-
-    /// Tìm binding đầu tiên khớp với InputState trong context hiện tại (hoặc Global fallback).
-    pub fn resolve_binding<'a>(
-        &'a self,
-        input: &egui::InputState,
-        active_context: KeyContext,
-    ) -> Option<(&'a KeyAction, &'a Keystroke)> {
-        // Bước 1: Ưu tiên context cụ thể hiện tại (nếu khác Global)
-        if active_context != KeyContext::Global {
-            for binding in self.bindings.iter().rev() {
-                if binding.context == active_context && binding.keystroke.matches(input) {
-                    if binding.action == KeyAction::Unbind {
-                        return None;
-                    }
-                    return Some((&binding.action, &binding.keystroke));
-                }
-            }
-        }
-
-        // Bước 2: Fall-through về ngữ cảnh Global
-        for binding in self.bindings.iter().rev() {
-            if binding.context == KeyContext::Global && binding.keystroke.matches(input) {
-                if binding.action == KeyAction::Unbind {
-                    return None;
-                }
-                return Some((&binding.action, &binding.keystroke));
-            }
-        }
-
-        None
-    }
-
-    /// Resolve action từ `egui::InputState`
-    pub fn resolve_action(
-        &self,
-        input: &egui::InputState,
-        active_context: KeyContext,
-    ) -> Option<KeyAction> {
-        self.resolve_binding(input, active_context)
-            .map(|(act, _)| act.clone())
-    }
-
-    /// Tiêu thụ sự kiện phím (Consume Key) trên `egui::Ui` để tránh phím lan truyền xuống các control bên dưới.
-    /// Thường dùng cho các modal hoặc popup autocomplete cần chặn phím mũi tên / Enter / Tab / Escape.
-    pub fn consume_input(
-        &self,
-        ui: &mut egui::Ui,
-        active_context: KeyContext,
-    ) -> Option<KeyAction> {
-        let matched = ui.input(|input| {
-            self.resolve_binding(input, active_context)
-                .map(|(act, ks)| (act.clone(), *ks))
-        });
-
-        if let Some((action, keystroke)) = matched {
-            let modifiers = egui::Modifiers {
-                alt: keystroke.alt,
-                ctrl: keystroke.ctrl,
-                shift: keystroke.shift,
-                mac_cmd: keystroke.mac_cmd,
-                command: keystroke.ctrl || keystroke.mac_cmd,
-            };
-            ui.input_mut(|i| i.consume_key(modifiers, keystroke.key));
-            Some(action)
-        } else {
-            None
-        }
-    }
-
-    /// Tiêu thụ sự kiện phím (Consume Key) trực tiếp trên `egui::Context`.
-    pub fn consume_input_ctx(
-        &self,
-        ctx: &egui::Context,
-        active_context: KeyContext,
-    ) -> Option<KeyAction> {
-        let matched = ctx.input(|input| {
-            self.resolve_binding(input, active_context)
-                .map(|(act, ks)| (act.clone(), *ks))
-        });
-
-        if let Some((action, keystroke)) = matched {
-            let modifiers = egui::Modifiers {
-                alt: keystroke.alt,
-                ctrl: keystroke.ctrl,
-                shift: keystroke.shift,
-                mac_cmd: keystroke.mac_cmd,
-                command: keystroke.ctrl || keystroke.mac_cmd,
-            };
-            ctx.input_mut(|i| i.consume_key(modifiers, keystroke.key));
-            Some(action)
-        } else {
-            None
-        }
-    }
-
     /// Tìm keystroke đầu tiên khớp với action trong context (hoặc Global fallback), loại trừ các phím đã bị unbind sau đó.
     fn find_keystroke_for_action(
         &self,
@@ -257,6 +152,145 @@ impl KeymapManager {
         self.find_keystroke_for_action(action, context)
             .map(|k| k.format_label())
     }
+
+    // -----------------------------------------------------------------------
+    // egui methods
+    // -----------------------------------------------------------------------
+    #[cfg(feature = "egui")]
+    pub fn resolve_binding<'a>(
+        &'a self,
+        input: &egui::InputState,
+        active_context: KeyContext,
+    ) -> Option<(&'a KeyAction, &'a Keystroke)> {
+        // Bước 1: Ưu tiên context cụ thể hiện tại (nếu khác Global)
+        if active_context != KeyContext::Global {
+            for binding in self.bindings.iter().rev() {
+                if binding.context == active_context && binding.keystroke.matches(input) {
+                    if binding.action == KeyAction::Unbind {
+                        return None;
+                    }
+                    return Some((&binding.action, &binding.keystroke));
+                }
+            }
+        }
+
+        // Bước 2: Fall-through về ngữ cảnh Global
+        for binding in self.bindings.iter().rev() {
+            if binding.context == KeyContext::Global && binding.keystroke.matches(input) {
+                if binding.action == KeyAction::Unbind {
+                    return None;
+                }
+                return Some((&binding.action, &binding.keystroke));
+            }
+        }
+
+        None
+    }
+
+    #[cfg(feature = "egui")]
+    pub fn resolve_action(
+        &self,
+        input: &egui::InputState,
+        active_context: KeyContext,
+    ) -> Option<KeyAction> {
+        self.resolve_binding(input, active_context)
+            .map(|(act, _)| act.clone())
+    }
+
+    #[cfg(feature = "egui")]
+    pub fn process_input(
+        &self,
+        ctx: &egui::Context,
+        active_context: KeyContext,
+    ) -> Option<KeyAction> {
+        ctx.input(|input| self.resolve_action(input, active_context))
+    }
+
+    #[cfg(feature = "egui")]
+    pub fn consume_input(
+        &self,
+        ui: &mut egui::Ui,
+        active_context: KeyContext,
+    ) -> Option<KeyAction> {
+        let matched = ui.input(|input| {
+            self.resolve_binding(input, active_context)
+                .map(|(act, ks)| (act.clone(), *ks))
+        });
+
+        if let Some((action, keystroke)) = matched {
+            if let Some(egui_key) = keystroke.key.to_egui() {
+                ui.input_mut(|i| i.consume_key(keystroke.to_egui_modifiers(), egui_key));
+            }
+            Some(action)
+        } else {
+            None
+        }
+    }
+
+    #[cfg(feature = "egui")]
+    pub fn consume_input_ctx(
+        &self,
+        ctx: &egui::Context,
+        active_context: KeyContext,
+    ) -> Option<KeyAction> {
+        let matched = ctx.input(|input| {
+            self.resolve_binding(input, active_context)
+                .map(|(act, ks)| (act.clone(), *ks))
+        });
+
+        if let Some((action, keystroke)) = matched {
+            if let Some(egui_key) = keystroke.key.to_egui() {
+                ctx.input_mut(|i| i.consume_key(keystroke.to_egui_modifiers(), egui_key));
+            }
+            Some(action)
+        } else {
+            None
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // crossterm methods
+    // -----------------------------------------------------------------------
+    #[cfg(feature = "crossterm")]
+    pub fn resolve_crossterm_binding<'a>(
+        &'a self,
+        event: &crossterm::event::KeyEvent,
+        active_context: KeyContext,
+    ) -> Option<(&'a KeyAction, &'a Keystroke)> {
+        // Bước 1: Ưu tiên context cụ thể hiện tại (nếu khác Global)
+        if active_context != KeyContext::Global {
+            for binding in self.bindings.iter().rev() {
+                if binding.context == active_context && binding.keystroke.matches_crossterm(event) {
+                    if binding.action == KeyAction::Unbind {
+                        return None;
+                    }
+                    return Some((&binding.action, &binding.keystroke));
+                }
+            }
+        }
+
+        // Bước 2: Fall-through về ngữ cảnh Global
+        for binding in self.bindings.iter().rev() {
+            if binding.context == KeyContext::Global && binding.keystroke.matches_crossterm(event) {
+                if binding.action == KeyAction::Unbind {
+                    return None;
+                }
+                return Some((&binding.action, &binding.keystroke));
+            }
+        }
+
+        None
+    }
+
+    #[cfg(feature = "crossterm")]
+    pub fn process_crossterm_event(
+        &self,
+        event: &crossterm::event::KeyEvent,
+        active_context: KeyContext,
+    ) -> Option<KeyAction> {
+        self.resolve_crossterm_binding(event, active_context)
+            .map(|(act, _)| act.clone())
+    }
 }
 
 #[cfg(test)]
@@ -290,5 +324,24 @@ mod tests {
         let label_after =
             manager.get_label_for_action(&KeyAction::ToggleProjectPicker, KeyContext::Global);
         assert_eq!(label_after.as_deref(), Some("Alt+P"));
+    }
+
+    #[cfg(feature = "egui")]
+    #[test]
+    fn test_context_fall_through_egui() {
+        let manager = KeymapManager::new();
+
+        // 1. Enter/Tab trong context Autocomplete -> ConfirmSelection (Tab được nạp sau nên ưu tiên tìm thấy trước)
+        let enter_autocomplete =
+            manager.get_label_for_action(&KeyAction::ConfirmSelection, KeyContext::Autocomplete);
+        assert_eq!(enter_autocomplete.as_deref(), Some("Tab"));
+
+        // 2. Escape trong context Modal -> fall-through về Global -> Dismiss
+        let esc_modal = manager.get_label_for_action(&KeyAction::Dismiss, KeyContext::Modal);
+        assert_eq!(esc_modal.as_deref(), Some("Esc"));
+
+        // 3. Escape trong context RemoteServers -> Back (ghi đè Dismiss của Global)
+        let esc_remote = manager.get_label_for_action(&KeyAction::Back, KeyContext::RemoteServers);
+        assert_eq!(esc_remote.as_deref(), Some("Esc"));
     }
 }
