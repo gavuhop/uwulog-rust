@@ -1,136 +1,112 @@
 //! Semantic Action Registry (Tầng 3 - Command Pattern).
 
-use serde::{Deserialize, Serialize};
+use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+use std::fmt;
+use std::str::FromStr;
 
-/// Danh mục các hành động ngữ nghĩa (Semantic Actions) có thể được gán phím tắt trong `uwulog`.
-/// Định dạng tên canonical dạng `namespace::Action` tương tự như Zed Editor.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum KeyAction {
-    // Window & View Controls
-    #[serde(rename = "window::Dismiss")]
-    Dismiss,
-    #[serde(rename = "window::Quit")]
-    Quit,
-    #[serde(rename = "window::ZoomIn")]
-    ZoomIn,
-    #[serde(rename = "window::ZoomOut")]
-    ZoomOut,
-    #[serde(rename = "window::ResetZoom")]
-    ResetZoom,
+macro_rules! define_actions {
+    ($(
+        $(#[$meta:meta])*
+        $variant:ident => ($canonical:literal, [$( $alias:literal ),* $(,)?])
+    ),* $(,)?) => {
+        /// Danh mục các hành động ngữ nghĩa (Semantic Actions) có thể được gán phím tắt trong `uwulog`.
+        /// Định dạng tên canonical dạng `namespace::Action` tương tự như Zed Editor.
+        #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+        pub enum KeyAction {
+            $(
+                $(#[$meta])*
+                $variant,
+            )*
+        }
 
-    // Workspace & Session Controls
-    #[serde(rename = "workspace::ToggleProjectPicker")]
-    ToggleProjectPicker,
-    #[serde(rename = "workspace::PreviousSession")]
-    PreviousSession,
-    #[serde(rename = "workspace::NextSession")]
-    NextSession,
-    #[serde(rename = "workspace::ToggleRemoteServers")]
-    ToggleRemoteServers,
-    #[serde(rename = "workspace::OpenLaunchModal")]
-    OpenLaunchModal,
-    #[serde(rename = "workspace::OpenColumnsModal")]
-    OpenColumnsModal,
-    #[serde(rename = "workspace::ToggleLatch")]
-    ToggleLatch,
+        impl KeyAction {
+            /// Trả về chuỗi canonical identifier chuẩn.
+            pub const fn canonical_name(&self) -> &'static str {
+                match self {
+                    $(
+                        Self::$variant => $canonical,
+                    )*
+                }
+            }
 
-    // Search Controls
-    #[serde(rename = "search::Commit")]
-    CommitSearch,
-    #[serde(rename = "search::Clear")]
-    ClearSearch,
-
-    // Autocomplete & List Navigation
-    #[serde(rename = "autocomplete::SelectNext")]
-    SelectNext,
-    #[serde(rename = "autocomplete::SelectPrev")]
-    SelectPrev,
-    #[serde(rename = "autocomplete::Confirm")]
-    ConfirmSelection,
-
-    // Navigation & Editing
-    #[serde(rename = "menu::Back")]
-    Back,
-    #[serde(rename = "picker::TabComplete")]
-    TabComplete,
-
-    // Đặc biệt: Hủy gán phím tắt (Unbind)
-    #[serde(rename = "unbind")]
-    Unbind,
+            /// Phân tích cú pháp từ chuỗi định danh canonical hoặc alias thông dụng.
+            pub fn parse(s: &str) -> Option<Self> {
+                let trimmed = s.trim();
+                match trimmed {
+                    $(
+                        $canonical $(| $alias)* => Some(Self::$variant),
+                    )*
+                    _ => None,
+                }
+            }
+        }
+    };
 }
 
-impl KeyAction {
-    /// Phân tích cú pháp từ chuỗi định danh canonical.
-    pub fn parse(s: &str) -> Option<Self> {
-        match s.trim() {
-            "window::Dismiss" | "Dismiss" => Some(Self::Dismiss),
-            "window::Quit" | "Quit" => Some(Self::Quit),
-            "window::ZoomIn" | "ZoomIn" => Some(Self::ZoomIn),
-            "window::ZoomOut" | "ZoomOut" => Some(Self::ZoomOut),
-            "window::ResetZoom" | "ResetZoom" => Some(Self::ResetZoom),
+define_actions! {
+    // Window & View Controls
+    Dismiss => ("window::Dismiss", ["Dismiss"]),
+    Quit => ("window::Quit", ["Quit"]),
+    ZoomIn => ("window::ZoomIn", ["ZoomIn"]),
+    ZoomOut => ("window::ZoomOut", ["ZoomOut"]),
+    ResetZoom => ("window::ResetZoom", ["ResetZoom"]),
 
-            "workspace::ToggleProjectPicker" | "ToggleProjectPicker" => {
-                Some(Self::ToggleProjectPicker)
-            }
-            "workspace::PreviousSession" | "PreviousSession" => Some(Self::PreviousSession),
-            "workspace::NextSession" | "NextSession" => Some(Self::NextSession),
-            "workspace::ToggleRemoteServers" | "ToggleRemoteServers" => {
-                Some(Self::ToggleRemoteServers)
-            }
-            "workspace::OpenLaunchModal" | "OpenLaunchModal" => Some(Self::OpenLaunchModal),
-            "workspace::OpenColumnsModal" | "OpenColumnsModal" => Some(Self::OpenColumnsModal),
-            "workspace::ToggleLatch" | "ToggleLatch" => Some(Self::ToggleLatch),
+    // Workspace & Session Controls
+    ToggleProjectPicker => ("workspace::ToggleProjectPicker", ["ToggleProjectPicker"]),
+    PreviousSession => ("workspace::PreviousSession", ["PreviousSession"]),
+    NextSession => ("workspace::NextSession", ["NextSession"]),
+    ToggleRemoteServers => ("workspace::ToggleRemoteServers", ["ToggleRemoteServers"]),
+    OpenLaunchModal => ("workspace::OpenLaunchModal", ["OpenLaunchModal"]),
+    OpenColumnsModal => ("workspace::OpenColumnsModal", ["OpenColumnsModal"]),
+    ToggleLatch => ("workspace::ToggleLatch", ["ToggleLatch"]),
 
-            "search::Commit" | "CommitSearch" => Some(Self::CommitSearch),
-            "search::Clear" | "ClearSearch" => Some(Self::ClearSearch),
+    // Search Controls
+    CommitSearch => ("search::Commit", ["CommitSearch"]),
+    ClearSearch => ("search::Clear", ["ClearSearch"]),
 
-            "autocomplete::SelectNext" | "SelectNext" | "menu::SelectNext" => {
-                Some(Self::SelectNext)
-            }
-            "autocomplete::SelectPrev" | "SelectPrev" | "menu::SelectPrev" => {
-                Some(Self::SelectPrev)
-            }
-            "autocomplete::Confirm" | "ConfirmSelection" | "menu::Confirm" => {
-                Some(Self::ConfirmSelection)
-            }
+    // Autocomplete & List Navigation
+    SelectNext => ("autocomplete::SelectNext", ["SelectNext", "menu::SelectNext"]),
+    SelectPrev => ("autocomplete::SelectPrev", ["SelectPrev", "menu::SelectPrev"]),
+    ConfirmSelection => ("autocomplete::Confirm", ["ConfirmSelection", "menu::Confirm"]),
 
-            "menu::Back" | "modal::Back" | "window::Back" | "Back" => Some(Self::Back),
-            "picker::TabComplete" | "tab::Complete" | "TabComplete" => Some(Self::TabComplete),
+    // Navigation & Editing
+    Back => ("menu::Back", ["modal::Back", "window::Back", "Back"]),
+    TabComplete => ("picker::TabComplete", ["tab::Complete", "TabComplete"]),
 
-            "unbind" | "Unbind" => Some(Self::Unbind),
-            _ => None,
-        }
+    // Đặc biệt: Hủy gán phím tắt (Unbind)
+    Unbind => ("unbind", ["Unbind"]),
+}
+
+impl fmt::Display for KeyAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.canonical_name())
     }
+}
 
-    /// Trả về chuỗi canonical identifier chuẩn.
-    pub fn canonical_name(&self) -> &'static str {
-        match self {
-            Self::Dismiss => "window::Dismiss",
-            Self::Quit => "window::Quit",
-            Self::ZoomIn => "window::ZoomIn",
-            Self::ZoomOut => "window::ZoomOut",
-            Self::ResetZoom => "window::ResetZoom",
+impl FromStr for KeyAction {
+    type Err = String;
 
-            Self::ToggleProjectPicker => "workspace::ToggleProjectPicker",
-            Self::PreviousSession => "workspace::PreviousSession",
-            Self::NextSession => "workspace::NextSession",
-            Self::ToggleRemoteServers => "workspace::ToggleRemoteServers",
-            Self::OpenLaunchModal => "workspace::OpenLaunchModal",
-            Self::OpenColumnsModal => "workspace::OpenColumnsModal",
-            Self::ToggleLatch => "workspace::ToggleLatch",
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse(s).ok_or_else(|| format!("Unknown KeyAction: '{}'", s))
+    }
+}
 
-            Self::CommitSearch => "search::Commit",
-            Self::ClearSearch => "search::Clear",
+impl Serialize for KeyAction {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.canonical_name())
+    }
+}
 
-            Self::SelectNext => "autocomplete::SelectNext",
-            Self::SelectPrev => "autocomplete::SelectPrev",
-            Self::ConfirmSelection => "autocomplete::Confirm",
-
-            Self::Back => "menu::Back",
-            Self::TabComplete => "picker::TabComplete",
-
-            Self::Unbind => "unbind",
-        }
+impl<'de> Deserialize<'de> for KeyAction {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Self::parse(&s).ok_or_else(|| de::Error::custom(format!("Unknown KeyAction '{}'", s)))
     }
 }
 
@@ -164,6 +140,10 @@ mod tests {
             "workspace::ToggleProjectPicker"
         );
         assert_eq!(KeyAction::Dismiss.canonical_name(), "window::Dismiss");
+        assert_eq!(
+            format!("{}", KeyAction::ToggleProjectPicker),
+            "workspace::ToggleProjectPicker"
+        );
     }
 
     #[test]
@@ -173,5 +153,9 @@ mod tests {
         assert_eq!(json, "\"workspace::ToggleProjectPicker\"");
         let deserialized: KeyAction = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized, action);
+
+        let deserialized_alias: KeyAction =
+            serde_json::from_str("\"ToggleProjectPicker\"").unwrap();
+        assert_eq!(deserialized_alias, action);
     }
 }

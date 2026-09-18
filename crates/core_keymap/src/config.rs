@@ -2,8 +2,10 @@
 
 use crate::action::KeyAction;
 use crate::context::KeyContext;
+use crate::key::Key;
+use crate::keystroke::Keystroke;
 use crate::manager::KeymapManager;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -16,80 +18,89 @@ pub struct KeymapConfigFile(pub Vec<KeymapSection>);
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct KeymapSection {
     /// Ngữ cảnh kích hoạt, ví dụ: "Global", "Autocomplete", "SearchInput", "Modal".
-    #[serde(default = "default_context_str")]
-    pub context: String,
+    #[serde(default)]
+    pub context: KeyContext,
 
-    /// Bảng ánh xạ chuỗi phím bấm -> tên hành động.
+    /// Bảng ánh xạ phím bấm -> hành động.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bindings: Option<BTreeMap<String, String>>,
+    pub bindings: Option<BTreeMap<Keystroke, KeyAction>>,
 
-    /// Bảng unbind phím tắt mặc định.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub unbind: Option<BTreeMap<String, String>>,
+    /// Danh sách unbind phím tắt (chấp nhận cả Array chuỗi `["alt-p"]` lẫn Map `{"alt-p": ...}`).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_unbind_list"
+    )]
+    pub unbind: Option<Vec<Keystroke>>,
 }
 
-fn default_context_str() -> String {
-    "Global".to_string()
+fn deserialize_unbind_list<'de, D>(deserializer: D) -> Result<Option<Vec<Keystroke>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum UnbindHelper {
+        List(Vec<Keystroke>),
+        Map(BTreeMap<Keystroke, serde_json::Value>),
+    }
+
+    let helper = Option::<UnbindHelper>::deserialize(deserializer)?;
+    match helper {
+        None => Ok(None),
+        Some(UnbindHelper::List(list)) => Ok(Some(list)),
+        Some(UnbindHelper::Map(map)) => Ok(Some(map.into_keys().collect())),
+    }
 }
 
 impl KeymapConfigFile {
     /// Áp dụng các cấu hình trong file này vào một `KeymapManager`.
     pub fn apply_to(&self, manager: &mut KeymapManager) {
         for section in &self.0 {
-            let context = KeyContext::parse(&section.context).unwrap_or(KeyContext::Global);
+            let context = section.context;
 
             // 1. Áp dụng unbind trước
             if let Some(ref unbinds) = section.unbind {
-                for keystroke_str in unbinds.keys() {
-                    manager.unbind(keystroke_str, context);
+                for ks in unbinds {
+                    manager.unbind_keystroke(*ks, context);
                 }
             }
 
             // 2. Áp dụng bindings mới
             if let Some(ref bindings) = section.bindings {
-                for (keystroke_str, action_str) in bindings {
-                    if let Some(action) = KeyAction::parse(action_str) {
-                        manager.bind(keystroke_str, action, context);
-                    }
+                for (ks, action) in bindings {
+                    manager.bind_keystroke(*ks, action.clone(), context);
                 }
             }
         }
     }
 
     /// Sinh cấu hình mặc định dạng đối tượng để có thể xuất ra file JSON mẫu cho người dùng.
+    /// Sử dụng typed Keystroke và KeyAction thay vì hardcoded string.
     pub fn generate_default_sample() -> Self {
         let mut global_bindings = BTreeMap::new();
-        global_bindings.insert(
-            "alt-p".to_string(),
-            "workspace::ToggleProjectPicker".to_string(),
-        );
-        global_bindings.insert(
-            "ctrl-pageup".to_string(),
-            "workspace::PreviousSession".to_string(),
-        );
-        global_bindings.insert(
-            "ctrl-pagedown".to_string(),
-            "workspace::NextSession".to_string(),
-        );
-        global_bindings.insert("ctrl-=".to_string(), "window::ZoomIn".to_string());
-        global_bindings.insert("ctrl--".to_string(), "window::ZoomOut".to_string());
-        global_bindings.insert("ctrl-0".to_string(), "window::ResetZoom".to_string());
-        global_bindings.insert("escape".to_string(), "window::Dismiss".to_string());
+        global_bindings.insert(Keystroke::alt(Key::P), KeyAction::ToggleProjectPicker);
+        global_bindings.insert(Keystroke::ctrl(Key::PageUp), KeyAction::PreviousSession);
+        global_bindings.insert(Keystroke::ctrl(Key::PageDown), KeyAction::NextSession);
+        global_bindings.insert(Keystroke::ctrl(Key::Equals), KeyAction::ZoomIn);
+        global_bindings.insert(Keystroke::ctrl(Key::Minus), KeyAction::ZoomOut);
+        global_bindings.insert(Keystroke::ctrl(Key::Num0), KeyAction::ResetZoom);
+        global_bindings.insert(Keystroke::new(Key::Escape), KeyAction::Dismiss);
 
         let mut auto_bindings = BTreeMap::new();
-        auto_bindings.insert("down".to_string(), "autocomplete::SelectNext".to_string());
-        auto_bindings.insert("up".to_string(), "autocomplete::SelectPrev".to_string());
-        auto_bindings.insert("enter".to_string(), "autocomplete::Confirm".to_string());
-        auto_bindings.insert("tab".to_string(), "autocomplete::Confirm".to_string());
+        auto_bindings.insert(Keystroke::new(Key::ArrowDown), KeyAction::SelectNext);
+        auto_bindings.insert(Keystroke::new(Key::ArrowUp), KeyAction::SelectPrev);
+        auto_bindings.insert(Keystroke::new(Key::Enter), KeyAction::ConfirmSelection);
+        auto_bindings.insert(Keystroke::new(Key::Tab), KeyAction::ConfirmSelection);
 
         Self(vec![
             KeymapSection {
-                context: "Global".to_string(),
+                context: KeyContext::Global,
                 bindings: Some(global_bindings),
                 unbind: None,
             },
             KeymapSection {
-                context: "Autocomplete".to_string(),
+                context: KeyContext::Autocomplete,
                 bindings: Some(auto_bindings),
                 unbind: None,
             },
@@ -99,15 +110,38 @@ impl KeymapConfigFile {
 
 /// Trả về đường dẫn mặc định của file cấu hình `keymap.json` trên hệ thống.
 pub fn default_config_path() -> PathBuf {
+    // 1. Cho phép ghi đè thông qua biến môi trường (phục vụ test, CI hoặc portable mode)
+    if let Ok(override_path) = std::env::var("UWULOG_KEYMAP_PATH") {
+        if !override_path.trim().is_empty() {
+            return PathBuf::from(override_path);
+        }
+    }
+
+    // 2. Windows: %APPDATA% hoặc %LOCALAPPDATA%
     #[cfg(target_os = "windows")]
     {
         if let Ok(appdata) = std::env::var("APPDATA") {
             return PathBuf::from(appdata).join("uwulog").join("keymap.json");
         }
+        if let Ok(localappdata) = std::env::var("LOCALAPPDATA") {
+            return PathBuf::from(localappdata)
+                .join("uwulog")
+                .join("keymap.json");
+        }
+        if let Ok(userprofile) = std::env::var("USERPROFILE") {
+            return PathBuf::from(userprofile)
+                .join(".config")
+                .join("uwulog")
+                .join("keymap.json");
+        }
     }
 
+    // 3. Unix/Linux/macOS: XDG Base Directory hoặc $HOME/.config
     #[cfg(not(target_os = "windows"))]
     {
+        if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+            return PathBuf::from(xdg).join("uwulog").join("keymap.json");
+        }
         if let Ok(home) = std::env::var("HOME") {
             return PathBuf::from(home)
                 .join(".config")
@@ -146,7 +180,8 @@ pub fn ensure_sample_config_file(path: Option<&Path>) -> Result<(), String> {
     }
 
     if let Some(parent) = target_path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create config directory '{:?}': {}", parent, e))?;
     }
 
     let sample = KeymapConfigFile::generate_default_sample();
@@ -198,5 +233,37 @@ mod tests {
         let next_label =
             manager.get_label_for_action(&KeyAction::SelectNext, KeyContext::Autocomplete);
         assert_eq!(next_label.as_deref(), Some("Ctrl+N"));
+    }
+
+    #[test]
+    fn test_parse_keymap_unbind_array_and_map() {
+        // Hỗ trợ cả unbind dạng mảng lẫn dạng map
+        let json_with_array = r#"[
+            {
+                "context": "Global",
+                "unbind": ["alt-p", "ctrl-pageup"]
+            }
+        ]"#;
+        let cfg1: KeymapConfigFile = serde_json::from_str(json_with_array).unwrap();
+        assert_eq!(cfg1.0[0].unbind.as_ref().unwrap().len(), 2);
+
+        let json_with_map = r#"[
+            {
+                "context": "Global",
+                "unbind": {
+                    "alt-p": "workspace::ToggleProjectPicker"
+                }
+            }
+        ]"#;
+        let cfg2: KeymapConfigFile = serde_json::from_str(json_with_map).unwrap();
+        assert_eq!(cfg2.0[0].unbind.as_ref().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_generate_default_sample_roundtrip() {
+        let sample = KeymapConfigFile::generate_default_sample();
+        let json = serde_json::to_string(&sample).unwrap();
+        let de: KeymapConfigFile = serde_json::from_str(&json).unwrap();
+        assert_eq!(de.0.len(), sample.0.len());
     }
 }
