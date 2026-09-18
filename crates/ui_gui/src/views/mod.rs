@@ -55,14 +55,20 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
         })
         .collect();
 
-    let project_shortcut = app.keystroke_text_for(&crate::keymap::KeyAction::ToggleProjectPicker);
+    let project_shortcut = app
+        .keymap
+        .get_label_str(
+            &crate::keymap::KeyAction::ToggleProjectPicker,
+            crate::keymap::KeyContext::Global,
+        )
+        .unwrap_or_default();
     let mut header_cx = header::HeaderContext {
         overlay_stack: &mut app.overlays.stack,
         store: &app.workspaces.store,
         sessions: &session_summaries,
         active_index,
         project_search_query: &mut app.overlays.project_search_query,
-        project_shortcut: &project_shortcut,
+        project_shortcut,
     };
 
     let active_session = &mut app.workspaces.sessions[active_index];

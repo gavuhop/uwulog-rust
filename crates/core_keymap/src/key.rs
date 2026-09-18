@@ -4,9 +4,11 @@
 //! đồng thời cung cấp adapter chuyển đổi hai chiều cho cả `egui` và `crossterm`.
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::fmt;
+use std::str::FromStr;
 
 /// Đại diện cho các phím bấm vật lý tiêu chuẩn trên bàn phím.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Key {
     // Letters
     A,
@@ -109,6 +111,20 @@ impl<'de> Deserialize<'de> for Key {
     {
         let s = String::deserialize(deserializer)?;
         parse_key(&s).ok_or_else(|| serde::de::Error::custom(format!("Unknown key '{}'", s)))
+    }
+}
+
+impl fmt::Display for Key {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", format_key(*self))
+    }
+}
+
+impl FromStr for Key {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        parse_key(s).ok_or_else(|| format!("Unknown key '{}'", s))
     }
 }
 

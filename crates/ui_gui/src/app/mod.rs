@@ -135,12 +135,18 @@ impl UwuGuiApp {
         }
     }
 
+    /// Lấy nhãn phím tắt định dạng thân thiện cho UI dạng mượn &str (Zero-Allocation, O(1))
+    #[inline]
+    pub fn keystroke_str_for(&self, action: &crate::keymap::KeyAction) -> &str {
+        self.keymap
+            .get_label_str(action, crate::keymap::KeyContext::Global)
+            .unwrap_or_default()
+    }
+
     /// Lấy nhãn phím tắt định dạng thân thiện cho UI (như "Alt+P", "Ctrl+PageUp")
     #[inline]
     pub fn keystroke_text_for(&self, action: &crate::keymap::KeyAction) -> String {
-        self.keymap
-            .get_label_for_action(action, crate::keymap::KeyContext::Global)
-            .unwrap_or_default()
+        self.keystroke_str_for(action).to_string()
     }
 
     /// Đẩy một layer mới vào đỉnh ngăn xếp nếu chưa có
