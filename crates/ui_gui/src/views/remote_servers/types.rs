@@ -63,6 +63,7 @@ pub struct SshPickerState {
     pub focus_input: bool,
     pub stage: SshPickerStage,
     pub parsed_options: Option<uwu_core_workspace::SshConnectionOptions>,
+    pub error_message: Option<String>,
 }
 
 impl SshPickerState {
@@ -74,6 +75,7 @@ impl SshPickerState {
             focus_input: true,
             stage: SshPickerStage::Input,
             parsed_options: None,
+            error_message: None,
         }
     }
 }

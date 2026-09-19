@@ -2,8 +2,13 @@ use super::{BoxedRead, BoxedWrite, RemoteTransport, WslArch, WslTransport};
 use crate::wsl::parse_wsl_arch;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::Sender;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt;
 use uwu_core_util::command::{new_std_command, new_tokio_command};
 
@@ -478,6 +483,410 @@ impl SshTransport {
         })
     }
 
+    /// Kết nối đến SSH server theo mô hình tương tác tuần tự (chuẩn Zed Editor).
+    /// Giao tiếp phản hồi theo từng bước: Kiểm tra kết nối -> Host Key (yes/no) -> Password.
+    /// Không hỏi trước thông tin khi chưa có yêu cầu từ SSH daemon.
+    pub fn connect_interactive(
+        host: &str,
+        user: Option<&str>,
+        port: Option<u16>,
+        args: Option<&[String]>,
+        cancel_flag: Arc<AtomicBool>,
+        event_tx: Sender<SshInteractiveEvent>,
+    ) {
+        let target = if let Some(u) = user {
+            format!("{}@{}", u, host)
+        } else {
+            host.to_string()
+        };
+
+        let askpass_session = match InteractiveAskPassSession::new() {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = event_tx.send(SshInteractiveEvent::Failed(format!(
+                    "Failed to initialize SSH askpass session: {}",
+                    e
+                )));
+                return;
+            }
+        };
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let socket_path = Self::compute_control_socket_path(host, user, port);
+            let additional_args = args.unwrap_or(&[]);
+            if socket_path.exists()
+                && !Self::is_master_alive(&socket_path, &target, additional_args)
+            {
+                let _ = std::fs::remove_file(&socket_path);
+            }
+
+            if Self::is_master_alive(&socket_path, &target, additional_args) {
+                let initial_dir = Self::resolve_home_dir(host, user, port, args);
+                let entries = Self::list_remote_directories(host, &initial_dir, user, port, args)
+                    .unwrap_or_default();
+                let _ = event_tx.send(SshInteractiveEvent::Connected(SshConnectionSuccess {
+                    initial_dir,
+                    entries,
+                }));
+                return;
+            }
+
+            let mut cmd = new_std_command("ssh");
+            cmd.arg("-N")
+                .arg("-f")
+                .arg("-o")
+                .arg("ControlMaster=yes")
+                .arg("-o")
+                .arg("ControlPersist=10m")
+                .arg("-o")
+                .arg(format!("ControlPath={}", socket_path.display()))
+                .arg("-o")
+                .arg("StrictHostKeyChecking=ask")
+                .arg("-o")
+                .arg("ConnectTimeout=10");
+
+            cmd.env("SSH_ASKPASS_REQUIRE", "force")
+                .env("SSH_ASKPASS", askpass_session.script_path());
+
+            if let Some(p) = port {
+                cmd.arg("-p").arg(p.to_string());
+            }
+            for arg in additional_args {
+                cmd.arg(arg);
+            }
+            cmd.arg(&target);
+            cmd.stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+
+            let mut child = match cmd.spawn() {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = event_tx.send(SshInteractiveEvent::Failed(format!(
+                        "Failed to spawn ssh command: {}",
+                        e
+                    )));
+                    return;
+                }
+            };
+
+            let start_time = Instant::now();
+            let timeout = Duration::from_secs(30);
+
+            loop {
+                if cancel_flag.load(Ordering::Relaxed) {
+                    let _ = child.kill();
+                    return;
+                }
+
+                if start_time.elapsed() > timeout {
+                    let _ = child.kill();
+                    let _ = event_tx.send(SshInteractiveEvent::Failed(
+                        "SSH connection timed out after 30 seconds".to_string(),
+                    ));
+                    return;
+                }
+
+                // 1. Kiểm tra yêu cầu tương tác từ SSH_ASKPASS
+                match askpass_session.listener().accept() {
+                    Ok((mut stream, _)) => {
+                        let _ = stream.set_nonblocking(false);
+                        let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+
+                        let mut prompt_bytes = Vec::new();
+                        let mut buf = [0u8; 512];
+                        loop {
+                            match stream.read(&mut buf) {
+                                Ok(0) => break,
+                                Ok(n) => {
+                                    prompt_bytes.extend_from_slice(&buf[..n]);
+                                    if prompt_bytes.contains(&0) || prompt_bytes.contains(&b'\n') {
+                                        break;
+                                    }
+                                }
+                                Err(_) => break,
+                            }
+                        }
+
+                        let raw_prompt = String::from_utf8_lossy(&prompt_bytes)
+                            .trim_matches(|c| c == '\0' || c == '\r' || c == '\n')
+                            .to_string();
+
+                        let prompt_lower = raw_prompt.to_lowercase();
+                        let is_yes_no = prompt_lower.contains("yes/no");
+                        let prompt_type = if is_yes_no {
+                            SshInteractivePromptType::HostKeyConfirmation
+                        } else {
+                            SshInteractivePromptType::Password
+                        };
+
+                        let (resp_tx, resp_rx) = std::sync::mpsc::channel::<String>();
+                        let _ = event_tx.send(SshInteractiveEvent::Prompt {
+                            prompt_message: raw_prompt,
+                            prompt_type,
+                            response_sender: resp_tx,
+                        });
+
+                        loop {
+                            if cancel_flag.load(Ordering::Relaxed) {
+                                let _ = child.kill();
+                                return;
+                            }
+                            match resp_rx.recv_timeout(Duration::from_millis(50)) {
+                                Ok(answer) => {
+                                    let _ = writeln!(stream, "{}", answer);
+                                    let _ = stream.flush();
+                                    break;
+                                }
+                                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                                    if let Ok(Some(_)) = child.try_wait() {
+                                        break;
+                                    }
+                                }
+                                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                                    let _ = child.kill();
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                    Err(_) => {}
+                }
+
+                // 2. Kiểm tra tiến trình child
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        if status.success() {
+                            for _ in 0..10 {
+                                if socket_path.exists() {
+                                    break;
+                                }
+                                std::thread::sleep(Duration::from_millis(50));
+                            }
+                            let initial_dir = Self::resolve_home_dir(host, user, port, args);
+                            let entries =
+                                Self::list_remote_directories(host, &initial_dir, user, port, args)
+                                    .unwrap_or_default();
+                            let _ = event_tx.send(SshInteractiveEvent::Connected(
+                                SshConnectionSuccess {
+                                    initial_dir,
+                                    entries,
+                                },
+                            ));
+                            return;
+                        } else {
+                            let mut err_msg = String::new();
+                            if let Some(mut stderr) = child.stderr.take() {
+                                let mut buf = Vec::new();
+                                let _ = stderr.read_to_end(&mut buf);
+                                err_msg = String::from_utf8_lossy(&buf).trim().to_string();
+                            }
+                            let msg = if err_msg.is_empty() {
+                                format!("SSH connection failed (exit code {:?})", status.code())
+                            } else {
+                                err_msg
+                            };
+                            let _ = event_tx.send(SshInteractiveEvent::Failed(msg));
+                            return;
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        let _ = event_tx.send(SshInteractiveEvent::Failed(format!(
+                            "Error monitoring SSH process: {}",
+                            e
+                        )));
+                        return;
+                    }
+                }
+
+                // 3. Kiểm tra socket master connection đã sẵn sàng
+                if socket_path.exists()
+                    && Self::is_master_alive(&socket_path, &target, additional_args)
+                {
+                    let initial_dir = Self::resolve_home_dir(host, user, port, args);
+                    let entries =
+                        Self::list_remote_directories(host, &initial_dir, user, port, args)
+                            .unwrap_or_default();
+                    let _ = event_tx.send(SshInteractiveEvent::Connected(SshConnectionSuccess {
+                        initial_dir,
+                        entries,
+                    }));
+                    return;
+                }
+
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            let mut cmd = new_std_command("ssh");
+            cmd.arg("-o")
+                .arg("StrictHostKeyChecking=ask")
+                .arg("-o")
+                .arg("ConnectTimeout=10");
+
+            cmd.env("SSH_ASKPASS_REQUIRE", "force")
+                .env("SSH_ASKPASS", askpass_session.script_path());
+
+            if let Some(p) = port {
+                cmd.arg("-p").arg(p.to_string());
+            }
+            if let Some(extra_args) = args {
+                for a in extra_args {
+                    cmd.arg(a);
+                }
+            }
+            cmd.arg(&target);
+            cmd.arg("echo $HOME");
+            cmd.stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+
+            let mut child = match cmd.spawn() {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = event_tx.send(SshInteractiveEvent::Failed(format!(
+                        "Failed to spawn ssh command: {}",
+                        e
+                    )));
+                    return;
+                }
+            };
+
+            let start_time = Instant::now();
+            let timeout = Duration::from_secs(30);
+
+            loop {
+                if cancel_flag.load(Ordering::Relaxed) {
+                    let _ = child.kill();
+                    return;
+                }
+
+                if start_time.elapsed() > timeout {
+                    let _ = child.kill();
+                    let _ = event_tx.send(SshInteractiveEvent::Failed(
+                        "SSH connection timed out after 30 seconds".to_string(),
+                    ));
+                    return;
+                }
+
+                // Kiểm tra prompt từ askpass
+                match askpass_session.listener().accept() {
+                    Ok((mut stream, _)) => {
+                        let _ = stream.set_nonblocking(false);
+                        let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+
+                        let mut prompt_bytes = Vec::new();
+                        let mut buf = [0u8; 512];
+                        loop {
+                            match stream.read(&mut buf) {
+                                Ok(0) => break,
+                                Ok(n) => {
+                                    prompt_bytes.extend_from_slice(&buf[..n]);
+                                    if prompt_bytes.contains(&0) || prompt_bytes.contains(&b'\n') {
+                                        break;
+                                    }
+                                }
+                                Err(_) => break,
+                            }
+                        }
+
+                        let raw_prompt = String::from_utf8_lossy(&prompt_bytes)
+                            .trim_matches(|c| c == '\0' || c == '\r' || c == '\n')
+                            .to_string();
+
+                        let prompt_lower = raw_prompt.to_lowercase();
+                        let is_yes_no = prompt_lower.contains("yes/no");
+                        let prompt_type = if is_yes_no {
+                            SshInteractivePromptType::HostKeyConfirmation
+                        } else {
+                            SshInteractivePromptType::Password
+                        };
+
+                        let (resp_tx, resp_rx) = std::sync::mpsc::channel::<String>();
+                        let _ = event_tx.send(SshInteractiveEvent::Prompt {
+                            prompt_message: raw_prompt,
+                            prompt_type,
+                            response_sender: resp_tx,
+                        });
+
+                        loop {
+                            if cancel_flag.load(Ordering::Relaxed) {
+                                let _ = child.kill();
+                                return;
+                            }
+                            match resp_rx.recv_timeout(Duration::from_millis(50)) {
+                                Ok(answer) => {
+                                    let _ = writeln!(stream, "{}", answer);
+                                    let _ = stream.flush();
+                                    break;
+                                }
+                                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                                    if let Ok(Some(_)) = child.try_wait() {
+                                        break;
+                                    }
+                                }
+                                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                                    let _ = child.kill();
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                    Err(_) => {}
+                }
+
+                // Kiểm tra trạng thái child
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        if status.success() {
+                            let initial_dir = Self::resolve_home_dir(host, user, port, args);
+                            let entries =
+                                Self::list_remote_directories(host, &initial_dir, user, port, args)
+                                    .unwrap_or_default();
+                            let _ = event_tx.send(SshInteractiveEvent::Connected(
+                                SshConnectionSuccess {
+                                    initial_dir,
+                                    entries,
+                                },
+                            ));
+                            return;
+                        } else {
+                            let mut err_msg = String::new();
+                            if let Some(mut stderr) = child.stderr.take() {
+                                let mut buf = Vec::new();
+                                let _ = stderr.read_to_end(&mut buf);
+                                err_msg = String::from_utf8_lossy(&buf).trim().to_string();
+                            }
+                            let msg = if err_msg.is_empty() {
+                                format!("SSH connection failed (exit code {:?})", status.code())
+                            } else {
+                                err_msg
+                            };
+                            let _ = event_tx.send(SshInteractiveEvent::Failed(msg));
+                            return;
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        let _ = event_tx.send(SshInteractiveEvent::Failed(format!(
+                            "Error monitoring SSH process: {}",
+                            e
+                        )));
+                        return;
+                    }
+                }
+
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    }
+
     /// Phát hiện kiến trúc CPU của máy chủ SSH từ xa (`uname -sm`)
     pub async fn detect_arch(&self) -> Result<WslArch> {
         let mut cmd = self.build_tokio_command();
@@ -667,6 +1076,133 @@ impl Drop for AskPassGuard {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.script_path);
         let _ = std::fs::remove_file(&self.secret_path);
+    }
+}
+
+/// Loại yêu cầu tương tác mà SSH daemon gửi về
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SshInteractivePromptType {
+    /// Xác thực khóa máy chủ (yes/no/[fingerprint])
+    HostKeyConfirmation,
+    /// Nhập mật khẩu / passphrase
+    Password,
+}
+
+/// Sự kiện gửi từ background thread kết nối SSH về cho GUI (chuẩn tương tác Zed)
+#[derive(Debug)]
+pub enum SshInteractiveEvent {
+    /// Cập nhật thông báo trạng thái kết nối
+    Status(String),
+    /// SSH yêu cầu người dùng nhập thông tin (HostKey hoặc Password)
+    Prompt {
+        prompt_message: String,
+        prompt_type: SshInteractivePromptType,
+        response_sender: Sender<String>,
+    },
+    /// Kết nối thành công, kèm thông tin thư mục ban đầu
+    Connected(SshConnectionSuccess),
+    /// Kết nối thất bại, kèm thông báo lỗi chi tiết
+    Failed(String),
+}
+
+/// Session quản lý tiến trình SSH_ASKPASS giao tiếp hai chiều với SSH qua TCP loopback socket
+pub struct InteractiveAskPassSession {
+    listener: std::net::TcpListener,
+    script_path: PathBuf,
+    temp_dir: PathBuf,
+}
+
+impl InteractiveAskPassSession {
+    pub fn new() -> std::io::Result<Self> {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+        listener.set_nonblocking(true)?;
+        let port = listener.local_addr()?.port();
+
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let pid = std::process::id();
+        let temp_dir = std::env::temp_dir().join(format!("uwu-askpass-{}-{}", pid, nanos));
+        std::fs::create_dir_all(&temp_dir)?;
+
+        #[cfg(unix)]
+        let script_path = {
+            use std::fs::OpenOptions;
+            use std::io::Write;
+            use std::os::unix::fs::OpenOptionsExt;
+            let s_path = temp_dir.join("askpass.sh");
+            let mut file = OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .mode(0o700)
+                .open(&s_path)?;
+
+            let script_content = format!(
+                r#"#!/bin/sh
+PORT={}
+if command -v python3 >/dev/null 2>&1; then
+    exec python3 -c '
+import sys, socket
+try:
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.connect(("127.0.0.1", int(sys.argv[1])))
+    prompt = " ".join(sys.argv[2:])
+    s.sendall(prompt.encode("utf-8") + b"\0")
+    resp = b""
+    while True:
+        chunk = s.recv(4096)
+        if not chunk: break
+        resp += chunk
+    sys.stdout.buffer.write(resp)
+except Exception:
+    pass
+' "$PORT" "$@"
+elif command -v nc >/dev/null 2>&1; then
+    printf '%s\0' "$*" | nc -N 127.0.0.1 "$PORT"
+else
+    bash -c 'exec 3<>/dev/tcp/127.0.0.1/'"$PORT"'; printf "%s\0" "$*" >&3; cat <&3' dummy "$@"
+fi
+"#,
+                port
+            );
+            file.write_all(script_content.as_bytes())?;
+            s_path
+        };
+
+        #[cfg(windows)]
+        let script_path = {
+            let s_path = temp_dir.join("askpass.bat");
+            let script_content = format!(
+                r#"@powershell -NoProfile -ExecutionPolicy Bypass -Command "$client = New-Object System.Net.Sockets.TcpClient('127.0.0.1', {}); $stream = $client.GetStream(); $bytes = [System.Text.Encoding]::UTF8.GetBytes(\"$($args -join ' ')`0\"); $stream.Write($bytes, 0, $bytes.Length); $reader = New-Object System.IO.StreamReader($stream); [Console]::Out.Write($reader.ReadToEnd()); $client.Close()" %*"#,
+                port
+            );
+            std::fs::write(&s_path, script_content)?;
+            s_path
+        };
+
+        #[cfg(not(any(unix, windows)))]
+        let script_path = PathBuf::new();
+
+        Ok(Self {
+            listener,
+            script_path,
+            temp_dir,
+        })
+    }
+
+    pub fn script_path(&self) -> &Path {
+        &self.script_path
+    }
+
+    pub fn listener(&self) -> &std::net::TcpListener {
+        &self.listener
+    }
+}
+
+impl Drop for InteractiveAskPassSession {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.temp_dir);
     }
 }
 

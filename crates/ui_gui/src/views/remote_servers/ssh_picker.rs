@@ -2,9 +2,11 @@ use crate::components::ui::{AppButton, IconName, TextInput};
 use crate::keymap::{KeyAction, KeyContext, KeymapManager};
 use crate::theme::ActiveTheme;
 use eframe::egui;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use uwu_core_workspace::{SshConnectionOptions, WorkspaceStore};
-use uwu_driver_transport::{SshConnectionSuccess, SshTransport};
+use uwu_driver_transport::{SshInteractiveEvent, SshInteractivePromptType, SshTransport};
 
 use super::helpers::{
     anchor_cursor_to_end, calculate_adaptive_scroll_height, step_selected_index, ListItemRow,
@@ -13,6 +15,14 @@ use super::types::{
     FolderPickerState, RemoteNavAction, RemoteServerKind, RemoteSubView, SshPickerStage,
     SshPickerState,
 };
+
+/// Trạng thái phiên tương tác kết nối SSH nền (chuẩn Zed Editor)
+#[derive(Clone, Default)]
+pub struct SshInteractiveSession {
+    pub receiver: Arc<Mutex<Option<Receiver<SshInteractiveEvent>>>>,
+    pub pending_response: Arc<Mutex<Option<Sender<String>>>>,
+    pub cancel_flag: Arc<AtomicBool>,
+}
 
 /// Subview: Nhập kết nối SSH và xử lý luồng xác thực Host Key (yes/no) cùng Password theo chuẩn Zed Editor
 pub fn render_ssh_picker_subview(
@@ -70,6 +80,29 @@ pub fn render_ssh_picker_subview(
                 return RemoteNavAction::Back;
             }
 
+            // Hiển thị thông báo lỗi kết nối nếu lần thử trước thất bại (chuẩn Zed Editor)
+            if let Some(ref err) = ssh_state.error_message {
+                egui::Frame::new()
+                    .fill(theme.status.error.gamma_multiply(0.15))
+                    .stroke(egui::Stroke::new(1.0, theme.status.error))
+                    .corner_radius(egui::CornerRadius::same(6))
+                    .inner_margin(egui::Margin::symmetric(10, 8))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            let (icon_r, _) = ui
+                                .allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
+                            IconName::AlertTriangle.paint(ui.painter(), icon_r, theme.status.error);
+                            ui.add_space(4.0);
+                            ui.label(
+                                egui::RichText::new(format!("Connection Failed: {}", err))
+                                    .size(11.5)
+                                    .color(theme.status.error),
+                            );
+                        });
+                    });
+                ui.add_space(6.0);
+            }
+
             // 2. Ô nhập địa chỉ SSH với định dạng chuẩn: `ssh user@example -o 2222`
             let input_id = egui::Id::new("ssh_picker_host_input");
 
@@ -92,6 +125,7 @@ pub fn render_ssh_picker_subview(
 
             if ssh_state.input_query != prev_query {
                 ssh_state.selected_index = 0;
+                ssh_state.error_message = None;
             }
 
             ui.add_space(4.0);
@@ -204,23 +238,50 @@ pub fn render_ssh_picker_subview(
                     }
                 });
 
-            // 5. Khi người dùng xác nhận kết nối -> chuyển sang Giai đoạn 2 (Xác thực Host Key yes/no theo chuẩn Zed)
+            // 5. Khi người dùng xác nhận kết nối -> Bắt đầu kết nối tương tác ngay lập tức (chuẩn Zed Editor)
             if let Some(target) = chosen_target {
-                let opts = SshConnectionOptions::parse_command_line(&target, "")
-                    .unwrap_or_else(|_| SshConnectionOptions::new(&target, ""));
+                match SshConnectionOptions::parse_command_line(&target, "") {
+                    Ok(opts) => {
+                        ssh_state.error_message = None;
+                        ssh_state.parsed_options = Some(opts.clone());
 
-                let target_display = opts.target_string();
-                let prompt = format!(
-                    "The authenticity of host '{}' can't be established.\nED25519 key fingerprint is SHA256:4Z1q9sK9jWzL6NpRv8X2tQ7mY0uI3eB5wV1c8aF4oDk.\nAre you sure you want to continue connecting (yes/no)?",
-                    target_display
-                );
+                        let (event_tx, event_rx) = std::sync::mpsc::channel();
+                        let cancel_flag = Arc::new(AtomicBool::new(false));
+                        let pending_response = Arc::new(Mutex::new(None));
 
-                ssh_state.parsed_options = Some(opts);
-                ssh_state.stage = SshPickerStage::HostKeyVerification {
-                    prompt_message: prompt,
-                    user_input: String::new(),
-                };
-                ssh_state.focus_input = true;
+                        let session = SshInteractiveSession {
+                            receiver: Arc::new(Mutex::new(Some(event_rx))),
+                            pending_response: pending_response.clone(),
+                            cancel_flag: cancel_flag.clone(),
+                        };
+                        let session_id = egui::Id::new("ssh_interactive_session");
+                        ui.ctx().data_mut(|d| d.insert_temp(session_id, session));
+
+                        let host = opts.host.clone();
+                        let user = opts.username.clone();
+                        let port = opts.port;
+                        let args = opts.args.clone();
+
+                        std::thread::spawn(move || {
+                            SshTransport::connect_interactive(
+                                &host,
+                                user.as_deref(),
+                                port,
+                                args.as_deref(),
+                                cancel_flag,
+                                event_tx,
+                            );
+                        });
+
+                        ssh_state.stage = SshPickerStage::Connecting {
+                            status_message: format!("Connecting to {}...", opts.target_string()),
+                        };
+                    }
+                    Err(e) => {
+                        ssh_state.error_message =
+                            Some(format!("Could not parse SSH address: {}", e));
+                    }
+                }
             }
 
             nav_action
@@ -270,7 +331,17 @@ pub fn render_ssh_picker_subview(
             ui.separator();
             ui.add_space(6.0);
 
+            let session_id = egui::Id::new("ssh_interactive_session");
+            let session_arc: Option<SshInteractiveSession> =
+                ui.ctx().data(|d| d.get_temp(session_id));
+
             if go_back || key_escape {
+                if let Some(ref sess) = session_arc {
+                    sess.cancel_flag.store(true, Ordering::Relaxed);
+                }
+                ui.ctx().data_mut(|d| {
+                    d.remove_temp::<SshInteractiveSession>(session_id);
+                });
                 ssh_state.stage = SshPickerStage::Input;
                 ssh_state.focus_input = true;
                 return RemoteNavAction::None;
@@ -358,15 +429,28 @@ pub fn render_ssh_picker_subview(
             }
 
             if advance_to_password {
-                let pw_prompt = format!("{}'s password:", target_title);
-                ssh_state.stage = SshPickerStage::PasswordPrompt {
-                    prompt_message: pw_prompt,
-                    password_input: String::new(),
-                    is_masked: true,
-                    error_message: None,
+                if let Some(ref sess) = session_arc {
+                    if let Ok(mut lock) = sess.pending_response.lock() {
+                        if let Some(tx) = lock.take() {
+                            let _ = tx.send("yes".to_string());
+                        }
+                    }
+                }
+                ssh_state.stage = SshPickerStage::Connecting {
+                    status_message: "Authenticating with host...".to_string(),
                 };
-                ssh_state.focus_input = true;
             } else if cancel_back {
+                if let Some(ref sess) = session_arc {
+                    sess.cancel_flag.store(true, Ordering::Relaxed);
+                    if let Ok(mut lock) = sess.pending_response.lock() {
+                        if let Some(tx) = lock.take() {
+                            let _ = tx.send("no".to_string());
+                        }
+                    }
+                }
+                ui.ctx().data_mut(|d| {
+                    d.remove_temp::<SshInteractiveSession>(session_id);
+                });
                 ssh_state.stage = SshPickerStage::Input;
                 ssh_state.focus_input = true;
             }
@@ -420,7 +504,17 @@ pub fn render_ssh_picker_subview(
             ui.separator();
             ui.add_space(6.0);
 
+            let session_id = egui::Id::new("ssh_interactive_session");
+            let session_arc: Option<SshInteractiveSession> =
+                ui.ctx().data(|d| d.get_temp(session_id));
+
             if go_back || key_escape {
+                if let Some(ref sess) = session_arc {
+                    sess.cancel_flag.store(true, Ordering::Relaxed);
+                }
+                ui.ctx().data_mut(|d| {
+                    d.remove_temp::<SshInteractiveSession>(session_id);
+                });
                 ssh_state.stage = SshPickerStage::Input;
                 ssh_state.focus_input = true;
                 return RemoteNavAction::None;
@@ -525,47 +619,17 @@ pub fn render_ssh_picker_subview(
             }
 
             if submit_password {
-                if let Some(ref opts) = ssh_state.parsed_options {
-                    let target_title = opts.target_string();
-                    let (tx, rx) = std::sync::mpsc::channel();
-                    let host = opts.host.clone();
-                    let user = opts.username.clone();
-                    let port = opts.port;
-                    let args = opts.args.clone();
-                    let password = password_input.clone();
-
-                    std::thread::spawn(move || {
-                        let res = SshTransport::connect_and_probe(
-                            &host,
-                            user.as_deref(),
-                            port,
-                            args.as_deref(),
-                            Some(&password),
-                        );
-                        let _ = tx.send(res);
-                    });
-
-                    type SshConnectingReceiver = Arc<
-                        Mutex<
-                            Option<
-                                std::sync::mpsc::Receiver<
-                                    std::result::Result<SshConnectionSuccess, String>,
-                                >,
-                            >,
-                        >,
-                    >;
-
-                    let rx_id = egui::Id::new("ssh_connecting_receiver");
-                    let receiver: SshConnectingReceiver = Arc::new(Mutex::new(Some(rx)));
-                    ui.ctx().data_mut(|d| {
-                        d.insert_temp(rx_id, receiver);
-                    });
-
-                    ssh_state.stage = SshPickerStage::Connecting {
-                        status_message: format!("Connecting to {}", target_title),
-                    };
-                    return RemoteNavAction::None;
+                if let Some(ref sess) = session_arc {
+                    if let Ok(mut lock) = sess.pending_response.lock() {
+                        if let Some(tx) = lock.take() {
+                            let _ = tx.send(password_input.clone());
+                        }
+                    }
                 }
+                ssh_state.stage = SshPickerStage::Connecting {
+                    status_message: format!("Authenticating with {}", target_title),
+                };
+                return RemoteNavAction::None;
             }
 
             RemoteNavAction::None
@@ -575,32 +639,22 @@ pub fn render_ssh_picker_subview(
         // GIAI ĐOẠN 4: Đang kết nối nền (Connecting non-blocking)
         // ====================================================================
         SshPickerStage::Connecting { status_message } => {
-            type SshConnectingReceiver = Arc<
-                Mutex<
-                    Option<
-                        std::sync::mpsc::Receiver<
-                            std::result::Result<SshConnectionSuccess, String>,
-                        >,
-                    >,
-                >,
-            >;
+            let session_id = egui::Id::new("ssh_interactive_session");
+            let session_arc: Option<SshInteractiveSession> =
+                ui.ctx().data(|d| d.get_temp(session_id));
 
-            let rx_id = egui::Id::new("ssh_connecting_receiver");
-            let rx_arc: Option<SshConnectingReceiver> = ui.ctx().data(|d| d.get_temp(rx_id));
-
-            let mut connection_result = None;
-            if let Some(ref arc) = rx_arc {
-                if let Ok(lock) = arc.lock() {
+            let mut pending_event = None;
+            if let Some(ref sess) = session_arc {
+                if let Ok(lock) = sess.receiver.lock() {
                     if let Some(ref rx) = *lock {
                         match rx.try_recv() {
-                            Ok(res) => connection_result = Some(res),
+                            Ok(event) => pending_event = Some(event),
                             Err(std::sync::mpsc::TryRecvError::Empty) => {
-                                // Tiến trình kết nối vẫn đang chạy nền, yêu cầu repaint sau 50ms để duy trì UI mượt
                                 ui.ctx()
                                     .request_repaint_after(std::time::Duration::from_millis(50));
                             }
                             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                                connection_result = Some(Err(
+                                pending_event = Some(SshInteractiveEvent::Failed(
                                     "SSH connection worker thread terminated unexpectedly"
                                         .to_string(),
                                 ));
@@ -610,13 +664,47 @@ pub fn render_ssh_picker_subview(
                 }
             }
 
-            if let Some(res) = connection_result {
-                ui.ctx().data_mut(|d| {
-                    d.remove_temp::<SshConnectingReceiver>(rx_id);
-                });
+            if let Some(event) = pending_event {
+                match event {
+                    SshInteractiveEvent::Status(msg) => {
+                        *status_message = msg;
+                    }
+                    SshInteractiveEvent::Prompt {
+                        prompt_message,
+                        prompt_type,
+                        response_sender,
+                    } => {
+                        if let Some(ref sess) = session_arc {
+                            if let Ok(mut lock) = sess.pending_response.lock() {
+                                *lock = Some(response_sender);
+                            }
+                        }
+                        match prompt_type {
+                            SshInteractivePromptType::HostKeyConfirmation => {
+                                ssh_state.stage = SshPickerStage::HostKeyVerification {
+                                    prompt_message,
+                                    user_input: String::new(),
+                                };
+                                ssh_state.focus_input = true;
+                                return RemoteNavAction::None;
+                            }
+                            SshInteractivePromptType::Password => {
+                                ssh_state.stage = SshPickerStage::PasswordPrompt {
+                                    prompt_message,
+                                    password_input: String::new(),
+                                    is_masked: true,
+                                    error_message: None,
+                                };
+                                ssh_state.focus_input = true;
+                                return RemoteNavAction::None;
+                            }
+                        }
+                    }
+                    SshInteractiveEvent::Connected(success) => {
+                        ui.ctx().data_mut(|d| {
+                            d.remove_temp::<SshInteractiveSession>(session_id);
+                        });
 
-                match res {
-                    Ok(success) => {
                         if let Some(ref opts) = ssh_state.parsed_options {
                             let conn = store.ensure_ssh_connection(&opts.host);
                             if let Some(ref u) = opts.username {
@@ -645,18 +733,13 @@ pub fn render_ssh_picker_subview(
                             ));
                         }
                     }
-                    Err(err) => {
-                        let target_title = ssh_state
-                            .parsed_options
-                            .as_ref()
-                            .map(|o| o.target_string())
-                            .unwrap_or_else(|| "SSH Server".to_string());
-                        ssh_state.stage = SshPickerStage::PasswordPrompt {
-                            prompt_message: format!("{}'s password:", target_title),
-                            password_input: String::new(),
-                            is_masked: true,
-                            error_message: Some(err),
-                        };
+                    SshInteractiveEvent::Failed(err) => {
+                        ui.ctx().data_mut(|d| {
+                            d.remove_temp::<SshInteractiveSession>(session_id);
+                        });
+
+                        ssh_state.stage = SshPickerStage::Input;
+                        ssh_state.error_message = Some(err);
                         ssh_state.focus_input = true;
                         return RemoteNavAction::None;
                     }
@@ -731,15 +814,13 @@ pub fn render_ssh_picker_subview(
             });
 
             if abort_connect {
+                if let Some(ref sess) = session_arc {
+                    sess.cancel_flag.store(true, Ordering::Relaxed);
+                }
                 ui.ctx().data_mut(|d| {
-                    d.remove_temp::<SshConnectingReceiver>(rx_id);
+                    d.remove_temp::<SshInteractiveSession>(session_id);
                 });
-                ssh_state.stage = SshPickerStage::PasswordPrompt {
-                    prompt_message: format!("{}'s password:", target_title),
-                    password_input: String::new(),
-                    is_masked: true,
-                    error_message: Some("Connection canceled by user".to_string()),
-                };
+                ssh_state.stage = SshPickerStage::Input;
                 ssh_state.focus_input = true;
             }
 

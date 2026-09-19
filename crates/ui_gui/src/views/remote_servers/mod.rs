@@ -768,4 +768,142 @@ mod tests {
         assert_eq!(saved.username.as_deref(), Some("user"));
         assert_eq!(saved.port, Some(2222));
     }
+
+    #[test]
+    fn test_ssh_step_by_step_interactive_failure_and_prompts() {
+        use uwu_driver_transport::{
+            SshConnectionSuccess, SshInteractiveEvent, SshInteractivePromptType,
+        };
+
+        // 1. Khởi tạo trạng thái ban đầu: Stage::Input
+        let mut ssh_state = SshPickerState::new(vec![]);
+        assert_eq!(ssh_state.stage, SshPickerStage::Input);
+        assert!(ssh_state.error_message.is_none());
+
+        // 2. Mô phỏng: Nhập server không kết nối được (ví dụ port đóng: `ssh user@localhost -p 3333`)
+        // Quy trình Zed: Thử kết nối ngay lập tức -> Nếu thất bại, báo lỗi NGAY TẠI Input stage
+        ssh_state.stage = SshPickerStage::Connecting {
+            status_message: "Connecting to localhost:3333...".to_string(),
+        };
+
+        let fail_event = SshInteractiveEvent::Failed(
+            "ssh: connect to host localhost port 3333: Connection refused".to_string(),
+        );
+
+        match fail_event {
+            SshInteractiveEvent::Failed(err) => {
+                ssh_state.stage = SshPickerStage::Input;
+                ssh_state.error_message = Some(err);
+            }
+            _ => panic!("Expected Failed event"),
+        }
+
+        // Đảm bảo quay lại Input stage và hiển thị lỗi ngay lập tức, KHÔNG hề hỏi yes/no hay password
+        assert_eq!(ssh_state.stage, SshPickerStage::Input);
+        assert_eq!(
+            ssh_state.error_message.as_deref(),
+            Some("ssh: connect to host localhost port 3333: Connection refused")
+        );
+
+        // 3. Khi người dùng sửa input, error_message tự động bị xóa
+        ssh_state.input_query = "ssh testuser@validserver".to_string();
+        ssh_state.error_message = None;
+        assert!(ssh_state.error_message.is_none());
+
+        // 4. Mô phỏng: Server yêu cầu xác thực Host Key
+        let (resp_tx, resp_rx) = std::sync::mpsc::channel::<String>();
+        let hostkey_prompt_event = SshInteractiveEvent::Prompt {
+            prompt_message: "The authenticity of host 'validserver' can't be established (yes/no)?"
+                .to_string(),
+            prompt_type: SshInteractivePromptType::HostKeyConfirmation,
+            response_sender: resp_tx,
+        };
+
+        match hostkey_prompt_event {
+            SshInteractiveEvent::Prompt {
+                prompt_message,
+                prompt_type,
+                response_sender,
+            } => {
+                assert_eq!(prompt_type, SshInteractivePromptType::HostKeyConfirmation);
+                ssh_state.stage = SshPickerStage::HostKeyVerification {
+                    prompt_message,
+                    user_input: String::new(),
+                };
+                // Người dùng gõ "yes"
+                let _ = response_sender.send("yes".to_string());
+            }
+            _ => panic!("Expected Prompt event"),
+        }
+
+        assert_eq!(resp_rx.recv().unwrap(), "yes");
+        match &ssh_state.stage {
+            SshPickerStage::HostKeyVerification { prompt_message, .. } => {
+                assert!(prompt_message.contains("authenticity"));
+            }
+            _ => panic!("Expected HostKeyVerification stage"),
+        }
+
+        // 5. Mô phỏng: Sau khi xác thực host key, SSH daemon yêu cầu Password
+        let (pw_tx, pw_rx) = std::sync::mpsc::channel::<String>();
+        let pw_prompt_event = SshInteractiveEvent::Prompt {
+            prompt_message: "testuser@validserver's password:".to_string(),
+            prompt_type: SshInteractivePromptType::Password,
+            response_sender: pw_tx,
+        };
+
+        match pw_prompt_event {
+            SshInteractiveEvent::Prompt {
+                prompt_message,
+                prompt_type,
+                response_sender,
+            } => {
+                assert_eq!(prompt_type, SshInteractivePromptType::Password);
+                ssh_state.stage = SshPickerStage::PasswordPrompt {
+                    prompt_message,
+                    password_input: String::new(),
+                    is_masked: true,
+                    error_message: None,
+                };
+                // Người dùng nhập password
+                let _ = response_sender.send("mypassword".to_string());
+            }
+            _ => panic!("Expected Password Prompt event"),
+        }
+
+        assert_eq!(pw_rx.recv().unwrap(), "mypassword");
+        match &ssh_state.stage {
+            SshPickerStage::PasswordPrompt {
+                prompt_message,
+                is_masked,
+                ..
+            } => {
+                assert_eq!(prompt_message, "testuser@validserver's password:");
+                assert!(*is_masked);
+            }
+            _ => panic!("Expected PasswordPrompt stage"),
+        }
+
+        // 6. Mô phỏng: Xác thực thành công -> chuyển sang FolderPicker
+        let success_event = SshInteractiveEvent::Connected(SshConnectionSuccess {
+            initial_dir: "/home/testuser".to_string(),
+            entries: vec!["projects".to_string(), "logs".to_string()],
+        });
+
+        match success_event {
+            SshInteractiveEvent::Connected(success) => {
+                let folder_state = FolderPickerState::new(
+                    RemoteServerKind::Ssh {
+                        host: "validserver".to_string(),
+                        nickname: None,
+                    },
+                    success.initial_dir,
+                    success.entries,
+                );
+                assert_eq!(folder_state.current_dir, "/home/testuser");
+                assert_eq!(folder_state.entries.len(), 2);
+            }
+            _ => panic!("Expected Connected event"),
+        }
+    }
 }
