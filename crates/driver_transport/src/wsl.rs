@@ -693,6 +693,21 @@ impl RemoteTransport for WslTransport {
             .working_dir
             .as_deref()
             .filter(|d| !d.trim().is_empty())
+            .map(|d| {
+                if d.ends_with(".log")
+                    || d.ends_with(".txt")
+                    || d.ends_with(".json")
+                    || d.ends_with(".jsonl")
+                    || d.ends_with(".out")
+                {
+                    std::path::Path::new(d)
+                        .parent()
+                        .and_then(|p| p.to_str())
+                        .unwrap_or(d)
+                } else {
+                    d
+                }
+            })
             .unwrap_or("~");
         cmd.arg("--cd").arg(cd_dir);
         cmd.arg("--")

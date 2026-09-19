@@ -103,6 +103,30 @@ impl RemoteServerKind {
         }
     }
 
+    pub fn target_string(&self) -> String {
+        match self {
+            RemoteServerKind::Wsl(name) => name.clone(),
+            RemoteServerKind::Ssh {
+                host,
+                username,
+                port,
+                ..
+            } => {
+                let base = if let Some(ref u) = username {
+                    format!("{}@{}", u, host)
+                } else {
+                    host.clone()
+                };
+                if let Some(p) = port {
+                    format!("{}:{}", base, p)
+                } else {
+                    base
+                }
+            }
+            RemoteServerKind::DevContainer(name) => name.clone(),
+        }
+    }
+
     pub fn icon(&self) -> IconName {
         match self {
             RemoteServerKind::Wsl(_) => IconName::Linux,
@@ -154,12 +178,13 @@ impl ServerOptionItem {
                     is_destructive: false,
                 },
             ],
-            RemoteServerKind::Ssh { host, nickname, .. } => {
+            RemoteServerKind::Ssh { nickname, .. } => {
                 let nickname_label = if nickname.is_some() {
                     "Edit Nickname"
                 } else {
                     "Add Nickname to Server"
                 };
+                let addr = server.target_string();
                 vec![
                     Self {
                         action: ServerOptionAction::EditNickname,
@@ -169,10 +194,10 @@ impl ServerOptionItem {
                         is_destructive: false,
                     },
                     Self {
-                        action: ServerOptionAction::CopyAddress(host.clone()),
+                        action: ServerOptionAction::CopyAddress(addr.clone()),
                         icon: IconName::Copy,
                         label: "Copy Server Address".to_string(),
-                        end_slot: Some(host.clone()),
+                        end_slot: Some(addr),
                         is_destructive: false,
                     },
                     Self {

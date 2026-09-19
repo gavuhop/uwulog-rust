@@ -66,14 +66,19 @@ pub fn create_server_workspace(server: &RemoteServerKind, target_dir: &str) -> W
         SourceType::Process
     };
 
-    let file_path = if is_log_file {
-        clean_dir.clone()
+    let (work_dir, file_path) = if is_log_file {
+        let parent = std::path::Path::new(&clean_dir)
+            .parent()
+            .and_then(|p| p.to_str())
+            .unwrap_or("/");
+        let parent_dir = if parent.is_empty() { "/" } else { parent };
+        (parent_dir.to_string(), clean_dir.clone())
     } else {
-        String::new()
+        (clean_dir.clone(), String::new())
     };
 
     let location = match server {
-        RemoteServerKind::Wsl(distro) => RemoteConnectionOptions::parse(distro, clean_dir),
+        RemoteServerKind::Wsl(distro) => RemoteConnectionOptions::parse(distro, &work_dir),
         RemoteServerKind::Ssh {
             host,
             nickname,
@@ -81,7 +86,7 @@ pub fn create_server_workspace(server: &RemoteServerKind, target_dir: &str) -> W
             port,
             args,
         } => {
-            let mut opts = SshConnectionOptions::new(host, clean_dir);
+            let mut opts = SshConnectionOptions::new(host, &work_dir);
             if let Some(nick) = nickname {
                 opts = opts.with_nickname(nick);
             }
@@ -96,7 +101,7 @@ pub fn create_server_workspace(server: &RemoteServerKind, target_dir: &str) -> W
             }
             opts.into()
         }
-        RemoteServerKind::DevContainer(name) => RemoteConnectionOptions::parse(name, clean_dir),
+        RemoteServerKind::DevContainer(name) => RemoteConnectionOptions::parse(name, &work_dir),
     };
 
     let mut ws = Workspace::new(
@@ -555,5 +560,12 @@ mod tests {
         // Test create_server_workspace at root
         let ws_ssh_root = create_server_workspace(&server_ssh, "/");
         assert_eq!(ws_ssh_root.name, "my-vps");
+
+        // Test create_server_workspace with a log file
+        let ws_ssh_file = create_server_workspace(&server_ssh, "/var/log/nginx/access.log");
+        assert_eq!(ws_ssh_file.name, "access.log");
+        assert_eq!(ws_ssh_file.source_type, SourceType::File);
+        assert_eq!(ws_ssh_file.file_path, "/var/log/nginx/access.log");
+        assert_eq!(ws_ssh_file.location.working_dir(), "/var/log/nginx");
     }
 }

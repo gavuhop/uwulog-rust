@@ -154,9 +154,9 @@ impl<'a> Connection<'a> {
             Self::Ssh(s) => ServerListAction::ViewServerOptionsKind(RemoteServerKind::Ssh {
                 host: s.host.clone(),
                 nickname: s.nickname.clone(),
-                username: None,
-                port: None,
-                args: None,
+                username: s.username.clone(),
+                port: s.port,
+                args: s.args.clone(),
             }),
         }
     }

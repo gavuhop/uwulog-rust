@@ -195,6 +195,7 @@ impl SshTransport {
         }
 
         if !Self::is_master_alive(&socket_path, &target, additional_args) {
+            let _ = std::fs::remove_file(&socket_path);
             let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
             let msg = if !err.is_empty() {
                 format!("Failed to establish SSH connection to {}: {}", target, err)
@@ -1278,7 +1279,24 @@ impl RemoteTransport for SshTransport {
 
         let mut cmd = transport.build_tokio_command();
         if let Some(ref workdir) = transport.working_dir {
-            cmd.arg(format!("cd \"{}\" && {}", workdir, agent_invocation));
+            let safe_dir = if workdir.ends_with(".log")
+                || workdir.ends_with(".txt")
+                || workdir.ends_with(".json")
+                || workdir.ends_with(".jsonl")
+                || workdir.ends_with(".out")
+            {
+                std::path::Path::new(workdir)
+                    .parent()
+                    .and_then(|p| p.to_str())
+                    .unwrap_or(workdir)
+            } else {
+                workdir.as_str()
+            };
+            if !safe_dir.trim().is_empty() {
+                cmd.arg(format!("cd \"{}\" && {}", safe_dir, agent_invocation));
+            } else {
+                cmd.arg(agent_invocation);
+            }
         } else {
             cmd.arg(agent_invocation);
         }

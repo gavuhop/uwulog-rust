@@ -344,6 +344,24 @@ impl SshConnectionOptions {
         }
     }
 
+    /// Khởi tạo SshTransport đã cấu hình đầy đủ từ options này
+    pub fn to_transport(&self) -> uwu_driver_transport::SshTransport {
+        let mut transport = uwu_driver_transport::SshTransport::new(&self.host);
+        if let Some(ref u) = self.username {
+            transport = transport.with_user(u);
+        }
+        if let Some(p) = self.port {
+            transport = transport.with_port(p);
+        }
+        if let Some(ref args) = self.args {
+            transport = transport.with_args(args.clone());
+        }
+        if !self.working_dir.trim().is_empty() {
+            transport = transport.with_working_dir(&self.working_dir);
+        }
+        transport
+    }
+
     /// Phân tích cú pháp dòng lệnh SSH theo chuẩn của Zed Editor (`SshConnectionOptions::parse_command_line`)
     /// Hỗ trợ cả định dạng URL: `user@hostname:2222`, `[ipv6]:port`
     /// Lẫn cú pháp dòng lệnh: `ssh -p 22 -i ~/.ssh/key -J bastion user@host`

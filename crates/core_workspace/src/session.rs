@@ -14,7 +14,6 @@ use uwu_driver_sources::{
     FileSource, LogSource, ProcessSource, RemoteLogSourceSpec, RemoteSource, WslSource,
     WslTargetMode,
 };
-use uwu_driver_transport::SshTransport;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -240,19 +239,8 @@ impl WorkspaceSession {
                             self.is_source_running = true;
                         }
                         WorkspaceLocation::Remote(RemoteConnectionOptions::Ssh(ssh_opts)) => {
-                            let mut transport = SshTransport::new(&ssh_opts.host);
-                            if let Some(ref u) = ssh_opts.username {
-                                transport = transport.with_user(u);
-                            }
-                            if let Some(p) = ssh_opts.port {
-                                transport = transport.with_port(p);
-                            }
-                            if let Some(ref args) = ssh_opts.args {
-                                transport = transport.with_args(args.clone());
-                            }
-                            if !ssh_opts.working_dir.trim().is_empty() {
-                                transport = transport.with_working_dir(&ssh_opts.working_dir);
-                            } else if !config.working_dir.trim().is_empty() {
+                            let mut transport = ssh_opts.to_transport();
+                            if !config.working_dir.trim().is_empty() {
                                 transport = transport.with_working_dir(&config.working_dir);
                             }
                             let spec = RemoteLogSourceSpec::Command(config.command_str.clone());
@@ -352,19 +340,7 @@ impl WorkspaceSession {
                             self.is_source_running = true;
                         }
                         WorkspaceLocation::Remote(RemoteConnectionOptions::Ssh(ssh_opts)) => {
-                            let mut transport = SshTransport::new(&ssh_opts.host);
-                            if let Some(ref u) = ssh_opts.username {
-                                transport = transport.with_user(u);
-                            }
-                            if let Some(p) = ssh_opts.port {
-                                transport = transport.with_port(p);
-                            }
-                            if let Some(ref args) = ssh_opts.args {
-                                transport = transport.with_args(args.clone());
-                            }
-                            if !ssh_opts.working_dir.trim().is_empty() {
-                                transport = transport.with_working_dir(&ssh_opts.working_dir);
-                            }
+                            let transport = ssh_opts.to_transport();
                             let spec = RemoteLogSourceSpec::File(config.file_path.clone());
                             let source = RemoteSource::new(Box::new(transport), spec, None);
                             let tx = source_tx.clone();
