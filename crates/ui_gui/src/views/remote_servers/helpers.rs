@@ -1,3 +1,4 @@
+use super::types::RemoteServerKind;
 use crate::components::ui::IconName;
 use crate::overlay::RemoteModalPlacement;
 use crate::theme::ActiveTheme;
@@ -5,10 +6,10 @@ use eframe::egui::{self, Align2, Color32, CornerRadius, Id, Order, Stroke};
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 use uwu_core_workspace::{
-    clean_path, extract_project_name, RemoteConnectionOptions, SourceType, Workspace,
-    WorkspaceLocation,
+    clean_path, extract_project_name, RemoteConnectionOptions, SourceType, SshConnectionOptions,
+    Workspace, WorkspaceLocation,
 };
-use uwu_driver_transport::WslTransport;
+use uwu_driver_transport::{SshTransport, WslTransport};
 
 /// Nối đường dẫn Unix (ví dụ: "/home/user" + "project" -> "/home/user/project")
 pub fn join_unix_path(base: &str, child: &str) -> String {
@@ -30,8 +31,8 @@ pub fn join_unix_dir(base: &str, child: &str) -> String {
     }
 }
 
-/// Khởi tạo workspace remote cho server (WSL, SSH, Container...) kèm đường dẫn làm việc (view helper)
-pub fn create_remote_workspace(server_name: &str, target_dir: &str) -> Workspace {
+/// Helper làm sạch path và xác định project name (ưu tiên tên thư mục, fallback là tên server)
+fn resolve_remote_dir_and_name(fallback_name: &str, target_dir: &str) -> (String, String) {
     let cleaned = clean_path(target_dir);
     let clean_dir = if cleaned.is_empty() {
         "/".to_string()
@@ -39,34 +40,60 @@ pub fn create_remote_workspace(server_name: &str, target_dir: &str) -> Workspace
         cleaned
     };
     let project_name = if clean_dir == "/" || clean_dir == "~" {
-        server_name.to_string()
+        fallback_name.to_string()
     } else {
         extract_project_name(&clean_dir)
     };
+    (clean_dir, project_name)
+}
+
+/// Khởi tạo workspace remote cho bất kỳ loại server nào (WSL, SSH, DevContainer)
+pub fn create_server_workspace(server: &RemoteServerKind, target_dir: &str) -> Workspace {
+    let (clean_dir, project_name) = resolve_remote_dir_and_name(server.display_name(), target_dir);
+
+    let location = match server {
+        RemoteServerKind::Wsl(distro) => RemoteConnectionOptions::parse(distro, clean_dir),
+        RemoteServerKind::Ssh { host, nickname } => {
+            let mut opts = SshConnectionOptions::new(host, clean_dir);
+            if let Some(nick) = nickname {
+                opts = opts.with_nickname(nick);
+            }
+            opts.into()
+        }
+        RemoteServerKind::DevContainer(name) => RemoteConnectionOptions::parse(name, clean_dir),
+    };
+
     Workspace::new(
         project_name,
-        WorkspaceLocation::remote(RemoteConnectionOptions::parse(server_name, clean_dir)),
+        WorkspaceLocation::remote(location),
         SourceType::Process,
     )
 }
-
-/// Alias tương thích ngược
-pub use create_remote_workspace as create_wsl_workspace;
 
 type DirCacheMap = HashMap<(String, String), Vec<String>>;
 
 /// Bộ nhớ đệm danh sách thư mục từ xa để điều hướng tức thì (< 1ms)
 static DIR_CACHE: LazyLock<Mutex<DirCacheMap>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
-pub fn get_cached_or_read_directories(distro: &str, dir: &str) -> Vec<String> {
-    let key = (distro.to_string(), dir.to_string());
+/// Lấy danh sách thư mục từ xa cho bất kỳ loại server nào (có cache)
+pub fn get_cached_or_read_directories(server: &RemoteServerKind, dir: &str) -> Vec<String> {
+    let key = (server.display_name().to_string(), dir.to_string());
     if let Ok(cache) = DIR_CACHE.lock() {
         if let Some(entries) = cache.get(&key) {
             return entries.clone();
         }
     }
 
-    let entries = WslTransport::list_remote_directories(distro, dir).unwrap_or_default();
+    let entries = match server {
+        RemoteServerKind::Wsl(distro) => {
+            WslTransport::list_remote_directories(distro, dir).unwrap_or_default()
+        }
+        RemoteServerKind::Ssh { host, .. } => {
+            SshTransport::list_remote_directories(host, dir, None, None, None).unwrap_or_default()
+        }
+        RemoteServerKind::DevContainer(_) => Vec::new(),
+    };
+
     if let Ok(mut cache) = DIR_CACHE.lock() {
         cache.insert(key, entries.clone());
     }
@@ -445,15 +472,30 @@ mod tests {
     }
 
     #[test]
-    fn test_create_wsl_workspace_and_view_helpers() {
-        let ws1 = create_wsl_workspace("Ubuntu", "/home/user/backend/");
+    fn test_create_server_workspace_and_view_helpers() {
+        let server_wsl = RemoteServerKind::Wsl("Ubuntu".to_string());
+        let ws1 = create_server_workspace(&server_wsl, "/home/user/backend/");
         assert_eq!(ws1.name, "backend");
         assert_eq!(ws1.location.working_dir(), "/home/user/backend");
         assert_eq!(ws1.server_name(), Some("Ubuntu"));
 
-        let ws_root = create_wsl_workspace("Ubuntu", "/");
+        let ws_root = create_server_workspace(&server_wsl, "/");
         assert_eq!(ws_root.name, "Ubuntu");
         assert_eq!(ws_root.location.working_dir(), "/");
         assert_eq!(ws_root.server_name(), Some("Ubuntu"));
+
+        // Test create_server_workspace for SSH
+        let server_ssh = RemoteServerKind::Ssh {
+            host: "192.168.1.100".to_string(),
+            nickname: Some("my-vps".to_string()),
+        };
+        let ws_ssh = create_server_workspace(&server_ssh, "/var/log/nginx");
+        assert_eq!(ws_ssh.name, "nginx");
+        assert_eq!(ws_ssh.location.working_dir(), "/var/log/nginx");
+        assert_eq!(ws_ssh.server_name(), Some("my-vps"));
+
+        // Test create_server_workspace at root
+        let ws_ssh_root = create_server_workspace(&server_ssh, "/");
+        assert_eq!(ws_ssh_root.name, "my-vps");
     }
 }

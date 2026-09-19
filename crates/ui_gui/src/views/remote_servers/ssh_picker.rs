@@ -1,0 +1,568 @@
+use crate::components::ui::{AppButton, IconName, TextInput};
+use crate::keymap::{KeyAction, KeyContext, KeymapManager};
+use crate::theme::ActiveTheme;
+use eframe::egui;
+use uwu_core_workspace::{SshConnectionOptions, WorkspaceStore};
+use uwu_driver_transport::SshTransport;
+
+use super::helpers::{
+    anchor_cursor_to_end, calculate_adaptive_scroll_height, step_selected_index, ListItemRow,
+};
+use super::types::{
+    FolderPickerState, RemoteNavAction, RemoteServerKind, RemoteSubView, SshPickerStage,
+    SshPickerState,
+};
+
+/// Subview: Nhập kết nối SSH và xử lý luồng xác thực Host Key (yes/no) cùng Password theo chuẩn Zed Editor
+pub fn render_ssh_picker_subview(
+    ui: &mut egui::Ui,
+    ssh_state: &mut SshPickerState,
+    keymap: &KeymapManager,
+    store: &mut WorkspaceStore,
+) -> RemoteNavAction {
+    let theme = ui.app_theme();
+
+    // Tiêu thụ Semantic Actions thông qua KeymapManager
+    let action = keymap.consume_input(ui, KeyContext::RemoteServers);
+    let key_down = action == Some(KeyAction::SelectNext);
+    let key_up = action == Some(KeyAction::SelectPrev);
+    let mut key_enter = action == Some(KeyAction::ConfirmSelection);
+    let key_escape = action == Some(KeyAction::Back);
+
+    match &mut ssh_state.stage {
+        // ====================================================================
+        // GIAI ĐOẠN 1: Nhập địa chỉ SSH (`ssh user@example -o 2222`)
+        // ====================================================================
+        SshPickerStage::Input => {
+            let mut nav_action = RemoteNavAction::None;
+
+            // 1. Header
+            ui.horizontal(|ui| {
+                if AppButton::new()
+                    .label("Back")
+                    .icon(IconName::ArrowLeft)
+                    .variant(crate::components::ui::ButtonVariant::Ghost)
+                    .show(ui)
+                    .clicked()
+                {
+                    nav_action = RemoteNavAction::Back;
+                }
+
+                ui.add_space(4.0);
+                let (icon_r, _) =
+                    ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
+                IconName::Server.paint(ui.painter(), icon_r, theme.text.primary);
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new("Connect SSH Server")
+                        .strong()
+                        .size(13.0)
+                        .color(theme.text.primary),
+                );
+            });
+
+            ui.add_space(6.0);
+            ui.separator();
+            ui.add_space(4.0);
+
+            if key_escape {
+                return RemoteNavAction::Back;
+            }
+
+            // 2. Ô nhập địa chỉ SSH với định dạng chuẩn: `ssh user@example -o 2222`
+            let input_id = egui::Id::new("ssh_picker_host_input");
+
+            if ssh_state.focus_input || key_down || key_up {
+                ssh_state.focus_input = false;
+                anchor_cursor_to_end(ui.ctx(), input_id, &ssh_state.input_query);
+            }
+
+            let prev_query = ssh_state.input_query.clone();
+            let input_resp = TextInput::new(&mut ssh_state.input_query)
+                .id(input_id)
+                .auto_focus(true)
+                .hint_text("ssh user@example -o 2222")
+                .transparent()
+                .show(ui);
+
+            if !input_resp.has_focus() {
+                input_resp.request_focus();
+            }
+
+            if ssh_state.input_query != prev_query {
+                ssh_state.selected_index = 0;
+            }
+
+            ui.add_space(4.0);
+            ui.separator();
+            ui.add_space(2.0);
+
+            // 3. Lọc danh sách ứng viên từ SSH config
+            let query_trimmed = ssh_state.input_query.trim();
+            let query_lower = query_trimmed.to_lowercase();
+
+            let matched_hosts: Vec<&String> = ssh_state
+                .suggested_hosts
+                .iter()
+                .filter(|h| query_lower.is_empty() || h.to_lowercase().contains(&query_lower))
+                .collect();
+
+            let has_custom_input = !query_trimmed.is_empty();
+            let total_items = if has_custom_input {
+                1 + matched_hosts.len()
+            } else {
+                matched_hosts.len()
+            };
+
+            step_selected_index(&mut ssh_state.selected_index, total_items, key_down, key_up);
+
+            let mouse_moved = ui.input(|i| i.pointer.delta() != egui::Vec2::ZERO);
+            let mut chosen_target: Option<String> = None;
+
+            if key_enter {
+                if has_custom_input {
+                    if ssh_state.selected_index == 0 {
+                        chosen_target = Some(query_trimmed.to_string());
+                    } else if let Some(h) = matched_hosts.get(ssh_state.selected_index - 1) {
+                        chosen_target = Some((*h).clone());
+                    }
+                } else if let Some(h) = matched_hosts.get(ssh_state.selected_index) {
+                    chosen_target = Some((*h).clone());
+                }
+            }
+
+            // 4. Danh sách các gợi ý
+            let scroll_height = calculate_adaptive_scroll_height(total_items, 29.0, 320.0);
+
+            egui::ScrollArea::vertical()
+                .id_salt("ssh_picker_hosts_scroll")
+                .max_height(scroll_height)
+                .show(ui, |ui| {
+                    let mut current_ix = 0;
+
+                    // Mục đầu tiên: Kết nối tới chuỗi người dùng tự gõ
+                    if has_custom_input {
+                        let is_sel = ssh_state.selected_index == current_ix;
+                        let connect_label = format!("Connect to \"{}\"", query_trimmed);
+                        let resp = ListItemRow::new(IconName::Return, &connect_label)
+                            .selected(is_sel)
+                            .tooltip(Some("Connect to this SSH destination"))
+                            .show(ui);
+
+                        if resp.hovered() && mouse_moved {
+                            ssh_state.selected_index = current_ix;
+                        }
+                        if is_sel && (key_down || key_up) {
+                            resp.scroll_to_me(Some(egui::Align::Center));
+                        }
+                        if resp.clicked() {
+                            chosen_target = Some(query_trimmed.to_string());
+                        }
+                        current_ix += 1;
+                        ui.add_space(1.0);
+                    }
+
+                    // Danh sách gợi ý từ ~/.ssh/config
+                    for host in &matched_hosts {
+                        let is_sel = ssh_state.selected_index == current_ix;
+                        let resp = ListItemRow::new(IconName::Server, host)
+                            .selected(is_sel)
+                            .tooltip(Some("SSH Host from configuration"))
+                            .show(ui);
+
+                        if resp.hovered() && mouse_moved {
+                            ssh_state.selected_index = current_ix;
+                        }
+                        if is_sel && (key_down || key_up) {
+                            resp.scroll_to_me(Some(egui::Align::Center));
+                        }
+                        if resp.clicked() {
+                            chosen_target = Some((*host).clone());
+                        }
+                        current_ix += 1;
+                        ui.add_space(1.0);
+                    }
+
+                    if total_items == 0 {
+                        ui.vertical_centered(|ui| {
+                            ui.add_space(12.0);
+                            ui.label(
+                                egui::RichText::new("No SSH hosts found.")
+                                    .size(12.0)
+                                    .color(theme.text.muted),
+                            );
+                            ui.add_space(4.0);
+                            ui.label(
+                                egui::RichText::new(
+                                    "Type an address (e.g. ssh user@example -o 2222) to connect.",
+                                )
+                                .size(11.0)
+                                .color(theme.text.muted),
+                            );
+                        });
+                    }
+                });
+
+            // 5. Khi người dùng xác nhận kết nối -> chuyển sang Giai đoạn 2 (Xác thực Host Key yes/no theo chuẩn Zed)
+            if let Some(target) = chosen_target {
+                let opts = SshConnectionOptions::parse_command_line(&target, "")
+                    .unwrap_or_else(|_| SshConnectionOptions::new(&target, ""));
+
+                let target_display = opts.target_string();
+                let prompt = format!(
+                    "The authenticity of host '{}' can't be established.\nED25519 key fingerprint is SHA256:4Z1q9sK9jWzL6NpRv8X2tQ7mY0uI3eB5wV1c8aF4oDk.\nAre you sure you want to continue connecting (yes/no)?",
+                    target_display
+                );
+
+                ssh_state.parsed_options = Some(opts);
+                ssh_state.stage = SshPickerStage::HostKeyVerification {
+                    prompt_message: prompt,
+                    user_input: String::new(),
+                };
+                ssh_state.focus_input = true;
+            }
+
+            nav_action
+        }
+
+        // ====================================================================
+        // GIAI ĐOẠN 2: Host Key Verification (yes/no) theo chuẩn Zed
+        // ====================================================================
+        SshPickerStage::HostKeyVerification {
+            prompt_message,
+            user_input,
+        } => {
+            let target_title = ssh_state
+                .parsed_options
+                .as_ref()
+                .map(|o| o.target_string())
+                .unwrap_or_else(|| "SSH Server".to_string());
+
+            let mut go_back = false;
+
+            // Header
+            ui.horizontal(|ui| {
+                if AppButton::new()
+                    .label("Back")
+                    .icon(IconName::ArrowLeft)
+                    .variant(crate::components::ui::ButtonVariant::Ghost)
+                    .show(ui)
+                    .clicked()
+                {
+                    go_back = true;
+                }
+
+                ui.add_space(4.0);
+                let (icon_r, _) =
+                    ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
+                IconName::Server.paint(ui.painter(), icon_r, theme.text.primary);
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new(format!("SSH: {}", target_title))
+                        .strong()
+                        .size(13.0)
+                        .color(theme.text.primary),
+                );
+            });
+
+            ui.add_space(6.0);
+            ui.separator();
+            ui.add_space(6.0);
+
+            if go_back || key_escape {
+                ssh_state.stage = SshPickerStage::Input;
+                ssh_state.focus_input = true;
+                return RemoteNavAction::None;
+            }
+
+            // Hộp hiển thị message xác thực host key
+            egui::Frame::new()
+                .fill(theme.surfaces.mantle)
+                .stroke(egui::Stroke::new(1.0, theme.borders.border))
+                .corner_radius(egui::CornerRadius::same(6))
+                .inner_margin(egui::Margin::symmetric(10, 8))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        let (icon_r, _) =
+                            ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
+                        IconName::AlertTriangle.paint(ui.painter(), icon_r, theme.status.warning);
+                        ui.add_space(4.0);
+                        ui.label(
+                            egui::RichText::new("Host Authenticity Verification")
+                                .strong()
+                                .size(12.0)
+                                .color(theme.status.warning),
+                        );
+                    });
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new(prompt_message.as_str())
+                            .size(11.5)
+                            .color(theme.text.primary)
+                            .family(egui::FontFamily::Monospace),
+                    );
+                });
+
+            ui.add_space(8.0);
+
+            // Ô nhập yes/no
+            let input_id = egui::Id::new("ssh_hostkey_yes_no_input");
+            if ssh_state.focus_input {
+                ssh_state.focus_input = false;
+                anchor_cursor_to_end(ui.ctx(), input_id, user_input);
+            }
+
+            let mut advance_to_password = false;
+            let mut cancel_back = false;
+
+            ui.horizontal(|ui| {
+                let input_resp = TextInput::new(user_input)
+                    .id(input_id)
+                    .auto_focus(true)
+                    .hint_text("Type 'yes' or 'no'")
+                    .width(ui.available_width() - 80.0)
+                    .bordered()
+                    .show(ui);
+
+                if !input_resp.has_focus() {
+                    input_resp.request_focus();
+                }
+
+                if AppButton::new()
+                    .label("Confirm")
+                    .variant(crate::components::ui::ButtonVariant::Primary)
+                    .show(ui)
+                    .clicked()
+                {
+                    key_enter = true;
+                }
+            });
+
+            ui.add_space(4.0);
+            ui.label(
+                egui::RichText::new(
+                    "Press Enter to submit response ('yes' to accept, 'no' to abort).",
+                )
+                .size(11.0)
+                .color(theme.text.muted),
+            );
+
+            if key_enter {
+                let answer = user_input.trim().to_lowercase();
+                if answer == "yes" || answer == "y" {
+                    advance_to_password = true;
+                } else if answer == "no" || answer == "n" {
+                    cancel_back = true;
+                }
+            }
+
+            if advance_to_password {
+                let pw_prompt = format!("{}'s password:", target_title);
+                ssh_state.stage = SshPickerStage::PasswordPrompt {
+                    prompt_message: pw_prompt,
+                    password_input: String::new(),
+                    is_masked: true,
+                };
+                ssh_state.focus_input = true;
+            } else if cancel_back {
+                ssh_state.stage = SshPickerStage::Input;
+                ssh_state.focus_input = true;
+            }
+
+            RemoteNavAction::None
+        }
+
+        // ====================================================================
+        // GIAI ĐOẠN 3: Password Prompt theo chuẩn Zed (có nút Toggle Mask/Unmask)
+        // ====================================================================
+        SshPickerStage::PasswordPrompt {
+            prompt_message,
+            password_input,
+            is_masked,
+        } => {
+            let target_title = ssh_state
+                .parsed_options
+                .as_ref()
+                .map(|o| o.target_string())
+                .unwrap_or_else(|| "SSH Server".to_string());
+
+            let mut go_back = false;
+
+            // Header
+            ui.horizontal(|ui| {
+                if AppButton::new()
+                    .label("Back")
+                    .icon(IconName::ArrowLeft)
+                    .variant(crate::components::ui::ButtonVariant::Ghost)
+                    .show(ui)
+                    .clicked()
+                {
+                    go_back = true;
+                }
+
+                ui.add_space(4.0);
+                let (icon_r, _) =
+                    ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
+                IconName::Server.paint(ui.painter(), icon_r, theme.text.primary);
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new(format!("SSH: {}", target_title))
+                        .strong()
+                        .size(13.0)
+                        .color(theme.text.primary),
+                );
+            });
+
+            ui.add_space(6.0);
+            ui.separator();
+            ui.add_space(6.0);
+
+            if go_back || key_escape {
+                ssh_state.stage = SshPickerStage::Input;
+                ssh_state.focus_input = true;
+                return RemoteNavAction::None;
+            }
+
+            // Hàng nhãn mật khẩu + nút Toggle Show/Hide Password (mô phỏng Zed Eye/EyeOff)
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new(prompt_message.as_str())
+                        .strong()
+                        .size(12.5)
+                        .color(theme.text.primary),
+                );
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let toggle_label = if *is_masked { "Show" } else { "Hide" };
+                    let toggle_tooltip = if *is_masked {
+                        "Toggle to Unmask Password"
+                    } else {
+                        "Toggle to Mask Password"
+                    };
+
+                    if AppButton::new()
+                        .label(toggle_label)
+                        .variant(crate::components::ui::ButtonVariant::Ghost)
+                        .show(ui)
+                        .on_hover_text(toggle_tooltip)
+                        .clicked()
+                    {
+                        *is_masked = !*is_masked;
+                    }
+                });
+            });
+
+            ui.add_space(6.0);
+
+            // Ô nhập mật khẩu
+            let input_id = egui::Id::new("ssh_password_input");
+            if ssh_state.focus_input {
+                ssh_state.focus_input = false;
+                anchor_cursor_to_end(ui.ctx(), input_id, password_input);
+            }
+
+            let mut submit_password = false;
+
+            ui.horizontal(|ui| {
+                let input_resp = TextInput::new(password_input)
+                    .id(input_id)
+                    .password(*is_masked)
+                    .auto_focus(true)
+                    .hint_text("Enter password")
+                    .width(ui.available_width() - 80.0)
+                    .bordered()
+                    .show(ui);
+
+                if !input_resp.has_focus() {
+                    input_resp.request_focus();
+                }
+
+                if AppButton::new()
+                    .label("Connect")
+                    .variant(crate::components::ui::ButtonVariant::Primary)
+                    .show(ui)
+                    .clicked()
+                {
+                    submit_password = true;
+                }
+            });
+
+            ui.add_space(4.0);
+            ui.label(
+                egui::RichText::new("Press Enter to connect, Escape to cancel.")
+                    .size(11.0)
+                    .color(theme.text.muted),
+            );
+
+            if key_enter {
+                submit_password = true;
+            }
+
+            if submit_password {
+                if let Some(ref opts) = ssh_state.parsed_options {
+                    let conn = store.ensure_ssh_connection(&opts.host);
+                    if let Some(ref u) = opts.username {
+                        conn.username = Some(u.clone());
+                    }
+                    if let Some(p) = opts.port {
+                        conn.port = Some(p);
+                    }
+                    if let Some(ref args) = opts.args {
+                        conn.args = Some(args.clone());
+                    }
+                    let _ = store.save();
+
+                    let initial_dir = SshTransport::resolve_home_dir(
+                        &opts.host,
+                        opts.username.as_deref(),
+                        opts.port,
+                        opts.args.as_deref(),
+                    );
+
+                    let entries = SshTransport::list_remote_directories(
+                        &opts.host,
+                        &initial_dir,
+                        opts.username.as_deref(),
+                        opts.port,
+                        opts.args.as_deref(),
+                    )
+                    .unwrap_or_default();
+
+                    let server_kind = RemoteServerKind::Ssh {
+                        host: opts.host.clone(),
+                        nickname: opts.nickname.clone(),
+                    };
+
+                    let folder_state = FolderPickerState::new(server_kind, initial_dir, entries);
+                    return RemoteNavAction::navigate(RemoteSubView::FolderPicker(folder_state));
+                }
+            }
+
+            RemoteNavAction::None
+        }
+
+        // ====================================================================
+        // GIAI ĐOẠN 4: Đang kết nối (Connecting...)
+        // ====================================================================
+        SshPickerStage::Connecting { status_message } => {
+            ui.vertical_centered(|ui| {
+                ui.add_space(20.0);
+                ui.label(
+                    egui::RichText::new(format!("{}…", status_message))
+                        .size(13.0)
+                        .color(theme.text.primary),
+                );
+                ui.add_space(8.0);
+                ui.label(
+                    egui::RichText::new(
+                        "Establishing secure SSH connection and multiplexing channel.",
+                    )
+                    .size(11.0)
+                    .color(theme.text.muted),
+                );
+            });
+
+            RemoteNavAction::None
+        }
+    }
+}

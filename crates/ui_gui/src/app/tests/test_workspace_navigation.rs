@@ -228,7 +228,7 @@ async fn test_remote_servers_modal_escape_back_navigation() {
     // 3. Khởi tạo state đang ở FolderPicker (đã navigate từ List)
     let mut state = RemoteModalState::default();
     state.navigate(RemoteSubView::FolderPicker(FolderPickerState::new(
-        "Ubuntu",
+        RemoteServerKind::Wsl("Ubuntu".to_string()),
         "/home",
         vec![],
     )));
@@ -421,8 +421,8 @@ async fn test_project_picker_and_server_list_consistency() {
         .any(|it| it.label == "/home/user/backend"));
 
     // 2. Mở project này qua open_or_switch_workspace (như khi chọn từ server list)
-    let ws = crate::views::remote_servers::helpers::create_remote_workspace(
-        "Ubuntu",
+    let ws = crate::views::remote_servers::helpers::create_server_workspace(
+        &RemoteServerKind::Wsl("Ubuntu".to_string()),
         "/home/user/backend",
     );
     app.open_or_switch_workspace(&ws);

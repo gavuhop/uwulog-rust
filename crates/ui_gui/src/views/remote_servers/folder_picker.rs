@@ -5,11 +5,11 @@ use eframe::egui;
 use uwu_core_workspace::{Workspace, WorkspaceStore};
 
 use super::helpers::{
-    anchor_cursor_to_end, calculate_adaptive_scroll_height, create_wsl_workspace,
+    anchor_cursor_to_end, calculate_adaptive_scroll_height, create_server_workspace,
     get_cached_or_read_directories, get_dir_and_suffix, join_unix_dir, join_unix_path,
     render_empty_state, step_selected_index, ListItemRow,
 };
-use super::types::{FolderPickerState, RemoteNavAction};
+use super::types::{FolderPickerState, RemoteNavAction, RemoteServerKind};
 
 /// Subview 3: Chọn Thư Mục Remote Chuẩn Zed (Bàn phím ưu tiên, Tab drill-down, Enter mở project)
 pub fn render_folder_picker_subview(
@@ -22,14 +22,17 @@ pub fn render_folder_picker_subview(
     let mut nav_action = RemoteNavAction::None;
     let mut selected_workspace = None;
 
-    // 1. Header: Linux <distro_name>
+    // 1. Header: [Icon] [Server Name] (chuẩn Zed: Linux Ubuntu hoặc Server SSH)
     ui.horizontal(|ui| {
         ui.add_space(4.0);
         let (icon_r, _) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
-        IconName::Linux.paint(ui.painter(), icon_r, theme.text.primary);
+        folder_state
+            .server
+            .icon()
+            .paint(ui.painter(), icon_r, theme.text.primary);
         ui.add_space(4.0);
         ui.label(
-            egui::RichText::new(&folder_state.distro)
+            egui::RichText::new(folder_state.server.display_name())
                 .strong()
                 .size(13.0)
                 .color(theme.text.primary),
@@ -75,7 +78,7 @@ pub fn render_folder_picker_subview(
         let (dir, _) = get_dir_and_suffix(&folder_state.path_query);
         if dir != folder_state.current_dir {
             folder_state.current_dir = dir.clone();
-            folder_state.entries = get_cached_or_read_directories(&folder_state.distro, &dir);
+            folder_state.entries = get_cached_or_read_directories(&folder_state.server, &dir);
         }
         // Khi gõ chữ: LUÔN pick item đầu tiên (index 0)
         folder_state.selected_index = 0;
@@ -209,15 +212,22 @@ pub fn render_folder_picker_subview(
 
     // Thực thi mở thư mục được chọn
     if let Some(target_dir) = action_open_dir {
-        let ws = create_wsl_workspace(&folder_state.distro, &target_dir);
-        store.add_remote_project_to_server(&folder_state.distro, &target_dir);
+        match &folder_state.server {
+            RemoteServerKind::Wsl(distro) | RemoteServerKind::DevContainer(distro) => {
+                store.add_remote_project_to_server(distro, &target_dir);
+            }
+            RemoteServerKind::Ssh { host, .. } => {
+                store.add_remote_project_to_ssh_server(host, &target_dir);
+            }
+        }
+        let ws = create_server_workspace(&folder_state.server, &target_dir);
         store.add_or_update(ws.clone());
         selected_workspace = Some(ws);
     } else if let Some(folder) = action_enter_folder {
         let new_dir = join_unix_dir(&dir, &folder);
         folder_state.current_dir = new_dir.clone();
         folder_state.path_query = new_dir.clone();
-        folder_state.entries = get_cached_or_read_directories(&folder_state.distro, &new_dir);
+        folder_state.entries = get_cached_or_read_directories(&folder_state.server, &new_dir);
         folder_state.selected_index = 0;
         folder_state.focus_input = true;
     }

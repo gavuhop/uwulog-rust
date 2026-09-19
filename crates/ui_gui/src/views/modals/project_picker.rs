@@ -1,6 +1,7 @@
 use crate::actions::AppAction;
 use crate::components::ui::IconName;
 use crate::theme::ActiveTheme;
+use crate::views::remote_servers::{create_server_workspace, RemoteServerKind};
 use eframe::egui::{self, Color32, CornerRadius, Rect};
 use std::collections::HashSet;
 use uwu_core_workspace::{SourceType, Workspace, WorkspaceLocation, WorkspaceStore};
@@ -328,12 +329,32 @@ pub fn render_project_picker_popup(
                             }
                         });
                         if !exists {
-                            all_recent.push(
-                                crate::views::remote_servers::helpers::create_remote_workspace(
-                                    &conn.distro,
-                                    &proj.path,
-                                ),
-                            );
+                            all_recent.push(create_server_workspace(
+                                &RemoteServerKind::Wsl(conn.distro.clone()),
+                                &proj.path,
+                            ));
+                        }
+                    }
+                }
+                for conn in &store.ssh_connections {
+                    for proj in &conn.projects {
+                        let clean = uwu_core_workspace::normalize_workdir(&proj.path);
+                        let exists = all_recent.iter().any(|ws| {
+                            if let Some(remote) = ws.location.as_remote() {
+                                remote.display_name().eq_ignore_ascii_case(&conn.host)
+                                    && ws.location.normalized_dir() == clean
+                            } else {
+                                false
+                            }
+                        });
+                        if !exists {
+                            all_recent.push(create_server_workspace(
+                                &RemoteServerKind::Ssh {
+                                    host: conn.host.clone(),
+                                    nickname: conn.nickname.clone(),
+                                },
+                                &proj.path,
+                            ));
                         }
                     }
                 }

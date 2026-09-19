@@ -10,6 +10,7 @@ pub use normalizer::LogNormalizer;
 pub use process::ProcessSource;
 pub use remote::RemoteSource;
 pub use traits::LogSource;
+pub use uwu_core_protocol::RemoteLogSourceSpec;
 pub use wsl::{WslSource, WslTargetMode};
 
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};

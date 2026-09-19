@@ -1,17 +1,19 @@
 use crate::components::ui::{IconName, TextInput};
 use crate::keymap::{KeyAction, KeyContext, KeymapManager};
 use eframe::egui;
+use std::collections::BTreeSet;
 #[cfg(target_os = "windows")]
-use uwu_core_workspace::RemoteProject;
-use uwu_core_workspace::{Workspace, WorkspaceStore};
-use uwu_driver_transport::WslTransport;
+use uwu_core_workspace::WslConnection;
+use uwu_core_workspace::{RemoteProject, SshConnection, Workspace, WorkspaceStore};
+use uwu_driver_transport::{load_system_and_user_ssh_hosts, SshTransport, WslTransport};
 
 use super::helpers::{
-    anchor_cursor_to_end, create_remote_workspace, get_cached_or_read_directories,
+    anchor_cursor_to_end, create_server_workspace, get_cached_or_read_directories,
     render_empty_state, render_section_title, step_selected_index, ListItemRow,
 };
 use super::types::{
     FolderPickerState, RemoteNavAction, RemoteServerKind, RemoteSubView, ServerOptionsState,
+    SshPickerState,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -20,9 +22,19 @@ pub enum ServerListAction {
     ConnectDevContainer,
     AddWslDistro,
     OpenWorkspace(Box<Workspace>),
-    OpenRemotePath { server: String, path: String },
+    OpenRemotePath {
+        server: String,
+        path: String,
+    },
+    OpenSshPath {
+        host: String,
+        nickname: Option<String>,
+        path: String,
+    },
     OpenFolder(String),
+    OpenFolderSsh(String),
     ViewServerOptions(String),
+    ViewServerOptionsKind(RemoteServerKind),
 }
 
 /// Một mục hiển thị trong Server List
@@ -36,18 +48,16 @@ pub struct ServerListItem {
 }
 
 /// Thu thập danh sách các item hiển thị dựa trên search filter và workspace store
-pub fn collect_server_list_items(filter: &str, _store: &WorkspaceStore) -> Vec<ServerListItem> {
+pub fn collect_server_list_items(filter: &str, store: &WorkspaceStore) -> Vec<ServerListItem> {
     let mut items = Vec::new();
     let filter = filter.trim().to_lowercase();
-    #[cfg(target_os = "windows")]
-    let store = _store;
 
     // 1. 3 Nút Action trên cùng (Connect SSH, Dev Container, Add WSL Distro)
     if filter.is_empty() || "connect ssh server".contains(&filter) {
         items.push(ServerListItem {
             icon: IconName::Plus,
             label: "Connect SSH Server".to_string(),
-            tooltip: Some("SSH connection coming soon".to_string()),
+            tooltip: Some("Connect to a remote server over SSH".to_string()),
             section_title: None,
             action: ServerListAction::ConnectSsh,
         });
@@ -74,89 +84,138 @@ pub fn collect_server_list_items(filter: &str, _store: &WorkspaceStore) -> Vec<S
         });
     }
 
-    // 2. Hiển thị từng Server Connection và các Projects thuộc về nó (duyệt thẳng O(1), chuẩn Zed)
-    #[cfg(target_os = "windows")]
-    for server in &store.wsl_connections {
-        let cluster_title = format!("WSL: {}", server.distro);
+    // 2. Gom tất cả các server connection vào biến `connections` và lặp qua một luồng duy nhất
+    let connections: Vec<Connection> = {
+        let mut list = Vec::new();
+        #[cfg(target_os = "windows")]
+        list.extend(store.wsl_connections.iter().map(Connection::Wsl));
+        list.extend(store.ssh_connections.iter().map(Connection::Ssh));
+        list
+    };
 
-        let cluster_title_matches =
-            !filter.is_empty() && cluster_title.to_lowercase().contains(&filter);
-        let open_folder_matches =
-            filter.is_empty() || "open folder".contains(&filter) || cluster_title_matches;
-        let options_matches =
-            filter.is_empty() || "view server options".contains(&filter) || cluster_title_matches;
-
-        let matching_projects: Vec<&RemoteProject> = server
-            .projects
-            .iter()
-            .filter(|p| {
-                filter.is_empty()
-                    || cluster_title_matches
-                    || p.path.to_lowercase().contains(&filter)
-            })
-            .collect();
-
-        if matching_projects.is_empty() && !open_folder_matches && !options_matches {
-            continue;
-        }
-
-        let mut is_first = true;
-
-        for proj in matching_projects {
-            let section = if is_first {
-                is_first = false;
-                Some(cluster_title.clone())
-            } else {
-                None
-            };
-
-            items.push(ServerListItem {
-                icon: IconName::Folder,
-                label: proj.path.clone(),
-                tooltip: Some(format!("Open project in {}", cluster_title)),
-                section_title: section,
-                action: ServerListAction::OpenRemotePath {
-                    server: server.distro.clone(),
-                    path: proj.path.clone(),
-                },
-            });
-        }
-
-        if open_folder_matches {
-            let section = if is_first {
-                is_first = false;
-                Some(cluster_title.clone())
-            } else {
-                None
-            };
-
-            items.push(ServerListItem {
-                icon: IconName::FolderOpen,
-                label: "Open Folder".to_string(),
-                tooltip: Some(format!("Open a directory path in {}", cluster_title)),
-                section_title: section,
-                action: ServerListAction::OpenFolder(server.distro.clone()),
-            });
-        }
-
-        if options_matches {
-            let section = if is_first {
-                Some(cluster_title.clone())
-            } else {
-                None
-            };
-
-            items.push(ServerListItem {
-                icon: IconName::Settings,
-                label: "View Server Options".to_string(),
-                tooltip: Some("View server options".to_string()),
-                section_title: section,
-                action: ServerListAction::ViewServerOptions(server.distro.clone()),
-            });
-        }
+    for conn in &connections {
+        append_connection_items(&mut items, &filter, conn);
     }
 
     items
+}
+
+/// Đại diện bọc cho một kết nối Server (WSL hoặc SSH)
+enum Connection<'a> {
+    #[cfg(target_os = "windows")]
+    Wsl(&'a WslConnection),
+    Ssh(&'a SshConnection),
+}
+
+impl<'a> Connection<'a> {
+    fn title(&self) -> String {
+        match self {
+            #[cfg(target_os = "windows")]
+            Self::Wsl(s) => format!("WSL: {}", s.distro),
+            Self::Ssh(s) => format!("SSH: {}", s.display_name()),
+        }
+    }
+
+    fn projects(&self) -> &'a BTreeSet<RemoteProject> {
+        match self {
+            #[cfg(target_os = "windows")]
+            Self::Wsl(s) => &s.projects,
+            Self::Ssh(s) => &s.projects,
+        }
+    }
+
+    fn project_action(&self, path: &str) -> ServerListAction {
+        match self {
+            #[cfg(target_os = "windows")]
+            Self::Wsl(s) => ServerListAction::OpenRemotePath {
+                server: s.distro.clone(),
+                path: path.to_string(),
+            },
+            Self::Ssh(s) => ServerListAction::OpenSshPath {
+                host: s.host.clone(),
+                nickname: s.nickname.clone(),
+                path: path.to_string(),
+            },
+        }
+    }
+
+    fn open_folder_action(&self) -> ServerListAction {
+        match self {
+            #[cfg(target_os = "windows")]
+            Self::Wsl(s) => ServerListAction::OpenFolder(s.distro.clone()),
+            Self::Ssh(s) => ServerListAction::OpenFolderSsh(s.host.clone()),
+        }
+    }
+
+    fn options_action(&self) -> ServerListAction {
+        match self {
+            #[cfg(target_os = "windows")]
+            Self::Wsl(s) => ServerListAction::ViewServerOptions(s.distro.clone()),
+            Self::Ssh(s) => ServerListAction::ViewServerOptionsKind(RemoteServerKind::Ssh {
+                host: s.host.clone(),
+                nickname: s.nickname.clone(),
+            }),
+        }
+    }
+}
+
+/// Helper trích xuất và hiển thị danh sách item cho một kết nối (WSL hoặc SSH)
+fn append_connection_items(items: &mut Vec<ServerListItem>, filter: &str, conn: &Connection) {
+    let title = conn.title();
+    let title_matches = !filter.is_empty() && title.to_lowercase().contains(filter);
+    let open_folder_matches = filter.is_empty() || "open folder".contains(filter) || title_matches;
+    let options_matches =
+        filter.is_empty() || "view server options".contains(filter) || title_matches;
+
+    let matching_projects: Vec<&RemoteProject> = conn
+        .projects()
+        .iter()
+        .filter(|p| filter.is_empty() || title_matches || p.path.to_lowercase().contains(filter))
+        .collect();
+
+    if matching_projects.is_empty() && !open_folder_matches && !options_matches {
+        return;
+    }
+
+    let mut is_first = true;
+    let mut take_section = || {
+        if is_first {
+            is_first = false;
+            Some(title.clone())
+        } else {
+            None
+        }
+    };
+
+    for proj in matching_projects {
+        items.push(ServerListItem {
+            icon: IconName::Folder,
+            label: proj.path.clone(),
+            tooltip: Some(format!("Open project in {}", title)),
+            section_title: take_section(),
+            action: conn.project_action(&proj.path),
+        });
+    }
+
+    if open_folder_matches {
+        items.push(ServerListItem {
+            icon: IconName::FolderOpen,
+            label: "Open Folder".to_string(),
+            tooltip: Some(format!("Open a directory path in {}", title)),
+            section_title: take_section(),
+            action: conn.open_folder_action(),
+        });
+    }
+
+    if options_matches {
+        items.push(ServerListItem {
+            icon: IconName::Settings,
+            label: "View Server Options".to_string(),
+            tooltip: Some("View server options".to_string()),
+            section_title: take_section(),
+            action: conn.options_action(),
+        });
+    }
 }
 
 /// Subview 1: Danh sách tổng quan Remote Projects & Clusters
@@ -265,32 +324,64 @@ pub fn render_remote_list_subview(
     if let Some(action) = triggered_action {
         match action {
             ServerListAction::ConnectSsh => {
-                // Placeholder SSH
+                let hosts = load_system_and_user_ssh_hosts().into_iter().collect();
+                nav_action =
+                    RemoteNavAction::navigate(RemoteSubView::SshPicker(SshPickerState::new(hosts)));
             }
             ServerListAction::ConnectDevContainer => {
                 // Placeholder Dev Container
             }
             ServerListAction::AddWslDistro => {
-                nav_action = RemoteNavAction::Navigate(RemoteSubView::WslPicker);
+                nav_action = RemoteNavAction::navigate(RemoteSubView::WslPicker);
             }
             ServerListAction::OpenWorkspace(ws) => {
                 selected_workspace = Some(*ws);
             }
             ServerListAction::OpenRemotePath { server, path } => {
-                let ws = create_remote_workspace(&server, &path);
+                let ws = create_server_workspace(&RemoteServerKind::Wsl(server), &path);
+                selected_workspace = Some(ws);
+            }
+            ServerListAction::OpenSshPath {
+                host,
+                nickname,
+                path,
+            } => {
+                let ws = create_server_workspace(&RemoteServerKind::Ssh { host, nickname }, &path);
                 selected_workspace = Some(ws);
             }
             ServerListAction::OpenFolder(distro) => {
                 let home = WslTransport::resolve_home_dir(&distro);
-                let entries = get_cached_or_read_directories(&distro, &home);
-                nav_action = RemoteNavAction::Navigate(RemoteSubView::FolderPicker(
-                    FolderPickerState::new(distro, home, entries),
+                let entries =
+                    get_cached_or_read_directories(&RemoteServerKind::Wsl(distro.clone()), &home);
+                nav_action = RemoteNavAction::navigate(RemoteSubView::FolderPicker(
+                    FolderPickerState::new(RemoteServerKind::Wsl(distro), home, entries),
+                ));
+            }
+            ServerListAction::OpenFolderSsh(host) => {
+                let conn = store.find_ssh_connection(&host);
+                let user = conn.and_then(|c| c.username.as_deref());
+                let port = conn.and_then(|c| c.port);
+                let args = conn.and_then(|c| c.args.as_deref());
+                let nickname = conn.and_then(|c| c.nickname.clone());
+                let home = SshTransport::resolve_home_dir(&host, user, port, args);
+                let entries = SshTransport::list_remote_directories(&host, &home, user, port, args)
+                    .unwrap_or_default();
+                nav_action = RemoteNavAction::navigate(RemoteSubView::FolderPicker(
+                    FolderPickerState::new(RemoteServerKind::Ssh { host, nickname }, home, entries),
                 ));
             }
             ServerListAction::ViewServerOptions(distro) => {
                 nav_action =
-                    RemoteNavAction::Navigate(RemoteSubView::ServerOptions(ServerOptionsState {
+                    RemoteNavAction::navigate(RemoteSubView::ServerOptions(ServerOptionsState {
                         server: RemoteServerKind::Wsl(distro),
+                        selected_index: 0,
+                        copied_flash_time: None,
+                    }));
+            }
+            ServerListAction::ViewServerOptionsKind(kind) => {
+                nav_action =
+                    RemoteNavAction::navigate(RemoteSubView::ServerOptions(ServerOptionsState {
+                        server: kind,
                         selected_index: 0,
                         copied_flash_time: None,
                     }));

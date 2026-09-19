@@ -136,7 +136,9 @@ pub fn render_server_options_subview(
                         RemoteServerKind::Wsl(distro) => {
                             store.remove_wsl_connection(distro);
                         }
-                        RemoteServerKind::Ssh { .. } => {}
+                        RemoteServerKind::Ssh { host, .. } => {
+                            store.remove_ssh_connection(host);
+                        }
                         RemoteServerKind::DevContainer(_) => {}
                     }
                     nav_action = RemoteNavAction::Back;

@@ -6,8 +6,8 @@ pub mod session;
 pub use environment::{load_workspace_environment, parse_dot_env, EnvLoadStatus};
 pub use manager::MultiWorkspaceManager;
 pub use remote::{
-    RemoteConnectionOptions, RemoteProject, ServerConnection, SshConnection, WslConnection,
-    WslConnectionOptions,
+    RemoteConnectionOptions, RemoteProject, ServerConnection, SshConnection, SshConnectionOptions,
+    WslConnection, WslConnectionOptions,
 };
 pub use session::{SourceConfig, SourceType, WorkspaceSession};
 pub use uwu_icons::IconName;
@@ -224,6 +224,8 @@ pub struct WorkspaceStore {
     pub recent_workspaces: Vec<Workspace>,
     #[serde(default)]
     pub wsl_connections: Vec<WslConnection>,
+    #[serde(default)]
+    pub ssh_connections: Vec<SshConnection>,
     #[serde(skip)]
     storage_path: Option<PathBuf>,
 }
@@ -402,6 +404,96 @@ impl WorkspaceStore {
         let _ = self.save();
     }
 
+    /// Tìm kết nối SSH theo host hoặc nickname
+    pub fn find_ssh_connection(&self, host: &str) -> Option<&SshConnection> {
+        let trimmed = host.trim();
+        self.ssh_connections.iter().find(|c| {
+            c.host.eq_ignore_ascii_case(trimmed)
+                || c.nickname
+                    .as_deref()
+                    .map(|n| n.eq_ignore_ascii_case(trimmed))
+                    .unwrap_or(false)
+        })
+    }
+
+    /// Tìm kết nối SSH dạng mutable theo host hoặc nickname
+    pub fn find_ssh_connection_mut(&mut self, host: &str) -> Option<&mut SshConnection> {
+        let trimmed = host.trim();
+        self.ssh_connections.iter_mut().find(|c| {
+            c.host.eq_ignore_ascii_case(trimmed)
+                || c.nickname
+                    .as_deref()
+                    .map(|n| n.eq_ignore_ascii_case(trimmed))
+                    .unwrap_or(false)
+        })
+    }
+
+    /// Đảm bảo một kết nối SSH tồn tại trong danh sách (tạo mới nếu chưa có)
+    pub fn ensure_ssh_connection(&mut self, host: impl Into<String>) -> &mut SshConnection {
+        let h = host.into();
+        let trimmed = h.trim().to_string();
+        if let Some(pos) = self.ssh_connections.iter().position(|c| {
+            c.host.eq_ignore_ascii_case(&trimmed)
+                || c.nickname
+                    .as_deref()
+                    .map(|n| n.eq_ignore_ascii_case(&trimmed))
+                    .unwrap_or(false)
+        }) {
+            &mut self.ssh_connections[pos]
+        } else {
+            self.ssh_connections.push(SshConnection::new(&trimmed));
+            let _ = self.save();
+            self.ssh_connections.last_mut().unwrap()
+        }
+    }
+
+    /// Xóa một kết nối SSH khỏi danh sách và xóa các workspace remote thuộc server đó
+    pub fn remove_ssh_connection(&mut self, host: &str) {
+        let trimmed = host.trim();
+        self.ssh_connections.retain(|c| {
+            !c.host.eq_ignore_ascii_case(trimmed)
+                && !c
+                    .nickname
+                    .as_deref()
+                    .map(|n| n.eq_ignore_ascii_case(trimmed))
+                    .unwrap_or(false)
+        });
+        self.recent_workspaces.retain(|ws| {
+            if let Some(remote) = ws.location.as_remote() {
+                !remote.display_name().eq_ignore_ascii_case(trimmed)
+            } else {
+                true
+            }
+        });
+        let _ = self.save();
+    }
+
+    /// Thêm project trực tiếp vào SSH server tương ứng
+    pub fn add_remote_project_to_ssh_server(&mut self, host: &str, path: impl Into<String>) {
+        let server = self.ensure_ssh_connection(host);
+        if server.add_project(path) {
+            let _ = self.save();
+        }
+    }
+
+    /// Xóa project trực tiếp khỏi SSH server tương ứng
+    pub fn remove_remote_project_from_ssh_server(&mut self, host: &str, path: &str) {
+        if let Some(server) = self.find_ssh_connection_mut(host) {
+            if server.remove_project(path) {
+                let clean = normalize_workdir(path);
+                self.recent_workspaces.retain(|w| {
+                    if let Some(remote) = w.location.as_remote() {
+                        !(remote.display_name().eq_ignore_ascii_case(host)
+                            && w.location.normalized_dir() == clean)
+                    } else {
+                        true
+                    }
+                });
+                let _ = self.save();
+            }
+        }
+    }
+
     /// Thêm project trực tiếp vào server connection tương ứng (WSL, SSH, Container...)
     pub fn add_remote_project_to_server(&mut self, server_name: &str, path: impl Into<String>) {
         let server = self.ensure_wsl_connection(server_name);
@@ -412,19 +504,28 @@ impl WorkspaceStore {
 
     /// Xóa project trực tiếp khỏi server connection tương ứng (WSL, SSH, Container...)
     pub fn remove_remote_project_from_server(&mut self, server_name: &str, path: &str) {
+        let mut modified = false;
         if let Some(server) = self.find_wsl_connection_mut(server_name) {
             if server.remove_project(path) {
-                let clean = normalize_workdir(path);
-                self.recent_workspaces.retain(|w| {
-                    if let Some(remote) = w.location.as_remote() {
-                        !(remote.display_name().eq_ignore_ascii_case(server_name)
-                            && w.location.normalized_dir() == clean)
-                    } else {
-                        true
-                    }
-                });
-                let _ = self.save();
+                modified = true;
             }
+        }
+        if let Some(server) = self.find_ssh_connection_mut(server_name) {
+            if server.remove_project(path) {
+                modified = true;
+            }
+        }
+        if modified {
+            let clean = normalize_workdir(path);
+            self.recent_workspaces.retain(|w| {
+                if let Some(remote) = w.location.as_remote() {
+                    !(remote.display_name().eq_ignore_ascii_case(server_name)
+                        && w.location.normalized_dir() == clean)
+                } else {
+                    true
+                }
+            });
+            let _ = self.save();
         }
     }
 
@@ -455,8 +556,7 @@ impl WorkspaceStore {
         }
     }
 
-    /// Đồng bộ các dự án remote giữa `wsl_connections` và `recent_workspaces`
-    /// TODO: Dùng cho ssh, container ...
+    /// Đồng bộ các dự án remote giữa `wsl_connections`, `ssh_connections` và `recent_workspaces`
     pub fn sync_remote_projects(&mut self) {
         for conn in &self.wsl_connections {
             for proj in &conn.projects {
@@ -476,6 +576,43 @@ impl WorkspaceStore {
                             &conn.distro,
                             &proj.path,
                         )),
+                        SourceType::Process,
+                    );
+                    self.recent_workspaces.push(ws);
+                }
+            }
+        }
+
+        for conn in &self.ssh_connections {
+            for proj in &conn.projects {
+                let clean = normalize_workdir(&proj.path);
+                let exists = self.recent_workspaces.iter().any(|ws| {
+                    if let Some(remote) = ws.location.as_remote() {
+                        remote
+                            .display_name()
+                            .eq_ignore_ascii_case(conn.display_name())
+                            && ws.location.normalized_dir() == clean
+                    } else {
+                        false
+                    }
+                });
+                if !exists {
+                    let mut opts = SshConnectionOptions::new(&conn.host, &proj.path);
+                    if let Some(ref u) = conn.username {
+                        opts = opts.with_user(u);
+                    }
+                    if let Some(p) = conn.port {
+                        opts = opts.with_port(p);
+                    }
+                    if let Some(ref nick) = conn.nickname {
+                        opts = opts.with_nickname(nick);
+                    }
+                    if let Some(ref args) = conn.args {
+                        opts.args = Some(args.clone());
+                    }
+                    let ws = Workspace::new(
+                        extract_project_name(&proj.path),
+                        WorkspaceLocation::remote(opts),
                         SourceType::Process,
                     );
                     self.recent_workspaces.push(ws);
@@ -808,5 +945,55 @@ mod tests {
         );
         assert_eq!(ws_local.name, "my-app");
         assert_eq!(ws_local.server_name(), None);
+    }
+
+    #[test]
+    fn test_workspace_store_ssh_connections_crud() {
+        let mut store = WorkspaceStore::default();
+        store.ensure_ssh_connection("prod-server");
+        store.ensure_ssh_connection("staging-server");
+        assert_eq!(store.ssh_connections.len(), 2);
+        assert_eq!(store.ssh_connections[0].host, "prod-server");
+        assert_eq!(store.ssh_connections[1].host, "staging-server");
+
+        // Thêm project vào prod-server
+        store.add_remote_project_to_ssh_server("prod-server", "/var/log/nginx");
+        store.add_remote_project_to_ssh_server("prod-server", "/var/log/backend");
+        // Kiểm tra deduplication
+        store.add_remote_project_to_ssh_server("prod-server", "/var/log/nginx");
+
+        let prod = store.find_ssh_connection("prod-server").unwrap();
+        assert_eq!(prod.projects.len(), 2);
+        assert!(prod
+            .projects
+            .contains(&RemoteProject::new("/var/log/nginx")));
+        assert!(prod
+            .projects
+            .contains(&RemoteProject::new("/var/log/backend")));
+
+        let ws_ssh = Workspace::new(
+            "nginx-log",
+            WorkspaceLocation::remote(SshConnectionOptions::new("prod-server", "/var/log/nginx")),
+            SourceType::Process,
+        );
+        store.add_or_update(ws_ssh);
+        assert_eq!(store.recent_workspaces.len(), 1);
+
+        // Xóa project khỏi prod-server
+        store.remove_remote_project_from_ssh_server("prod-server", "/var/log/nginx");
+        assert_eq!(
+            store
+                .find_ssh_connection("prod-server")
+                .unwrap()
+                .projects
+                .len(),
+            1
+        );
+        assert_eq!(store.recent_workspaces.len(), 0);
+
+        // Xóa SSH server
+        store.remove_ssh_connection("prod-server");
+        assert_eq!(store.ssh_connections.len(), 1);
+        assert_eq!(store.ssh_connections[0].host, "staging-server");
     }
 }

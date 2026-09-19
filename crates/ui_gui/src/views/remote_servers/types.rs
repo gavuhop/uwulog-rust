@@ -4,7 +4,7 @@ use std::time::Instant;
 /// Trạng thái của hộp thoại chọn thư mục WSL/Remote
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FolderPickerState {
-    pub distro: String,
+    pub server: RemoteServerKind,
     pub path_query: String,
     pub current_dir: String,
     pub entries: Vec<String>,
@@ -14,19 +14,65 @@ pub struct FolderPickerState {
 
 impl FolderPickerState {
     pub fn new(
-        distro: impl Into<String>,
+        server: RemoteServerKind,
         initial_dir: impl Into<String>,
         entries: Vec<String>,
     ) -> Self {
-        let d = distro.into();
         let init = initial_dir.into();
         Self {
-            distro: d,
+            server,
             path_query: init.clone(),
             current_dir: init,
             entries,
             selected_index: 0,
             focus_input: true,
+        }
+    }
+}
+
+/// Các giai đoạn kết nối SSH theo chuẩn của Zed Editor:
+/// 1. Input: Nhập lệnh ssh (ví dụ: `ssh user@example -o 2222`)
+/// 2. HostKeyVerification: Nhận diện host authenticity fingerprint -> gõ 'yes' hoặc 'no' (unmasked)
+/// 3. PasswordPrompt: Nhập mật khẩu tài khoản từ xa -> masked, có nút Toggle Unmask/Mask (Eye/EyeOff)
+/// 4. Connecting: Đang kết nối nền và tải danh sách thư mục
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum SshPickerStage {
+    #[default]
+    Input,
+    HostKeyVerification {
+        prompt_message: String,
+        user_input: String,
+    },
+    PasswordPrompt {
+        prompt_message: String,
+        password_input: String,
+        is_masked: bool,
+    },
+    Connecting {
+        status_message: String,
+    },
+}
+
+/// Trạng thái của hộp thoại nhập SSH Host / Autocomplete (chuẩn Zed Editor)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SshPickerState {
+    pub input_query: String,
+    pub suggested_hosts: Vec<String>,
+    pub selected_index: usize,
+    pub focus_input: bool,
+    pub stage: SshPickerStage,
+    pub parsed_options: Option<uwu_core_workspace::SshConnectionOptions>,
+}
+
+impl SshPickerState {
+    pub fn new(suggested_hosts: Vec<String>) -> Self {
+        Self {
+            input_query: String::new(),
+            suggested_hosts,
+            selected_index: 0,
+            focus_input: true,
+            stage: SshPickerStage::Input,
+            parsed_options: None,
         }
     }
 }
@@ -171,6 +217,7 @@ pub enum RemoteSubView {
     #[default]
     List,
     WslPicker,
+    SshPicker(SshPickerState),
     FolderPicker(FolderPickerState),
     ServerOptions(ServerOptionsState),
 }
@@ -179,8 +226,14 @@ pub enum RemoteSubView {
 pub enum RemoteNavAction {
     #[default]
     None,
-    Navigate(RemoteSubView),
+    Navigate(Box<RemoteSubView>),
     Back,
+}
+
+impl RemoteNavAction {
+    pub fn navigate(subview: RemoteSubView) -> Self {
+        Self::Navigate(Box::new(subview))
+    }
 }
 
 #[derive(Clone, Default)]

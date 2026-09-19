@@ -2,6 +2,7 @@ pub mod folder_picker;
 pub mod helpers;
 pub mod server_list;
 pub mod server_options;
+pub mod ssh_picker;
 pub mod types;
 pub mod wsl_picker;
 
@@ -11,6 +12,7 @@ pub use server_list::{
     collect_server_list_items, render_remote_list_subview, ServerListAction, ServerListItem,
 };
 pub use server_options::render_server_options_subview;
+pub use ssh_picker::render_ssh_picker_subview;
 pub use types::*;
 pub use wsl_picker::render_wsl_picker_subview;
 
@@ -59,6 +61,9 @@ pub fn render_remote_servers_modal(
             RemoteSubView::WslPicker => {
                 nav_action = render_wsl_picker_subview(ui, keymap, store);
             }
+            RemoteSubView::SshPicker(ssh_state) => {
+                nav_action = render_ssh_picker_subview(ui, ssh_state, keymap, store);
+            }
             RemoteSubView::FolderPicker(folder_state) => {
                 let (action, ws) = render_folder_picker_subview(ui, folder_state, keymap, store);
                 nav_action = action;
@@ -78,7 +83,7 @@ pub fn render_remote_servers_modal(
 
     match nav_action {
         RemoteNavAction::Navigate(next) => {
-            state.navigate(next);
+            state.navigate(*next);
             ctx.data_mut(|d| d.insert_temp(state_id, state));
             return;
         }
@@ -180,7 +185,10 @@ mod tests {
     fn test_clear_dir_cache() {
         clear_dir_cache();
         // Caching and clearing
-        let entries = get_cached_or_read_directories("non_existent_distro", "/home");
+        let entries = get_cached_or_read_directories(
+            &RemoteServerKind::Wsl("non_existent_distro".to_string()),
+            "/home",
+        );
         assert!(entries.is_empty());
         clear_dir_cache();
     }
@@ -188,7 +196,7 @@ mod tests {
     #[test]
     fn test_folder_picker_state_focus_input() {
         let state = FolderPickerState::new(
-            "Ubuntu",
+            RemoteServerKind::Wsl("Ubuntu".to_string()),
             "/home/truongviet/",
             vec![".claude".to_string(), ".config".to_string()],
         );
@@ -416,11 +424,14 @@ mod tests {
         assert_eq!(store.wsl_connections[0].distro, "Ubuntu");
 
         // 5. Bấm "Open Folder" sau đó mới vào FolderPicker
-        let folder_picker_subview =
-            RemoteSubView::FolderPicker(FolderPickerState::new("Ubuntu", "/home/user", vec![]));
+        let folder_picker_subview = RemoteSubView::FolderPicker(FolderPickerState::new(
+            RemoteServerKind::Wsl("Ubuntu".to_string()),
+            "/home/user",
+            vec![],
+        ));
         match folder_picker_subview {
             RemoteSubView::FolderPicker(s) => {
-                assert_eq!(s.distro, "Ubuntu");
+                assert_eq!(s.server.display_name(), "Ubuntu");
             }
             _ => panic!("Expected FolderPicker subview"),
         }
@@ -533,8 +544,11 @@ mod tests {
         assert_eq!(state.history[0], RemoteSubView::List);
 
         // 2. Chuyển từ WslPicker -> FolderPicker
-        let folder_subview =
-            RemoteSubView::FolderPicker(FolderPickerState::new("Ubuntu", "/home", vec![]));
+        let folder_subview = RemoteSubView::FolderPicker(FolderPickerState::new(
+            RemoteServerKind::Wsl("Ubuntu".to_string()),
+            "/home",
+            vec![],
+        ));
         state.navigate(folder_subview.clone());
         assert_eq!(state.subview, folder_subview);
         assert_eq!(state.history.len(), 2);
@@ -622,5 +636,134 @@ mod tests {
             assert!(!closed);
         });
         output3.textures_delta.clear();
+    }
+
+    #[test]
+    fn test_ssh_picker_and_server_flow() {
+        let mut store = WorkspaceStore::default();
+        store.ensure_ssh_connection("staging-server");
+        store.add_remote_project_to_ssh_server("staging-server", "/var/log/nginx");
+
+        let items = collect_server_list_items("", &store);
+        let ssh_project_item = items.iter().find(|i| {
+            matches!(
+                &i.action,
+                ServerListAction::OpenSshPath { host, .. } if host == "staging-server"
+            )
+        });
+        assert!(ssh_project_item.is_some());
+
+        // Test FolderPicker with SSH ServerKind
+        let folder_state = FolderPickerState::new(
+            RemoteServerKind::Ssh {
+                host: "staging-server".to_string(),
+                nickname: None,
+            },
+            "/var/log",
+            vec!["nginx".to_string(), "redis".to_string()],
+        );
+        assert_eq!(folder_state.server.display_name(), "staging-server");
+        assert_eq!(folder_state.entries.len(), 2);
+
+        // Test SshPickerState
+        let mut ssh_state =
+            SshPickerState::new(vec!["server-alpha".to_string(), "server-beta".to_string()]);
+        assert_eq!(ssh_state.suggested_hosts.len(), 2);
+        ssh_state.input_query = "alpha".to_string();
+        assert_eq!(ssh_state.input_query, "alpha");
+    }
+
+    #[test]
+    fn test_ssh_multi_stage_zed_flow() {
+        use uwu_core_workspace::SshConnectionOptions;
+
+        // 1. Phân tích cú pháp: `ssh user@example -o 2222`
+        let input = "ssh user@example -o 2222";
+        let opts =
+            SshConnectionOptions::parse_command_line(input, "").expect("Must parse successfully");
+        assert_eq!(opts.host, "example");
+        assert_eq!(opts.username, Some("user".to_string()));
+        assert_eq!(opts.port, Some(2222));
+        assert_eq!(opts.target_string(), "user@example:2222");
+
+        // 2. Khởi tạo SshPickerState ở giai đoạn Input
+        let mut ssh_state = SshPickerState::new(vec!["example".to_string()]);
+        assert_eq!(ssh_state.stage, SshPickerStage::Input);
+        assert!(ssh_state.parsed_options.is_none());
+
+        // 3. Sau khi người dùng xác nhận kết nối -> chuyển sang HostKeyVerification (yes/no)
+        let prompt = format!(
+            "The authenticity of host '{}' can't be established.\nED25519 key fingerprint is SHA256:4Z1q9sK9jWzL6NpRv8X2tQ7mY0uI3eB5wV1c8aF4oDk.\nAre you sure you want to continue connecting (yes/no)?",
+            opts.target_string()
+        );
+        ssh_state.parsed_options = Some(opts.clone());
+        ssh_state.stage = SshPickerStage::HostKeyVerification {
+            prompt_message: prompt.clone(),
+            user_input: String::new(),
+        };
+
+        assert!(prompt.contains("yes/no"));
+        assert!(prompt.contains("user@example:2222"));
+
+        // 4. Nếu người dùng nhập "no", hủy quay lại Input
+        let abort_answer = "no";
+        if abort_answer == "no" {
+            ssh_state.stage = SshPickerStage::Input;
+        }
+        assert_eq!(ssh_state.stage, SshPickerStage::Input);
+
+        // 5. Nếu người dùng nhập "yes", chuyển sang PasswordPrompt
+        let confirm_answer = "yes";
+        if confirm_answer == "yes" {
+            ssh_state.stage = SshPickerStage::PasswordPrompt {
+                prompt_message: format!("{}'s password:", opts.target_string()),
+                password_input: String::new(),
+                is_masked: true,
+            };
+        }
+
+        match &mut ssh_state.stage {
+            SshPickerStage::PasswordPrompt {
+                prompt_message,
+                password_input,
+                is_masked,
+            } => {
+                assert_eq!(prompt_message, "user@example:2222's password:");
+                assert!(*is_masked, "Password must initially be masked");
+
+                // Toggle unmask (mô phỏng nút Show)
+                *is_masked = !*is_masked;
+                assert!(!*is_masked, "Password must be unmasked after toggling");
+
+                // Toggle mask (mô phỏng nút Hide)
+                *is_masked = !*is_masked;
+                assert!(
+                    *is_masked,
+                    "Password must be re-masked after toggling again"
+                );
+
+                // Nhập mật khẩu
+                password_input.push_str("secret123");
+                assert_eq!(password_input, "secret123");
+            }
+            _ => panic!("Expected PasswordPrompt stage"),
+        }
+
+        // 6. Lưu cấu hình vào WorkspaceStore khi kết nối thành công
+        let mut store = WorkspaceStore::default();
+        let conn = store.ensure_ssh_connection(&opts.host);
+        if let Some(ref u) = opts.username {
+            conn.username = Some(u.clone());
+        }
+        if let Some(p) = opts.port {
+            conn.port = Some(p);
+        }
+
+        let saved = store
+            .find_ssh_connection("example")
+            .expect("Connection must exist");
+        assert_eq!(saved.host, "example");
+        assert_eq!(saved.username.as_deref(), Some("user"));
+        assert_eq!(saved.port, Some(2222));
     }
 }

@@ -1,11 +1,13 @@
 pub mod process;
 pub mod ssh;
+pub mod ssh_config;
 pub mod wsl;
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 pub use process::ProcessTransport;
 pub use ssh::SshTransport;
+pub use ssh_config::{load_system_and_user_ssh_hosts, parse_ssh_config_hosts};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, BufReader};
 pub use wsl::{WslArch, WslTransport};
 

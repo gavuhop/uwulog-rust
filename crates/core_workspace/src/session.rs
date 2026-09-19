@@ -10,7 +10,11 @@ use tokio::sync::{mpsc, oneshot, watch};
 use uuid::Uuid;
 use uwu_core_engine::SystemEngine;
 use uwu_core_schema::RawLogEntry;
-use uwu_driver_sources::{FileSource, LogSource, ProcessSource, WslSource, WslTargetMode};
+use uwu_driver_sources::{
+    FileSource, LogSource, ProcessSource, RemoteLogSourceSpec, RemoteSource, WslSource,
+    WslTargetMode,
+};
+use uwu_driver_transport::SshTransport;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -234,6 +238,29 @@ impl WorkspaceSession {
                             });
                             self.is_source_running = true;
                         }
+                        WorkspaceLocation::Remote(RemoteConnectionOptions::Ssh(ssh_opts)) => {
+                            let mut transport = SshTransport::new(&ssh_opts.host);
+                            if let Some(ref u) = ssh_opts.username {
+                                transport = transport.with_user(u);
+                            }
+                            if let Some(p) = ssh_opts.port {
+                                transport = transport.with_port(p);
+                            }
+                            if let Some(ref args) = ssh_opts.args {
+                                transport = transport.with_args(args.clone());
+                            }
+                            if !ssh_opts.working_dir.trim().is_empty() {
+                                transport = transport.with_working_dir(&ssh_opts.working_dir);
+                            } else if !config.working_dir.trim().is_empty() {
+                                transport = transport.with_working_dir(&config.working_dir);
+                            }
+                            let spec = RemoteLogSourceSpec::Command(config.command_str.clone());
+                            let source = RemoteSource::new(Box::new(transport), spec, None);
+                            rt.spawn(async move {
+                                let _ = source.start_stream(source_tx).await;
+                            });
+                            self.is_source_running = true;
+                        }
                         WorkspaceLocation::Local { .. } => {
                             let cmd_parts: Vec<&str> =
                                 config.command_str.split_whitespace().collect();
@@ -306,6 +333,27 @@ impl WorkspaceSession {
                                 let _ = WslSource::new_with_dir(distro, target_mode, workdir)
                                     .start_stream(source_tx)
                                     .await;
+                            });
+                            self.is_source_running = true;
+                        }
+                        WorkspaceLocation::Remote(RemoteConnectionOptions::Ssh(ssh_opts)) => {
+                            let mut transport = SshTransport::new(&ssh_opts.host);
+                            if let Some(ref u) = ssh_opts.username {
+                                transport = transport.with_user(u);
+                            }
+                            if let Some(p) = ssh_opts.port {
+                                transport = transport.with_port(p);
+                            }
+                            if let Some(ref args) = ssh_opts.args {
+                                transport = transport.with_args(args.clone());
+                            }
+                            if !ssh_opts.working_dir.trim().is_empty() {
+                                transport = transport.with_working_dir(&ssh_opts.working_dir);
+                            }
+                            let spec = RemoteLogSourceSpec::File(config.file_path.clone());
+                            let source = RemoteSource::new(Box::new(transport), spec, None);
+                            rt.spawn(async move {
+                                let _ = source.start_stream(source_tx).await;
                             });
                             self.is_source_running = true;
                         }
