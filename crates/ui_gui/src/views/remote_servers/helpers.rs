@@ -6,8 +6,8 @@ use eframe::egui::{self, Align2, Color32, CornerRadius, Id, Order, Stroke};
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 use uwu_core_workspace::{
-    clean_path, extract_project_name, RemoteConnectionOptions, SourceType, SshConnectionOptions,
-    Workspace, WorkspaceLocation,
+    clean_path, extract_project_name, RemoteConnectionOptions, SourceType, Workspace,
+    WorkspaceLocation,
 };
 use uwu_driver_transport::{SshTransport, WslTransport};
 
@@ -53,28 +53,7 @@ pub fn create_server_workspace(server: &RemoteServerKind, target_dir: &str) -> W
 
     let location = match server {
         RemoteServerKind::Wsl(distro) => RemoteConnectionOptions::parse(distro, clean_dir),
-        RemoteServerKind::Ssh {
-            host,
-            port,
-            username,
-            nickname,
-            args,
-        } => {
-            let mut opts = SshConnectionOptions::new(host, clean_dir);
-            if let Some(p) = port {
-                opts = opts.with_port(*p);
-            }
-            if let Some(ref u) = username {
-                opts = opts.with_user(u);
-            }
-            if let Some(ref nick) = nickname {
-                opts = opts.with_nickname(nick);
-            }
-            if let Some(ref a) = args {
-                opts = opts.with_args(a.clone());
-            }
-            opts.into()
-        }
+        RemoteServerKind::Ssh(conn) => conn.to_options(clean_dir).into(),
         RemoteServerKind::DevContainer(name) => RemoteConnectionOptions::parse(name, clean_dir),
     };
 
@@ -103,18 +82,12 @@ pub fn get_cached_or_read_directories(server: &RemoteServerKind, dir: &str) -> V
         RemoteServerKind::Wsl(distro) => {
             WslTransport::list_remote_directories(distro, dir).unwrap_or_default()
         }
-        RemoteServerKind::Ssh {
-            host,
-            port,
-            username,
-            args,
-            ..
-        } => SshTransport::list_remote_directories(
-            host,
+        RemoteServerKind::Ssh(conn) => SshTransport::list_remote_directories(
+            &conn.host,
             dir,
-            username.as_deref(),
-            *port,
-            args.as_deref(),
+            conn.username.as_deref(),
+            conn.port,
+            conn.args.as_deref(),
         )
         .unwrap_or_default(),
         RemoteServerKind::DevContainer(_) => Vec::new(),
@@ -511,13 +484,12 @@ mod tests {
         assert_eq!(ws_root.server_name(), Some("Ubuntu"));
 
         // Test create_server_workspace for SSH
-        let server_ssh = RemoteServerKind::Ssh {
-            host: "192.168.1.100".to_string(),
-            port: Some(2222),
-            username: Some("deploy".to_string()),
-            nickname: Some("my-vps".to_string()),
-            args: None,
-        };
+        let server_ssh = RemoteServerKind::Ssh(
+            uwu_core_workspace::SshConnection::new("192.168.1.100")
+                .with_user("deploy")
+                .with_port(2222)
+                .with_nickname("my-vps"),
+        );
         let ws_ssh = create_server_workspace(&server_ssh, "/var/log/nginx");
         assert_eq!(ws_ssh.name, "nginx");
         assert_eq!(ws_ssh.location.working_dir(), "/var/log/nginx");

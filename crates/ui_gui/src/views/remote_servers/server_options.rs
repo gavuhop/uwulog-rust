@@ -111,8 +111,8 @@ pub fn render_server_options_subview(
                         "Remove WSL Distro",
                         format!("Remove WSL distro `{}`?", distro),
                     ),
-                    RemoteServerKind::Ssh { host, nickname, .. } => {
-                        let name = nickname.as_deref().unwrap_or(host);
+                    RemoteServerKind::Ssh(conn) => {
+                        let name = conn.display_name();
                         (
                             "Remove SSH Server",
                             format!("Remove SSH server `{}`?", name),
@@ -136,8 +136,8 @@ pub fn render_server_options_subview(
                         RemoteServerKind::Wsl(distro) => {
                             store.remove_wsl_connection(distro);
                         }
-                        RemoteServerKind::Ssh { host, .. } => {
-                            store.remove_ssh_connection(host);
+                        RemoteServerKind::Ssh(conn) => {
+                            store.remove_ssh_connection(&conn.host);
                         }
                         RemoteServerKind::DevContainer(_) => {}
                     }

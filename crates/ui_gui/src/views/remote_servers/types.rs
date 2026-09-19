@@ -1,5 +1,6 @@
 use crate::components::ui::IconName;
 use std::time::Instant;
+use uwu_core_workspace::{SshConnection, SshConnectionOptions};
 
 /// Trạng thái của hộp thoại chọn thư mục WSL/Remote
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,13 +85,7 @@ impl SshPickerState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RemoteServerKind {
     Wsl(String),
-    Ssh {
-        host: String,
-        port: Option<u16>,
-        username: Option<String>,
-        nickname: Option<String>,
-        args: Option<Vec<String>>,
-    },
+    Ssh(SshConnection),
     DevContainer(String),
 }
 
@@ -98,7 +93,7 @@ impl RemoteServerKind {
     pub fn display_name(&self) -> &str {
         match self {
             RemoteServerKind::Wsl(name) => name,
-            RemoteServerKind::Ssh { host, nickname, .. } => nickname.as_deref().unwrap_or(host),
+            RemoteServerKind::Ssh(conn) => conn.display_name(),
             RemoteServerKind::DevContainer(name) => name,
         }
     }
@@ -106,39 +101,27 @@ impl RemoteServerKind {
     pub fn icon(&self) -> IconName {
         match self {
             RemoteServerKind::Wsl(_) => IconName::Linux,
-            RemoteServerKind::Ssh { .. } => IconName::Server,
+            RemoteServerKind::Ssh(_) => IconName::Server,
             RemoteServerKind::DevContainer(_) => IconName::Box,
         }
     }
 
-    pub fn from_ssh_connection(conn: &uwu_core_workspace::SshConnection) -> Self {
-        Self::Ssh {
-            host: conn.host.clone(),
-            port: conn.port,
-            username: conn.username.clone(),
-            nickname: conn.nickname.clone(),
-            args: conn.args.clone(),
-        }
+    pub fn from_ssh_connection(conn: &SshConnection) -> Self {
+        Self::Ssh(conn.clone())
     }
 
-    pub fn from_ssh_options(opts: &uwu_core_workspace::SshConnectionOptions) -> Self {
-        Self::Ssh {
-            host: opts.host.clone(),
-            port: opts.port,
-            username: opts.username.clone(),
-            nickname: opts.nickname.clone(),
-            args: opts.args.clone(),
-        }
+    pub fn from_ssh_options(opts: &SshConnectionOptions) -> Self {
+        Self::Ssh(SshConnection::from(opts))
     }
 
     pub fn ssh_simple(host: impl Into<String>) -> Self {
-        Self::Ssh {
-            host: host.into(),
-            port: None,
-            username: None,
-            nickname: None,
-            args: None,
-        }
+        Self::Ssh(SshConnection::new(host))
+    }
+}
+
+impl From<SshConnection> for RemoteServerKind {
+    fn from(conn: SshConnection) -> Self {
+        Self::Ssh(conn)
     }
 }
 
@@ -184,26 +167,13 @@ impl ServerOptionItem {
                     is_destructive: false,
                 },
             ],
-            RemoteServerKind::Ssh {
-                host,
-                port,
-                username,
-                nickname,
-                ..
-            } => {
-                let nickname_label = if nickname.is_some() {
+            RemoteServerKind::Ssh(conn) => {
+                let nickname_label = if conn.nickname.is_some() {
                     "Edit Nickname"
                 } else {
                     "Add Nickname to Server"
                 };
-                let mut target = if let Some(u) = username {
-                    format!("{}@{}", u, host)
-                } else {
-                    host.clone()
-                };
-                if let Some(p) = port {
-                    target = format!("{}:{}", target, p);
-                }
+                let target = conn.target_string();
                 vec![
                     Self {
                         action: ServerOptionAction::EditNickname,

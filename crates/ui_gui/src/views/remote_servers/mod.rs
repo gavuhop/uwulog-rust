@@ -304,13 +304,9 @@ mod tests {
         assert_eq!(ssh.display_name(), "prod-server");
         assert_eq!(ssh.icon(), IconName::Server);
 
-        let ssh_nick = RemoteServerKind::Ssh {
-            host: "prod-server".to_string(),
-            port: None,
-            username: None,
-            nickname: Some("Production Node".to_string()),
-            args: None,
-        };
+        let ssh_nick = RemoteServerKind::Ssh(
+            uwu_core_workspace::SshConnection::new("prod-server").with_nickname("Production Node"),
+        );
         assert_eq!(ssh_nick.display_name(), "Production Node");
 
         let dev_container = RemoteServerKind::DevContainer("rust-env".to_string());

@@ -337,17 +337,11 @@ pub fn render_remote_list_subview(
             ServerListAction::OpenFolder(server) => {
                 let home = match &server {
                     RemoteServerKind::Wsl(distro) => WslTransport::resolve_home_dir(distro),
-                    RemoteServerKind::Ssh {
-                        host,
-                        port,
-                        username,
-                        args,
-                        ..
-                    } => SshTransport::resolve_home_dir(
-                        host,
-                        username.as_deref(),
-                        *port,
-                        args.as_deref(),
+                    RemoteServerKind::Ssh(conn) => SshTransport::resolve_home_dir(
+                        &conn.host,
+                        conn.username.as_deref(),
+                        conn.port,
+                        conn.args.as_deref(),
                     ),
                     RemoteServerKind::DevContainer(_) => "~/".to_string(),
                 };

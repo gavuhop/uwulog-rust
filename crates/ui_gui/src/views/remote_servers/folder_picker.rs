@@ -216,8 +216,8 @@ pub fn render_folder_picker_subview(
             RemoteServerKind::Wsl(distro) | RemoteServerKind::DevContainer(distro) => {
                 store.add_remote_project_to_server(distro, &target_dir);
             }
-            RemoteServerKind::Ssh { host, .. } => {
-                store.add_remote_project_to_ssh_server(host, &target_dir);
+            RemoteServerKind::Ssh(conn) => {
+                store.add_remote_project_to_ssh_server(&conn.host, &target_dir);
             }
         }
         let ws = create_server_workspace(&folder_state.server, &target_dir);

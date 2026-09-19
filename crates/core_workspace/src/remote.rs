@@ -274,6 +274,35 @@ impl SshConnection {
             base
         }
     }
+
+    /// Chuyển đổi thành SshConnectionOptions kèm thư mục làm việc
+    pub fn to_options(&self, working_dir: impl Into<String>) -> SshConnectionOptions {
+        let mut opts = SshConnectionOptions::new(&self.host, working_dir);
+        opts.port = self.port;
+        opts.username = self.username.clone();
+        opts.nickname = self.nickname.clone();
+        opts.args = self.args.clone();
+        opts
+    }
+}
+
+impl From<&SshConnectionOptions> for SshConnection {
+    fn from(opts: &SshConnectionOptions) -> Self {
+        Self {
+            host: opts.host.clone(),
+            port: opts.port,
+            username: opts.username.clone(),
+            nickname: opts.nickname.clone(),
+            args: opts.args.clone(),
+            projects: BTreeSet::new(),
+        }
+    }
+}
+
+impl From<SshConnectionOptions> for SshConnection {
+    fn from(opts: SshConnectionOptions) -> Self {
+        Self::from(&opts)
+    }
 }
 
 /// Tùy chọn kết nối SSH (Secure Shell) kèm thư mục làm việc (chuẩn Zed Editor)
