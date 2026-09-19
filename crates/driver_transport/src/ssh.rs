@@ -194,6 +194,19 @@ impl SshTransport {
             log::warn!("SSH ControlMaster spawn warning: {}", err.trim());
         }
 
+        if !Self::is_master_alive(&socket_path, &target, additional_args) {
+            let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let msg = if !err.is_empty() {
+                format!("Failed to establish SSH connection to {}: {}", target, err)
+            } else {
+                format!(
+                    "Failed to establish SSH connection to {}: ControlMaster socket is not active",
+                    target
+                )
+            };
+            anyhow::bail!(msg);
+        }
+
         Ok(socket_path)
     }
 
@@ -213,6 +226,7 @@ impl SshTransport {
                     .arg(format!("ControlPath={}", socket.display()));
             }
         }
+        cmd.arg("-o").arg("LogLevel=ERROR");
         if let Some(p) = self.port {
             cmd.arg("-p").arg(p.to_string());
         }
@@ -924,10 +938,11 @@ impl SshTransport {
 
         let version = env!("CARGO_PKG_VERSION");
         let binary_name = format!("uwu-agent-{}-{}", arch.as_str(), version);
-        let remote_binary_path = format!("\"$HOME/.local/share/uwu/server_state/{}\"", binary_name);
+        let remote_dir = "$HOME/.local/share/uwu/server_state";
+        let remote_binary_path = format!("{}/{}", remote_dir, binary_name);
 
         // 1. Kiểm tra xem binary đã tồn tại và chạy được chưa
-        let check_cmd = format!("{} version", remote_binary_path);
+        let check_cmd = format!("\"{}\" version", remote_binary_path);
         let mut check_process = self.build_tokio_command();
         check_process.arg(&check_cmd);
         if let Ok(output) = check_process.output().await {
@@ -959,8 +974,8 @@ impl SshTransport {
             );
             if let Ok(bytes) = tokio::fs::read(&local_path).await {
                 let stream_cmd = format!(
-                    "mkdir -p \"$HOME/.local/share/uwu/server_state\" && cat > {} && chmod 755 {}",
-                    remote_binary_path, remote_binary_path
+                    "mkdir -p \"{}\" && cat > \"{}\" && chmod 755 \"{}\"",
+                    remote_dir, remote_binary_path, remote_binary_path
                 );
                 let mut upload_process = self.build_tokio_command();
                 upload_process.arg(&stream_cmd);
@@ -976,20 +991,49 @@ impl SshTransport {
                     }
                     if let Ok(status) = child.wait().await {
                         if status.success() {
-                            log::info!(
-                                "Successfully provisioned SSH Remote Agent at {}",
-                                remote_binary_path
-                            );
-                            return Ok(remote_binary_path);
+                            // Xác thực lại binary vừa upload có thực sự chạy được trên remote không (tránh lỗi libc incompatibility)
+                            let mut verify_process = self.build_tokio_command();
+                            verify_process.arg(&check_cmd);
+                            if let Ok(output) = verify_process.output().await {
+                                if output.status.success() {
+                                    log::info!(
+                                        "Successfully provisioned and verified SSH Remote Agent at {}",
+                                        remote_binary_path
+                                    );
+                                    return Ok(remote_binary_path);
+                                } else {
+                                    let err_str = String::from_utf8_lossy(&output.stderr);
+                                    log::error!(
+                                        "Provisioned binary failed to execute on remote host '{}': {}",
+                                        self.host,
+                                        err_str.trim()
+                                    );
+                                }
+                            }
                         }
                     }
                 }
             }
         }
 
-        // Fallback: Nếu không upload được, fallback gọi binary `uwu-agent` sẵn có trong PATH
-        log::warn!("Could not provision uwu-agent binary to SSH host, falling back to 'uwu-agent'");
-        Ok("uwu-agent".to_string())
+        // Fallback: Kiểm tra xem uwu-agent có sẵn và chạy được trong PATH trên remote không
+        let mut check_path = self.build_tokio_command();
+        check_path.arg("uwu-agent version");
+        if let Ok(output) = check_path.output().await {
+            if output.status.success() {
+                log::info!(
+                    "Using system 'uwu-agent' found in PATH on SSH host '{}'",
+                    self.host
+                );
+                return Ok("uwu-agent".to_string());
+            }
+        }
+
+        anyhow::bail!(
+            "Failed to deploy uwu-agent on SSH host '{}'. Could not provision binary to {} (or incompatible with remote libc) and 'uwu-agent' is not installed in remote PATH.",
+            self.host,
+            remote_binary_path
+        );
     }
 }
 
@@ -1216,25 +1260,27 @@ impl RemoteTransport for SshTransport {
         #[cfg(not(target_os = "windows"))]
         let socket_path =
             Self::ensure_master_connection(&self.host, self.user.as_deref(), self.port, &self.args)
-                .await
-                .ok();
+                .await?;
 
         let mut transport = self.clone();
         #[cfg(not(target_os = "windows"))]
         {
-            transport.control_socket = socket_path.or_else(|| self.control_socket.clone());
+            transport.control_socket = Some(socket_path);
         }
 
-        let remote_binary = transport
-            .ensure_server_binary()
-            .await
-            .unwrap_or_else(|_| "uwu-agent".to_string());
+        let remote_binary = transport.ensure_server_binary().await?;
+
+        let agent_invocation = if remote_binary.contains('/') {
+            format!("\"{}\" proxy", remote_binary)
+        } else {
+            format!("{} proxy", remote_binary)
+        };
 
         let mut cmd = transport.build_tokio_command();
         if let Some(ref workdir) = transport.working_dir {
-            cmd.arg(format!("cd \"{}\" && {} proxy", workdir, remote_binary));
+            cmd.arg(format!("cd \"{}\" && {}", workdir, agent_invocation));
         } else {
-            cmd.arg(format!("{} proxy", remote_binary));
+            cmd.arg(agent_invocation);
         }
 
         cmd.stdin(Stdio::piped());

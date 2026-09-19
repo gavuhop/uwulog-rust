@@ -9,7 +9,7 @@ use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, watch};
 use uuid::Uuid;
 use uwu_core_engine::SystemEngine;
-use uwu_core_schema::RawLogEntry;
+use uwu_core_schema::{RawLogEntry, RawPayload};
 use uwu_driver_sources::{
     FileSource, LogSource, ProcessSource, RemoteLogSourceSpec, RemoteSource, WslSource,
     WslTargetMode,
@@ -231,9 +231,10 @@ impl WorkspaceSession {
                             } else {
                                 None
                             };
+                            let tx = source_tx.clone();
                             rt.spawn(async move {
                                 let _ = WslSource::new_with_dir(distro, target_mode, workdir)
-                                    .start_stream(source_tx)
+                                    .start_stream(tx)
                                     .await;
                             });
                             self.is_source_running = true;
@@ -256,8 +257,20 @@ impl WorkspaceSession {
                             }
                             let spec = RemoteLogSourceSpec::Command(config.command_str.clone());
                             let source = RemoteSource::new(Box::new(transport), spec, None);
+                            let tx = source_tx.clone();
+                            let tx_err = source_tx.clone();
                             rt.spawn(async move {
-                                let _ = source.start_stream(source_tx).await;
+                                if let Err(e) = source.start_stream(tx).await {
+                                    log::error!("SSH command stream error: {:#}", e);
+                                    let _ = tx_err
+                                        .send(RawLogEntry {
+                                            payload: RawPayload::Text(format!(
+                                                "[SSH ERROR] Failed to start log stream: {:#}",
+                                                e
+                                            )),
+                                        })
+                                        .await;
+                                }
                             });
                             self.is_source_running = true;
                         }
@@ -281,6 +294,7 @@ impl WorkspaceSession {
 
                                 let mut watch_rx = self.env_watch_rx.clone();
                                 let current_envs = self.env_vars.clone();
+                                let tx = source_tx.clone();
                                 rt.spawn(async move {
                                     let envs = if !current_envs.is_empty() {
                                         if let Some(latest) = watch_rx.borrow().as_ref() {
@@ -310,7 +324,7 @@ impl WorkspaceSession {
                                     if !envs.is_empty() {
                                         proc_src = proc_src.with_envs(envs);
                                     }
-                                    let _ = proc_src.start_stream(source_tx).await;
+                                    let _ = proc_src.start_stream(tx).await;
                                 });
                                 self.is_source_running = true;
                             }
@@ -329,9 +343,10 @@ impl WorkspaceSession {
                             } else {
                                 None
                             };
+                            let tx = source_tx.clone();
                             rt.spawn(async move {
                                 let _ = WslSource::new_with_dir(distro, target_mode, workdir)
-                                    .start_stream(source_tx)
+                                    .start_stream(tx)
                                     .await;
                             });
                             self.is_source_running = true;
@@ -352,20 +367,57 @@ impl WorkspaceSession {
                             }
                             let spec = RemoteLogSourceSpec::File(config.file_path.clone());
                             let source = RemoteSource::new(Box::new(transport), spec, None);
+                            let tx = source_tx.clone();
+                            let tx_err = source_tx.clone();
                             rt.spawn(async move {
-                                let _ = source.start_stream(source_tx).await;
+                                if let Err(e) = source.start_stream(tx).await {
+                                    log::error!("SSH file stream error: {:#}", e);
+                                    let _ = tx_err
+                                        .send(RawLogEntry {
+                                            payload: RawPayload::Text(format!(
+                                                "[SSH ERROR] Failed to start log stream: {:#}",
+                                                e
+                                            )),
+                                        })
+                                        .await;
+                                }
                             });
                             self.is_source_running = true;
                         }
                         WorkspaceLocation::Local { .. } => {
                             let path = config.file_path.clone();
+                            let tx = source_tx.clone();
                             rt.spawn(async move {
-                                let _ = FileSource::new(path).start_stream(source_tx).await;
+                                let _ = FileSource::new(path).start_stream(tx).await;
                             });
                             self.is_source_running = true;
                         }
                     }
                 }
+            }
+        }
+
+        // Hướng dẫn người dùng khi vừa mở Workspace SSH mà chưa cấu hình File/Command
+        if let WorkspaceLocation::Remote(RemoteConnectionOptions::Ssh(ref ssh_opts)) = self.location
+        {
+            if config.command_str.trim().is_empty() && config.file_path.trim().is_empty() {
+                let tx_info = source_tx.clone();
+                let target = ssh_opts.target_string();
+                let workdir = if !ssh_opts.working_dir.is_empty() {
+                    format!(" (directory: {})", ssh_opts.working_dir)
+                } else {
+                    String::new()
+                };
+                rt.spawn(async move {
+                    let _ = tx_info
+                        .send(RawLogEntry {
+                            payload: RawPayload::Text(format!(
+                                "[SSH READY] Connected to {}{}. Open Settings (⚙) on the toolbar to choose a log file or command to stream.",
+                                target, workdir
+                            )),
+                        })
+                        .await;
+                });
             }
         }
     }

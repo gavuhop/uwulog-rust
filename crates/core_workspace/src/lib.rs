@@ -584,6 +584,34 @@ impl WorkspaceStore {
         }
 
         for conn in &self.ssh_connections {
+            // Tự động đồng bộ / cập nhật thông tin SSH (username, port, args) cho các workspace đã lưu trước đó
+            for ws in &mut self.recent_workspaces {
+                if let WorkspaceLocation::Remote(RemoteConnectionOptions::Ssh(ref mut opts)) =
+                    ws.location
+                {
+                    if opts.host.eq_ignore_ascii_case(&conn.host)
+                        || conn
+                            .nickname
+                            .as_deref()
+                            .map(|n| n.eq_ignore_ascii_case(&opts.host))
+                            .unwrap_or(false)
+                    {
+                        if opts.username.is_none() && conn.username.is_some() {
+                            opts.username = conn.username.clone();
+                        }
+                        if opts.port.is_none() && conn.port.is_some() {
+                            opts.port = conn.port;
+                        }
+                        if opts.args.is_none() && conn.args.is_some() {
+                            opts.args = conn.args.clone();
+                        }
+                        if opts.nickname.is_none() && conn.nickname.is_some() {
+                            opts.nickname = conn.nickname.clone();
+                        }
+                    }
+                }
+            }
+
             for proj in &conn.projects {
                 let clean = normalize_workdir(&proj.path);
                 let exists = self.recent_workspaces.iter().any(|ws| {

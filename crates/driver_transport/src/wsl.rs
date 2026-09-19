@@ -394,26 +394,49 @@ impl WslTransport {
             "uwu-agent".to_string(),
         ];
 
-        // 1. Kiểm tra trong thư mục cài đặt của ứng dụng (bundled với file cài Windows)
+        // 1. Kiểm tra trong thư mục cài đặt / build cạnh file thực thi hiện tại
         if let Some(ref dir) = exe_dir {
-            let bundle_subdirs = [
+            let mut search_dirs = vec![
+                dir.join(format!("../{}-unknown-linux-musl/release", arch_str)),
+                dir.join(format!("../{}-unknown-linux-musl/debug", arch_str)),
+                dir.clone(),
                 dir.join("agents"),
                 dir.join("resources").join("agents"),
                 dir.join("resources"),
-                dir.clone(),
+                dir.join("../release"),
+                dir.join("../debug"),
+                dir.join(format!("../{}-unknown-linux-gnu/release", arch_str)),
             ];
 
-            for sub in &bundle_subdirs {
+            if let Some(ws_root) = dir.parent().and_then(|p| p.parent()) {
+                search_dirs.insert(
+                    0,
+                    ws_root.join(format!("target/{}-unknown-linux-musl/release", arch_str)),
+                );
+                search_dirs.insert(
+                    1,
+                    ws_root.join(format!("target/{}-unknown-linux-musl/debug", arch_str)),
+                );
+                search_dirs.push(ws_root.join("target/release"));
+                search_dirs.push(ws_root.join("target/debug"));
+                search_dirs
+                    .push(ws_root.join(format!("target/{}-unknown-linux-gnu/release", arch_str)));
+            }
+
+            for sub in &search_dirs {
                 for file_name in &arch_file_names {
                     let candidate = sub.join(file_name);
                     if candidate.is_file() {
+                        if let Ok(canonical) = candidate.canonicalize() {
+                            return Some(canonical);
+                        }
                         return Some(candidate);
                     }
                 }
             }
         }
 
-        // 2. Kiểm tra trong môi trường phát triển Cargo workspace (target/...)
+        // 2. Kiểm tra trong môi trường phát triển Cargo workspace (relative to current_dir)
         let cargo_candidates = [
             // Target cross-compile theo kiến trúc
             format!("target/{}-unknown-linux-musl/release/uwu-agent", arch_str),

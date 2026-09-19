@@ -3,9 +3,11 @@ use clap::{Parser, Subcommand};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::io::AsyncWriteExt;
 use tokio::sync::{mpsc, Mutex};
 use uwu_core_protocol::{
     ClientEnvelope, FramedReader, FramedWriter, RemoteLogSourceSpec, ServerEnvelope,
+    AGENT_READY_MARKER,
 };
 use uwu_core_schema::RawLogEntry;
 use uwu_driver_sources::{FileSource, LogSource, ProcessSource};
@@ -150,7 +152,12 @@ fn setup_proxy_diagnostics() {
 /// RPC Proxy Mode: Giao tiếp 2 chiều với Local Client qua Framed Envelope trên stdin/stdout
 pub async fn run_rpc_proxy_mode(default_workdir: Option<String>) -> Result<()> {
     let stdin = tokio::io::stdin();
-    let stdout = tokio::io::stdout();
+    let mut stdout = tokio::io::stdout();
+
+    // 1. Phát tín hiệu Ready Handshake Marker để Local Client nhận diện Agent đã sẵn sàng
+    // và lọc bỏ toàn bộ các text rác (SSH Banner, MOTD, .bashrc echo...)
+    stdout.write_all(AGENT_READY_MARKER).await?;
+    stdout.flush().await?;
 
     let mut reader = FramedReader::new(stdin);
     let writer = Arc::new(Mutex::new(FramedWriter::new(stdout)));

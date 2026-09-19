@@ -303,6 +303,9 @@ mod tests {
         let ssh = RemoteServerKind::Ssh {
             host: "prod-server".to_string(),
             nickname: None,
+            username: None,
+            port: None,
+            args: None,
         };
         assert_eq!(ssh.display_name(), "prod-server");
         assert_eq!(ssh.icon(), IconName::Server);
@@ -310,6 +313,9 @@ mod tests {
         let ssh_nick = RemoteServerKind::Ssh {
             host: "prod-server".to_string(),
             nickname: Some("Production Node".to_string()),
+            username: None,
+            port: None,
+            args: None,
         };
         assert_eq!(ssh_nick.display_name(), "Production Node");
 
@@ -335,6 +341,9 @@ mod tests {
         let ssh = RemoteServerKind::Ssh {
             host: "server1.example.com".to_string(),
             nickname: None,
+            username: None,
+            port: None,
+            args: None,
         };
         let ssh_opts = ServerOptionItem::list_for_server(&ssh);
         assert_eq!(ssh_opts.len(), 4);
@@ -658,6 +667,9 @@ mod tests {
             RemoteServerKind::Ssh {
                 host: "staging-server".to_string(),
                 nickname: None,
+                username: None,
+                port: None,
+                args: None,
             },
             "/var/log",
             vec!["nginx".to_string(), "redis".to_string()],
@@ -896,6 +908,9 @@ mod tests {
                     RemoteServerKind::Ssh {
                         host: "validserver".to_string(),
                         nickname: None,
+                        username: None,
+                        port: None,
+                        args: None,
                     },
                     success.initial_dir,
                     success.entries,

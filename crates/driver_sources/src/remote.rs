@@ -57,16 +57,21 @@ impl LogSource for RemoteSource {
     }
 
     async fn start_stream(&self, tx: mpsc::Sender<RawLogEntry>) -> Result<()> {
-        let (reader, writer) = self
+        let (mut reader, writer) = self
             .transport
             .spawn_proxy()
             .await
             .context("Failed to spawn remote proxy transport")?;
 
+        // 1. Chờ tín hiệu Ready Handshake từ Agent, lọc bỏ toàn bộ SSH Banner, MOTD, .bashrc echo
+        uwu_core_protocol::wait_for_ready_marker(&mut reader)
+            .await
+            .context("Failed during remote agent handshake")?;
+
         let mut framed_reader = FramedReader::new(reader);
         let framed_writer = Arc::new(Mutex::new(FramedWriter::new(writer)));
 
-        // 1. Gửi lệnh bắt đầu stream log cho Remote Agent
+        // 2. Gửi lệnh bắt đầu stream log cho Remote Agent
         {
             let mut writer_guard = framed_writer.lock().await;
             writer_guard
@@ -78,7 +83,7 @@ impl LogSource for RemoteSource {
                 .context("Failed to send StartStream envelope to remote agent")?;
         }
 
-        // 2. Heartbeat Task: Gửi Ping định kỳ 5 giây để duy trì kết nối và phát hiện đứt gãy
+        // 3. Heartbeat Task: Gửi Ping định kỳ 5 giây để duy trì kết nối và phát hiện đứt gãy
         let heartbeat_writer = Arc::clone(&framed_writer);
         let heartbeat_handle = tokio::spawn(async move {
             let mut seq = 0u64;
@@ -93,27 +98,48 @@ impl LogSource for RemoteSource {
             }
         });
 
-        // 3. Vòng lặp nhận dữ liệu (Ingestion Loop)
+        // 4. Vòng lặp nhận dữ liệu (Ingestion Loop)
         tokio::spawn(async move {
-            while let Ok(Some(envelope)) = framed_reader.next::<ServerEnvelope>().await {
-                match envelope {
-                    ServerEnvelope::LogBatch(batch) => {
-                        for entry in batch {
-                            if tx.send(entry).await.is_err() {
-                                break;
+            loop {
+                match framed_reader.next::<ServerEnvelope>().await {
+                    Ok(Some(envelope)) => match envelope {
+                        ServerEnvelope::LogBatch(batch) => {
+                            for entry in batch {
+                                if tx.send(entry).await.is_err() {
+                                    break;
+                                }
                             }
                         }
+                        ServerEnvelope::Pong { .. } => {
+                            // Heartbeat phản hồi hợp lệ
+                        }
+                        ServerEnvelope::Error { message } => {
+                            let err_entry = RawLogEntry {
+                                payload: RawPayload::Text(format!("[REMOTE ERROR] {}", message)),
+                            };
+                            let _ = tx.send(err_entry).await;
+                        }
+                        ServerEnvelope::Terminated { exit_code } => {
+                            let msg =
+                                format!("[REMOTE PROCESS TERMINATED] Exit code: {:?}", exit_code);
+                            let _ = tx
+                                .send(RawLogEntry {
+                                    payload: RawPayload::Text(msg),
+                                })
+                                .await;
+                            break;
+                        }
+                    },
+                    Ok(None) => {
+                        log::info!("Remote agent stream closed cleanly (EOF)");
+                        break;
                     }
-                    ServerEnvelope::Pong { .. } => {
-                        // Heartbeat phản hồi hợp lệ
-                    }
-                    ServerEnvelope::Error { message } => {
+                    Err(err) => {
+                        log::error!("Error reading envelope from remote agent: {:#}", err);
                         let err_entry = RawLogEntry {
-                            payload: RawPayload::Text(format!("[REMOTE ERROR] {}", message)),
+                            payload: RawPayload::Text(format!("[REMOTE PROTOCOL ERROR] {}", err)),
                         };
                         let _ = tx.send(err_entry).await;
-                    }
-                    ServerEnvelope::Terminated { .. } => {
                         break;
                     }
                 }

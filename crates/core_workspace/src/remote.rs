@@ -308,6 +308,10 @@ impl SshConnectionOptions {
         self
     }
 
+    pub fn with_username(self, user: impl Into<String>) -> Self {
+        self.with_user(user)
+    }
+
     pub fn with_port(mut self, port: u16) -> Self {
         self.port = Some(port);
         self
@@ -315,6 +319,11 @@ impl SshConnectionOptions {
 
     pub fn with_nickname(mut self, nickname: impl Into<String>) -> Self {
         self.nickname = Some(nickname.into());
+        self
+    }
+
+    pub fn with_args(mut self, args: Vec<String>) -> Self {
+        self.args = Some(args);
         self
     }
 

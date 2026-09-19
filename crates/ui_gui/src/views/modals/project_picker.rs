@@ -352,6 +352,9 @@ pub fn render_project_picker_popup(
                                 &RemoteServerKind::Ssh {
                                     host: conn.host.clone(),
                                     nickname: conn.nickname.clone(),
+                                    username: conn.username.clone(),
+                                    port: conn.port,
+                                    args: conn.args.clone(),
                                 },
                                 &proj.path,
                             ));

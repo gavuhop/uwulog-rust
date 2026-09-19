@@ -6,6 +6,9 @@ use uwu_core_schema::RawLogEntry;
 
 pub const MAX_FRAME_SIZE: usize = 64 * 1024 * 1024; // 64 MB frame limit
 
+/// Dấu hiệu đồng bộ nhận diện Remote Agent đã khởi động xong xuôi (bỏ qua SSH MOTD / Banner / .bashrc)
+pub const AGENT_READY_MARKER: &[u8] = b"__UWU_AGENT_READY__\n";
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum RemoteLogSourceSpec {
     Command(String),
@@ -119,6 +122,46 @@ impl<R: AsyncRead + Unpin> FramedReader<R> {
     }
 }
 
+/// Đọc stream ban đầu từ remote transport và loại bỏ toàn bộ SSH Banner, MOTD, prompt
+/// cho đến khi bắt gặp dấu hiệu khởi động thành công của Agent: `__UWU_AGENT_READY__\n`.
+pub async fn wait_for_ready_marker<R: AsyncRead + Unpin>(reader: &mut R) -> Result<()> {
+    let mut buf = Vec::new();
+    let mut byte = [0u8; 1];
+    let marker = AGENT_READY_MARKER;
+
+    // Giới hạn tối đa kích thước text banner/preamble đọc trước khi tìm thấy marker (tránh cạn kiệt RAM)
+    const MAX_PREAMBLE_BYTES: usize = 1024 * 1024; // 1 MB
+
+    while buf.len() < MAX_PREAMBLE_BYTES {
+        match reader.read_exact(&mut byte).await {
+            Ok(_) => {
+                buf.push(byte[0]);
+                if buf.ends_with(marker) {
+                    return Ok(());
+                }
+            }
+            Err(e) if e.kind() == ErrorKind::UnexpectedEof => {
+                let preamble_text = String::from_utf8_lossy(&buf);
+                let trimmed = preamble_text.trim();
+                if trimmed.is_empty() {
+                    anyhow::bail!(
+                        "Remote agent connection closed unexpectedly before sending ready marker"
+                    );
+                } else {
+                    anyhow::bail!("Remote agent failed to start. Remote output:\n{}", trimmed);
+                }
+            }
+            Err(e) => return Err(e).context("Failed reading initial stream for ready marker"),
+        }
+    }
+
+    let preamble_text = String::from_utf8_lossy(&buf[..1024.min(buf.len())]);
+    anyhow::bail!(
+        "Preamble exceeded 1MB without finding agent ready marker. Initial output:\n{}",
+        preamble_text
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -163,5 +206,33 @@ mod tests {
             }
             _ => panic!("Expected LogBatch"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_wait_for_ready_marker_with_ssh_banner_and_motd() {
+        let (mut server_io, mut client_io) = tokio::io::duplex(4096);
+
+        // Mô phỏng SSH server in ra MOTD và .bashrc text trước khi Agent bắt đầu
+        tokio::spawn(async move {
+            let banner = b"Welcome to Ubuntu 22.04 LTS (GNU/Linux 5.15.0-x86_64)\n\
+                           * Documentation:  https://help.ubuntu.com\n\
+                           * Management:     https://landscape.canonical.com\n\
+                           Last login: Sat Sep 19 12:00:00 2026 from 192.168.1.5\n\
+                           [user@ubuntu ~]$ echo Loading .bashrc environment...\n";
+            server_io.write_all(banner).await.unwrap();
+            server_io.write_all(AGENT_READY_MARKER).await.unwrap();
+
+            // Sau khi gửi marker, gửi tiếp 1 Framed envelope bình thường
+            let mut server_writer = FramedWriter::new(server_io);
+            let ping = ClientEnvelope::Ping { seq: 999 };
+            server_writer.send(&ping).await.unwrap();
+        });
+
+        // Client chờ marker và đọc tiếp frame
+        wait_for_ready_marker(&mut client_io).await.unwrap();
+
+        let mut client_reader = FramedReader::new(client_io);
+        let envelope: Option<ClientEnvelope> = client_reader.next().await.unwrap();
+        assert_eq!(envelope, Some(ClientEnvelope::Ping { seq: 999 }));
     }
 }
