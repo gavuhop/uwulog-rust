@@ -234,6 +234,9 @@ impl SshTransport {
         };
 
         let mut cmd = new_std_command("ssh");
+        cmd.stdin(Stdio::null());
+        cmd.arg("-o").arg("BatchMode=yes");
+        cmd.arg("-o").arg("ConnectTimeout=5");
         #[cfg(not(target_os = "windows"))]
         {
             let socket_path = Self::compute_control_socket_path(host, user, port);
@@ -289,6 +292,9 @@ impl SshTransport {
         args: Option<&[String]>,
     ) -> String {
         let mut cmd = new_std_command("ssh");
+        cmd.stdin(Stdio::null());
+        cmd.arg("-o").arg("BatchMode=yes");
+        cmd.arg("-o").arg("ConnectTimeout=5");
         #[cfg(not(target_os = "windows"))]
         {
             let socket_path = Self::compute_control_socket_path(host, user, port);
@@ -328,6 +334,148 @@ impl SshTransport {
             }
         }
         "~/".to_string()
+    }
+
+    /// Kết nối đến SSH server, kích hoạt multiplexing ControlMaster (nếu hỗ trợ) và probe thư mục ban đầu.
+    /// Hàm này chạy đồng bộ (thích hợp gọi trong background worker thread).
+    pub fn connect_and_probe(
+        host: &str,
+        user: Option<&str>,
+        port: Option<u16>,
+        args: Option<&[String]>,
+        password: Option<&str>,
+    ) -> std::result::Result<SshConnectionSuccess, String> {
+        let target = if let Some(u) = user {
+            format!("{}@{}", u, host)
+        } else {
+            host.to_string()
+        };
+
+        let askpass = password
+            .filter(|p| !p.is_empty())
+            .and_then(|p| AskPassGuard::new(p).ok());
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let socket_path = Self::compute_control_socket_path(host, user, port);
+            let additional_args = args.unwrap_or(&[]);
+            if socket_path.exists()
+                && !Self::is_master_alive(&socket_path, &target, additional_args)
+            {
+                let _ = std::fs::remove_file(&socket_path);
+            }
+
+            if !Self::is_master_alive(&socket_path, &target, additional_args) {
+                let mut cmd = new_std_command("ssh");
+                cmd.arg("-N")
+                    .arg("-f")
+                    .arg("-o")
+                    .arg("ControlMaster=yes")
+                    .arg("-o")
+                    .arg("ControlPersist=10m")
+                    .arg("-o")
+                    .arg(format!("ControlPath={}", socket_path.display()))
+                    .arg("-o")
+                    .arg("StrictHostKeyChecking=accept-new")
+                    .arg("-o")
+                    .arg("ConnectTimeout=10");
+
+                if let Some(ref ap) = askpass {
+                    cmd.env("SSH_ASKPASS_REQUIRE", "force")
+                        .env("SSH_ASKPASS", ap.script_path());
+                }
+
+                if let Some(p) = port {
+                    cmd.arg("-p").arg(p.to_string());
+                }
+                for arg in additional_args {
+                    cmd.arg(arg);
+                }
+                cmd.arg(&target);
+                cmd.stdin(Stdio::null())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped());
+
+                let output = cmd
+                    .output()
+                    .map_err(|e| format!("Failed to execute ssh: {}", e))?;
+
+                if !output.status.success() {
+                    let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                    let msg = if err.is_empty() {
+                        format!(
+                            "SSH connection failed (exit code {:?})",
+                            output.status.code()
+                        )
+                    } else {
+                        err
+                    };
+                    return Err(msg);
+                }
+
+                // Chờ socket file sẵn sàng
+                for _ in 0..10 {
+                    if socket_path.exists() {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+            }
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            let mut cmd = new_std_command("ssh");
+            cmd.arg("-o")
+                .arg("StrictHostKeyChecking=accept-new")
+                .arg("-o")
+                .arg("ConnectTimeout=10");
+
+            if let Some(ref ap) = askpass {
+                cmd.env("SSH_ASKPASS_REQUIRE", "force")
+                    .env("SSH_ASKPASS", ap.script_path());
+            }
+
+            if let Some(p) = port {
+                cmd.arg("-p").arg(p.to_string());
+            }
+            if let Some(extra_args) = args {
+                for a in extra_args {
+                    cmd.arg(a);
+                }
+            }
+            cmd.arg(&target);
+            cmd.arg("echo $HOME");
+            cmd.stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+
+            let output = cmd
+                .output()
+                .map_err(|e| format!("Failed to execute ssh: {}", e))?;
+
+            if !output.status.success() {
+                let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                let msg = if err.is_empty() {
+                    format!(
+                        "SSH connection failed (exit code {:?})",
+                        output.status.code()
+                    )
+                } else {
+                    err
+                };
+                return Err(msg);
+            }
+        }
+
+        let initial_dir = Self::resolve_home_dir(host, user, port, args);
+        let entries =
+            Self::list_remote_directories(host, &initial_dir, user, port, args).unwrap_or_default();
+
+        Ok(SshConnectionSuccess {
+            initial_dir,
+            entries,
+        })
     }
 
     /// Phát hiện kiến trúc CPU của máy chủ SSH từ xa (`uname -sm`)
@@ -433,6 +581,92 @@ impl SshTransport {
         // Fallback: Nếu không upload được, fallback gọi binary `uwu-agent` sẵn có trong PATH
         log::warn!("Could not provision uwu-agent binary to SSH host, falling back to 'uwu-agent'");
         Ok("uwu-agent".to_string())
+    }
+}
+
+/// Kết quả probe thư mục ban đầu thành công sau khi kết nối SSH
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SshConnectionSuccess {
+    pub initial_dir: String,
+    pub entries: Vec<String>,
+}
+
+/// RAII Guard tạo và dọn dẹp file script SSH_ASKPASS tạm thời phục vụ xác thực mật khẩu
+pub struct AskPassGuard {
+    script_path: PathBuf,
+    secret_path: PathBuf,
+}
+
+impl AskPassGuard {
+    pub fn new(password: &str) -> std::io::Result<Self> {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let pid = std::process::id();
+        let temp_dir = std::env::temp_dir();
+        let secret_path = temp_dir.join(format!("uwu-pass-{}-{}.secret", pid, nanos));
+
+        #[cfg(unix)]
+        {
+            use std::fs::OpenOptions;
+            use std::io::Write;
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut file = OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .mode(0o600)
+                .open(&secret_path)?;
+            file.write_all(password.as_bytes())?;
+            file.write_all(b"\n")?;
+        }
+        #[cfg(not(unix))]
+        {
+            std::fs::write(&secret_path, format!("{}\r\n", password))?;
+        }
+
+        #[cfg(unix)]
+        let script_path = {
+            use std::fs::OpenOptions;
+            use std::io::Write;
+            use std::os::unix::fs::OpenOptionsExt;
+            let s_path = temp_dir.join(format!("uwu-askpass-{}-{}.sh", pid, nanos));
+            let mut file = OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .mode(0o700)
+                .open(&s_path)?;
+            let script_content = format!("#!/bin/sh\ncat \"{}\"\n", secret_path.display());
+            file.write_all(script_content.as_bytes())?;
+            s_path
+        };
+
+        #[cfg(windows)]
+        let script_path = {
+            let s_path = temp_dir.join(format!("uwu-askpass-{}-{}.bat", pid, nanos));
+            let script_content = format!("@echo off\r\ntype \"{}\"\r\n", secret_path.display());
+            std::fs::write(&s_path, script_content)?;
+            s_path
+        };
+
+        #[cfg(not(any(unix, windows)))]
+        let script_path = PathBuf::new();
+
+        Ok(Self {
+            script_path,
+            secret_path,
+        })
+    }
+
+    pub fn script_path(&self) -> &Path {
+        &self.script_path
+    }
+}
+
+impl Drop for AskPassGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.script_path);
+        let _ = std::fs::remove_file(&self.secret_path);
     }
 }
 

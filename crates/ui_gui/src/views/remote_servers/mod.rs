@@ -719,6 +719,7 @@ mod tests {
                 prompt_message: format!("{}'s password:", opts.target_string()),
                 password_input: String::new(),
                 is_masked: true,
+                error_message: None,
             };
         }
 
@@ -727,6 +728,7 @@ mod tests {
                 prompt_message,
                 password_input,
                 is_masked,
+                error_message: _,
             } => {
                 assert_eq!(prompt_message, "user@example:2222's password:");
                 assert!(*is_masked, "Password must initially be masked");

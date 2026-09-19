@@ -2,8 +2,9 @@ use crate::components::ui::{AppButton, IconName, TextInput};
 use crate::keymap::{KeyAction, KeyContext, KeymapManager};
 use crate::theme::ActiveTheme;
 use eframe::egui;
+use std::sync::{Arc, Mutex};
 use uwu_core_workspace::{SshConnectionOptions, WorkspaceStore};
-use uwu_driver_transport::SshTransport;
+use uwu_driver_transport::{SshConnectionSuccess, SshTransport};
 
 use super::helpers::{
     anchor_cursor_to_end, calculate_adaptive_scroll_height, step_selected_index, ListItemRow,
@@ -362,6 +363,7 @@ pub fn render_ssh_picker_subview(
                     prompt_message: pw_prompt,
                     password_input: String::new(),
                     is_masked: true,
+                    error_message: None,
                 };
                 ssh_state.focus_input = true;
             } else if cancel_back {
@@ -379,6 +381,7 @@ pub fn render_ssh_picker_subview(
             prompt_message,
             password_input,
             is_masked,
+            error_message,
         } => {
             let target_title = ssh_state
                 .parsed_options
@@ -421,6 +424,29 @@ pub fn render_ssh_picker_subview(
                 ssh_state.stage = SshPickerStage::Input;
                 ssh_state.focus_input = true;
                 return RemoteNavAction::None;
+            }
+
+            // Hiển thị thông báo lỗi nếu lần thử trước thất bại
+            if let Some(ref err) = error_message {
+                egui::Frame::new()
+                    .fill(theme.status.error.gamma_multiply(0.15))
+                    .stroke(egui::Stroke::new(1.0, theme.status.error))
+                    .corner_radius(egui::CornerRadius::same(6))
+                    .inner_margin(egui::Margin::symmetric(10, 8))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            let (icon_r, _) = ui
+                                .allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
+                            IconName::AlertTriangle.paint(ui.painter(), icon_r, theme.status.error);
+                            ui.add_space(4.0);
+                            ui.label(
+                                egui::RichText::new(format!("Connection Failed: {}", err))
+                                    .size(11.5)
+                                    .color(theme.status.error),
+                            );
+                        });
+                    });
+                ui.add_space(6.0);
             }
 
             // Hàng nhãn mật khẩu + nút Toggle Show/Hide Password (mô phỏng Zed Eye/EyeOff)
@@ -500,41 +526,45 @@ pub fn render_ssh_picker_subview(
 
             if submit_password {
                 if let Some(ref opts) = ssh_state.parsed_options {
-                    let conn = store.ensure_ssh_connection(&opts.host);
-                    if let Some(ref u) = opts.username {
-                        conn.username = Some(u.clone());
-                    }
-                    if let Some(p) = opts.port {
-                        conn.port = Some(p);
-                    }
-                    if let Some(ref args) = opts.args {
-                        conn.args = Some(args.clone());
-                    }
-                    let _ = store.save();
+                    let target_title = opts.target_string();
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    let host = opts.host.clone();
+                    let user = opts.username.clone();
+                    let port = opts.port;
+                    let args = opts.args.clone();
+                    let password = password_input.clone();
 
-                    let initial_dir = SshTransport::resolve_home_dir(
-                        &opts.host,
-                        opts.username.as_deref(),
-                        opts.port,
-                        opts.args.as_deref(),
-                    );
+                    std::thread::spawn(move || {
+                        let res = SshTransport::connect_and_probe(
+                            &host,
+                            user.as_deref(),
+                            port,
+                            args.as_deref(),
+                            Some(&password),
+                        );
+                        let _ = tx.send(res);
+                    });
 
-                    let entries = SshTransport::list_remote_directories(
-                        &opts.host,
-                        &initial_dir,
-                        opts.username.as_deref(),
-                        opts.port,
-                        opts.args.as_deref(),
-                    )
-                    .unwrap_or_default();
+                    type SshConnectingReceiver = Arc<
+                        Mutex<
+                            Option<
+                                std::sync::mpsc::Receiver<
+                                    std::result::Result<SshConnectionSuccess, String>,
+                                >,
+                            >,
+                        >,
+                    >;
 
-                    let server_kind = RemoteServerKind::Ssh {
-                        host: opts.host.clone(),
-                        nickname: opts.nickname.clone(),
+                    let rx_id = egui::Id::new("ssh_connecting_receiver");
+                    let receiver: SshConnectingReceiver = Arc::new(Mutex::new(Some(rx)));
+                    ui.ctx().data_mut(|d| {
+                        d.insert_temp(rx_id, receiver);
+                    });
+
+                    ssh_state.stage = SshPickerStage::Connecting {
+                        status_message: format!("Connecting to {}", target_title),
                     };
-
-                    let folder_state = FolderPickerState::new(server_kind, initial_dir, entries);
-                    return RemoteNavAction::navigate(RemoteSubView::FolderPicker(folder_state));
+                    return RemoteNavAction::None;
                 }
             }
 
@@ -542,17 +572,146 @@ pub fn render_ssh_picker_subview(
         }
 
         // ====================================================================
-        // GIAI ĐOẠN 4: Đang kết nối (Connecting...)
+        // GIAI ĐOẠN 4: Đang kết nối nền (Connecting non-blocking)
         // ====================================================================
         SshPickerStage::Connecting { status_message } => {
-            ui.vertical_centered(|ui| {
-                ui.add_space(20.0);
+            type SshConnectingReceiver = Arc<
+                Mutex<
+                    Option<
+                        std::sync::mpsc::Receiver<
+                            std::result::Result<SshConnectionSuccess, String>,
+                        >,
+                    >,
+                >,
+            >;
+
+            let rx_id = egui::Id::new("ssh_connecting_receiver");
+            let rx_arc: Option<SshConnectingReceiver> = ui.ctx().data(|d| d.get_temp(rx_id));
+
+            let mut connection_result = None;
+            if let Some(ref arc) = rx_arc {
+                if let Ok(lock) = arc.lock() {
+                    if let Some(ref rx) = *lock {
+                        match rx.try_recv() {
+                            Ok(res) => connection_result = Some(res),
+                            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                                // Tiến trình kết nối vẫn đang chạy nền, yêu cầu repaint sau 50ms để duy trì UI mượt
+                                ui.ctx()
+                                    .request_repaint_after(std::time::Duration::from_millis(50));
+                            }
+                            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                                connection_result = Some(Err(
+                                    "SSH connection worker thread terminated unexpectedly"
+                                        .to_string(),
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let Some(res) = connection_result {
+                ui.ctx().data_mut(|d| {
+                    d.remove_temp::<SshConnectingReceiver>(rx_id);
+                });
+
+                match res {
+                    Ok(success) => {
+                        if let Some(ref opts) = ssh_state.parsed_options {
+                            let conn = store.ensure_ssh_connection(&opts.host);
+                            if let Some(ref u) = opts.username {
+                                conn.username = Some(u.clone());
+                            }
+                            if let Some(p) = opts.port {
+                                conn.port = Some(p);
+                            }
+                            if let Some(ref args) = opts.args {
+                                conn.args = Some(args.clone());
+                            }
+                            let _ = store.save();
+
+                            let server_kind = RemoteServerKind::Ssh {
+                                host: opts.host.clone(),
+                                nickname: opts.nickname.clone(),
+                            };
+
+                            let folder_state = FolderPickerState::new(
+                                server_kind,
+                                success.initial_dir,
+                                success.entries,
+                            );
+                            return RemoteNavAction::navigate(RemoteSubView::FolderPicker(
+                                folder_state,
+                            ));
+                        }
+                    }
+                    Err(err) => {
+                        let target_title = ssh_state
+                            .parsed_options
+                            .as_ref()
+                            .map(|o| o.target_string())
+                            .unwrap_or_else(|| "SSH Server".to_string());
+                        ssh_state.stage = SshPickerStage::PasswordPrompt {
+                            prompt_message: format!("{}'s password:", target_title),
+                            password_input: String::new(),
+                            is_masked: true,
+                            error_message: Some(err),
+                        };
+                        ssh_state.focus_input = true;
+                        return RemoteNavAction::None;
+                    }
+                }
+            }
+
+            let target_title = ssh_state
+                .parsed_options
+                .as_ref()
+                .map(|o| o.target_string())
+                .unwrap_or_else(|| "SSH Server".to_string());
+
+            let mut abort_connect = false;
+            if key_escape {
+                abort_connect = true;
+            }
+
+            ui.horizontal(|ui| {
+                if AppButton::new()
+                    .label("Cancel")
+                    .icon(IconName::Close)
+                    .variant(crate::components::ui::ButtonVariant::Ghost)
+                    .show(ui)
+                    .clicked()
+                {
+                    abort_connect = true;
+                }
+
+                ui.add_space(4.0);
+                let (icon_r, _) =
+                    ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
+                IconName::Server.paint(ui.painter(), icon_r, theme.text.primary);
+                ui.add_space(4.0);
                 ui.label(
-                    egui::RichText::new(format!("{}…", status_message))
+                    egui::RichText::new(format!("SSH: {}", target_title))
+                        .strong()
                         .size(13.0)
                         .color(theme.text.primary),
                 );
-                ui.add_space(8.0);
+            });
+
+            ui.add_space(6.0);
+            ui.separator();
+            ui.add_space(16.0);
+
+            ui.vertical_centered(|ui| {
+                ui.spinner();
+                ui.add_space(10.0);
+                ui.label(
+                    egui::RichText::new(format!("{}…", status_message))
+                        .strong()
+                        .size(13.0)
+                        .color(theme.text.primary),
+                );
+                ui.add_space(4.0);
                 ui.label(
                     egui::RichText::new(
                         "Establishing secure SSH connection and multiplexing channel.",
@@ -560,7 +719,29 @@ pub fn render_ssh_picker_subview(
                     .size(11.0)
                     .color(theme.text.muted),
                 );
+                ui.add_space(14.0);
+                if AppButton::new()
+                    .label("Cancel Connection")
+                    .variant(crate::components::ui::ButtonVariant::Default)
+                    .show(ui)
+                    .clicked()
+                {
+                    abort_connect = true;
+                }
             });
+
+            if abort_connect {
+                ui.ctx().data_mut(|d| {
+                    d.remove_temp::<SshConnectingReceiver>(rx_id);
+                });
+                ssh_state.stage = SshPickerStage::PasswordPrompt {
+                    prompt_message: format!("{}'s password:", target_title),
+                    password_input: String::new(),
+                    is_masked: true,
+                    error_message: Some("Connection canceled by user".to_string()),
+                };
+                ssh_state.focus_input = true;
+            }
 
             RemoteNavAction::None
         }

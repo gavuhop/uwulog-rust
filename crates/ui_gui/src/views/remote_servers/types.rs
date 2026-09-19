@@ -47,6 +47,7 @@ pub enum SshPickerStage {
         prompt_message: String,
         password_input: String,
         is_masked: bool,
+        error_message: Option<String>,
     },
     Connecting {
         status_message: String,
