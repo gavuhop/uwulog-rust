@@ -22,19 +22,12 @@ pub enum ServerListAction {
     ConnectDevContainer,
     AddWslDistro,
     OpenWorkspace(Box<Workspace>),
-    OpenRemotePath {
-        server: String,
+    OpenServerPath {
+        server: RemoteServerKind,
         path: String,
     },
-    OpenSshPath {
-        host: String,
-        nickname: Option<String>,
-        path: String,
-    },
-    OpenFolder(String),
-    OpenFolderSsh(String),
-    ViewServerOptions(String),
-    ViewServerOptionsKind(RemoteServerKind),
+    OpenFolder(RemoteServerKind),
+    ViewServerOptions(RemoteServerKind),
 }
 
 /// Một mục hiển thị trong Server List
@@ -127,13 +120,12 @@ impl<'a> Connection<'a> {
     fn project_action(&self, path: &str) -> ServerListAction {
         match self {
             #[cfg(target_os = "windows")]
-            Self::Wsl(s) => ServerListAction::OpenRemotePath {
-                server: s.distro.clone(),
+            Self::Wsl(s) => ServerListAction::OpenServerPath {
+                server: RemoteServerKind::Wsl(s.distro.clone()),
                 path: path.to_string(),
             },
-            Self::Ssh(s) => ServerListAction::OpenSshPath {
-                host: s.host.clone(),
-                nickname: s.nickname.clone(),
+            Self::Ssh(s) => ServerListAction::OpenServerPath {
+                server: RemoteServerKind::from_ssh_connection(s),
                 path: path.to_string(),
             },
         }
@@ -142,19 +134,20 @@ impl<'a> Connection<'a> {
     fn open_folder_action(&self) -> ServerListAction {
         match self {
             #[cfg(target_os = "windows")]
-            Self::Wsl(s) => ServerListAction::OpenFolder(s.distro.clone()),
-            Self::Ssh(s) => ServerListAction::OpenFolderSsh(s.host.clone()),
+            Self::Wsl(s) => ServerListAction::OpenFolder(RemoteServerKind::Wsl(s.distro.clone())),
+            Self::Ssh(s) => ServerListAction::OpenFolder(RemoteServerKind::from_ssh_connection(s)),
         }
     }
 
     fn options_action(&self) -> ServerListAction {
         match self {
             #[cfg(target_os = "windows")]
-            Self::Wsl(s) => ServerListAction::ViewServerOptions(s.distro.clone()),
-            Self::Ssh(s) => ServerListAction::ViewServerOptionsKind(RemoteServerKind::Ssh {
-                host: s.host.clone(),
-                nickname: s.nickname.clone(),
-            }),
+            Self::Wsl(s) => {
+                ServerListAction::ViewServerOptions(RemoteServerKind::Wsl(s.distro.clone()))
+            }
+            Self::Ssh(s) => {
+                ServerListAction::ViewServerOptions(RemoteServerKind::from_ssh_connection(s))
+            }
         }
     }
 }
@@ -337,51 +330,36 @@ pub fn render_remote_list_subview(
             ServerListAction::OpenWorkspace(ws) => {
                 selected_workspace = Some(*ws);
             }
-            ServerListAction::OpenRemotePath { server, path } => {
-                let ws = create_server_workspace(&RemoteServerKind::Wsl(server), &path);
+            ServerListAction::OpenServerPath { server, path } => {
+                let ws = create_server_workspace(&server, &path);
                 selected_workspace = Some(ws);
             }
-            ServerListAction::OpenSshPath {
-                host,
-                nickname,
-                path,
-            } => {
-                let ws = create_server_workspace(&RemoteServerKind::Ssh { host, nickname }, &path);
-                selected_workspace = Some(ws);
-            }
-            ServerListAction::OpenFolder(distro) => {
-                let home = WslTransport::resolve_home_dir(&distro);
-                let entries =
-                    get_cached_or_read_directories(&RemoteServerKind::Wsl(distro.clone()), &home);
+            ServerListAction::OpenFolder(server) => {
+                let home = match &server {
+                    RemoteServerKind::Wsl(distro) => WslTransport::resolve_home_dir(distro),
+                    RemoteServerKind::Ssh {
+                        host,
+                        port,
+                        username,
+                        args,
+                        ..
+                    } => SshTransport::resolve_home_dir(
+                        host,
+                        username.as_deref(),
+                        *port,
+                        args.as_deref(),
+                    ),
+                    RemoteServerKind::DevContainer(_) => "~/".to_string(),
+                };
+                let entries = get_cached_or_read_directories(&server, &home);
                 nav_action = RemoteNavAction::navigate(RemoteSubView::FolderPicker(
-                    FolderPickerState::new(RemoteServerKind::Wsl(distro), home, entries),
+                    FolderPickerState::new(server, home, entries),
                 ));
             }
-            ServerListAction::OpenFolderSsh(host) => {
-                let conn = store.find_ssh_connection(&host);
-                let user = conn.and_then(|c| c.username.as_deref());
-                let port = conn.and_then(|c| c.port);
-                let args = conn.and_then(|c| c.args.as_deref());
-                let nickname = conn.and_then(|c| c.nickname.clone());
-                let home = SshTransport::resolve_home_dir(&host, user, port, args);
-                let entries = SshTransport::list_remote_directories(&host, &home, user, port, args)
-                    .unwrap_or_default();
-                nav_action = RemoteNavAction::navigate(RemoteSubView::FolderPicker(
-                    FolderPickerState::new(RemoteServerKind::Ssh { host, nickname }, home, entries),
-                ));
-            }
-            ServerListAction::ViewServerOptions(distro) => {
+            ServerListAction::ViewServerOptions(server) => {
                 nav_action =
                     RemoteNavAction::navigate(RemoteSubView::ServerOptions(ServerOptionsState {
-                        server: RemoteServerKind::Wsl(distro),
-                        selected_index: 0,
-                        copied_flash_time: None,
-                    }));
-            }
-            ServerListAction::ViewServerOptionsKind(kind) => {
-                nav_action =
-                    RemoteNavAction::navigate(RemoteSubView::ServerOptions(ServerOptionsState {
-                        server: kind,
+                        server,
                         selected_index: 0,
                         copied_flash_time: None,
                     }));

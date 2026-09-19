@@ -53,10 +53,25 @@ pub fn create_server_workspace(server: &RemoteServerKind, target_dir: &str) -> W
 
     let location = match server {
         RemoteServerKind::Wsl(distro) => RemoteConnectionOptions::parse(distro, clean_dir),
-        RemoteServerKind::Ssh { host, nickname } => {
+        RemoteServerKind::Ssh {
+            host,
+            port,
+            username,
+            nickname,
+            args,
+        } => {
             let mut opts = SshConnectionOptions::new(host, clean_dir);
-            if let Some(nick) = nickname {
+            if let Some(p) = port {
+                opts = opts.with_port(*p);
+            }
+            if let Some(ref u) = username {
+                opts = opts.with_user(u);
+            }
+            if let Some(ref nick) = nickname {
                 opts = opts.with_nickname(nick);
+            }
+            if let Some(ref a) = args {
+                opts = opts.with_args(a.clone());
             }
             opts.into()
         }
@@ -88,9 +103,20 @@ pub fn get_cached_or_read_directories(server: &RemoteServerKind, dir: &str) -> V
         RemoteServerKind::Wsl(distro) => {
             WslTransport::list_remote_directories(distro, dir).unwrap_or_default()
         }
-        RemoteServerKind::Ssh { host, .. } => {
-            SshTransport::list_remote_directories(host, dir, None, None, None).unwrap_or_default()
-        }
+        RemoteServerKind::Ssh {
+            host,
+            port,
+            username,
+            args,
+            ..
+        } => SshTransport::list_remote_directories(
+            host,
+            dir,
+            username.as_deref(),
+            *port,
+            args.as_deref(),
+        )
+        .unwrap_or_default(),
         RemoteServerKind::DevContainer(_) => Vec::new(),
     };
 
@@ -487,11 +513,22 @@ mod tests {
         // Test create_server_workspace for SSH
         let server_ssh = RemoteServerKind::Ssh {
             host: "192.168.1.100".to_string(),
+            port: Some(2222),
+            username: Some("deploy".to_string()),
             nickname: Some("my-vps".to_string()),
+            args: None,
         };
         let ws_ssh = create_server_workspace(&server_ssh, "/var/log/nginx");
         assert_eq!(ws_ssh.name, "nginx");
         assert_eq!(ws_ssh.location.working_dir(), "/var/log/nginx");
+        if let Some(uwu_core_workspace::RemoteConnectionOptions::Ssh(ssh_opts)) =
+            ws_ssh.location.as_remote()
+        {
+            assert_eq!(ssh_opts.port, Some(2222));
+            assert_eq!(ssh_opts.username, Some("deploy".to_string()));
+        } else {
+            panic!("Expected SSH workspace location");
+        }
         assert_eq!(ws_ssh.server_name(), Some("my-vps"));
 
         // Test create_server_workspace at root

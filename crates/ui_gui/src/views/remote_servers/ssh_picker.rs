@@ -718,10 +718,7 @@ pub fn render_ssh_picker_subview(
                             }
                             let _ = store.save();
 
-                            let server_kind = RemoteServerKind::Ssh {
-                                host: opts.host.clone(),
-                                nickname: opts.nickname.clone(),
-                            };
+                            let server_kind = RemoteServerKind::from_ssh_options(opts);
 
                             let folder_state = FolderPickerState::new(
                                 server_kind,

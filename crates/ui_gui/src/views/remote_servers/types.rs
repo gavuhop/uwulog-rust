@@ -86,7 +86,10 @@ pub enum RemoteServerKind {
     Wsl(String),
     Ssh {
         host: String,
+        port: Option<u16>,
+        username: Option<String>,
         nickname: Option<String>,
+        args: Option<Vec<String>>,
     },
     DevContainer(String),
 }
@@ -95,7 +98,7 @@ impl RemoteServerKind {
     pub fn display_name(&self) -> &str {
         match self {
             RemoteServerKind::Wsl(name) => name,
-            RemoteServerKind::Ssh { host, nickname } => nickname.as_deref().unwrap_or(host),
+            RemoteServerKind::Ssh { host, nickname, .. } => nickname.as_deref().unwrap_or(host),
             RemoteServerKind::DevContainer(name) => name,
         }
     }
@@ -105,6 +108,36 @@ impl RemoteServerKind {
             RemoteServerKind::Wsl(_) => IconName::Linux,
             RemoteServerKind::Ssh { .. } => IconName::Server,
             RemoteServerKind::DevContainer(_) => IconName::Box,
+        }
+    }
+
+    pub fn from_ssh_connection(conn: &uwu_core_workspace::SshConnection) -> Self {
+        Self::Ssh {
+            host: conn.host.clone(),
+            port: conn.port,
+            username: conn.username.clone(),
+            nickname: conn.nickname.clone(),
+            args: conn.args.clone(),
+        }
+    }
+
+    pub fn from_ssh_options(opts: &uwu_core_workspace::SshConnectionOptions) -> Self {
+        Self::Ssh {
+            host: opts.host.clone(),
+            port: opts.port,
+            username: opts.username.clone(),
+            nickname: opts.nickname.clone(),
+            args: opts.args.clone(),
+        }
+    }
+
+    pub fn ssh_simple(host: impl Into<String>) -> Self {
+        Self::Ssh {
+            host: host.into(),
+            port: None,
+            username: None,
+            nickname: None,
+            args: None,
         }
     }
 }
@@ -151,12 +184,26 @@ impl ServerOptionItem {
                     is_destructive: false,
                 },
             ],
-            RemoteServerKind::Ssh { host, nickname } => {
+            RemoteServerKind::Ssh {
+                host,
+                port,
+                username,
+                nickname,
+                ..
+            } => {
                 let nickname_label = if nickname.is_some() {
                     "Edit Nickname"
                 } else {
                     "Add Nickname to Server"
                 };
+                let mut target = if let Some(u) = username {
+                    format!("{}@{}", u, host)
+                } else {
+                    host.clone()
+                };
+                if let Some(p) = port {
+                    target = format!("{}:{}", target, p);
+                }
                 vec![
                     Self {
                         action: ServerOptionAction::EditNickname,
@@ -166,10 +213,10 @@ impl ServerOptionItem {
                         is_destructive: false,
                     },
                     Self {
-                        action: ServerOptionAction::CopyAddress(host.clone()),
+                        action: ServerOptionAction::CopyAddress(target.clone()),
                         icon: IconName::Copy,
                         label: "Copy Server Address".to_string(),
-                        end_slot: Some(host.clone()),
+                        end_slot: Some(target),
                         is_destructive: false,
                     },
                     Self {

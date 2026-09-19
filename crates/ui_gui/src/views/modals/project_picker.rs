@@ -349,10 +349,7 @@ pub fn render_project_picker_popup(
                         });
                         if !exists {
                             all_recent.push(create_server_workspace(
-                                &RemoteServerKind::Ssh {
-                                    host: conn.host.clone(),
-                                    nickname: conn.nickname.clone(),
-                                },
+                                &RemoteServerKind::from_ssh_connection(conn),
                                 &proj.path,
                             ));
                         }

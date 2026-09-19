@@ -300,16 +300,16 @@ mod tests {
         assert_eq!(wsl.display_name(), "Ubuntu-22.04");
         assert_eq!(wsl.icon(), IconName::Linux);
 
-        let ssh = RemoteServerKind::Ssh {
-            host: "prod-server".to_string(),
-            nickname: None,
-        };
+        let ssh = RemoteServerKind::ssh_simple("prod-server");
         assert_eq!(ssh.display_name(), "prod-server");
         assert_eq!(ssh.icon(), IconName::Server);
 
         let ssh_nick = RemoteServerKind::Ssh {
             host: "prod-server".to_string(),
+            port: None,
+            username: None,
             nickname: Some("Production Node".to_string()),
+            args: None,
         };
         assert_eq!(ssh_nick.display_name(), "Production Node");
 
@@ -332,10 +332,7 @@ mod tests {
         assert!(!wsl_opts[1].is_destructive);
 
         // 2. SSH: Edit Nickname + Copy Server Address + Remove Server + Go Back
-        let ssh = RemoteServerKind::Ssh {
-            host: "server1.example.com".to_string(),
-            nickname: None,
-        };
+        let ssh = RemoteServerKind::ssh_simple("server1.example.com");
         let ssh_opts = ServerOptionItem::list_for_server(&ssh);
         assert_eq!(ssh_opts.len(), 4);
         assert_eq!(ssh_opts[0].action, ServerOptionAction::EditNickname);
@@ -456,7 +453,7 @@ mod tests {
             assert_eq!(items_with_server.len(), 5);
             assert_eq!(
                 items_with_server[3].action,
-                ServerListAction::OpenFolder("Ubuntu".to_string())
+                ServerListAction::OpenFolder(RemoteServerKind::Wsl("Ubuntu".to_string()))
             );
             assert_eq!(
                 items_with_server[3].section_title,
@@ -464,7 +461,7 @@ mod tests {
             );
             assert_eq!(
                 items_with_server[4].action,
-                ServerListAction::ViewServerOptions("Ubuntu".to_string())
+                ServerListAction::ViewServerOptions(RemoteServerKind::Wsl("Ubuntu".to_string()))
             );
 
             // 3. Thêm project trực tiếp vào server Ubuntu -> xuất hiện mục project duyệt O(1)
@@ -473,8 +470,8 @@ mod tests {
             assert_eq!(items_with_project.len(), 6);
             assert_eq!(
                 items_with_project[3].action,
-                ServerListAction::OpenRemotePath {
-                    server: "Ubuntu".to_string(),
+                ServerListAction::OpenServerPath {
+                    server: RemoteServerKind::Wsl("Ubuntu".to_string()),
                     path: "/home/user/backend".to_string(),
                 }
             );
@@ -484,7 +481,7 @@ mod tests {
             assert_eq!(filtered.len(), 1);
             assert_eq!(
                 filtered[0].action,
-                ServerListAction::OpenFolder("Ubuntu".to_string())
+                ServerListAction::OpenFolder(RemoteServerKind::Wsl("Ubuntu".to_string()))
             );
         }
 
@@ -648,17 +645,14 @@ mod tests {
         let ssh_project_item = items.iter().find(|i| {
             matches!(
                 &i.action,
-                ServerListAction::OpenSshPath { host, .. } if host == "staging-server"
+                ServerListAction::OpenServerPath { server, .. } if server.display_name() == "staging-server"
             )
         });
         assert!(ssh_project_item.is_some());
 
         // Test FolderPicker with SSH ServerKind
         let folder_state = FolderPickerState::new(
-            RemoteServerKind::Ssh {
-                host: "staging-server".to_string(),
-                nickname: None,
-            },
+            RemoteServerKind::ssh_simple("staging-server"),
             "/var/log",
             vec!["nginx".to_string(), "redis".to_string()],
         );
@@ -893,10 +887,7 @@ mod tests {
         match success_event {
             SshInteractiveEvent::Connected(success) => {
                 let folder_state = FolderPickerState::new(
-                    RemoteServerKind::Ssh {
-                        host: "validserver".to_string(),
-                        nickname: None,
-                    },
+                    RemoteServerKind::ssh_simple("validserver"),
                     success.initial_dir,
                     success.entries,
                 );
