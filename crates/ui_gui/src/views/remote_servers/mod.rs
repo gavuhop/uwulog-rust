@@ -429,49 +429,66 @@ mod tests {
     #[test]
     fn test_collect_server_list_items_and_filtering() {
         let mut store = WorkspaceStore::default();
-        // 1. Mặc định chưa có server nào -> 3 static actions
+        // 1. Mặc định chưa có server nào
         let items_empty = collect_server_list_items("", &store);
-        assert_eq!(items_empty.len(), 3);
-        assert_eq!(items_empty[0].action, ServerListAction::ConnectSsh);
-        assert_eq!(items_empty[1].action, ServerListAction::ConnectDevContainer);
-        assert_eq!(items_empty[2].action, ServerListAction::AddWslDistro);
 
-        // 2. Thêm WSL distro vào store -> có thêm 2 items: Open Folder và View Server Options
-        store.ensure_wsl_connection("Ubuntu");
-        let items_with_server = collect_server_list_items("", &store);
-        assert_eq!(items_with_server.len(), 5);
-        assert_eq!(
-            items_with_server[3].action,
-            ServerListAction::OpenFolder("Ubuntu".to_string())
-        );
-        assert_eq!(
-            items_with_server[3].section_title,
-            Some("WSL: Ubuntu".to_string())
-        );
-        assert_eq!(
-            items_with_server[4].action,
-            ServerListAction::ViewServerOptions("Ubuntu".to_string())
-        );
+        #[cfg(target_os = "windows")]
+        {
+            assert_eq!(items_empty.len(), 3);
+            assert_eq!(items_empty[0].action, ServerListAction::ConnectSsh);
+            assert_eq!(items_empty[1].action, ServerListAction::ConnectDevContainer);
+            assert_eq!(items_empty[2].action, ServerListAction::AddWslDistro);
 
-        // 3. Thêm project trực tiếp vào server Ubuntu -> xuất hiện mục project duyệt O(1)
-        store.add_remote_project_to_server("Ubuntu", "/home/user/backend");
-        let items_with_project = collect_server_list_items("", &store);
-        assert_eq!(items_with_project.len(), 6);
-        assert_eq!(
-            items_with_project[3].action,
-            ServerListAction::OpenRemotePath {
-                server: "Ubuntu".to_string(),
-                path: "/home/user/backend".to_string(),
-            }
-        );
+            // 2. Thêm WSL distro vào store -> có thêm 2 items: Open Folder và View Server Options
+            store.ensure_wsl_connection("Ubuntu");
+            let items_with_server = collect_server_list_items("", &store);
+            assert_eq!(items_with_server.len(), 5);
+            assert_eq!(
+                items_with_server[3].action,
+                ServerListAction::OpenFolder("Ubuntu".to_string())
+            );
+            assert_eq!(
+                items_with_server[3].section_title,
+                Some("WSL: Ubuntu".to_string())
+            );
+            assert_eq!(
+                items_with_server[4].action,
+                ServerListAction::ViewServerOptions("Ubuntu".to_string())
+            );
 
-        // 4. Lọc theo chữ "open folder"
-        let filtered = collect_server_list_items("open folder", &store);
-        assert_eq!(filtered.len(), 1);
-        assert_eq!(
-            filtered[0].action,
-            ServerListAction::OpenFolder("Ubuntu".to_string())
-        );
+            // 3. Thêm project trực tiếp vào server Ubuntu -> xuất hiện mục project duyệt O(1)
+            store.add_remote_project_to_server("Ubuntu", "/home/user/backend");
+            let items_with_project = collect_server_list_items("", &store);
+            assert_eq!(items_with_project.len(), 6);
+            assert_eq!(
+                items_with_project[3].action,
+                ServerListAction::OpenRemotePath {
+                    server: "Ubuntu".to_string(),
+                    path: "/home/user/backend".to_string(),
+                }
+            );
+
+            // 4. Lọc theo chữ "open folder"
+            let filtered = collect_server_list_items("open folder", &store);
+            assert_eq!(filtered.len(), 1);
+            assert_eq!(
+                filtered[0].action,
+                ServerListAction::OpenFolder("Ubuntu".to_string())
+            );
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            // Trên Linux/macOS: không có WSL, chỉ có các action SSH và Dev Container
+            assert_eq!(items_empty.len(), 2);
+            assert_eq!(items_empty[0].action, ServerListAction::ConnectSsh);
+            assert_eq!(items_empty[1].action, ServerListAction::ConnectDevContainer);
+
+            // WSL connections không hiển thị trên non-Windows
+            store.ensure_wsl_connection("Ubuntu");
+            let items_with_server = collect_server_list_items("", &store);
+            assert_eq!(items_with_server.len(), 2);
+        }
     }
 
     #[test]

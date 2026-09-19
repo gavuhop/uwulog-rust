@@ -402,6 +402,7 @@ async fn test_on_exit_saves_current_workspace() {
 }
 
 #[tokio::test]
+#[cfg(target_os = "windows")]
 async fn test_project_picker_and_server_list_consistency() {
     let mut app = create_test_app();
 

@@ -1,7 +1,9 @@
 use crate::components::ui::{IconName, TextInput};
 use crate::keymap::{KeyAction, KeyContext, KeymapManager};
 use eframe::egui;
-use uwu_core_workspace::{RemoteProject, Workspace, WorkspaceStore};
+#[cfg(target_os = "windows")]
+use uwu_core_workspace::RemoteProject;
+use uwu_core_workspace::{Workspace, WorkspaceStore};
 use uwu_driver_transport::WslTransport;
 
 use super::helpers::{
@@ -34,9 +36,11 @@ pub struct ServerListItem {
 }
 
 /// Thu thập danh sách các item hiển thị dựa trên search filter và workspace store
-pub fn collect_server_list_items(filter: &str, store: &WorkspaceStore) -> Vec<ServerListItem> {
+pub fn collect_server_list_items(filter: &str, _store: &WorkspaceStore) -> Vec<ServerListItem> {
     let mut items = Vec::new();
     let filter = filter.trim().to_lowercase();
+    #[cfg(target_os = "windows")]
+    let store = _store;
 
     // 1. 3 Nút Action trên cùng (Connect SSH, Dev Container, Add WSL Distro)
     if filter.is_empty() || "connect ssh server".contains(&filter) {
@@ -59,6 +63,7 @@ pub fn collect_server_list_items(filter: &str, store: &WorkspaceStore) -> Vec<Se
         });
     }
 
+    #[cfg(target_os = "windows")]
     if filter.is_empty() || "add wsl distro".contains(&filter) {
         items.push(ServerListItem {
             icon: IconName::Plus,
@@ -70,6 +75,7 @@ pub fn collect_server_list_items(filter: &str, store: &WorkspaceStore) -> Vec<Se
     }
 
     // 2. Hiển thị từng Server Connection và các Projects thuộc về nó (duyệt thẳng O(1), chuẩn Zed)
+    #[cfg(target_os = "windows")]
     for server in &store.wsl_connections {
         let cluster_title = format!("WSL: {}", server.distro);
 
