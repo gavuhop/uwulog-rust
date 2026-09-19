@@ -53,8 +53,8 @@ pub fn render_autocomplete_popup(ctx: &egui::Context, session: &mut GuiSession, 
 
                     let desired_size = egui::vec2(ui.available_width(), 26.0);
                     let (rect, resp) = ui.allocate_exact_size(desired_size, egui::Sense::click());
-                    if selection_changed && is_selected {
-                        resp.scroll_to_me(Some(egui::Align::Center));
+                    if selection_changed && is_selected && !ctx.input(|i| i.pointer.is_moving()) {
+                        resp.scroll_to_me(None);
                     }
 
                     if resp.hovered() {
@@ -121,7 +121,12 @@ pub fn render_autocomplete_popup(ctx: &egui::Context, session: &mut GuiSession, 
             }
 
             if let Some(hover_idx) = hovered_index {
-                session.search.autocomplete.selected_index = hover_idx;
+                if ctx.input(|i| i.pointer.is_moving()) {
+                    session.search.autocomplete.selected_index = hover_idx;
+                    ctx.data_mut(|d| {
+                        d.insert_temp(egui::Id::new("ac_last_selected"), hover_idx);
+                    });
+                }
             }
         });
 
