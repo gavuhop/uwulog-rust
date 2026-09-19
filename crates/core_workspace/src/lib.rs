@@ -19,7 +19,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -224,10 +224,12 @@ pub struct WorkspaceStore {
     pub recent_workspaces: Vec<Workspace>,
     #[serde(default)]
     pub wsl_connections: Vec<WslConnection>,
+    #[serde(skip)]
+    storage_path: Option<PathBuf>,
 }
 
 impl WorkspaceStore {
-    /// Lấy đường dẫn lưu file cấu hình workspaces.json
+    /// Lấy đường dẫn lưu file cấu hình workspaces.json mặc định
     pub fn get_storage_path() -> PathBuf {
         #[cfg(target_os = "windows")]
         {
@@ -248,40 +250,59 @@ impl WorkspaceStore {
         PathBuf::from("workspaces.json")
     }
 
-    /// Đọc và tải danh sách workspace từ file
+    /// Đọc và tải danh sách workspace từ file cấu hình mặc định
     pub fn load() -> Self {
-        let path = Self::get_storage_path();
-        if path.exists() {
-            if let Ok(content) = fs::read_to_string(&path) {
-                if let Ok(mut store) = serde_json::from_str::<WorkspaceStore>(&content) {
-                    for ws in &mut store.recent_workspaces {
-                        ws.name = sanitize_project_name(&ws.name, &ws.location);
-                    }
-                    store.sync_remote_projects();
-                    return store;
-                }
-            }
-        }
-        Self::default()
+        Self::load_from_path(Self::get_storage_path())
     }
 
-    /// Lưu danh sách workspace ra file (bỏ qua khi chạy unit tests để tránh làm bẩn cấu hình thật)
-    #[cfg(not(test))]
+    /// Đọc và tải danh sách workspace từ một file cấu hình cụ thể
+    pub fn load_from_path(path: impl Into<PathBuf>) -> Self {
+        let path = path.into();
+        let mut store = (|| {
+            let content = fs::read_to_string(&path).ok()?;
+            let mut loaded = serde_json::from_str::<WorkspaceStore>(&content).ok()?;
+            for ws in &mut loaded.recent_workspaces {
+                ws.name = sanitize_project_name(&ws.name, &ws.location);
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                loaded.wsl_connections.clear();
+            }
+            loaded.sync_remote_projects();
+            Some(loaded)
+        })()
+        .unwrap_or_default();
+
+        store.storage_path = Some(path);
+        store
+    }
+
+    /// Đường dẫn file lưu trữ liên kết với store (nếu có)
+    pub fn storage_path(&self) -> Option<&Path> {
+        self.storage_path.as_deref()
+    }
+
+    /// Thiết lập đường dẫn file lưu trữ
+    pub fn set_storage_path(&mut self, path: impl Into<PathBuf>) {
+        self.storage_path = Some(path.into());
+    }
+
+    /// Lưu danh sách workspace ra file (nếu store có liên kết với file lưu trữ)
     pub fn save(&self) -> Result<()> {
-        let path = Self::get_storage_path();
+        let Some(ref path) = self.storage_path else {
+            return Ok(());
+        };
+
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to create directory {:?}", parent))?;
+            if !parent.as_os_str().is_empty() {
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("Failed to create directory {:?}", parent))?;
+            }
         }
         let json =
             serde_json::to_string_pretty(self).context("Failed to serialize WorkspaceStore")?;
-        fs::write(&path, json)
+        fs::write(path, json)
             .with_context(|| format!("Failed to write workspaces to {:?}", path))?;
-        Ok(())
-    }
-
-    #[cfg(test)]
-    pub fn save(&self) -> Result<()> {
         Ok(())
     }
 
