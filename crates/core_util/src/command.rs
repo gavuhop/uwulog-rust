@@ -7,6 +7,7 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000_u32;
 /// Trên Windows, tự động gắn cờ `CREATE_NO_WINDOW` để không bật cửa sổ terminal đen khi gọi từ ứng dụng GUI.
 #[inline]
 pub fn new_std_command(program: impl AsRef<OsStr>) -> std::process::Command {
+    #[allow(unused_mut)]
     let mut cmd = std::process::Command::new(program);
     #[cfg(target_os = "windows")]
     {
@@ -20,6 +21,7 @@ pub fn new_std_command(program: impl AsRef<OsStr>) -> std::process::Command {
 /// Trên Windows, tự động gắn cờ `CREATE_NO_WINDOW` để không bật cửa sổ terminal đen khi chạy lệnh lấy log/stream.
 #[inline]
 pub fn new_tokio_command(program: impl AsRef<OsStr>) -> tokio::process::Command {
+    #[allow(unused_mut)]
     let mut cmd = tokio::process::Command::new(program);
     #[cfg(target_os = "windows")]
     cmd.creation_flags(CREATE_NO_WINDOW);

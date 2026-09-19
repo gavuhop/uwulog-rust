@@ -4,7 +4,9 @@ use async_trait::async_trait;
 use std::process::Stdio;
 use tokio::sync::mpsc;
 use uwu_core_schema::RawLogEntry;
-use uwu_core_util::command::{new_std_command, new_tokio_command};
+#[cfg(target_os = "windows")]
+use uwu_core_util::command::new_std_command;
+use uwu_core_util::command::new_tokio_command;
 
 pub struct ProcessSource {
     command: String,
