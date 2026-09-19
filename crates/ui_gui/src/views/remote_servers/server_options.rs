@@ -111,7 +111,7 @@ pub fn render_server_options_subview(
                         "Remove WSL Distro",
                         format!("Remove WSL distro `{}`?", distro),
                     ),
-                    RemoteServerKind::Ssh { host, nickname, .. } => {
+                    RemoteServerKind::Ssh { host, nickname } => {
                         let name = nickname.as_deref().unwrap_or(host);
                         (
                             "Remove SSH Server",

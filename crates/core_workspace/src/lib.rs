@@ -596,17 +596,18 @@ impl WorkspaceStore {
                             .map(|n| n.eq_ignore_ascii_case(&opts.host))
                             .unwrap_or(false)
                     {
-                        if opts.username.is_none() && conn.username.is_some() {
-                            opts.username = conn.username.clone();
+                        opts.host = conn.host.clone();
+                        if let Some(ref u) = conn.username {
+                            opts.username = Some(u.clone());
                         }
-                        if opts.port.is_none() && conn.port.is_some() {
-                            opts.port = conn.port;
+                        if let Some(p) = conn.port {
+                            opts.port = Some(p);
                         }
-                        if opts.args.is_none() && conn.args.is_some() {
-                            opts.args = conn.args.clone();
+                        if let Some(ref a) = conn.args {
+                            opts.args = Some(a.clone());
                         }
-                        if opts.nickname.is_none() && conn.nickname.is_some() {
-                            opts.nickname = conn.nickname.clone();
+                        if let Some(ref n) = conn.nickname {
+                            opts.nickname = Some(n.clone());
                         }
                     }
                 }

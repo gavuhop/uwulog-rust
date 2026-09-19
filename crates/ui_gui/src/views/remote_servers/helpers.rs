@@ -51,66 +51,23 @@ fn resolve_remote_dir_and_name(fallback_name: &str, target_dir: &str) -> (String
 pub fn create_server_workspace(server: &RemoteServerKind, target_dir: &str) -> Workspace {
     let (clean_dir, project_name) = resolve_remote_dir_and_name(server.display_name(), target_dir);
 
-    let is_log_file = clean_dir.ends_with(".log")
-        || clean_dir.ends_with(".txt")
-        || clean_dir.ends_with(".json")
-        || clean_dir.ends_with(".jsonl")
-        || clean_dir.ends_with(".out")
-        || clean_dir.ends_with("/syslog")
-        || clean_dir.ends_with("/messages")
-        || clean_dir.ends_with("/dmesg");
-
-    let source_type = if is_log_file {
-        SourceType::File
-    } else {
-        SourceType::Process
-    };
-
-    let (work_dir, file_path) = if is_log_file {
-        let parent = std::path::Path::new(&clean_dir)
-            .parent()
-            .and_then(|p| p.to_str())
-            .unwrap_or("/");
-        let parent_dir = if parent.is_empty() { "/" } else { parent };
-        (parent_dir.to_string(), clean_dir.clone())
-    } else {
-        (clean_dir.clone(), String::new())
-    };
-
     let location = match server {
-        RemoteServerKind::Wsl(distro) => RemoteConnectionOptions::parse(distro, &work_dir),
-        RemoteServerKind::Ssh {
-            host,
-            nickname,
-            username,
-            port,
-            args,
-        } => {
-            let mut opts = SshConnectionOptions::new(host, &work_dir);
+        RemoteServerKind::Wsl(distro) => RemoteConnectionOptions::parse(distro, clean_dir),
+        RemoteServerKind::Ssh { host, nickname } => {
+            let mut opts = SshConnectionOptions::new(host, clean_dir);
             if let Some(nick) = nickname {
                 opts = opts.with_nickname(nick);
             }
-            if let Some(u) = username {
-                opts = opts.with_username(u);
-            }
-            if let Some(p) = port {
-                opts = opts.with_port(*p);
-            }
-            if let Some(a) = args {
-                opts = opts.with_args(a.clone());
-            }
             opts.into()
         }
-        RemoteServerKind::DevContainer(name) => RemoteConnectionOptions::parse(name, &work_dir),
+        RemoteServerKind::DevContainer(name) => RemoteConnectionOptions::parse(name, clean_dir),
     };
 
-    let mut ws = Workspace::new(
+    Workspace::new(
         project_name,
         WorkspaceLocation::remote(location),
-        source_type,
-    );
-    ws.file_path = file_path;
-    ws
+        SourceType::Process,
+    )
 }
 
 type DirCacheMap = HashMap<(String, String), Vec<String>>;
@@ -131,20 +88,9 @@ pub fn get_cached_or_read_directories(server: &RemoteServerKind, dir: &str) -> V
         RemoteServerKind::Wsl(distro) => {
             WslTransport::list_remote_directories(distro, dir).unwrap_or_default()
         }
-        RemoteServerKind::Ssh {
-            host,
-            username,
-            port,
-            args,
-            ..
-        } => SshTransport::list_remote_directories(
-            host,
-            dir,
-            username.as_deref(),
-            *port,
-            args.as_deref(),
-        )
-        .unwrap_or_default(),
+        RemoteServerKind::Ssh { host, .. } => {
+            SshTransport::list_remote_directories(host, dir, None, None, None).unwrap_or_default()
+        }
         RemoteServerKind::DevContainer(_) => Vec::new(),
     };
 
@@ -542,30 +488,14 @@ mod tests {
         let server_ssh = RemoteServerKind::Ssh {
             host: "192.168.1.100".to_string(),
             nickname: Some("my-vps".to_string()),
-            username: Some("root".to_string()),
-            port: Some(2222),
-            args: None,
         };
         let ws_ssh = create_server_workspace(&server_ssh, "/var/log/nginx");
         assert_eq!(ws_ssh.name, "nginx");
         assert_eq!(ws_ssh.location.working_dir(), "/var/log/nginx");
         assert_eq!(ws_ssh.server_name(), Some("my-vps"));
-        if let WorkspaceLocation::Remote(RemoteConnectionOptions::Ssh(ref opts)) = ws_ssh.location {
-            assert_eq!(opts.username.as_deref(), Some("root"));
-            assert_eq!(opts.port, Some(2222));
-        } else {
-            panic!("Expected Ssh location");
-        }
 
         // Test create_server_workspace at root
         let ws_ssh_root = create_server_workspace(&server_ssh, "/");
         assert_eq!(ws_ssh_root.name, "my-vps");
-
-        // Test create_server_workspace with a log file
-        let ws_ssh_file = create_server_workspace(&server_ssh, "/var/log/nginx/access.log");
-        assert_eq!(ws_ssh_file.name, "access.log");
-        assert_eq!(ws_ssh_file.source_type, SourceType::File);
-        assert_eq!(ws_ssh_file.file_path, "/var/log/nginx/access.log");
-        assert_eq!(ws_ssh_file.location.working_dir(), "/var/log/nginx");
     }
 }

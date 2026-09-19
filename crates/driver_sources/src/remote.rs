@@ -64,9 +64,17 @@ impl LogSource for RemoteSource {
             .context("Failed to spawn remote proxy transport")?;
 
         // 1. Chờ tín hiệu Ready Handshake từ Agent, lọc bỏ toàn bộ SSH Banner, MOTD, .bashrc echo
-        uwu_core_protocol::wait_for_ready_marker(&mut reader)
-            .await
-            .context("Failed during remote agent handshake")?;
+        tokio::time::timeout(
+            Duration::from_secs(15),
+            uwu_core_protocol::wait_for_ready_marker(&mut reader),
+        )
+        .await
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "Remote agent handshake timed out (15s). The remote host took too long to start uwu-agent or is blocking."
+            )
+        })?
+        .context("Failed during remote agent handshake")?;
 
         let mut framed_reader = FramedReader::new(reader);
         let framed_writer = Arc::new(Mutex::new(FramedWriter::new(writer)));

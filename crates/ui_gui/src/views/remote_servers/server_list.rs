@@ -154,9 +154,6 @@ impl<'a> Connection<'a> {
             Self::Ssh(s) => ServerListAction::ViewServerOptionsKind(RemoteServerKind::Ssh {
                 host: s.host.clone(),
                 nickname: s.nickname.clone(),
-                username: s.username.clone(),
-                port: s.port,
-                args: s.args.clone(),
             }),
         }
     }
@@ -349,20 +346,7 @@ pub fn render_remote_list_subview(
                 nickname,
                 path,
             } => {
-                let conn = store.find_ssh_connection(&host);
-                let username = conn.and_then(|c| c.username.clone());
-                let port = conn.and_then(|c| c.port);
-                let args = conn.and_then(|c| c.args.clone());
-                let ws = create_server_workspace(
-                    &RemoteServerKind::Ssh {
-                        host,
-                        nickname,
-                        username,
-                        port,
-                        args,
-                    },
-                    &path,
-                );
+                let ws = create_server_workspace(&RemoteServerKind::Ssh { host, nickname }, &path);
                 selected_workspace = Some(ws);
             }
             ServerListAction::OpenFolder(distro) => {
@@ -375,32 +359,16 @@ pub fn render_remote_list_subview(
             }
             ServerListAction::OpenFolderSsh(host) => {
                 let conn = store.find_ssh_connection(&host);
-                let user = conn.and_then(|c| c.username.clone());
+                let user = conn.and_then(|c| c.username.as_deref());
                 let port = conn.and_then(|c| c.port);
-                let args = conn.and_then(|c| c.args.clone());
+                let args = conn.and_then(|c| c.args.as_deref());
                 let nickname = conn.and_then(|c| c.nickname.clone());
-                let home =
-                    SshTransport::resolve_home_dir(&host, user.as_deref(), port, args.as_deref());
-                let entries = SshTransport::list_remote_directories(
-                    &host,
-                    &home,
-                    user.as_deref(),
-                    port,
-                    args.as_deref(),
-                )
-                .unwrap_or_default();
-                nav_action =
-                    RemoteNavAction::navigate(RemoteSubView::FolderPicker(FolderPickerState::new(
-                        RemoteServerKind::Ssh {
-                            host,
-                            nickname,
-                            username: user,
-                            port,
-                            args,
-                        },
-                        home,
-                        entries,
-                    )));
+                let home = SshTransport::resolve_home_dir(&host, user, port, args);
+                let entries = SshTransport::list_remote_directories(&host, &home, user, port, args)
+                    .unwrap_or_default();
+                nav_action = RemoteNavAction::navigate(RemoteSubView::FolderPicker(
+                    FolderPickerState::new(RemoteServerKind::Ssh { host, nickname }, home, entries),
+                ));
             }
             ServerListAction::ViewServerOptions(distro) => {
                 nav_action =

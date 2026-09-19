@@ -1,5 +1,5 @@
 use crate::environment::EnvLoadStatus;
-use crate::remote::RemoteConnectionOptions;
+use crate::remote::{RemoteConnectionOptions, SshConnectionOptions};
 use crate::{Workspace, WorkspaceLocation};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -239,27 +239,13 @@ impl WorkspaceSession {
                             self.is_source_running = true;
                         }
                         WorkspaceLocation::Remote(RemoteConnectionOptions::Ssh(ssh_opts)) => {
-                            let mut transport = ssh_opts.to_transport();
-                            if !config.working_dir.trim().is_empty() {
-                                transport = transport.with_working_dir(&config.working_dir);
-                            }
-                            let spec = RemoteLogSourceSpec::Command(config.command_str.clone());
-                            let source = RemoteSource::new(Box::new(transport), spec, None);
-                            let tx = source_tx.clone();
-                            let tx_err = source_tx.clone();
-                            rt.spawn(async move {
-                                if let Err(e) = source.start_stream(tx).await {
-                                    log::error!("SSH command stream error: {:#}", e);
-                                    let _ = tx_err
-                                        .send(RawLogEntry {
-                                            payload: RawPayload::Text(format!(
-                                                "[SSH ERROR] Failed to start log stream: {:#}",
-                                                e
-                                            )),
-                                        })
-                                        .await;
-                                }
-                            });
+                            Self::spawn_ssh_stream(
+                                rt,
+                                ssh_opts,
+                                RemoteLogSourceSpec::Command(config.command_str.clone()),
+                                &config.working_dir,
+                                source_tx.clone(),
+                            );
                             self.is_source_running = true;
                         }
                         WorkspaceLocation::Local { .. } => {
@@ -340,24 +326,13 @@ impl WorkspaceSession {
                             self.is_source_running = true;
                         }
                         WorkspaceLocation::Remote(RemoteConnectionOptions::Ssh(ssh_opts)) => {
-                            let transport = ssh_opts.to_transport();
-                            let spec = RemoteLogSourceSpec::File(config.file_path.clone());
-                            let source = RemoteSource::new(Box::new(transport), spec, None);
-                            let tx = source_tx.clone();
-                            let tx_err = source_tx.clone();
-                            rt.spawn(async move {
-                                if let Err(e) = source.start_stream(tx).await {
-                                    log::error!("SSH file stream error: {:#}", e);
-                                    let _ = tx_err
-                                        .send(RawLogEntry {
-                                            payload: RawPayload::Text(format!(
-                                                "[SSH ERROR] Failed to start log stream: {:#}",
-                                                e
-                                            )),
-                                        })
-                                        .await;
-                                }
-                            });
+                            Self::spawn_ssh_stream(
+                                rt,
+                                ssh_opts,
+                                RemoteLogSourceSpec::File(config.file_path.clone()),
+                                &config.working_dir,
+                                source_tx.clone(),
+                            );
                             self.is_source_running = true;
                         }
                         WorkspaceLocation::Local { .. } => {
@@ -396,6 +371,35 @@ impl WorkspaceSession {
                 });
             }
         }
+    }
+
+    fn spawn_ssh_stream(
+        rt: &Handle,
+        ssh_opts: &SshConnectionOptions,
+        spec: RemoteLogSourceSpec,
+        working_dir: &str,
+        source_tx: tokio::sync::mpsc::Sender<RawLogEntry>,
+    ) {
+        let mut transport = ssh_opts.to_transport();
+        if !working_dir.trim().is_empty() {
+            transport = transport.with_working_dir(working_dir);
+        }
+        let source = RemoteSource::new(Box::new(transport), spec, None);
+        let tx = source_tx.clone();
+        let tx_err = source_tx;
+        rt.spawn(async move {
+            if let Err(e) = source.start_stream(tx).await {
+                log::error!("SSH stream error: {:#}", e);
+                let _ = tx_err
+                    .send(RawLogEntry {
+                        payload: RawPayload::Text(format!(
+                            "[SSH ERROR] Failed to start log stream: {:#}",
+                            e
+                        )),
+                    })
+                    .await;
+            }
+        });
     }
 
     pub fn stop_source(&mut self) {

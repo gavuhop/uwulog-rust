@@ -1279,21 +1279,8 @@ impl RemoteTransport for SshTransport {
 
         let mut cmd = transport.build_tokio_command();
         if let Some(ref workdir) = transport.working_dir {
-            let safe_dir = if workdir.ends_with(".log")
-                || workdir.ends_with(".txt")
-                || workdir.ends_with(".json")
-                || workdir.ends_with(".jsonl")
-                || workdir.ends_with(".out")
-            {
-                std::path::Path::new(workdir)
-                    .parent()
-                    .and_then(|p| p.to_str())
-                    .unwrap_or(workdir)
-            } else {
-                workdir.as_str()
-            };
-            if !safe_dir.trim().is_empty() {
-                cmd.arg(format!("cd \"{}\" && {}", safe_dir, agent_invocation));
+            if !workdir.trim().is_empty() {
+                cmd.arg(format!("cd \"{}\" && {}", workdir.trim(), agent_invocation));
             } else {
                 cmd.arg(agent_invocation);
             }
