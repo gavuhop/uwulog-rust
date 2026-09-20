@@ -19,6 +19,7 @@ use super::types::{
 #[derive(Debug, Clone, PartialEq)]
 pub enum ServerListAction {
     ConnectSsh,
+    #[allow(dead_code)]
     ConnectDevContainer,
     AddWslDistro,
     OpenWorkspace(Box<Workspace>),
@@ -56,15 +57,16 @@ pub fn collect_server_list_items(filter: &str, store: &WorkspaceStore) -> Vec<Se
         });
     }
 
-    if filter.is_empty() || "connect dev container".contains(&filter) {
-        items.push(ServerListItem {
-            icon: IconName::Plus,
-            label: "Connect Dev Container".to_string(),
-            tooltip: Some("Dev Container connection coming soon".to_string()),
-            section_title: None,
-            action: ServerListAction::ConnectDevContainer,
-        });
-    }
+    // Tạm thời comment lại phần Connect Dev Container vì chưa thực hiện
+    // if filter.is_empty() || "connect dev container".contains(&filter) {
+    //     items.push(ServerListItem {
+    //         icon: IconName::Plus,
+    //         label: "Connect Dev Container".to_string(),
+    //         tooltip: Some("Dev Container connection coming soon".to_string()),
+    //         section_title: None,
+    //         action: ServerListAction::ConnectDevContainer,
+    //     });
+    // }
 
     #[cfg(target_os = "windows")]
     if filter.is_empty() || "add wsl distro".contains(&filter) {
