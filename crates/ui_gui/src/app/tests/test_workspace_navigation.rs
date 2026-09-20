@@ -1,7 +1,6 @@
 use super::test_helpers::create_test_app;
 use crate::actions::AppAction;
 use crate::overlay::{OverlayLayer, RemoteModalPlacement};
-use crate::views::remote_servers::RemoteServerKind;
 use uwu_core_workspace::{extract_project_name, SourceType, Workspace, WorkspaceLocation};
 
 #[tokio::test]
