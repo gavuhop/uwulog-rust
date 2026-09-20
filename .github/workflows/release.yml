@@ -51,7 +51,7 @@ jobs:
   # 2. LINUX (x86_64 & aarch64)
   # ============================================================================
   build-linux:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     strategy:
       matrix:
         include:
@@ -68,7 +68,7 @@ jobs:
       - name: Install System Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libasound2-dev libfontconfig1-dev dpkg-dev
+          sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libasound2-dev libfontconfig1-dev dpkg-dev rpm
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -91,6 +91,7 @@ jobs:
         run: |
           bash packaging/linux/build-tarball.sh --arch ${{ matrix.arch }} --target ${{ matrix.target }} --skip-build
           bash packaging/linux/build-deb.sh --arch ${{ matrix.deb_arch }} --target ${{ matrix.target }} --skip-build
+          bash packaging/linux/build-rpm.sh --arch ${{ matrix.arch }} --target ${{ matrix.target }} --skip-build
 
       - name: Upload Linux Artifacts
         uses: actions/upload-artifact@v4
@@ -99,6 +100,7 @@ jobs:
           path: |
             dist/uwulog-v*-linux-${{ matrix.arch }}.tar.gz
             dist/uwulog_*_${{ matrix.deb_arch }}.deb
+            dist/uwulog-*.${{ matrix.arch }}.rpm
 
   # ============================================================================
   # 3. MACOS (Apple Silicon arm64 & Intel x86_64)

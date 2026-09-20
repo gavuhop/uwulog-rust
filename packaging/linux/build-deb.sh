@@ -116,7 +116,7 @@ rm -rf "$STAGE_DIR"
 mkdir -p "$STAGE_DIR/DEBIAN"
 mkdir -p "$STAGE_DIR/usr/bin"
 mkdir -p "$STAGE_DIR/usr/share/applications"
-mkdir -p "$STAGE_DIR/usr/share/icons/hicolor/512x512/apps"
+mkdir -p "$STAGE_DIR/usr/share/pixmaps"
 mkdir -p "$DIST_DIR"
 
 # 4. Create DEBIAN/control file
@@ -142,7 +142,10 @@ if command -v update-desktop-database >/dev/null 2>&1; then
     update-desktop-database -q /usr/share/applications || true
 fi
 if command -v gtk-update-icon-cache >/dev/null 2>&1; then
-    gtk-update-icon-cache -q /usr/share/icons/hicolor || true
+    gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || true
+fi
+if command -v gtk4-update-icon-cache >/dev/null 2>&1; then
+    gtk4-update-icon-cache -q -t -f /usr/share/icons/hicolor || true
 fi
 EOF
 chmod 755 "$STAGE_DIR/DEBIAN/postinst"
@@ -155,7 +158,10 @@ if command -v update-desktop-database >/dev/null 2>&1; then
     update-desktop-database -q /usr/share/applications || true
 fi
 if command -v gtk-update-icon-cache >/dev/null 2>&1; then
-    gtk-update-icon-cache -q /usr/share/icons/hicolor || true
+    gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || true
+fi
+if command -v gtk4-update-icon-cache >/dev/null 2>&1; then
+    gtk4-update-icon-cache -q -t -f /usr/share/icons/hicolor || true
 fi
 EOF
 chmod 755 "$STAGE_DIR/DEBIAN/postrm"
@@ -167,11 +173,23 @@ cp "$BIN_DIR/uwu-agent" "$STAGE_DIR/usr/bin/"
 cp "$BIN_DIR/uwulog" "$STAGE_DIR/usr/bin/"
 chmod 755 "$STAGE_DIR/usr/bin/"*
 
-# Desktop entry & icon
+# Desktop entry
 cp "$PACKAGING_DIR/assets/uwulog.desktop" "$STAGE_DIR/usr/share/applications/"
-cp "$PACKAGING_DIR/assets/icon_512.png" "$STAGE_DIR/usr/share/icons/hicolor/512x512/apps/uwulog.png"
 chmod 644 "$STAGE_DIR/usr/share/applications/uwulog.desktop"
-chmod 644 "$STAGE_DIR/usr/share/icons/hicolor/512x512/apps/uwulog.png"
+
+# Install all icon resolutions into hicolor theme
+for size in 16 32 48 64 128 256 512; do
+    icon_dir="$STAGE_DIR/usr/share/icons/hicolor/${size}x${size}/apps"
+    mkdir -p "$icon_dir"
+    if [ -f "$PACKAGING_DIR/assets/icon_${size}.png" ]; then
+        cp "$PACKAGING_DIR/assets/icon_${size}.png" "$icon_dir/uwulog.png"
+        chmod 644 "$icon_dir/uwulog.png"
+    fi
+done
+
+# Pixmaps fallback
+cp "$PACKAGING_DIR/assets/icon_256.png" "$STAGE_DIR/usr/share/pixmaps/uwulog.png"
+chmod 644 "$STAGE_DIR/usr/share/pixmaps/uwulog.png"
 
 # 8. Build .deb package
 OUTPUT_DEB="$DIST_DIR/${PKG_NAME}.deb"

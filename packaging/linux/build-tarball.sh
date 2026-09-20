@@ -122,6 +122,13 @@ chmod 755 "$STAGE_DIR/bin/"*
 # 5. Copy assets
 cp "$PACKAGING_DIR/assets/uwulog.desktop" "$STAGE_DIR/"
 cp "$PACKAGING_DIR/assets/icon_512.png" "$STAGE_DIR/uwulog.png"
+mkdir -p "$STAGE_DIR/icons/hicolor"
+for size in 16 32 48 64 128 256 512; do
+    if [ -f "$PACKAGING_DIR/assets/icon_${size}.png" ]; then
+        mkdir -p "$STAGE_DIR/icons/hicolor/${size}x${size}/apps"
+        cp "$PACKAGING_DIR/assets/icon_${size}.png" "$STAGE_DIR/icons/hicolor/${size}x${size}/apps/uwulog.png"
+    fi
+done
 
 # 6. Standalone installer script
 cat << 'EOF' > "$STAGE_DIR/install.sh"
@@ -140,15 +147,47 @@ cp "$SCRIPT_DIR/bin/uwu-agent" "$INSTALL_PREFIX/bin/"
 cp "$SCRIPT_DIR/bin/uwulog" "$INSTALL_PREFIX/bin/"
 chmod 755 "$INSTALL_PREFIX/bin/"*
 
-# Desktop Entry if installing to system
-if [ "$INSTALL_PREFIX" = "/usr" ] || [ "$INSTALL_PREFIX" = "/usr/local" ]; then
-    mkdir -p "$INSTALL_PREFIX/share/applications"
-    mkdir -p "$INSTALL_PREFIX/share/icons/hicolor/512x512/apps"
-    cp "$SCRIPT_DIR/uwulog.desktop" "$INSTALL_PREFIX/share/applications/"
-    cp "$SCRIPT_DIR/uwulog.png" "$INSTALL_PREFIX/share/icons/hicolor/512x512/apps/uwulog.png"
-    if command -v update-desktop-database >/dev/null 2>&1; then
-        update-desktop-database -q "$INSTALL_PREFIX/share/applications" || true
-    fi
+# Desktop Entry & Icons
+mkdir -p "$INSTALL_PREFIX/share/applications"
+mkdir -p "$INSTALL_PREFIX/share/pixmaps"
+cp "$SCRIPT_DIR/uwulog.desktop" "$INSTALL_PREFIX/share/applications/"
+chmod 644 "$INSTALL_PREFIX/share/applications/uwulog.desktop"
+
+# If installed into user/custom prefix (like ~/.local), resolve absolute paths for desktop Exec & Icon
+if [ "$INSTALL_PREFIX" != "/usr" ]; then
+    sed -i "s|^Exec=uwu-gui|Exec=$INSTALL_PREFIX/bin/uwu-gui|g" "$INSTALL_PREFIX/share/applications/uwulog.desktop" 2>/dev/null || true
+    sed -i "s|^Icon=uwulog|Icon=$INSTALL_PREFIX/share/icons/hicolor/512x512/apps/uwulog.png|g" "$INSTALL_PREFIX/share/applications/uwulog.desktop" 2>/dev/null || true
+fi
+
+# Install all icons
+if [ -d "$SCRIPT_DIR/icons/hicolor" ]; then
+    mkdir -p "$INSTALL_PREFIX/share/icons/hicolor"
+    cp -r "$SCRIPT_DIR/icons/hicolor/"* "$INSTALL_PREFIX/share/icons/hicolor/"
+fi
+mkdir -p "$INSTALL_PREFIX/share/icons/hicolor/512x512/apps"
+cp "$SCRIPT_DIR/uwulog.png" "$INSTALL_PREFIX/share/icons/hicolor/512x512/apps/uwulog.png"
+
+# Pixmap fallback
+if [ -f "$SCRIPT_DIR/icons/hicolor/256x256/apps/uwulog.png" ]; then
+    cp "$SCRIPT_DIR/icons/hicolor/256x256/apps/uwulog.png" "$INSTALL_PREFIX/share/pixmaps/uwulog.png"
+else
+    cp "$SCRIPT_DIR/uwulog.png" "$INSTALL_PREFIX/share/pixmaps/uwulog.png"
+fi
+
+# Update desktop & icon caches
+if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database -q "$INSTALL_PREFIX/share/applications" || true
+fi
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+    gtk-update-icon-cache -q -t -f "$INSTALL_PREFIX/share/icons/hicolor" || true
+fi
+if command -v gtk4-update-icon-cache >/dev/null 2>&1; then
+    gtk4-update-icon-cache -q -t -f "$INSTALL_PREFIX/share/icons/hicolor" || true
+fi
+if command -v kbuildsycoca6 >/dev/null 2>&1; then
+    kbuildsycoca6 --noincremental 2>/dev/null || true
+elif command -v kbuildsycoca5 >/dev/null 2>&1; then
+    kbuildsycoca5 --noincremental 2>/dev/null || true
 fi
 
 echo "✅ Uwu Log successfully installed to $INSTALL_PREFIX/bin/uwulog!"
@@ -168,7 +207,17 @@ rm -f "$INSTALL_PREFIX/bin/uwu-tui"
 rm -f "$INSTALL_PREFIX/bin/uwu-agent"
 rm -f "$INSTALL_PREFIX/bin/uwulog"
 rm -f "$INSTALL_PREFIX/share/applications/uwulog.desktop"
-rm -f "$INSTALL_PREFIX/share/icons/hicolor/512x512/apps/uwulog.png"
+for size in 16 32 48 64 128 256 512; do
+    rm -f "$INSTALL_PREFIX/share/icons/hicolor/${size}x${size}/apps/uwulog.png"
+done
+rm -f "$INSTALL_PREFIX/share/pixmaps/uwulog.png"
+
+if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database -q "$INSTALL_PREFIX/share/applications" || true
+fi
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+    gtk-update-icon-cache -q -t -f "$INSTALL_PREFIX/share/icons/hicolor" || true
+fi
 
 echo "✅ Uwu Log successfully uninstalled."
 EOF

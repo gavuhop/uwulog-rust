@@ -30,6 +30,7 @@ fn main() -> eframe::Result<()> {
 
     let native_options = NativeOptions {
         viewport: egui::ViewportBuilder::default()
+            .with_app_id("uwulog")
             .with_inner_size([1280.0, 800.0])
             .with_min_inner_size([800.0, 500.0])
             .with_title("Uwu Log")
@@ -40,7 +41,7 @@ fn main() -> eframe::Result<()> {
     };
 
     let _res = eframe::run_native(
-        "Uwu Log Viewer",
+        "uwulog",
         native_options,
         Box::new(move |cc| Ok(Box::new(UwuGuiApp::new(cc, handle)))),
     );
