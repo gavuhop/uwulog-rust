@@ -7,6 +7,6 @@ Terminal=false
 Type=Application
 Categories=Development;System;Utility;
 Keywords=log;viewer;monitor;wsl;tui;gui;
-StartupWMClass=uwu-gui
+StartupWMClass=uwulog
 StartupNotify=true
 MimeType=text/plain;application/json;

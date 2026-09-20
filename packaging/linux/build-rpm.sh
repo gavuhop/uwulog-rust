@@ -172,6 +172,11 @@ fi
 if command -v gtk4-update-icon-cache >/dev/null 2>&1; then
     gtk4-update-icon-cache -q -t -f %{_datadir}/icons/hicolor || true
 fi
+if command -v kbuildsycoca6 >/dev/null 2>&1; then
+    kbuildsycoca6 --noincremental 2>/dev/null || true
+elif command -v kbuildsycoca5 >/dev/null 2>&1; then
+    kbuildsycoca5 --noincremental 2>/dev/null || true
+fi
 
 %postun
 if command -v update-desktop-database >/dev/null 2>&1; then
@@ -182,6 +187,11 @@ if command -v gtk-update-icon-cache >/dev/null 2>&1; then
 fi
 if command -v gtk4-update-icon-cache >/dev/null 2>&1; then
     gtk4-update-icon-cache -q -t -f %{_datadir}/icons/hicolor || true
+fi
+if command -v kbuildsycoca6 >/dev/null 2>&1; then
+    kbuildsycoca6 --noincremental 2>/dev/null || true
+elif command -v kbuildsycoca5 >/dev/null 2>&1; then
+    kbuildsycoca5 --noincremental 2>/dev/null || true
 fi
 
 %files
