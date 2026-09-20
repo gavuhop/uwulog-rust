@@ -23,6 +23,7 @@ pub struct SshTransport {
     working_dir: Option<String>,
     agent_cmd: Option<String>,
     name: String,
+    #[allow(dead_code)]
     control_socket: Option<PathBuf>,
 }
 
@@ -977,6 +978,7 @@ impl RemoteTransport for SshTransport {
             Self::ensure_master_connection(&self.host, self.user.as_deref(), self.port, &self.args)
                 .await?;
 
+        #[allow(unused_mut)]
         let mut transport = self.clone();
         #[cfg(not(target_os = "windows"))]
         {

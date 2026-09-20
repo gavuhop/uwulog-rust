@@ -1,5 +1,5 @@
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 const FILTERED_GIT_PROVIDER_HOSTNAMES: &[&str] = &[
     "dev.azure.com",
@@ -135,9 +135,9 @@ pub fn user_ssh_config_path() -> Option<PathBuf> {
 pub fn system_ssh_config_path() -> Option<PathBuf> {
     #[cfg(not(target_os = "windows"))]
     {
-        let p = Path::new("/etc/ssh/ssh_config");
+        let p = PathBuf::from("/etc/ssh/ssh_config");
         if p.exists() {
-            return Some(p.to_path_buf());
+            return Some(p);
         }
     }
     None
