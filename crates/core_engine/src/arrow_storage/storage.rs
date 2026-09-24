@@ -53,7 +53,7 @@ impl ArrowStorage {
 
     pub fn flush(&self) {
         let mut builder = self.active_builder.lock();
-        if builder.len() > 0 {
+        if !builder.is_empty() {
             if let Some(batch) = builder.seal() {
                 self.append_sealed_batch(batch);
             }
@@ -173,7 +173,7 @@ impl ArrowStorage {
                 }
             }
 
-            if builder.len() > 0 {
+            if !builder.is_empty() {
                 if let Some(batch) = builder.seal() {
                     drop(builder);
                     self.append_sealed_batch(batch);

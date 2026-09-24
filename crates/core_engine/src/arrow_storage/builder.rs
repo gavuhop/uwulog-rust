@@ -116,6 +116,10 @@ impl DynamicColumnBuilder {
         }
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn finish(self) -> (DataType, ArrayRef) {
         match self {
             DynamicColumnBuilder::Int64(mut b) => {
