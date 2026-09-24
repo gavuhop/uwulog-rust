@@ -1,34 +1,30 @@
 use anyhow::Result;
-use rayon::prelude::*;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use tokio::sync::mpsc;
-use uwu_core_filter::evaluator::eval_event;
 use uwu_core_filter::parser::{tokenize, Parser};
 use uwu_core_schema::{FieldType, LogEvent, RawLogEntry, StandardField};
 use uwu_core_util::{detect_timestamp_format, now_secs, parse_with_format, TimestampFormat};
 use uwu_driver_sources::{LogNormalizer, LogSource};
 
+pub mod arrow_storage;
+use arrow_storage::ArrowStorage;
+
 pub struct SystemEngine {
     raw_tx: mpsc::Sender<RawLogEntry>,
-    events: Arc<RwLock<VecDeque<LogEvent>>>,
+    storage: Arc<ArrowStorage>,
     schema: Arc<RwLock<HashMap<String, FieldType>>>,
     known_keys: Arc<RwLock<HashSet<String>>>,
     /// Trạng thái nhận diện timestamp: (key_name, format) — gộp 1 RwLock để tránh inconsistent state
     active_timestamp_info: Arc<RwLock<Option<(String, TimestampFormat)>>>,
     schema_version: Arc<AtomicU64>,
-    total_processed: Arc<AtomicU64>,
-    max_timestamp: Arc<RwLock<f64>>,
-    max_capacity: usize,
 }
 
 impl SystemEngine {
     pub fn new(max_capacity: usize) -> Self {
         let (raw_tx, mut raw_rx) = mpsc::channel::<RawLogEntry>(10_000);
-        let events = Arc::new(RwLock::new(VecDeque::with_capacity(max_capacity)));
-        let total_processed = Arc::new(AtomicU64::new(0));
-        let max_timestamp = Arc::new(RwLock::new(0.0));
+        let storage = Arc::new(ArrowStorage::new(max_capacity));
 
         let default_schema = {
             let mut map = HashMap::new();
@@ -51,9 +47,7 @@ impl SystemEngine {
             Arc::new(RwLock::new(None));
         let schema_version = Arc::new(AtomicU64::new(1));
 
-        let events_clone = Arc::clone(&events);
-        let processed_clone = Arc::clone(&total_processed);
-        let max_ts_clone = Arc::clone(&max_timestamp);
+        let storage_clone = Arc::clone(&storage);
         let schema_clone = Arc::clone(&schema);
         let known_keys_clone = Arc::clone(&known_keys);
         let ts_info_clone = Arc::clone(&active_timestamp_info);
@@ -130,9 +124,9 @@ impl SystemEngine {
                                     {
                                         cached_ts_info = Some((
                                             k.clone(),
-                                            cached_ts_info.map(|(_, f)| f).unwrap_or(
-                                                TimestampFormat::Rfc3339, // placeholder, sẽ bị ghi đè bởi detect
-                                            ),
+                                            cached_ts_info
+                                                .map(|(_, f)| f)
+                                                .unwrap_or(TimestampFormat::Rfc3339),
                                         ));
                                         ts_info_dirty = true;
                                     }
@@ -169,25 +163,14 @@ impl SystemEngine {
                 drop(current_schema);
                 drop(current_known_keys);
 
-                // Cập nhật timestamp info nếu có thay đổi / redetect (1 write lock duy nhất)
+                // Cập nhật timestamp info nếu có thay đổi / redetect
                 if ts_info_dirty {
                     if let Ok(mut lock) = ts_info_clone.write() {
                         *lock = cached_ts_info;
                     }
                 }
 
-                let batch_len = event_batch.len();
-
-                // 2. Cập nhật max_timestamp nếu có timestamp lớn hơn
-                if batch_max_ts > 0.0 {
-                    if let Ok(mut max_ts) = max_ts_clone.write() {
-                        if batch_max_ts > *max_ts {
-                            *max_ts = batch_max_ts;
-                        }
-                    }
-                }
-
-                // 3. Cập nhật Schema Registry và known_keys nếu có trường mới
+                // Cập nhật Schema Registry và known_keys nếu có trường mới
                 if !schema_updates.is_empty() {
                     if let Ok(mut schema_write) = schema_clone.write() {
                         for (k, ft) in &schema_updates {
@@ -210,42 +193,18 @@ impl SystemEngine {
                     schema_version_clone.fetch_add(1, Ordering::Release);
                 }
 
-                // 4. Acquire write lock 1 lần duy nhất cho toàn bộ batch
-                if let Ok(mut evts) = events_clone.write() {
-                    let current_len = evts.len();
-                    let new_total = current_len + batch_len;
-                    if new_total > max_capacity {
-                        let overflow = new_total - max_capacity;
-                        if overflow >= current_len {
-                            evts.clear();
-                            let skip_in_batch = overflow - current_len;
-                            evts.extend(event_batch.into_iter().skip(skip_in_batch));
-                        } else {
-                            evts.drain(0..overflow);
-                            evts.extend(event_batch);
-                        }
-                    } else {
-                        evts.extend(event_batch);
-                    }
-
-                    // Cập nhật atomic counter bên trong write lock để reader holding read lock luôn thấy trạng thái nhất quán
-                    processed_clone.fetch_add(batch_len as u64, Ordering::Release);
-                } else {
-                    processed_clone.fetch_add(batch_len as u64, Ordering::Relaxed);
-                }
+                // Push vào Arrow Storage
+                storage_clone.push_events(event_batch);
             }
         });
 
         Self {
             raw_tx,
-            events,
+            storage,
             schema,
             known_keys,
             active_timestamp_info,
             schema_version,
-            total_processed,
-            max_timestamp,
-            max_capacity,
         }
     }
 
@@ -260,10 +219,9 @@ impl SystemEngine {
 
     #[inline]
     fn current_data_now(&self) -> f64 {
-        if let Ok(max_ts) = self.max_timestamp.read() {
-            if *max_ts > 0.0 {
-                return *max_ts;
-            }
+        let max_ts = self.storage.get_max_timestamp();
+        if max_ts > 0.0 {
+            return max_ts;
         }
         now_secs()
     }
@@ -278,115 +236,57 @@ impl SystemEngine {
 
     pub fn search_with_count(&self, query: &str, limit: usize) -> (usize, Vec<LogEvent>) {
         let trimmed = query.trim();
-
-        if let Ok(evts) = self.events.read() {
-            let total_logs = evts.len();
-            if total_logs == 0 {
-                return (0, Vec::new());
-            }
-
-            // Fast path: Khi từ khóa rỗng, lấy trực tiếp từ In-memory RingBuffer mà không tốn CPU lọc biểu thức
-            if trimmed.is_empty() {
-                let skip_count = total_logs.saturating_sub(limit);
-                let events = evts.iter().skip(skip_count).cloned().collect();
-                return (total_logs, events);
-            }
-
-            let data_now = self.current_data_now();
-
-            let tokens = tokenize(trimmed);
-            let mut parser = Parser::new(tokens, data_now);
-            let ast = match parser.parse() {
-                Some(e) => e,
-                None => {
-                    let skip_count = total_logs.saturating_sub(limit);
-                    let events = evts.iter().skip(skip_count).cloned().collect();
-                    return (total_logs, events);
-                }
-            };
-
-            // Index-only collect: Rayon chỉ thu thập index usize, tránh clone hàng trăm nghìn LogEvent
-            let matching_indices: Vec<usize> = evts
-                .par_iter()
-                .enumerate()
-                .filter_map(|(idx, e)| {
-                    if eval_event(&ast, e, data_now) {
-                        Some(idx)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            let matched_len = matching_indices.len();
-            let skip_count = matched_len.saturating_sub(limit);
-            let events = matching_indices[skip_count..]
-                .iter()
-                .filter_map(|&idx| evts.get(idx).cloned())
-                .collect();
-
-            (matched_len, events)
-        } else {
-            (0, Vec::new())
+        let data_now = self.current_data_now();
+        if trimmed.is_empty() {
+            return self.storage.search_with_count(None, limit, data_now);
         }
+
+        let tokens = tokenize(trimmed);
+        let mut parser = Parser::new(tokens, data_now);
+        let ast = match parser.parse() {
+            Some(e) => e,
+            None => {
+                return self.storage.search_with_count(None, limit, data_now);
+            }
+        };
+
+        self.storage.search_with_count(Some(&ast), limit, data_now)
     }
 
     pub fn filter_incremental(&self, query: &str, last_processed: u64) -> (usize, Vec<LogEvent>) {
         let trimmed = query.trim();
-
-        if let Ok(evts) = self.events.read() {
-            let current_total = self.total_processed.load(Ordering::Acquire);
-            if current_total <= last_processed {
-                return (0, Vec::new());
-            }
-
-            let new_count = (current_total - last_processed) as usize;
-            let total_in_buffer = evts.len();
-            let take_count = new_count.min(total_in_buffer);
-            let start_idx = total_in_buffer.saturating_sub(take_count);
-
-            if trimmed.is_empty() {
-                let events: Vec<LogEvent> = evts.iter().skip(start_idx).cloned().collect();
-                let matched_len = events.len();
-                return (matched_len, events);
-            }
-
-            let data_now = self.current_data_now();
-
-            let tokens = tokenize(trimmed);
-            let mut parser = Parser::new(tokens, data_now);
-            let ast = match parser.parse() {
-                Some(e) => e,
-                None => {
-                    let events: Vec<LogEvent> = evts.iter().skip(start_idx).cloned().collect();
-                    let matched_len = events.len();
-                    return (matched_len, events);
-                }
-            };
-
-            let matched_events: Vec<LogEvent> = evts
-                .iter()
-                .skip(start_idx)
-                .filter(|e| eval_event(&ast, e, data_now))
-                .cloned()
-                .collect();
-            let matched_len = matched_events.len();
-            return (matched_len, matched_events);
+        let data_now = self.current_data_now();
+        if trimmed.is_empty() {
+            return self
+                .storage
+                .filter_incremental(None, last_processed, data_now);
         }
 
-        (0, Vec::new())
+        let tokens = tokenize(trimmed);
+        let mut parser = Parser::new(tokens, data_now);
+        let ast = match parser.parse() {
+            Some(e) => e,
+            None => {
+                return self
+                    .storage
+                    .filter_incremental(None, last_processed, data_now);
+            }
+        };
+
+        self.storage
+            .filter_incremental(Some(&ast), last_processed, data_now)
     }
 
     pub fn total_logs(&self) -> usize {
-        self.events.read().map(|e| e.len()).unwrap_or(0)
+        self.storage.total_logs()
     }
 
     pub fn total_processed(&self) -> u64 {
-        self.total_processed.load(Ordering::Relaxed)
+        self.storage.total_processed()
     }
 
     pub fn max_capacity(&self) -> usize {
-        self.max_capacity
+        self.storage.max_capacity()
     }
 
     /// Trả về toàn bộ log chưa lọc trong RingBuffer (có giới hạn limit) và index của target_id nếu có.
@@ -396,37 +296,7 @@ impl SystemEngine {
         target_id: Option<u64>,
         limit: usize,
     ) -> (Option<usize>, Vec<LogEvent>) {
-        if let Ok(evts) = self.events.read() {
-            let total = evts.len();
-            if total == 0 {
-                return (None, Vec::new());
-            }
-
-            if let Some(target_log_id) = target_id {
-                if let Some(pos) = evts.iter().position(|e| e.id == target_log_id) {
-                    let half = limit / 2;
-                    let start_idx = pos.saturating_sub(half);
-                    let end_idx = (start_idx + limit).min(total);
-                    let actual_start = end_idx.saturating_sub(limit);
-
-                    let events: Vec<LogEvent> = evts
-                        .iter()
-                        .skip(actual_start)
-                        .take(end_idx - actual_start)
-                        .cloned()
-                        .collect();
-                    let target_idx = events.iter().position(|e| e.id == target_log_id);
-                    return (target_idx, events);
-                }
-            }
-
-            let skip_count = total.saturating_sub(limit);
-            let events: Vec<LogEvent> = evts.iter().skip(skip_count).cloned().collect();
-            let target_idx = target_id.and_then(|id| events.iter().position(|e| e.id == id));
-            (target_idx, events)
-        } else {
-            (None, Vec::new())
-        }
+        self.storage.get_unfiltered_events(target_id, limit)
     }
 
     /// Lấy danh sách toàn bộ các trường đã phát hiện cùng kiểu dữ liệu tương ứng (O(1) read lock)
@@ -492,55 +362,11 @@ impl SystemEngine {
 
     /// (Benchmark) Nạp trực tiếp một tập LogEvent vào SystemEngine (hữu ích cho khởi tạo nhanh & benchmark)
     pub fn push_events(&self, new_events: Vec<LogEvent>) {
-        if new_events.is_empty() {
-            return;
-        }
-        let batch_len = new_events.len();
-        let mut batch_max_ts = 0.0f64;
-        for event in &new_events {
-            if let Some(ts) = event.timestamp_secs {
-                if ts > batch_max_ts {
-                    batch_max_ts = ts;
-                }
-            }
-        }
-        if batch_max_ts > 0.0 {
-            if let Ok(mut max_ts) = self.max_timestamp.write() {
-                if batch_max_ts > *max_ts {
-                    *max_ts = batch_max_ts;
-                }
-            }
-        }
-
-        if let Ok(mut evts) = self.events.write() {
-            let current_len = evts.len();
-            let new_total = current_len + batch_len;
-            if new_total > self.max_capacity {
-                let overflow = new_total - self.max_capacity;
-                if overflow >= current_len {
-                    evts.clear();
-                    let skip_in_batch = overflow - current_len;
-                    evts.extend(new_events.into_iter().skip(skip_in_batch));
-                } else {
-                    evts.drain(0..overflow);
-                    evts.extend(new_events);
-                }
-            } else {
-                evts.extend(new_events);
-            }
-            self.total_processed
-                .fetch_add(batch_len as u64, Ordering::Release);
-        }
+        self.storage.push_events(new_events);
     }
 
     pub fn clear(&self) {
-        if let Ok(mut evts) = self.events.write() {
-            evts.clear();
-        }
-        if let Ok(mut max_ts) = self.max_timestamp.write() {
-            *max_ts = 0.0;
-        }
-        self.total_processed.store(0, Ordering::Relaxed);
+        self.storage.clear();
         self.reset_runtime_detection();
     }
 }
