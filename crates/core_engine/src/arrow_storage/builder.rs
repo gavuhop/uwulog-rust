@@ -1,9 +1,9 @@
+use ahash::AHashMap;
 use arrow::array::{
     Array, ArrayBuilder, ArrayRef, Float64Builder, Int64Builder, RecordBatch, StringBuilder,
     UInt64Builder, UInt8Builder,
 };
 use arrow::datatypes::{DataType, Field, Schema};
-use std::collections::HashMap;
 use std::sync::Arc;
 use uwu_core_schema::{value_to_cow, LogEvent};
 
@@ -139,7 +139,7 @@ pub struct ActiveRecordBatchBuilder {
     timestamp_builder: StringBuilder,
     timestamp_secs_builder: Float64Builder,
     message_builder: StringBuilder,
-    dynamic_builders: HashMap<String, DynamicColumnBuilder>,
+    dynamic_builders: AHashMap<String, DynamicColumnBuilder>,
 }
 
 impl ActiveRecordBatchBuilder {
@@ -152,7 +152,7 @@ impl ActiveRecordBatchBuilder {
             timestamp_builder: StringBuilder::with_capacity(capacity, capacity * 24),
             timestamp_secs_builder: Float64Builder::with_capacity(capacity),
             message_builder: StringBuilder::with_capacity(capacity, capacity * 64),
-            dynamic_builders: HashMap::new(),
+            dynamic_builders: AHashMap::new(),
         }
     }
 
