@@ -11,6 +11,84 @@ use uwu_core_schema::StandardField;
 use uwu_core_util::{contains_ignore_case, contains_ignore_case_ascii_bytes, parse_numeric_value};
 
 // ============================================================================
+// ColumnView: Typed Column Dispatcher (Zero-Cost Enum Wrapper)
+// ============================================================================
+
+pub enum ColumnView<'a> {
+    Utf8(&'a StringArray),
+    Int64(&'a Int64Array),
+    UInt64(&'a UInt64Array),
+    Float64(&'a Float64Array),
+    Boolean(&'a BooleanArray),
+    Unsupported,
+}
+
+impl<'a> ColumnView<'a> {
+    #[inline]
+    pub fn from_array(col: &'a (dyn Array + 'static)) -> Self {
+        match col.data_type() {
+            DataType::Utf8 => {
+                if let Some(a) = col.as_any().downcast_ref::<StringArray>() {
+                    Self::Utf8(a)
+                } else {
+                    Self::Unsupported
+                }
+            }
+            DataType::Int64 => {
+                if let Some(a) = col.as_any().downcast_ref::<Int64Array>() {
+                    Self::Int64(a)
+                } else {
+                    Self::Unsupported
+                }
+            }
+            DataType::UInt64 => {
+                if let Some(a) = col.as_any().downcast_ref::<UInt64Array>() {
+                    Self::UInt64(a)
+                } else {
+                    Self::Unsupported
+                }
+            }
+            DataType::Float64 => {
+                if let Some(a) = col.as_any().downcast_ref::<Float64Array>() {
+                    Self::Float64(a)
+                } else {
+                    Self::Unsupported
+                }
+            }
+            DataType::Boolean => {
+                if let Some(a) = col.as_any().downcast_ref::<BooleanArray>() {
+                    Self::Boolean(a)
+                } else {
+                    Self::Unsupported
+                }
+            }
+            _ => Self::Unsupported,
+        }
+    }
+}
+
+// ============================================================================
+// Masked Evaluation Template (Higher-Order Function Pattern)
+// ============================================================================
+
+#[inline(always)]
+fn eval_masked(
+    num_rows: usize,
+    mask: Option<&BooleanBuffer>,
+    mut predicate: impl FnMut(usize) -> bool,
+) -> BooleanArray {
+    let buf = BooleanBuffer::collect_bool(num_rows, |i| {
+        if let Some(m) = mask {
+            if !m.value(i) {
+                return false;
+            }
+        }
+        predicate(i)
+    });
+    BooleanArray::new(buf, None)
+}
+
+// ============================================================================
 // Zero-Allocation Fast Stack Formatters & Op Helpers
 // ============================================================================
 
@@ -148,6 +226,32 @@ impl QueryCompiler {
         None
     }
 
+    #[inline]
+    pub fn resolve_column_view<'a>(
+        batch: &'a RecordBatch,
+        field_name: &str,
+    ) -> Option<ColumnView<'a>> {
+        Self::resolve_column(batch, field_name).map(|col| ColumnView::from_array(col.as_ref()))
+    }
+
+    #[inline]
+    pub fn resolve_numeric_column<'a>(
+        batch: &'a RecordBatch,
+        field_name: &str,
+    ) -> Option<ColumnView<'a>> {
+        if StandardField::from_alias(field_name) == Some(StandardField::Timestamp) {
+            return batch
+                .column_by_name("__timestamp_secs")
+                .map(|c| ColumnView::from_array(c.as_ref()));
+        }
+        if StandardField::from_alias(field_name) == Some(StandardField::Id) {
+            return batch
+                .column_by_name("__id")
+                .map(|c| ColumnView::from_array(c.as_ref()));
+        }
+        Self::resolve_column_view(batch, field_name)
+    }
+
     // ------------------------------------------------------------------------
     // Main Evaluation Entry Points
     // ------------------------------------------------------------------------
@@ -269,118 +373,42 @@ impl QueryCompiler {
         mask: Option<&BooleanBuffer>,
     ) -> BooleanArray {
         let num_rows = batch.num_rows();
-
-        // 1. Direct standard field shortcuts
-        if StandardField::from_alias(field) == Some(StandardField::Timestamp) {
-            if let Some(col) = batch.column_by_name("__timestamp_secs") {
-                if let Some(float_col) = col.as_any().downcast_ref::<Float64Array>() {
-                    let vals = float_col.values();
-                    let buf = BooleanBuffer::collect_bool(num_rows, |i| {
-                        if let Some(m) = mask {
-                            if !m.value(i) {
-                                return false;
-                            }
-                        }
-                        float_col.is_valid(i) && eval_cmp_op(vals[i], value, op)
-                    });
-                    return BooleanArray::new(buf, None);
-                }
-            }
-            return Self::all_false(num_rows);
-        }
-
-        if StandardField::from_alias(field) == Some(StandardField::Id) {
-            if let Some(col) = batch.column_by_name("__id") {
-                if let Some(u_col) = col.as_any().downcast_ref::<UInt64Array>() {
-                    let vals = u_col.values();
-                    let target = value as u64;
-                    let buf = BooleanBuffer::collect_bool(num_rows, |i| {
-                        if let Some(m) = mask {
-                            if !m.value(i) {
-                                return false;
-                            }
-                        }
-                        u_col.is_valid(i) && eval_cmp_op(vals[i], target, op)
-                    });
-                    return BooleanArray::new(buf, None);
-                }
-            }
-            return Self::all_false(num_rows);
-        }
-
-        // 2. Generic resolved dynamic column
-        let col = match Self::resolve_column(batch, field) {
-            Some(c) => c,
+        let view = match Self::resolve_numeric_column(batch, field) {
+            Some(v) => v,
             None => return Self::all_false(num_rows),
         };
 
-        match col.data_type() {
-            DataType::Float64 => {
-                if let Some(float_col) = col.as_any().downcast_ref::<Float64Array>() {
-                    let vals = float_col.values();
-                    let buf = BooleanBuffer::collect_bool(num_rows, |i| {
-                        if let Some(m) = mask {
-                            if !m.value(i) {
-                                return false;
-                            }
-                        }
-                        float_col.is_valid(i) && eval_cmp_op(vals[i], value, op)
-                    });
-                    return BooleanArray::new(buf, None);
-                }
+        match view {
+            ColumnView::Float64(float_col) => {
+                let vals = float_col.values();
+                eval_masked(num_rows, mask, |i| {
+                    float_col.is_valid(i) && eval_cmp_op(vals[i], value, op)
+                })
             }
-            DataType::Int64 => {
-                if let Some(int_col) = col.as_any().downcast_ref::<Int64Array>() {
-                    let vals = int_col.values();
-                    let target = value as i64;
-                    let buf = BooleanBuffer::collect_bool(num_rows, |i| {
-                        if let Some(m) = mask {
-                            if !m.value(i) {
-                                return false;
-                            }
-                        }
-                        int_col.is_valid(i) && eval_cmp_op(vals[i], target, op)
-                    });
-                    return BooleanArray::new(buf, None);
-                }
+            ColumnView::Int64(int_col) => {
+                let vals = int_col.values();
+                let target = value as i64;
+                eval_masked(num_rows, mask, |i| {
+                    int_col.is_valid(i) && eval_cmp_op(vals[i], target, op)
+                })
             }
-            DataType::UInt64 => {
-                if let Some(u_col) = col.as_any().downcast_ref::<UInt64Array>() {
-                    let vals = u_col.values();
-                    let target = value as u64;
-                    let buf = BooleanBuffer::collect_bool(num_rows, |i| {
-                        if let Some(m) = mask {
-                            if !m.value(i) {
-                                return false;
-                            }
-                        }
-                        u_col.is_valid(i) && eval_cmp_op(vals[i], target, op)
-                    });
-                    return BooleanArray::new(buf, None);
-                }
+            ColumnView::UInt64(u_col) => {
+                let vals = u_col.values();
+                let target = value as u64;
+                eval_masked(num_rows, mask, |i| {
+                    u_col.is_valid(i) && eval_cmp_op(vals[i], target, op)
+                })
             }
-            DataType::Utf8 => {
-                if let Some(str_col) = col.as_any().downcast_ref::<StringArray>() {
-                    let buf = BooleanBuffer::collect_bool(num_rows, |i| {
-                        if let Some(m) = mask {
-                            if !m.value(i) {
-                                return false;
-                            }
-                        }
-                        if str_col.is_valid(i) {
-                            if let Some(v) = parse_numeric_value(str_col.value(i), now) {
-                                return eval_cmp_op(v, value, op);
-                            }
-                        }
-                        false
-                    });
-                    return BooleanArray::new(buf, None);
+            ColumnView::Utf8(str_col) => eval_masked(num_rows, mask, |i| {
+                if str_col.is_valid(i) {
+                    if let Some(v) = parse_numeric_value(str_col.value(i), now) {
+                        return eval_cmp_op(v, value, op);
+                    }
                 }
-            }
-            _ => {}
+                false
+            }),
+            _ => Self::all_false(num_rows),
         }
-
-        Self::all_false(num_rows)
     }
 
     fn eval_field_range(
@@ -395,145 +423,44 @@ impl QueryCompiler {
         let min = lo.min(hi);
         let max = lo.max(hi);
 
-        // 1. Direct standard field shortcuts
-        if StandardField::from_alias(field) == Some(StandardField::Timestamp) {
-            if let Some(col) = batch.column_by_name("__timestamp_secs") {
-                if let Some(float_col) = col.as_any().downcast_ref::<Float64Array>() {
-                    let vals = float_col.values();
-                    let buf = BooleanBuffer::collect_bool(num_rows, |i| {
-                        if let Some(m) = mask {
-                            if !m.value(i) {
-                                return false;
-                            }
-                        }
-                        if float_col.is_valid(i) {
-                            let v = vals[i];
-                            v >= min && v <= max
-                        } else {
-                            false
-                        }
-                    });
-                    return BooleanArray::new(buf, None);
-                }
-            }
-            return Self::all_false(num_rows);
-        }
-
-        if StandardField::from_alias(field) == Some(StandardField::Id) {
-            if let Some(col) = batch.column_by_name("__id") {
-                if let Some(u_col) = col.as_any().downcast_ref::<UInt64Array>() {
-                    let vals = u_col.values();
-                    let min_u = min as u64;
-                    let max_u = max as u64;
-                    let buf = BooleanBuffer::collect_bool(num_rows, |i| {
-                        if let Some(m) = mask {
-                            if !m.value(i) {
-                                return false;
-                            }
-                        }
-                        if u_col.is_valid(i) {
-                            let v = vals[i];
-                            v >= min_u && v <= max_u
-                        } else {
-                            false
-                        }
-                    });
-                    return BooleanArray::new(buf, None);
-                }
-            }
-            return Self::all_false(num_rows);
-        }
-
-        // 2. Generic resolved dynamic column
-        let col = match Self::resolve_column(batch, field) {
-            Some(c) => c,
+        let view = match Self::resolve_numeric_column(batch, field) {
+            Some(v) => v,
             None => return Self::all_false(num_rows),
         };
 
-        match col.data_type() {
-            DataType::Float64 => {
-                if let Some(float_col) = col.as_any().downcast_ref::<Float64Array>() {
-                    let vals = float_col.values();
-                    let buf = BooleanBuffer::collect_bool(num_rows, |i| {
-                        if let Some(m) = mask {
-                            if !m.value(i) {
-                                return false;
-                            }
-                        }
-                        if float_col.is_valid(i) {
-                            let v = vals[i];
-                            v >= min && v <= max
-                        } else {
-                            false
-                        }
-                    });
-                    return BooleanArray::new(buf, None);
-                }
+        match view {
+            ColumnView::Float64(float_col) => {
+                let vals = float_col.values();
+                eval_masked(num_rows, mask, |i| {
+                    float_col.is_valid(i) && vals[i] >= min && vals[i] <= max
+                })
             }
-            DataType::Int64 => {
-                if let Some(int_col) = col.as_any().downcast_ref::<Int64Array>() {
-                    let vals = int_col.values();
-                    let min_i = min as i64;
-                    let max_i = max as i64;
-                    let buf = BooleanBuffer::collect_bool(num_rows, |i| {
-                        if let Some(m) = mask {
-                            if !m.value(i) {
-                                return false;
-                            }
-                        }
-                        if int_col.is_valid(i) {
-                            let v = vals[i];
-                            v >= min_i && v <= max_i
-                        } else {
-                            false
-                        }
-                    });
-                    return BooleanArray::new(buf, None);
-                }
+            ColumnView::Int64(int_col) => {
+                let vals = int_col.values();
+                let min_i = min as i64;
+                let max_i = max as i64;
+                eval_masked(num_rows, mask, |i| {
+                    int_col.is_valid(i) && vals[i] >= min_i && vals[i] <= max_i
+                })
             }
-            DataType::UInt64 => {
-                if let Some(u_col) = col.as_any().downcast_ref::<UInt64Array>() {
-                    let vals = u_col.values();
-                    let min_u = min as u64;
-                    let max_u = max as u64;
-                    let buf = BooleanBuffer::collect_bool(num_rows, |i| {
-                        if let Some(m) = mask {
-                            if !m.value(i) {
-                                return false;
-                            }
-                        }
-                        if u_col.is_valid(i) {
-                            let v = vals[i];
-                            v >= min_u && v <= max_u
-                        } else {
-                            false
-                        }
-                    });
-                    return BooleanArray::new(buf, None);
-                }
+            ColumnView::UInt64(u_col) => {
+                let vals = u_col.values();
+                let min_u = min as u64;
+                let max_u = max as u64;
+                eval_masked(num_rows, mask, |i| {
+                    u_col.is_valid(i) && vals[i] >= min_u && vals[i] <= max_u
+                })
             }
-            DataType::Utf8 => {
-                if let Some(str_col) = col.as_any().downcast_ref::<StringArray>() {
-                    let buf = BooleanBuffer::collect_bool(num_rows, |i| {
-                        if let Some(m) = mask {
-                            if !m.value(i) {
-                                return false;
-                            }
-                        }
-                        if str_col.is_valid(i) {
-                            if let Some(v) = parse_numeric_value(str_col.value(i), now) {
-                                return v >= min && v <= max;
-                            }
-                        }
-                        false
-                    });
-                    return BooleanArray::new(buf, None);
+            ColumnView::Utf8(str_col) => eval_masked(num_rows, mask, |i| {
+                if str_col.is_valid(i) {
+                    if let Some(v) = parse_numeric_value(str_col.value(i), now) {
+                        return v >= min && v <= max;
+                    }
                 }
-            }
-            _ => {}
+                false
+            }),
+            _ => Self::all_false(num_rows),
         }
-
-        Self::all_false(num_rows)
     }
 
     // ------------------------------------------------------------------------
@@ -547,144 +474,96 @@ impl QueryCompiler {
         mask: Option<&BooleanBuffer>,
     ) -> BooleanArray {
         let num_rows = batch.num_rows();
-        let col = match Self::resolve_column(batch, field) {
-            Some(c) => c,
+        let view = match Self::resolve_column_view(batch, field) {
+            Some(v) => v,
             None => return Self::all_false(num_rows),
         };
 
-        match col.data_type() {
-            DataType::Utf8 => {
-                if let Some(str_col) = col.as_any().downcast_ref::<StringArray>() {
-                    let data = str_col.value_data();
-                    if data.is_empty() {
-                        return Self::all_false(num_rows);
-                    }
-                    // Chunk pruning on raw contiguous buffer
-                    let can_match = if value.is_ascii() {
-                        contains_ignore_case_ascii_bytes(data, value.as_bytes())
-                    } else {
-                        contains_ignore_case(std::str::from_utf8(data).unwrap_or(""), value)
-                    };
-                    if !can_match {
-                        return Self::all_false(num_rows);
-                    }
+        match view {
+            ColumnView::Utf8(str_col) => {
+                let data = str_col.value_data();
+                if data.is_empty() {
+                    return Self::all_false(num_rows);
+                }
+                // Chunk pruning on raw contiguous buffer
+                let can_match = if value.is_ascii() {
+                    contains_ignore_case_ascii_bytes(data, value.as_bytes())
+                } else {
+                    contains_ignore_case(std::str::from_utf8(data).unwrap_or(""), value)
+                };
+                if !can_match {
+                    return Self::all_false(num_rows);
+                }
 
-                    let offsets = str_col.value_offsets();
-                    let val_len = value.len();
-                    let val_bytes = value.as_bytes();
-                    let is_ascii = value.is_ascii();
+                let offsets = str_col.value_offsets();
+                let val_len = value.len();
+                let val_bytes = value.as_bytes();
+                let is_ascii = value.is_ascii();
 
-                    let buf = BooleanBuffer::collect_bool(num_rows, |i| {
-                        if let Some(m) = mask {
-                            if !m.value(i) {
-                                return false;
-                            }
-                        }
-                        if str_col.is_valid(i) {
-                            let start = offsets[i] as usize;
-                            let end = offsets[i + 1] as usize;
-                            if end - start == val_len {
-                                let slice = &data[start..end];
-                                if is_ascii {
-                                    slice.eq_ignore_ascii_case(val_bytes)
-                                } else {
-                                    std::str::from_utf8(slice)
-                                        .map(|s| s.eq_ignore_ascii_case(value))
-                                        .unwrap_or(false)
-                                }
+                eval_masked(num_rows, mask, |i| {
+                    if str_col.is_valid(i) {
+                        let start = offsets[i] as usize;
+                        let end = offsets[i + 1] as usize;
+                        if end - start == val_len {
+                            let slice = &data[start..end];
+                            if is_ascii {
+                                slice.eq_ignore_ascii_case(val_bytes)
                             } else {
-                                false
+                                std::str::from_utf8(slice)
+                                    .map(|s| s.eq_ignore_ascii_case(value))
+                                    .unwrap_or(false)
                             }
                         } else {
                             false
                         }
-                    });
-                    return BooleanArray::new(buf, None);
-                }
-            }
-            DataType::Int64 => {
-                if let Some(int_col) = col.as_any().downcast_ref::<Int64Array>() {
-                    if let Ok(target) = value.trim().parse::<i64>() {
-                        let vals = int_col.values();
-                        let buf = BooleanBuffer::collect_bool(num_rows, |i| {
-                            if let Some(m) = mask {
-                                if !m.value(i) {
-                                    return false;
-                                }
-                            }
-                            int_col.is_valid(i) && vals[i] == target
-                        });
-                        return BooleanArray::new(buf, None);
+                    } else {
+                        false
                     }
+                })
+            }
+            ColumnView::Int64(int_col) => {
+                if let Ok(target) = value.trim().parse::<i64>() {
+                    let vals = int_col.values();
+                    eval_masked(num_rows, mask, |i| int_col.is_valid(i) && vals[i] == target)
+                } else {
+                    Self::all_false(num_rows)
                 }
             }
-            DataType::UInt64 => {
-                if let Some(u_col) = col.as_any().downcast_ref::<UInt64Array>() {
-                    if let Ok(target) = value.trim().parse::<u64>() {
-                        let vals = u_col.values();
-                        let buf = BooleanBuffer::collect_bool(num_rows, |i| {
-                            if let Some(m) = mask {
-                                if !m.value(i) {
-                                    return false;
-                                }
-                            }
-                            u_col.is_valid(i) && vals[i] == target
-                        });
-                        return BooleanArray::new(buf, None);
-                    }
+            ColumnView::UInt64(u_col) => {
+                if let Ok(target) = value.trim().parse::<u64>() {
+                    let vals = u_col.values();
+                    eval_masked(num_rows, mask, |i| u_col.is_valid(i) && vals[i] == target)
+                } else {
+                    Self::all_false(num_rows)
                 }
             }
-            DataType::Float64 => {
-                if let Some(float_col) = col.as_any().downcast_ref::<Float64Array>() {
-                    if let Ok(target) = value.trim().parse::<f64>() {
-                        let vals = float_col.values();
-                        let buf = BooleanBuffer::collect_bool(num_rows, |i| {
-                            if let Some(m) = mask {
-                                if !m.value(i) {
-                                    return false;
-                                }
-                            }
-                            if float_col.is_valid(i) {
-                                let v = vals[i];
-                                v == target || (v - target).abs() < f64::EPSILON
-                            } else {
-                                false
-                            }
-                        });
-                        return BooleanArray::new(buf, None);
-                    }
+            ColumnView::Float64(float_col) => {
+                if let Ok(target) = value.trim().parse::<f64>() {
+                    let vals = float_col.values();
+                    eval_masked(num_rows, mask, |i| {
+                        if float_col.is_valid(i) {
+                            let v = vals[i];
+                            v == target || (v - target).abs() < f64::EPSILON
+                        } else {
+                            false
+                        }
+                    })
+                } else {
+                    Self::all_false(num_rows)
                 }
             }
-            DataType::Boolean => {
-                if let Some(b_col) = col.as_any().downcast_ref::<BooleanArray>() {
-                    let val_lower = value.trim().to_ascii_lowercase();
-                    if val_lower == "true" {
-                        let buf = BooleanBuffer::collect_bool(num_rows, |i| {
-                            if let Some(m) = mask {
-                                if !m.value(i) {
-                                    return false;
-                                }
-                            }
-                            b_col.is_valid(i) && b_col.value(i)
-                        });
-                        return BooleanArray::new(buf, None);
-                    } else if val_lower == "false" {
-                        let buf = BooleanBuffer::collect_bool(num_rows, |i| {
-                            if let Some(m) = mask {
-                                if !m.value(i) {
-                                    return false;
-                                }
-                            }
-                            b_col.is_valid(i) && !b_col.value(i)
-                        });
-                        return BooleanArray::new(buf, None);
-                    }
+            ColumnView::Boolean(b_col) => {
+                let val_lower = value.trim().to_ascii_lowercase();
+                if val_lower == "true" {
+                    eval_masked(num_rows, mask, |i| b_col.is_valid(i) && b_col.value(i))
+                } else if val_lower == "false" {
+                    eval_masked(num_rows, mask, |i| b_col.is_valid(i) && !b_col.value(i))
+                } else {
+                    Self::all_false(num_rows)
                 }
             }
-            _ => {}
+            _ => Self::all_false(num_rows),
         }
-
-        Self::all_false(num_rows)
     }
 
     fn eval_field_contains_any(
@@ -694,191 +573,146 @@ impl QueryCompiler {
         mask: Option<&BooleanBuffer>,
     ) -> BooleanArray {
         let num_rows = batch.num_rows();
-        let col = match Self::resolve_column(batch, field) {
-            Some(c) => c,
+        let view = match Self::resolve_column_view(batch, field) {
+            Some(v) => v,
             None => return Self::all_false(num_rows),
         };
 
-        match col.data_type() {
-            DataType::Utf8 => {
-                if let Some(str_col) = col.as_any().downcast_ref::<StringArray>() {
-                    let data = str_col.value_data();
-                    if data.is_empty() {
-                        return Self::all_false(num_rows);
+        match view {
+            ColumnView::Utf8(str_col) => {
+                let data = str_col.value_data();
+                if data.is_empty() {
+                    return Self::all_false(num_rows);
+                }
+                // Chunk pruning on string column
+                let can_match = values.iter().any(|v| {
+                    if v.is_ascii() {
+                        contains_ignore_case_ascii_bytes(data, v.as_bytes())
+                    } else {
+                        contains_ignore_case(std::str::from_utf8(data).unwrap_or(""), v)
                     }
-                    // Chunk pruning on string column
-                    let can_match = values.iter().any(|v| {
-                        if v.is_ascii() {
-                            contains_ignore_case_ascii_bytes(data, v.as_bytes())
-                        } else {
-                            contains_ignore_case(std::str::from_utf8(data).unwrap_or(""), v)
-                        }
-                    });
-                    if !can_match {
-                        return Self::all_false(num_rows);
+                });
+                if !can_match {
+                    return Self::all_false(num_rows);
+                }
+
+                let offsets = str_col.value_offsets();
+                eval_masked(num_rows, mask, |i| {
+                    if str_col.is_valid(i) {
+                        let start = offsets[i] as usize;
+                        let end = offsets[i + 1] as usize;
+                        let slice = &data[start..end];
+                        values.iter().any(|v| {
+                            if v.is_ascii() {
+                                contains_ignore_case_ascii_bytes(slice, v.as_bytes())
+                            } else {
+                                contains_ignore_case(std::str::from_utf8(slice).unwrap_or(""), v)
+                            }
+                        })
+                    } else {
+                        false
                     }
-
-                    let offsets = str_col.value_offsets();
-                    let buf = BooleanBuffer::collect_bool(num_rows, |i| {
-                        if let Some(m) = mask {
-                            if !m.value(i) {
-                                return false;
-                            }
-                        }
-                        if str_col.is_valid(i) {
-                            let start = offsets[i] as usize;
-                            let end = offsets[i + 1] as usize;
-                            let slice = &data[start..end];
-                            values.iter().any(|v| {
-                                if v.is_ascii() {
-                                    contains_ignore_case_ascii_bytes(slice, v.as_bytes())
-                                } else {
-                                    contains_ignore_case(
-                                        std::str::from_utf8(slice).unwrap_or(""),
-                                        v,
-                                    )
-                                }
-                            })
-                        } else {
-                            false
-                        }
-                    });
-                    return BooleanArray::new(buf, None);
-                }
+                })
             }
-            DataType::Int64 => {
-                if let Some(int_col) = col.as_any().downcast_ref::<Int64Array>() {
-                    let has_possible_match = values.iter().any(|v| {
-                        let t = v.trim();
-                        !t.is_empty() && t.chars().all(|c| c.is_ascii_digit() || c == '-')
-                    });
-                    if !has_possible_match {
-                        return Self::all_false(num_rows);
+            ColumnView::Int64(int_col) => {
+                let has_possible_match = values.iter().any(|v| {
+                    let t = v.trim();
+                    !t.is_empty() && t.chars().all(|c| c.is_ascii_digit() || c == '-')
+                });
+                if !has_possible_match {
+                    return Self::all_false(num_rows);
+                }
+
+                let parsed_targets: Vec<i64> = values
+                    .iter()
+                    .filter_map(|v| v.trim().parse::<i64>().ok())
+                    .collect();
+
+                let vals = int_col.values();
+                eval_masked(num_rows, mask, |i| {
+                    if !int_col.is_valid(i) {
+                        return false;
                     }
-
-                    let parsed_targets: Vec<i64> = values
-                        .iter()
-                        .filter_map(|v| v.trim().parse::<i64>().ok())
-                        .collect();
-
-                    let vals = int_col.values();
-                    let buf = BooleanBuffer::collect_bool(num_rows, |i| {
-                        if let Some(m) = mask {
-                            if !m.value(i) {
-                                return false;
-                            }
-                        }
-                        if !int_col.is_valid(i) {
-                            return false;
-                        }
-                        let v = vals[i];
-                        if parsed_targets.contains(&v) {
-                            return true;
-                        }
-                        let mut stack_buf = [0u8; 24];
-                        let str_val = format_i64(v, &mut stack_buf);
-                        values.iter().any(|needle| str_val.contains(needle.trim()))
-                    });
-                    return BooleanArray::new(buf, None);
-                }
-            }
-            DataType::UInt64 => {
-                if let Some(u_col) = col.as_any().downcast_ref::<UInt64Array>() {
-                    let has_possible_match = values.iter().any(|v| {
-                        let t = v.trim();
-                        !t.is_empty() && t.chars().all(|c| c.is_ascii_digit())
-                    });
-                    if !has_possible_match {
-                        return Self::all_false(num_rows);
+                    let v = vals[i];
+                    if parsed_targets.contains(&v) {
+                        return true;
                     }
-
-                    let parsed_targets: Vec<u64> = values
-                        .iter()
-                        .filter_map(|v| v.trim().parse::<u64>().ok())
-                        .collect();
-
-                    let vals = u_col.values();
-                    let buf = BooleanBuffer::collect_bool(num_rows, |i| {
-                        if let Some(m) = mask {
-                            if !m.value(i) {
-                                return false;
-                            }
-                        }
-                        if !u_col.is_valid(i) {
-                            return false;
-                        }
-                        let v = vals[i];
-                        if parsed_targets.contains(&v) {
-                            return true;
-                        }
-                        let mut stack_buf = [0u8; 24];
-                        let str_val = format_u64(v, &mut stack_buf);
-                        values.iter().any(|needle| str_val.contains(needle.trim()))
-                    });
-                    return BooleanArray::new(buf, None);
-                }
+                    let mut stack_buf = [0u8; 24];
+                    let str_val = format_i64(v, &mut stack_buf);
+                    values.iter().any(|needle| str_val.contains(needle.trim()))
+                })
             }
-            DataType::Float64 => {
-                if let Some(float_col) = col.as_any().downcast_ref::<Float64Array>() {
-                    let parsed_targets: Vec<f64> = values
-                        .iter()
-                        .filter_map(|v| v.trim().parse::<f64>().ok())
-                        .collect();
+            ColumnView::UInt64(u_col) => {
+                let has_possible_match = values.iter().any(|v| {
+                    let t = v.trim();
+                    !t.is_empty() && t.chars().all(|c| c.is_ascii_digit())
+                });
+                if !has_possible_match {
+                    return Self::all_false(num_rows);
+                }
 
-                    let vals = float_col.values();
-                    let buf = BooleanBuffer::collect_bool(num_rows, |i| {
-                        if let Some(m) = mask {
-                            if !m.value(i) {
-                                return false;
-                            }
-                        }
-                        if !float_col.is_valid(i) {
-                            return false;
-                        }
-                        let v = vals[i];
-                        if parsed_targets
-                            .iter()
-                            .any(|&target| v == target || (v - target).abs() < f64::EPSILON)
-                        {
-                            return true;
-                        }
-                        let mut stack_buf = [0u8; 32];
-                        let str_val = format_f64(v, &mut stack_buf);
-                        values.iter().any(|needle| str_val.contains(needle.trim()))
-                    });
-                    return BooleanArray::new(buf, None);
-                }
+                let parsed_targets: Vec<u64> = values
+                    .iter()
+                    .filter_map(|v| v.trim().parse::<u64>().ok())
+                    .collect();
+
+                let vals = u_col.values();
+                eval_masked(num_rows, mask, |i| {
+                    if !u_col.is_valid(i) {
+                        return false;
+                    }
+                    let v = vals[i];
+                    if parsed_targets.contains(&v) {
+                        return true;
+                    }
+                    let mut stack_buf = [0u8; 24];
+                    let str_val = format_u64(v, &mut stack_buf);
+                    values.iter().any(|needle| str_val.contains(needle.trim()))
+                })
             }
-            DataType::Boolean => {
-                if let Some(b_col) = col.as_any().downcast_ref::<BooleanArray>() {
-                    let match_true = values
+            ColumnView::Float64(float_col) => {
+                let parsed_targets: Vec<f64> = values
+                    .iter()
+                    .filter_map(|v| v.trim().parse::<f64>().ok())
+                    .collect();
+
+                let vals = float_col.values();
+                eval_masked(num_rows, mask, |i| {
+                    if !float_col.is_valid(i) {
+                        return false;
+                    }
+                    let v = vals[i];
+                    if parsed_targets
                         .iter()
-                        .any(|v| "true".contains(&v.trim().to_ascii_lowercase()));
-                    let match_false = values
-                        .iter()
-                        .any(|v| "false".contains(&v.trim().to_ascii_lowercase()));
-                    let buf = BooleanBuffer::collect_bool(num_rows, |i| {
-                        if let Some(m) = mask {
-                            if !m.value(i) {
-                                return false;
-                            }
-                        }
-                        if !b_col.is_valid(i) {
-                            return false;
-                        }
-                        if b_col.value(i) {
-                            match_true
-                        } else {
-                            match_false
-                        }
-                    });
-                    return BooleanArray::new(buf, None);
-                }
+                        .any(|&target| v == target || (v - target).abs() < f64::EPSILON)
+                    {
+                        return true;
+                    }
+                    let mut stack_buf = [0u8; 32];
+                    let str_val = format_f64(v, &mut stack_buf);
+                    values.iter().any(|needle| str_val.contains(needle.trim()))
+                })
             }
-            _ => {}
+            ColumnView::Boolean(b_col) => {
+                let match_true = values
+                    .iter()
+                    .any(|v| "true".contains(&v.trim().to_ascii_lowercase()));
+                let match_false = values
+                    .iter()
+                    .any(|v| "false".contains(&v.trim().to_ascii_lowercase()));
+                eval_masked(num_rows, mask, |i| {
+                    if !b_col.is_valid(i) {
+                        return false;
+                    }
+                    if b_col.value(i) {
+                        match_true
+                    } else {
+                        match_false
+                    }
+                })
+            }
+            _ => Self::all_false(num_rows),
         }
-
-        Self::all_false(num_rows)
     }
 
     fn eval_field_regex(
@@ -888,107 +722,61 @@ impl QueryCompiler {
         mask: Option<&BooleanBuffer>,
     ) -> BooleanArray {
         let num_rows = batch.num_rows();
-        let col = match Self::resolve_column(batch, field) {
-            Some(c) => c,
+        let view = match Self::resolve_column_view(batch, field) {
+            Some(v) => v,
             None => return Self::all_false(num_rows),
         };
 
-        match col.data_type() {
-            DataType::Utf8 => {
-                if let Some(str_col) = col.as_any().downcast_ref::<StringArray>() {
-                    let buf = BooleanBuffer::collect_bool(num_rows, |i| {
-                        if let Some(m) = mask {
-                            if !m.value(i) {
-                                return false;
-                            }
-                        }
-                        str_col.is_valid(i) && re.is_match(str_col.value(i))
-                    });
-                    return BooleanArray::new(buf, None);
-                }
+        match view {
+            ColumnView::Utf8(str_col) => eval_masked(num_rows, mask, |i| {
+                str_col.is_valid(i) && re.is_match(str_col.value(i))
+            }),
+            ColumnView::Int64(int_col) => {
+                let vals = int_col.values();
+                eval_masked(num_rows, mask, |i| {
+                    if int_col.is_valid(i) {
+                        let mut stack_buf = [0u8; 24];
+                        let str_val = format_i64(vals[i], &mut stack_buf);
+                        re.is_match(str_val)
+                    } else {
+                        false
+                    }
+                })
             }
-            DataType::Int64 => {
-                if let Some(int_col) = col.as_any().downcast_ref::<Int64Array>() {
-                    let vals = int_col.values();
-                    let buf = BooleanBuffer::collect_bool(num_rows, |i| {
-                        if let Some(m) = mask {
-                            if !m.value(i) {
-                                return false;
-                            }
-                        }
-                        if int_col.is_valid(i) {
-                            let mut stack_buf = [0u8; 24];
-                            let str_val = format_i64(vals[i], &mut stack_buf);
-                            re.is_match(str_val)
-                        } else {
-                            false
-                        }
-                    });
-                    return BooleanArray::new(buf, None);
-                }
+            ColumnView::UInt64(u_col) => {
+                let vals = u_col.values();
+                eval_masked(num_rows, mask, |i| {
+                    if u_col.is_valid(i) {
+                        let mut stack_buf = [0u8; 24];
+                        let str_val = format_u64(vals[i], &mut stack_buf);
+                        re.is_match(str_val)
+                    } else {
+                        false
+                    }
+                })
             }
-            DataType::UInt64 => {
-                if let Some(u_col) = col.as_any().downcast_ref::<UInt64Array>() {
-                    let vals = u_col.values();
-                    let buf = BooleanBuffer::collect_bool(num_rows, |i| {
-                        if let Some(m) = mask {
-                            if !m.value(i) {
-                                return false;
-                            }
-                        }
-                        if u_col.is_valid(i) {
-                            let mut stack_buf = [0u8; 24];
-                            let str_val = format_u64(vals[i], &mut stack_buf);
-                            re.is_match(str_val)
-                        } else {
-                            false
-                        }
-                    });
-                    return BooleanArray::new(buf, None);
-                }
+            ColumnView::Float64(float_col) => {
+                let vals = float_col.values();
+                eval_masked(num_rows, mask, |i| {
+                    if float_col.is_valid(i) {
+                        let mut stack_buf = [0u8; 32];
+                        let str_val = format_f64(vals[i], &mut stack_buf);
+                        re.is_match(str_val)
+                    } else {
+                        false
+                    }
+                })
             }
-            DataType::Float64 => {
-                if let Some(float_col) = col.as_any().downcast_ref::<Float64Array>() {
-                    let vals = float_col.values();
-                    let buf = BooleanBuffer::collect_bool(num_rows, |i| {
-                        if let Some(m) = mask {
-                            if !m.value(i) {
-                                return false;
-                            }
-                        }
-                        if float_col.is_valid(i) {
-                            let mut stack_buf = [0u8; 32];
-                            let str_val = format_f64(vals[i], &mut stack_buf);
-                            re.is_match(str_val)
-                        } else {
-                            false
-                        }
-                    });
-                    return BooleanArray::new(buf, None);
+            ColumnView::Boolean(b_col) => eval_masked(num_rows, mask, |i| {
+                if b_col.is_valid(i) {
+                    let str_val = if b_col.value(i) { "true" } else { "false" };
+                    re.is_match(str_val)
+                } else {
+                    false
                 }
-            }
-            DataType::Boolean => {
-                if let Some(b_col) = col.as_any().downcast_ref::<BooleanArray>() {
-                    let buf = BooleanBuffer::collect_bool(num_rows, |i| {
-                        if let Some(m) = mask {
-                            if !m.value(i) {
-                                return false;
-                            }
-                        }
-                        if b_col.is_valid(i) {
-                            let str_val = if b_col.value(i) { "true" } else { "false" };
-                            re.is_match(str_val)
-                        } else {
-                            false
-                        }
-                    });
-                    return BooleanArray::new(buf, None);
-                }
-            }
-            _ => {}
+            }),
+            _ => Self::all_false(num_rows),
         }
-
-        Self::all_false(num_rows)
     }
 
     // ------------------------------------------------------------------------
@@ -1081,13 +869,7 @@ impl QueryCompiler {
             let needle_bytes = needle.as_bytes();
             let is_ascii = needle.is_ascii();
 
-            BooleanBuffer::collect_bool(num_rows, |i| {
-                if let Some(m) = mask {
-                    if !m.value(i) {
-                        return false;
-                    }
-                }
-
+            eval_masked(num_rows, mask, |i| {
                 // Check __message first (short-circuit row immediately!)
                 if msg_can_match {
                     if let Some(msg) = msg_col {
@@ -1123,14 +905,10 @@ impl QueryCompiler {
 
                 false
             })
+            .values()
+            .clone()
         } else {
-            BooleanBuffer::collect_bool(num_rows, |i| {
-                if let Some(m) = mask {
-                    if !m.value(i) {
-                        return false;
-                    }
-                }
-
+            eval_masked(num_rows, mask, |i| {
                 // Check __message first
                 if msg_can_match {
                     if let Some(msg) = msg_col {
@@ -1159,6 +937,8 @@ impl QueryCompiler {
 
                 false
             })
+            .values()
+            .clone()
         };
 
         let final_buf = match num_match_buf {
@@ -1188,48 +968,27 @@ impl QueryCompiler {
             }
 
             for col in batch.columns() {
-                match col.data_type() {
-                    DataType::Int64 => {
+                match ColumnView::from_array(col.as_ref()) {
+                    ColumnView::Int64(int_col) => {
                         if let Some(val) = parsed_i64 {
-                            if let Some(int_col) = col.as_any().downcast_ref::<Int64Array>() {
-                                let scalar = Int64Array::new_scalar(val);
-                                if let Ok(res) = eq(int_col, &scalar) {
-                                    let clean = match res.nulls() {
-                                        Some(nulls) => res.values() & nulls.inner(),
-                                        None => res.values().clone(),
-                                    };
-                                    combined_buf = Some(match combined_buf {
-                                        Some(prev) => &prev | &clean,
-                                        None => clean,
-                                    });
-                                }
+                            let scalar = Int64Array::new_scalar(val);
+                            if let Ok(res) = eq(int_col, &scalar) {
+                                let clean = match res.nulls() {
+                                    Some(nulls) => res.values() & nulls.inner(),
+                                    None => res.values().clone(),
+                                };
+                                combined_buf = Some(match combined_buf {
+                                    Some(prev) => &prev | &clean,
+                                    None => clean,
+                                });
                             }
                         }
                     }
-                    DataType::UInt64 => {
+                    ColumnView::UInt64(u_col) => {
                         if let Some(val) = parsed_i64 {
                             if val >= 0 {
-                                if let Some(u_col) = col.as_any().downcast_ref::<UInt64Array>() {
-                                    let scalar = UInt64Array::new_scalar(val as u64);
-                                    if let Ok(res) = eq(u_col, &scalar) {
-                                        let clean = match res.nulls() {
-                                            Some(nulls) => res.values() & nulls.inner(),
-                                            None => res.values().clone(),
-                                        };
-                                        combined_buf = Some(match combined_buf {
-                                            Some(prev) => &prev | &clean,
-                                            None => clean,
-                                        });
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    DataType::Float64 => {
-                        if let Some(val) = parsed_f64 {
-                            if let Some(f_col) = col.as_any().downcast_ref::<Float64Array>() {
-                                let scalar = Float64Array::new_scalar(val);
-                                if let Ok(res) = eq(f_col, &scalar) {
+                                let scalar = UInt64Array::new_scalar(val as u64);
+                                if let Ok(res) = eq(u_col, &scalar) {
                                     let clean = match res.nulls() {
                                         Some(nulls) => res.values() & nulls.inner(),
                                         None => res.values().clone(),
@@ -1239,6 +998,21 @@ impl QueryCompiler {
                                         None => clean,
                                     });
                                 }
+                            }
+                        }
+                    }
+                    ColumnView::Float64(f_col) => {
+                        if let Some(val) = parsed_f64 {
+                            let scalar = Float64Array::new_scalar(val);
+                            if let Ok(res) = eq(f_col, &scalar) {
+                                let clean = match res.nulls() {
+                                    Some(nulls) => res.values() & nulls.inner(),
+                                    None => res.values().clone(),
+                                };
+                                combined_buf = Some(match combined_buf {
+                                    Some(prev) => &prev | &clean,
+                                    None => clean,
+                                });
                             }
                         }
                     }

@@ -1,16 +1,63 @@
 use super::builder::ActiveRecordBatchBuilder;
-use super::compiler::QueryCompiler;
+use super::compiler::{ColumnView, QueryCompiler};
 use arrow::array::{
-    Array, BooleanArray, Float64Array, Int64Array, RecordBatch, StringArray, UInt64Array,
-    UInt8Array,
+    Array, BooleanArray, Float64Array, RecordBatch, StringArray, UInt64Array, UInt8Array,
 };
-use arrow::datatypes::DataType;
 use parking_lot::{Mutex, RwLock};
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use uwu_core_filter::parser::Expr;
 use uwu_core_schema::{LogColor, LogEvent, LogFields};
+
+// ============================================================================
+// BatchSliceIterator: Cursor Iterator across RecordBatches
+// ============================================================================
+
+pub struct BatchSliceIterator<'a> {
+    batches: &'a [RecordBatch],
+    batch_idx: usize,
+    passed_rows: usize,
+    start_idx: usize,
+    remaining_count: usize,
+}
+
+impl<'a> BatchSliceIterator<'a> {
+    pub fn new(batches: &'a [RecordBatch], start_idx: usize, take_count: usize) -> Self {
+        Self {
+            batches,
+            batch_idx: 0,
+            passed_rows: 0,
+            start_idx,
+            remaining_count: take_count,
+        }
+    }
+}
+
+impl<'a> Iterator for BatchSliceIterator<'a> {
+    type Item = (&'a RecordBatch, std::ops::Range<usize>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.remaining_count > 0 && self.batch_idx < self.batches.len() {
+            let batch = &self.batches[self.batch_idx];
+            self.batch_idx += 1;
+
+            let b_rows = batch.num_rows();
+            if self.passed_rows + b_rows <= self.start_idx {
+                self.passed_rows += b_rows;
+                continue;
+            }
+
+            let batch_skip = self.start_idx.saturating_sub(self.passed_rows);
+            let to_take = (b_rows - batch_skip).min(self.remaining_count);
+            self.passed_rows += b_rows;
+            self.remaining_count -= to_take;
+
+            return Some((batch, batch_skip..(batch_skip + to_take)));
+        }
+        None
+    }
+}
 
 // ============================================================================
 // BatchColumns: Zero-Lookup Column Cache
@@ -99,46 +146,18 @@ impl<'a> BatchColumns<'a> {
             if col.is_null(row_idx) {
                 continue;
             }
-            let val = match col.data_type() {
-                DataType::Int64 => {
-                    if let Some(c) = col.as_any().downcast_ref::<Int64Array>() {
-                        serde_json::Value::Number(c.value(row_idx).into())
+            let val = match ColumnView::from_array(col.as_ref()) {
+                ColumnView::Int64(c) => serde_json::Value::Number(c.value(row_idx).into()),
+                ColumnView::Float64(c) => {
+                    if let Some(n) = serde_json::Number::from_f64(c.value(row_idx)) {
+                        serde_json::Value::Number(n)
                     } else {
                         continue;
                     }
                 }
-                DataType::Float64 => {
-                    if let Some(c) = col.as_any().downcast_ref::<Float64Array>() {
-                        if let Some(n) = serde_json::Number::from_f64(c.value(row_idx)) {
-                            serde_json::Value::Number(n)
-                        } else {
-                            continue;
-                        }
-                    } else {
-                        continue;
-                    }
-                }
-                DataType::Utf8 => {
-                    if let Some(c) = col.as_any().downcast_ref::<StringArray>() {
-                        serde_json::Value::String(c.value(row_idx).to_string())
-                    } else {
-                        continue;
-                    }
-                }
-                DataType::Boolean => {
-                    if let Some(c) = col.as_any().downcast_ref::<BooleanArray>() {
-                        serde_json::Value::Bool(c.value(row_idx))
-                    } else {
-                        continue;
-                    }
-                }
-                DataType::UInt64 => {
-                    if let Some(c) = col.as_any().downcast_ref::<UInt64Array>() {
-                        serde_json::Value::Number(c.value(row_idx).into())
-                    } else {
-                        continue;
-                    }
-                }
+                ColumnView::Utf8(c) => serde_json::Value::String(c.value(row_idx).to_string()),
+                ColumnView::Boolean(c) => serde_json::Value::Bool(c.value(row_idx)),
+                ColumnView::UInt64(c) => serde_json::Value::Number(c.value(row_idx).into()),
                 _ => continue,
             };
             fields.insert(schema.field(col_idx).name().clone(), val);
@@ -381,7 +400,7 @@ impl ArrowStorage {
     ) -> (usize, Vec<LogEvent>) {
         self.flush();
 
-        // 1. Snapshot Read: Clone Arc in ~10 nanoseconds, releasing the lock immediately!
+        // Snapshot Read: Clone Arc in ~10 nanoseconds, releasing the lock immediately!
         let sealed = {
             let guard = self.sealed_batches.read();
             Arc::clone(&*guard)
@@ -517,25 +536,16 @@ impl ArrowStorage {
 
         let expr_ref = expr.unwrap();
         let mut matched_events = Vec::new();
-        let mut passed_rows = 0;
 
-        for batch in sealed.iter() {
-            let b_rows = batch.num_rows();
-            if passed_rows + b_rows <= start_storage_idx {
-                passed_rows += b_rows;
-                continue;
-            }
-
-            let batch_skip = start_storage_idx.saturating_sub(passed_rows);
+        for (batch, row_range) in BatchSliceIterator::new(&sealed, start_storage_idx, take_rows) {
             let mask = QueryCompiler::eval_batch(expr_ref, batch, now);
             let cols = BatchColumns::extract(batch);
 
-            for r in batch_skip..b_rows {
+            for r in row_range {
                 if mask.value(r) {
                     matched_events.push(cols.materialize_row(r));
                 }
             }
-            passed_rows += b_rows;
         }
 
         let matched_len = matched_events.len();
@@ -589,36 +599,19 @@ impl ArrowStorage {
     // ------------------------------------------------------------------------
 
     /// Trích xuất và chuyển đổi (materialize) một lát cắt dòng liên tục `[start_idx..start_idx + take_count]`
-    /// trên danh sách RecordBatches mà không cấp phát thừa bộ nhớ.
+    /// trên danh sách RecordBatches thông qua BatchSliceIterator.
     fn extract_row_slice(
         batches: &[RecordBatch],
         start_idx: usize,
         take_count: usize,
     ) -> Vec<LogEvent> {
         let mut events = Vec::with_capacity(take_count);
-        let mut passed_rows = 0;
-
-        for batch in batches {
-            let b_rows = batch.num_rows();
-            if passed_rows + b_rows <= start_idx {
-                passed_rows += b_rows;
-                continue;
-            }
-
-            let batch_skip = start_idx.saturating_sub(passed_rows);
-            let to_take = (b_rows - batch_skip).min(take_count - events.len());
+        for (batch, row_range) in BatchSliceIterator::new(batches, start_idx, take_count) {
             let cols = BatchColumns::extract(batch);
-
-            for r in batch_skip..(batch_skip + to_take) {
+            for r in row_range {
                 events.push(cols.materialize_row(r));
             }
-            passed_rows += b_rows;
-
-            if events.len() >= take_count {
-                break;
-            }
         }
-
         events
     }
 
