@@ -4974,6 +4974,7 @@ dependencies = [
  "arrow",
  "chrono",
  "loom",
+ "memchr",
  "parking_lot",
  "rayon",
  "serde_json",
@@ -5035,6 +5036,7 @@ name = "uwu-core-util"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "memchr",
  "tokio",
 ]
 

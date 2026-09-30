@@ -728,4 +728,138 @@ mod tests {
         assert_eq!(key4, Some("time".to_string()));
         assert!(matches!(fmt4, Some(TimestampFormat::NaiveDateTime(_))));
     }
+
+    #[tokio::test]
+    async fn test_substring_match_and_mask_propagation() {
+        let engine = SystemEngine::new(100);
+        let tx = engine.get_channel();
+
+        let entries = vec![
+            RawLogEntry {
+                payload: RawPayload::Json(serde_json::json!({
+                    "msg": "database connection timeout after 30s",
+                    "tag": "app.database",
+                    "level": "ERROR"
+                })),
+            },
+            RawLogEntry {
+                payload: RawPayload::Json(serde_json::json!({
+                    "msg": "database connection established successfully",
+                    "tag": "app.database",
+                    "level": "INFO"
+                })),
+            },
+            RawLogEntry {
+                payload: RawPayload::Json(serde_json::json!({
+                    "msg": "redis connection timeout after 10s",
+                    "tag": "app.cache",
+                    "level": "WARN"
+                })),
+            },
+            RawLogEntry {
+                payload: RawPayload::Json(serde_json::json!({
+                    "msg": "user login succeeded",
+                    "tag": "app.auth",
+                    "level": "INFO"
+                })),
+            },
+        ];
+
+        for entry in entries {
+            tx.send(entry).await.unwrap();
+        }
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        // 1. Triple word substring search (database AND connection AND timeout)
+        let (count1, logs1) = engine.search_with_count("database connection timeout", 10);
+        assert_eq!(count1, 1);
+        assert_eq!(logs1[0].message, "database connection timeout after 30s");
+
+        // 2. Double word substring search (database AND connection)
+        let (count2, logs2) = engine.search_with_count("database connection", 10);
+        assert_eq!(count2, 2);
+        assert!(logs2.iter().any(|l| l.message.contains("timeout")));
+        assert!(logs2.iter().any(|l| l.message.contains("established")));
+
+        // 3. Substring across different words (connection timeout)
+        let (count3, logs3) = engine.search_with_count("connection timeout", 10);
+        assert_eq!(count3, 2);
+        assert!(logs3.iter().any(|l| l.message.contains("database")));
+        assert!(logs3.iter().any(|l| l.message.contains("redis")));
+
+        // 4. Disjunction (database OR redis)
+        let (count4, _) = engine.search_with_count("database OR redis", 10);
+        assert_eq!(count4, 3);
+
+        // 5. Negation (database -timeout)
+        let (count5, logs5) = engine.search_with_count("database -timeout", 10);
+        assert_eq!(count5, 1);
+        assert_eq!(
+            logs5[0].message,
+            "database connection established successfully"
+        );
+
+        // 6. Substring match on tag
+        let (count6, _) = engine.search_with_count("app.database", 10);
+        assert_eq!(count6, 2);
+    }
+
+    #[tokio::test]
+    async fn test_type_aware_free_text_search() {
+        let engine = SystemEngine::new(50);
+        let tx = engine.get_channel();
+
+        let entries = vec![
+            RawLogEntry {
+                payload: RawPayload::Json(serde_json::json!({
+                    "msg": "User login OK",
+                    "status": 200,
+                    "latency": 150
+                })),
+            },
+            RawLogEntry {
+                payload: RawPayload::Json(serde_json::json!({
+                    "msg": "HTTP request failed with error 500",
+                    "status": 500,
+                    "latency": 450
+                })),
+            },
+            RawLogEntry {
+                payload: RawPayload::Json(serde_json::json!({
+                    "msg": "Database timeout after 30s",
+                    "status": 504,
+                    "latency": 500
+                })),
+            },
+        ];
+
+        for entry in entries {
+            tx.send(entry).await.unwrap();
+        }
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        // 1. Free-text query "500" should match both:
+        //    - Log 2 (via text "error 500" AND status: 500)
+        //    - Log 3 (via numeric latency: 500, even though msg has no "500"!)
+        let (count_500, logs_500) = engine.search_with_count("500", 10);
+        assert_eq!(count_500, 2);
+        assert!(logs_500
+            .iter()
+            .any(|l| l.message.contains("HTTP request failed")));
+        assert!(logs_500
+            .iter()
+            .any(|l| l.message.contains("Database timeout")));
+
+        // 2. Free-text query "200" should match Log 1 (via numeric status: 200)
+        let (count_200, logs_200) = engine.search_with_count("200", 10);
+        assert_eq!(count_200, 1);
+        assert_eq!(logs_200[0].message, "User login OK");
+
+        // 3. Free-text query "timeout" should only match Log 3 (text match, non-numeric)
+        let (count_timeout, logs_timeout) = engine.search_with_count("timeout", 10);
+        assert_eq!(count_timeout, 1);
+        assert_eq!(logs_timeout[0].message, "Database timeout after 30s");
+    }
 }

@@ -32,6 +32,7 @@ chrono = { version = "0.4", features = ["serde"] }
 regex = "1.10"
 rayon = "1.10"
 arrow = "53"
+memchr = "2"
 
 # Async & Channels
 tokio = { version = "1.38", features = ["full"] }

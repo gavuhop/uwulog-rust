@@ -40,7 +40,38 @@ pub fn strip_ansi(s: &str) -> Cow<'_, str> {
     Cow::Owned(result)
 }
 
-/// Helper tìm kiếm chuỗi không phân biệt hoa thường với 0 heap allocation
+/// Helper tìm kiếm chuỗi byte ASCII không phân biệt hoa thường với SIMD acceleration (memchr2)
+#[inline]
+pub fn contains_ignore_case_ascii_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    if haystack.len() < needle.len() {
+        return false;
+    }
+
+    let first_byte = needle[0];
+    let first_lower = first_byte.to_ascii_lowercase();
+    let first_upper = first_byte.to_ascii_uppercase();
+
+    let search_limit = haystack.len() - needle.len() + 1;
+    let mut offset = 0;
+    while offset < search_limit {
+        match memchr::memchr2(first_lower, first_upper, &haystack[offset..search_limit]) {
+            Some(pos) => {
+                let abs_pos = offset + pos;
+                if haystack[abs_pos..abs_pos + needle.len()].eq_ignore_ascii_case(needle) {
+                    return true;
+                }
+                offset = abs_pos + 1;
+            }
+            None => break,
+        }
+    }
+    false
+}
+
+/// Helper tìm kiếm chuỗi không phân biệt hoa thường với SIMD acceleration và 0 heap allocation
 #[inline]
 pub fn contains_ignore_case(haystack: &str, needle: &str) -> bool {
     if needle.is_empty() {
@@ -49,6 +80,10 @@ pub fn contains_ignore_case(haystack: &str, needle: &str) -> bool {
     if haystack.len() < needle.len() {
         return false;
     }
+    if needle.is_ascii() {
+        return contains_ignore_case_ascii_bytes(haystack.as_bytes(), needle.as_bytes());
+    }
+    // Unicode fallback (nếu needle chứa ký tự non-ASCII)
     let haystack_bytes = haystack.as_bytes();
     let needle_bytes = needle.as_bytes();
     haystack_bytes
@@ -354,9 +389,45 @@ mod tests {
     #[test]
     fn test_contains_ignore_case() {
         assert!(contains_ignore_case("Hello World", "world"));
+        assert!(contains_ignore_case("Hello World", "WORLD"));
+        assert!(contains_ignore_case("Hello World", "Hello"));
+        assert!(contains_ignore_case("Hello World", "World"));
+        assert!(contains_ignore_case("Hello World", "o W"));
         assert!(contains_ignore_case("ERROR: something broke", "error"));
         assert!(!contains_ignore_case("INFO: ok", "error"));
         assert!(contains_ignore_case("anything", ""));
+        assert!(!contains_ignore_case("short", "much longer needle"));
+        assert!(contains_ignore_case("a", "A"));
+        assert!(contains_ignore_case(
+            "database connection timeout after 30s",
+            "database"
+        ));
+        assert!(contains_ignore_case(
+            "database connection timeout after 30s",
+            "connection"
+        ));
+        assert!(contains_ignore_case(
+            "database connection timeout after 30s",
+            "timeout"
+        ));
+
+        // Bytes direct
+        assert!(contains_ignore_case_ascii_bytes(
+            b"database connection timeout",
+            b"database"
+        ));
+        assert!(contains_ignore_case_ascii_bytes(
+            b"database connection timeout",
+            b"connection"
+        ));
+        assert!(contains_ignore_case_ascii_bytes(
+            b"database connection timeout",
+            b"TIMEOUT"
+        ));
+        assert!(!contains_ignore_case_ascii_bytes(
+            b"database connection timeout",
+            b"postgres"
+        ));
     }
 
     #[test]

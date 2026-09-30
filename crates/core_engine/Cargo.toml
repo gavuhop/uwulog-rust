@@ -17,6 +17,7 @@ parking_lot = "0.12"
 serde_json = "1.0"
 chrono.workspace = true
 ahash = "0.8"
+memchr.workspace = true
 
 [dev-dependencies]
 loom = "0.7"
