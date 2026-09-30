@@ -4,9 +4,60 @@ use arrow::array::{
 use arrow::buffer::BooleanBuffer;
 use arrow::compute::kernels::cmp::eq;
 use arrow::datatypes::DataType;
+use std::io::Write;
 use uwu_core_filter::parser::{Expr, NumOp};
 use uwu_core_schema::StandardField;
 use uwu_core_util::{contains_ignore_case, contains_ignore_case_ascii_bytes, parse_numeric_value};
+
+#[inline]
+fn format_i64(val: i64, buf: &mut [u8; 24]) -> &str {
+    if val == 0 {
+        buf[0] = b'0';
+        return "0";
+    }
+    let mut is_neg = false;
+    let mut u = if val < 0 {
+        is_neg = true;
+        (val as i128).unsigned_abs() as u64
+    } else {
+        val as u64
+    };
+    let mut i = buf.len();
+    while u > 0 {
+        i -= 1;
+        buf[i] = b'0' + (u % 10) as u8;
+        u /= 10;
+    }
+    if is_neg {
+        i -= 1;
+        buf[i] = b'-';
+    }
+    // Safety: we only wrote ascii digits and optional '-'
+    unsafe { std::str::from_utf8_unchecked(&buf[i..]) }
+}
+
+#[inline]
+fn format_u64(mut val: u64, buf: &mut [u8; 24]) -> &str {
+    if val == 0 {
+        buf[0] = b'0';
+        return "0";
+    }
+    let mut i = buf.len();
+    while val > 0 {
+        i -= 1;
+        buf[i] = b'0' + (val % 10) as u8;
+        val /= 10;
+    }
+    unsafe { std::str::from_utf8_unchecked(&buf[i..]) }
+}
+
+#[inline]
+fn format_f64(val: f64, buf: &mut [u8; 32]) -> &str {
+    let mut cursor = std::io::Cursor::new(&mut buf[..]);
+    let _ = write!(cursor, "{}", val);
+    let len = cursor.position() as usize;
+    unsafe { std::str::from_utf8_unchecked(&buf[..len]) }
+}
 
 pub struct QueryCompiler;
 
@@ -49,8 +100,8 @@ impl QueryCompiler {
             match std_field {
                 StandardField::Timestamp => {
                     return batch
-                        .column_by_name("__timestamp_secs")
-                        .or_else(|| batch.column_by_name("__timestamp"));
+                        .column_by_name("__timestamp")
+                        .or_else(|| batch.column_by_name("__timestamp_secs"));
                 }
                 StandardField::Id => {
                     return batch.column_by_name("__id");
@@ -257,6 +308,31 @@ impl QueryCompiler {
                             return BooleanArray::new(buf, None);
                         }
                     }
+                    DataType::UInt64 => {
+                        if let Some(u_col) = col.as_any().downcast_ref::<UInt64Array>() {
+                            let vals = u_col.values();
+                            let target = *value as u64;
+                            let buf = BooleanBuffer::collect_bool(num_rows, |i| {
+                                if let Some(m) = mask {
+                                    if !m.value(i) {
+                                        return false;
+                                    }
+                                }
+                                if u_col.is_valid(i) {
+                                    let v = vals[i];
+                                    match op {
+                                        NumOp::Gt => v > target,
+                                        NumOp::Lt => v < target,
+                                        NumOp::Gte => v >= target,
+                                        NumOp::Lte => v <= target,
+                                    }
+                                } else {
+                                    false
+                                }
+                            });
+                            return BooleanArray::new(buf, None);
+                        }
+                    }
                     DataType::Utf8 => {
                         if let Some(str_col) = col.as_any().downcast_ref::<StringArray>() {
                             let buf = BooleanBuffer::collect_bool(num_rows, |i| {
@@ -387,6 +463,27 @@ impl QueryCompiler {
                             return BooleanArray::new(buf, None);
                         }
                     }
+                    DataType::UInt64 => {
+                        if let Some(u_col) = col.as_any().downcast_ref::<UInt64Array>() {
+                            let vals = u_col.values();
+                            let min_u = min as u64;
+                            let max_u = max as u64;
+                            let buf = BooleanBuffer::collect_bool(num_rows, |i| {
+                                if let Some(m) = mask {
+                                    if !m.value(i) {
+                                        return false;
+                                    }
+                                }
+                                if u_col.is_valid(i) {
+                                    let v = vals[i];
+                                    v >= min_u && v <= max_u
+                                } else {
+                                    false
+                                }
+                            });
+                            return BooleanArray::new(buf, None);
+                        }
+                    }
                     DataType::Utf8 => {
                         if let Some(str_col) = col.as_any().downcast_ref::<StringArray>() {
                             let buf = BooleanBuffer::collect_bool(num_rows, |i| {
@@ -417,52 +514,136 @@ impl QueryCompiler {
                     None => return Self::all_false(num_rows),
                 };
 
-                if let Some(str_col) = col.as_any().downcast_ref::<StringArray>() {
-                    let data = str_col.value_data();
-                    if data.is_empty() {
-                        return Self::all_false(num_rows);
-                    }
-                    // Chunk pruning on raw contiguous buffer
-                    let can_match = if value.is_ascii() {
-                        contains_ignore_case_ascii_bytes(data, value.as_bytes())
-                    } else {
-                        contains_ignore_case(std::str::from_utf8(data).unwrap_or(""), value)
-                    };
-                    if !can_match {
-                        return Self::all_false(num_rows);
-                    }
-
-                    let offsets = str_col.value_offsets();
-                    let val_len = value.len();
-                    let val_bytes = value.as_bytes();
-                    let is_ascii = value.is_ascii();
-
-                    let buf = BooleanBuffer::collect_bool(num_rows, |i| {
-                        if let Some(m) = mask {
-                            if !m.value(i) {
-                                return false;
+                match col.data_type() {
+                    DataType::Utf8 => {
+                        if let Some(str_col) = col.as_any().downcast_ref::<StringArray>() {
+                            let data = str_col.value_data();
+                            if data.is_empty() {
+                                return Self::all_false(num_rows);
                             }
-                        }
-                        if str_col.is_valid(i) {
-                            let start = offsets[i] as usize;
-                            let end = offsets[i + 1] as usize;
-                            if end - start == val_len {
-                                let slice = &data[start..end];
-                                if is_ascii {
-                                    slice.eq_ignore_ascii_case(val_bytes)
-                                } else {
-                                    std::str::from_utf8(slice)
-                                        .map(|s| s.eq_ignore_ascii_case(value))
-                                        .unwrap_or(false)
-                                }
+                            // Chunk pruning on raw contiguous buffer
+                            let can_match = if value.is_ascii() {
+                                contains_ignore_case_ascii_bytes(data, value.as_bytes())
                             } else {
-                                false
+                                contains_ignore_case(std::str::from_utf8(data).unwrap_or(""), value)
+                            };
+                            if !can_match {
+                                return Self::all_false(num_rows);
                             }
-                        } else {
-                            false
+
+                            let offsets = str_col.value_offsets();
+                            let val_len = value.len();
+                            let val_bytes = value.as_bytes();
+                            let is_ascii = value.is_ascii();
+
+                            let buf = BooleanBuffer::collect_bool(num_rows, |i| {
+                                if let Some(m) = mask {
+                                    if !m.value(i) {
+                                        return false;
+                                    }
+                                }
+                                if str_col.is_valid(i) {
+                                    let start = offsets[i] as usize;
+                                    let end = offsets[i + 1] as usize;
+                                    if end - start == val_len {
+                                        let slice = &data[start..end];
+                                        if is_ascii {
+                                            slice.eq_ignore_ascii_case(val_bytes)
+                                        } else {
+                                            std::str::from_utf8(slice)
+                                                .map(|s| s.eq_ignore_ascii_case(value))
+                                                .unwrap_or(false)
+                                        }
+                                    } else {
+                                        false
+                                    }
+                                } else {
+                                    false
+                                }
+                            });
+                            return BooleanArray::new(buf, None);
                         }
-                    });
-                    return BooleanArray::new(buf, None);
+                    }
+                    DataType::Int64 => {
+                        if let Some(int_col) = col.as_any().downcast_ref::<Int64Array>() {
+                            if let Ok(target) = value.trim().parse::<i64>() {
+                                let vals = int_col.values();
+                                let buf = BooleanBuffer::collect_bool(num_rows, |i| {
+                                    if let Some(m) = mask {
+                                        if !m.value(i) {
+                                            return false;
+                                        }
+                                    }
+                                    int_col.is_valid(i) && vals[i] == target
+                                });
+                                return BooleanArray::new(buf, None);
+                            }
+                        }
+                    }
+                    DataType::UInt64 => {
+                        if let Some(u_col) = col.as_any().downcast_ref::<UInt64Array>() {
+                            if let Ok(target) = value.trim().parse::<u64>() {
+                                let vals = u_col.values();
+                                let buf = BooleanBuffer::collect_bool(num_rows, |i| {
+                                    if let Some(m) = mask {
+                                        if !m.value(i) {
+                                            return false;
+                                        }
+                                    }
+                                    u_col.is_valid(i) && vals[i] == target
+                                });
+                                return BooleanArray::new(buf, None);
+                            }
+                        }
+                    }
+                    DataType::Float64 => {
+                        if let Some(float_col) = col.as_any().downcast_ref::<Float64Array>() {
+                            if let Ok(target) = value.trim().parse::<f64>() {
+                                let vals = float_col.values();
+                                let buf = BooleanBuffer::collect_bool(num_rows, |i| {
+                                    if let Some(m) = mask {
+                                        if !m.value(i) {
+                                            return false;
+                                        }
+                                    }
+                                    if float_col.is_valid(i) {
+                                        let v = vals[i];
+                                        v == target || (v - target).abs() < f64::EPSILON
+                                    } else {
+                                        false
+                                    }
+                                });
+                                return BooleanArray::new(buf, None);
+                            }
+                        }
+                    }
+                    DataType::Boolean => {
+                        if let Some(b_col) = col.as_any().downcast_ref::<BooleanArray>() {
+                            let val_lower = value.trim().to_ascii_lowercase();
+                            if val_lower == "true" {
+                                let buf = BooleanBuffer::collect_bool(num_rows, |i| {
+                                    if let Some(m) = mask {
+                                        if !m.value(i) {
+                                            return false;
+                                        }
+                                    }
+                                    b_col.is_valid(i) && b_col.value(i)
+                                });
+                                return BooleanArray::new(buf, None);
+                            } else if val_lower == "false" {
+                                let buf = BooleanBuffer::collect_bool(num_rows, |i| {
+                                    if let Some(m) = mask {
+                                        if !m.value(i) {
+                                            return false;
+                                        }
+                                    }
+                                    b_col.is_valid(i) && !b_col.value(i)
+                                });
+                                return BooleanArray::new(buf, None);
+                            }
+                        }
+                    }
+                    _ => {}
                 }
 
                 Self::all_false(num_rows)
@@ -474,49 +655,183 @@ impl QueryCompiler {
                     None => return Self::all_false(num_rows),
                 };
 
-                if let Some(str_col) = col.as_any().downcast_ref::<StringArray>() {
-                    let data = str_col.value_data();
-                    if data.is_empty() {
-                        return Self::all_false(num_rows);
-                    }
-                    // Chunk pruning
-                    let can_match = values.iter().any(|v| {
-                        if v.is_ascii() {
-                            contains_ignore_case_ascii_bytes(data, v.as_bytes())
-                        } else {
-                            contains_ignore_case(std::str::from_utf8(data).unwrap_or(""), v)
-                        }
-                    });
-                    if !can_match {
-                        return Self::all_false(num_rows);
-                    }
-
-                    let offsets = str_col.value_offsets();
-                    let buf = BooleanBuffer::collect_bool(num_rows, |i| {
-                        if let Some(m) = mask {
-                            if !m.value(i) {
-                                return false;
+                match col.data_type() {
+                    DataType::Utf8 => {
+                        if let Some(str_col) = col.as_any().downcast_ref::<StringArray>() {
+                            let data = str_col.value_data();
+                            if data.is_empty() {
+                                return Self::all_false(num_rows);
                             }
-                        }
-                        if str_col.is_valid(i) {
-                            let start = offsets[i] as usize;
-                            let end = offsets[i + 1] as usize;
-                            let slice = &data[start..end];
-                            values.iter().any(|v| {
+                            // Chunk pruning
+                            let can_match = values.iter().any(|v| {
                                 if v.is_ascii() {
-                                    contains_ignore_case_ascii_bytes(slice, v.as_bytes())
+                                    contains_ignore_case_ascii_bytes(data, v.as_bytes())
                                 } else {
-                                    contains_ignore_case(
-                                        std::str::from_utf8(slice).unwrap_or(""),
-                                        v,
-                                    )
+                                    contains_ignore_case(std::str::from_utf8(data).unwrap_or(""), v)
                                 }
-                            })
-                        } else {
-                            false
+                            });
+                            if !can_match {
+                                return Self::all_false(num_rows);
+                            }
+
+                            let offsets = str_col.value_offsets();
+                            let buf = BooleanBuffer::collect_bool(num_rows, |i| {
+                                if let Some(m) = mask {
+                                    if !m.value(i) {
+                                        return false;
+                                    }
+                                }
+                                if str_col.is_valid(i) {
+                                    let start = offsets[i] as usize;
+                                    let end = offsets[i + 1] as usize;
+                                    let slice = &data[start..end];
+                                    values.iter().any(|v| {
+                                        if v.is_ascii() {
+                                            contains_ignore_case_ascii_bytes(slice, v.as_bytes())
+                                        } else {
+                                            contains_ignore_case(
+                                                std::str::from_utf8(slice).unwrap_or(""),
+                                                v,
+                                            )
+                                        }
+                                    })
+                                } else {
+                                    false
+                                }
+                            });
+                            return BooleanArray::new(buf, None);
                         }
-                    });
-                    return BooleanArray::new(buf, None);
+                    }
+                    DataType::Int64 => {
+                        if let Some(int_col) = col.as_any().downcast_ref::<Int64Array>() {
+                            let has_possible_match = values.iter().any(|v| {
+                                let t = v.trim();
+                                !t.is_empty() && t.chars().all(|c| c.is_ascii_digit() || c == '-')
+                            });
+                            if !has_possible_match {
+                                return Self::all_false(num_rows);
+                            }
+
+                            let parsed_targets: Vec<i64> = values
+                                .iter()
+                                .filter_map(|v| v.trim().parse::<i64>().ok())
+                                .collect();
+
+                            let vals = int_col.values();
+                            let buf = BooleanBuffer::collect_bool(num_rows, |i| {
+                                if let Some(m) = mask {
+                                    if !m.value(i) {
+                                        return false;
+                                    }
+                                }
+                                if !int_col.is_valid(i) {
+                                    return false;
+                                }
+                                let v = vals[i];
+                                if parsed_targets.contains(&v) {
+                                    return true;
+                                }
+                                let mut stack_buf = [0u8; 24];
+                                let str_val = format_i64(v, &mut stack_buf);
+                                values.iter().any(|needle| str_val.contains(needle.trim()))
+                            });
+                            return BooleanArray::new(buf, None);
+                        }
+                    }
+                    DataType::UInt64 => {
+                        if let Some(u_col) = col.as_any().downcast_ref::<UInt64Array>() {
+                            let has_possible_match = values.iter().any(|v| {
+                                let t = v.trim();
+                                !t.is_empty() && t.chars().all(|c| c.is_ascii_digit())
+                            });
+                            if !has_possible_match {
+                                return Self::all_false(num_rows);
+                            }
+
+                            let parsed_targets: Vec<u64> = values
+                                .iter()
+                                .filter_map(|v| v.trim().parse::<u64>().ok())
+                                .collect();
+
+                            let vals = u_col.values();
+                            let buf = BooleanBuffer::collect_bool(num_rows, |i| {
+                                if let Some(m) = mask {
+                                    if !m.value(i) {
+                                        return false;
+                                    }
+                                }
+                                if !u_col.is_valid(i) {
+                                    return false;
+                                }
+                                let v = vals[i];
+                                if parsed_targets.contains(&v) {
+                                    return true;
+                                }
+                                let mut stack_buf = [0u8; 24];
+                                let str_val = format_u64(v, &mut stack_buf);
+                                values.iter().any(|needle| str_val.contains(needle.trim()))
+                            });
+                            return BooleanArray::new(buf, None);
+                        }
+                    }
+                    DataType::Float64 => {
+                        if let Some(float_col) = col.as_any().downcast_ref::<Float64Array>() {
+                            let parsed_targets: Vec<f64> = values
+                                .iter()
+                                .filter_map(|v| v.trim().parse::<f64>().ok())
+                                .collect();
+
+                            let vals = float_col.values();
+                            let buf = BooleanBuffer::collect_bool(num_rows, |i| {
+                                if let Some(m) = mask {
+                                    if !m.value(i) {
+                                        return false;
+                                    }
+                                }
+                                if !float_col.is_valid(i) {
+                                    return false;
+                                }
+                                let v = vals[i];
+                                if parsed_targets
+                                    .iter()
+                                    .any(|&target| v == target || (v - target).abs() < f64::EPSILON)
+                                {
+                                    return true;
+                                }
+                                let mut stack_buf = [0u8; 32];
+                                let str_val = format_f64(v, &mut stack_buf);
+                                values.iter().any(|needle| str_val.contains(needle.trim()))
+                            });
+                            return BooleanArray::new(buf, None);
+                        }
+                    }
+                    DataType::Boolean => {
+                        if let Some(b_col) = col.as_any().downcast_ref::<BooleanArray>() {
+                            let match_true = values
+                                .iter()
+                                .any(|v| "true".contains(&v.trim().to_ascii_lowercase()));
+                            let match_false = values
+                                .iter()
+                                .any(|v| "false".contains(&v.trim().to_ascii_lowercase()));
+                            let buf = BooleanBuffer::collect_bool(num_rows, |i| {
+                                if let Some(m) = mask {
+                                    if !m.value(i) {
+                                        return false;
+                                    }
+                                }
+                                if !b_col.is_valid(i) {
+                                    return false;
+                                }
+                                if b_col.value(i) {
+                                    match_true
+                                } else {
+                                    match_false
+                                }
+                            });
+                            return BooleanArray::new(buf, None);
+                        }
+                    }
+                    _ => {}
                 }
 
                 Self::all_false(num_rows)
@@ -528,16 +843,99 @@ impl QueryCompiler {
                     None => return Self::all_false(num_rows),
                 };
 
-                if let Some(str_col) = col.as_any().downcast_ref::<StringArray>() {
-                    let buf = BooleanBuffer::collect_bool(num_rows, |i| {
-                        if let Some(m) = mask {
-                            if !m.value(i) {
-                                return false;
-                            }
+                match col.data_type() {
+                    DataType::Utf8 => {
+                        if let Some(str_col) = col.as_any().downcast_ref::<StringArray>() {
+                            let buf = BooleanBuffer::collect_bool(num_rows, |i| {
+                                if let Some(m) = mask {
+                                    if !m.value(i) {
+                                        return false;
+                                    }
+                                }
+                                str_col.is_valid(i) && re.is_match(str_col.value(i))
+                            });
+                            return BooleanArray::new(buf, None);
                         }
-                        str_col.is_valid(i) && re.is_match(str_col.value(i))
-                    });
-                    return BooleanArray::new(buf, None);
+                    }
+                    DataType::Int64 => {
+                        if let Some(int_col) = col.as_any().downcast_ref::<Int64Array>() {
+                            let vals = int_col.values();
+                            let buf = BooleanBuffer::collect_bool(num_rows, |i| {
+                                if let Some(m) = mask {
+                                    if !m.value(i) {
+                                        return false;
+                                    }
+                                }
+                                if int_col.is_valid(i) {
+                                    let mut stack_buf = [0u8; 24];
+                                    let str_val = format_i64(vals[i], &mut stack_buf);
+                                    re.is_match(str_val)
+                                } else {
+                                    false
+                                }
+                            });
+                            return BooleanArray::new(buf, None);
+                        }
+                    }
+                    DataType::UInt64 => {
+                        if let Some(u_col) = col.as_any().downcast_ref::<UInt64Array>() {
+                            let vals = u_col.values();
+                            let buf = BooleanBuffer::collect_bool(num_rows, |i| {
+                                if let Some(m) = mask {
+                                    if !m.value(i) {
+                                        return false;
+                                    }
+                                }
+                                if u_col.is_valid(i) {
+                                    let mut stack_buf = [0u8; 24];
+                                    let str_val = format_u64(vals[i], &mut stack_buf);
+                                    re.is_match(str_val)
+                                } else {
+                                    false
+                                }
+                            });
+                            return BooleanArray::new(buf, None);
+                        }
+                    }
+                    DataType::Float64 => {
+                        if let Some(float_col) = col.as_any().downcast_ref::<Float64Array>() {
+                            let vals = float_col.values();
+                            let buf = BooleanBuffer::collect_bool(num_rows, |i| {
+                                if let Some(m) = mask {
+                                    if !m.value(i) {
+                                        return false;
+                                    }
+                                }
+                                if float_col.is_valid(i) {
+                                    let mut stack_buf = [0u8; 32];
+                                    let str_val = format_f64(vals[i], &mut stack_buf);
+                                    re.is_match(str_val)
+                                } else {
+                                    false
+                                }
+                            });
+                            return BooleanArray::new(buf, None);
+                        }
+                    }
+                    DataType::Boolean => {
+                        if let Some(b_col) = col.as_any().downcast_ref::<BooleanArray>() {
+                            let buf = BooleanBuffer::collect_bool(num_rows, |i| {
+                                if let Some(m) = mask {
+                                    if !m.value(i) {
+                                        return false;
+                                    }
+                                }
+                                if b_col.is_valid(i) {
+                                    let str_val = if b_col.value(i) { "true" } else { "false" };
+                                    re.is_match(str_val)
+                                } else {
+                                    false
+                                }
+                            });
+                            return BooleanArray::new(buf, None);
+                        }
+                    }
+                    _ => {}
                 }
 
                 Self::all_false(num_rows)

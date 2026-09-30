@@ -141,6 +141,13 @@ impl<'a> BatchColumns<'a> {
                         continue;
                     }
                 }
+                DataType::UInt64 => {
+                    if let Some(c) = col.as_any().downcast_ref::<UInt64Array>() {
+                        serde_json::Value::Number(c.value(row_idx).into())
+                    } else {
+                        continue;
+                    }
+                }
                 _ => continue,
             };
             fields.insert(schema.field(col_idx).name().clone(), val);

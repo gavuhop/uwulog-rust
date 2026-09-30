@@ -868,4 +868,101 @@ mod tests {
         assert_eq!(count_timeout, 1);
         assert_eq!(logs_timeout[0].message, "Database timeout after 30s");
     }
+
+    #[tokio::test]
+    async fn test_numeric_and_boolean_field_queries() {
+        let engine = SystemEngine::new(50);
+        let tx = engine.get_channel();
+
+        let user_log = serde_json::json!({
+            "lv": "TRACE",
+            "source": "cache_manager",
+            "user_id": "user_30",
+            "status": 400,
+            "latency": 12.5,
+            "is_active": true,
+            "metadata": {
+                "instance_id": "i-322492",
+                "region": "us-east-1",
+                "version": "v1.0.0",
+                "system": {
+                    "env": "test",
+                    "infra": {
+                        "cluster": "global-edge-01"
+                    }
+                }
+            }
+        });
+
+        tx.send(RawLogEntry {
+            payload: RawPayload::Json(user_log),
+        })
+        .await
+        .unwrap();
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        // 1. Full user complex query including status:400
+        let q = "lv:TRACE source:cache_manager metadata.instance_id:i-322492 user_id:user_30 metadata.region:us-east-1 metadata.system.env:test metadata.version:v1.0.0 metadata.system.infra.cluster:global-edge-01 status:400";
+        let (count, logs) = engine.search_with_count(q, 10);
+        assert_eq!(
+            count, 1,
+            "Full complex query with status:400 should return 1 result"
+        );
+        assert_eq!(
+            logs[0].fields.get("status").unwrap(),
+            &serde_json::json!(400)
+        );
+
+        // 2. Direct status:400
+        let (count_status, _) = engine.search_with_count("status:400", 10);
+        assert_eq!(
+            count_status, 1,
+            "status:400 should match numeric status 400"
+        );
+
+        // 3. Exact equality status=400
+        let (count_exact, _) = engine.search_with_count("status=400", 10);
+        assert_eq!(count_exact, 1, "status=400 should match numeric status 400");
+
+        // 4. Multi-value status:200|400
+        let (count_multi, _) = engine.search_with_count("status:200|400", 10);
+        assert_eq!(count_multi, 1, "status:200|400 should match");
+
+        // 5. Substring numeric status:40
+        let (count_sub, _) = engine.search_with_count("status:40", 10);
+        assert_eq!(count_sub, 1, "status:40 should substring match 400");
+
+        // 6. Non-matching status:500
+        let (count_none, _) = engine.search_with_count("status:500", 10);
+        assert_eq!(count_none, 0, "status:500 should not match 400");
+
+        // 7. Non-numeric query against numeric column status:error
+        let (count_err, _) = engine.search_with_count("status:error", 10);
+        assert_eq!(count_err, 0, "status:error should not match numeric column");
+
+        // 8. Numeric range status:300..500
+        let (count_range, _) = engine.search_with_count("status:300..500", 10);
+        assert_eq!(count_range, 1, "status:300..500 should match 400");
+
+        // 9. Numeric comparison status >= 400
+        let (count_cmp, _) = engine.search_with_count("status>=400", 10);
+        assert_eq!(count_cmp, 1, "status>=400 should match 400");
+
+        // 10. Regex match on numeric status:~^4\d\d$
+        let (count_re, _) = engine.search_with_count("status:~^4\\d\\d$", 10);
+        assert_eq!(count_re, 1, "status:~^4\\d\\d$ should match 400");
+
+        // 11. Float column query latency:12.5
+        let (count_float, _) = engine.search_with_count("latency:12.5", 10);
+        assert_eq!(count_float, 1, "latency:12.5 should match");
+
+        // 12. Boolean column query is_active:true and is_active=true
+        let (count_bool, _) = engine.search_with_count("is_active:true", 10);
+        assert_eq!(count_bool, 1, "is_active:true should match");
+        let (count_bool_exact, _) = engine.search_with_count("is_active=true", 10);
+        assert_eq!(count_bool_exact, 1, "is_active=true should match");
+        let (count_bool_false, _) = engine.search_with_count("is_active:false", 10);
+        assert_eq!(count_bool_false, 0, "is_active:false should not match true");
+    }
 }
