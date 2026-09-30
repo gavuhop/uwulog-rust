@@ -12,6 +12,10 @@ use std::sync::Arc;
 use uwu_core_filter::parser::Expr;
 use uwu_core_schema::{LogColor, LogEvent, LogFields};
 
+// ============================================================================
+// BatchColumns: Zero-Lookup Column Cache
+// ============================================================================
+
 pub struct BatchColumns<'a> {
     batch: &'a RecordBatch,
     id_col: Option<&'a UInt64Array>,
@@ -73,32 +77,19 @@ impl<'a> BatchColumns<'a> {
 
         let timestamp = self
             .ts_col
-            .and_then(|c| {
-                if c.is_valid(row_idx) {
-                    Some(c.value(row_idx).to_string())
-                } else {
-                    None
-                }
-            })
+            .filter(|c| c.is_valid(row_idx))
+            .map(|c| c.value(row_idx).to_string())
             .unwrap_or_default();
 
-        let timestamp_secs = self.ts_secs_col.and_then(|c| {
-            if c.is_valid(row_idx) {
-                Some(c.value(row_idx))
-            } else {
-                None
-            }
-        });
+        let timestamp_secs = self
+            .ts_secs_col
+            .filter(|c| c.is_valid(row_idx))
+            .map(|c| c.value(row_idx));
 
         let message = self
             .msg_col
-            .and_then(|c| {
-                if c.is_valid(row_idx) {
-                    Some(c.value(row_idx).to_string())
-                } else {
-                    None
-                }
-            })
+            .filter(|c| c.is_valid(row_idx))
+            .map(|c| c.value(row_idx).to_string())
             .unwrap_or_default();
 
         let mut fields = LogFields::with_capacity(self.dynamic_indices.len());
@@ -164,6 +155,10 @@ impl<'a> BatchColumns<'a> {
     }
 }
 
+// ============================================================================
+// ArrowStorage: Concurrent Columnar In-Memory Store
+// ============================================================================
+
 pub struct ArrowStorage {
     max_capacity: usize,
     sealed_batches: RwLock<Arc<Vec<RecordBatch>>>,
@@ -174,6 +169,10 @@ pub struct ArrowStorage {
 }
 
 impl ArrowStorage {
+    // ------------------------------------------------------------------------
+    // Lifecycle & Metrics
+    // ------------------------------------------------------------------------
+
     pub fn new(max_capacity: usize) -> Self {
         Self {
             max_capacity,
@@ -222,6 +221,10 @@ impl ArrowStorage {
         }
     }
 
+    // ------------------------------------------------------------------------
+    // Ingestion & Batch Sealing
+    // ------------------------------------------------------------------------
+
     pub fn flush(&self) {
         let mut builder = self.active_builder.lock();
         if !builder.is_empty() {
@@ -231,15 +234,16 @@ impl ArrowStorage {
         }
     }
 
+    pub fn append_sealed_batch(&self, batch: RecordBatch) {
+        self.append_sealed_batches(vec![batch]);
+    }
+
     pub fn append_sealed_batches(&self, batches: Vec<RecordBatch>) {
         if batches.is_empty() {
             return;
         }
 
-        let mut total_added = 0usize;
-        for b in &batches {
-            total_added += b.num_rows();
-        }
+        let total_added: usize = batches.iter().map(|b| b.num_rows()).sum();
         if total_added == 0 {
             return;
         }
@@ -284,10 +288,6 @@ impl ArrowStorage {
         *guard = Arc::new(new_list);
     }
 
-    pub fn append_sealed_batch(&self, batch: RecordBatch) {
-        self.append_sealed_batches(vec![batch]);
-    }
-
     pub fn push_event(&self, event: &LogEvent) {
         if let Some(ts) = event.timestamp_secs {
             self.update_max_timestamp(ts);
@@ -317,7 +317,6 @@ impl ArrowStorage {
                 }
             }
         }
-
         if batch_max_ts > 0.0 {
             self.update_max_timestamp(batch_max_ts);
         }
@@ -344,7 +343,6 @@ impl ArrowStorage {
             self.append_sealed_batches(new_batches);
         } else {
             let mut builder = self.active_builder.lock();
-
             for event in events {
                 builder.append_log(&event);
                 if builder.len() >= 4096 {
@@ -371,6 +369,10 @@ impl ArrowStorage {
         self.max_timestamp.store(0, Ordering::SeqCst);
     }
 
+    // ------------------------------------------------------------------------
+    // Search & Filtering
+    // ------------------------------------------------------------------------
+
     pub fn search_with_count(
         &self,
         expr: Option<&Expr>,
@@ -388,47 +390,57 @@ impl ArrowStorage {
             return (0, Vec::new());
         }
 
-        // Fast-path: Empty query (no filter expr)
-        if expr.is_none() {
-            let total_rows = self.total_stored_rows.load(Ordering::Acquire) as usize;
-            if total_rows == 0 {
-                return (0, Vec::new());
-            }
+        match expr {
+            None => self.search_unfiltered(&sealed, limit),
+            Some(expr_ref) => self.search_filtered(&sealed, expr_ref, limit, now),
+        }
+    }
 
-            let take_count = limit.min(total_rows);
-            let mut events = Vec::with_capacity(take_count);
-
-            // Reverse scan from newest batch backwards for viewport!
-            for batch in sealed.iter().rev() {
-                let b_rows = batch.num_rows();
-                if b_rows == 0 {
-                    continue;
-                }
-                let needed = take_count - events.len();
-                let to_take = b_rows.min(needed);
-                let start_idx = b_rows - to_take;
-
-                let cols = BatchColumns::extract(batch);
-                for r in (start_idx..b_rows).rev() {
-                    events.push(cols.materialize_row(r));
-                }
-
-                if events.len() >= take_count {
-                    break;
-                }
-            }
-
-            events.reverse();
-            return (total_rows, events);
+    fn search_unfiltered(&self, sealed: &[RecordBatch], limit: usize) -> (usize, Vec<LogEvent>) {
+        let total_rows = self.total_stored_rows.load(Ordering::Acquire) as usize;
+        if total_rows == 0 {
+            return (0, Vec::new());
         }
 
-        let expr_ref = expr.unwrap();
+        let take_count = limit.min(total_rows);
+        let mut events = Vec::with_capacity(take_count);
 
-        // 2. Parallel SIMD Vectorized Evaluation across batches outside of ANY lock
+        // Reverse scan from newest batch backwards for viewport!
+        for batch in sealed.iter().rev() {
+            let b_rows = batch.num_rows();
+            if b_rows == 0 {
+                continue;
+            }
+            let needed = take_count - events.len();
+            let to_take = b_rows.min(needed);
+            let start_idx = b_rows - to_take;
+
+            let cols = BatchColumns::extract(batch);
+            for r in (start_idx..b_rows).rev() {
+                events.push(cols.materialize_row(r));
+            }
+
+            if events.len() >= take_count {
+                break;
+            }
+        }
+
+        events.reverse();
+        (total_rows, events)
+    }
+
+    fn search_filtered(
+        &self,
+        sealed: &[RecordBatch],
+        expr: &Expr,
+        limit: usize,
+        now: f64,
+    ) -> (usize, Vec<LogEvent>) {
+        // Parallel SIMD Vectorized Evaluation across batches outside of ANY lock
         let batch_evals: Vec<(BooleanArray, usize)> = sealed
             .par_iter()
             .map(|batch| {
-                let mask = QueryCompiler::eval_batch(expr_ref, batch, now);
+                let mask = QueryCompiler::eval_batch(expr, batch, now);
                 let true_cnt = mask.true_count();
                 (mask, true_cnt)
             })
@@ -440,10 +452,9 @@ impl ArrowStorage {
         }
 
         let take_matches = limit.min(total_matched);
-
-        // 3. Late Materialization: Reverse scan from newest batch backwards!
         let mut events = Vec::with_capacity(take_matches);
 
+        // Late Materialization: Reverse scan from newest batch backwards!
         for (batch_idx, batch) in sealed.iter().enumerate().rev() {
             let (mask, true_cnt) = &batch_evals[batch_idx];
             if *true_cnt == 0 {
@@ -497,32 +508,9 @@ impl ArrowStorage {
         let take_rows = new_count.min(total_in_storage);
         let start_storage_idx = total_in_storage.saturating_sub(take_rows);
 
-        // Fast path: Empty query
+        // Fast path: Empty query (trả về các bản ghi mới nhất vừa nạp)
         if expr.is_none() {
-            let mut events = Vec::with_capacity(take_rows);
-            let mut passed_rows = 0;
-
-            for batch in sealed.iter() {
-                let b_rows = batch.num_rows();
-                if passed_rows + b_rows <= start_storage_idx {
-                    passed_rows += b_rows;
-                    continue;
-                }
-
-                let batch_skip = start_storage_idx.saturating_sub(passed_rows);
-                let to_take = (b_rows - batch_skip).min(take_rows - events.len());
-                let cols = BatchColumns::extract(batch);
-
-                for r in batch_skip..(batch_skip + to_take) {
-                    events.push(cols.materialize_row(r));
-                }
-                passed_rows += b_rows;
-
-                if events.len() >= take_rows {
-                    break;
-                }
-            }
-
+            let events = Self::extract_row_slice(&sealed, start_storage_idx, take_rows);
             let len = events.len();
             return (len, events);
         }
@@ -571,66 +559,14 @@ impl ArrowStorage {
         }
 
         if let Some(target_log_id) = target_id {
-            // Find global position of target_id
-            let mut target_global_idx = None;
-            let mut global_offset = 0;
-
-            for batch in sealed.iter() {
-                if let Some(col) = batch
-                    .column_by_name("__id")
-                    .and_then(|c| c.as_any().downcast_ref::<UInt64Array>())
-                {
-                    let b_rows = batch.num_rows();
-                    if b_rows > 0 {
-                        let first_id = col.value(0);
-                        let last_id = col.value(b_rows - 1);
-                        if target_log_id >= first_id && target_log_id <= last_id {
-                            for r in 0..b_rows {
-                                if col.value(r) == target_log_id {
-                                    target_global_idx = Some(global_offset + r);
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-                if target_global_idx.is_some() {
-                    break;
-                }
-                global_offset += batch.num_rows();
-            }
-
-            if let Some(pos) = target_global_idx {
+            if let Some(pos) = Self::find_log_index_by_id(&sealed, target_log_id) {
                 let half = limit / 2;
                 let start_idx = pos.saturating_sub(half);
                 let end_idx = (start_idx + limit).min(total);
                 let actual_start = end_idx.saturating_sub(limit);
                 let take_count = end_idx - actual_start;
 
-                let mut events = Vec::with_capacity(take_count);
-                let mut skipped = 0;
-
-                for batch in sealed.iter() {
-                    let b_rows = batch.num_rows();
-                    if skipped + b_rows <= actual_start {
-                        skipped += b_rows;
-                        continue;
-                    }
-
-                    let batch_skip = actual_start.saturating_sub(skipped);
-                    let to_take = (b_rows - batch_skip).min(take_count - events.len());
-                    let cols = BatchColumns::extract(batch);
-
-                    for r in batch_skip..(batch_skip + to_take) {
-                        events.push(cols.materialize_row(r));
-                    }
-                    skipped += b_rows;
-
-                    if events.len() >= take_count {
-                        break;
-                    }
-                }
-
+                let events = Self::extract_row_slice(&sealed, actual_start, take_count);
                 let target_idx = events.iter().position(|e| e.id == target_log_id);
                 return (target_idx, events);
             }
@@ -639,36 +575,77 @@ impl ArrowStorage {
         // Target not specified or not found: return the last limit rows
         let skip_count = total.saturating_sub(limit);
         let take_count = total - skip_count;
-
-        let mut events = Vec::with_capacity(take_count);
-        let mut skipped = 0;
-
-        for batch in sealed.iter() {
-            let b_rows = batch.num_rows();
-            if skipped + b_rows <= skip_count {
-                skipped += b_rows;
-                continue;
-            }
-
-            let batch_skip = skip_count.saturating_sub(skipped);
-            let to_take = (b_rows - batch_skip).min(take_count - events.len());
-            let cols = BatchColumns::extract(batch);
-
-            for r in batch_skip..(batch_skip + to_take) {
-                events.push(cols.materialize_row(r));
-            }
-            skipped += b_rows;
-
-            if events.len() >= take_count {
-                break;
-            }
-        }
-
+        let events = Self::extract_row_slice(&sealed, skip_count, take_count);
         let target_idx = target_id.and_then(|id| events.iter().position(|e| e.id == id));
         (target_idx, events)
     }
 
     pub fn materialize_row(batch: &RecordBatch, row_idx: usize) -> LogEvent {
         BatchColumns::extract(batch).materialize_row(row_idx)
+    }
+
+    // ------------------------------------------------------------------------
+    // Internal Helpers
+    // ------------------------------------------------------------------------
+
+    /// Trích xuất và chuyển đổi (materialize) một lát cắt dòng liên tục `[start_idx..start_idx + take_count]`
+    /// trên danh sách RecordBatches mà không cấp phát thừa bộ nhớ.
+    fn extract_row_slice(
+        batches: &[RecordBatch],
+        start_idx: usize,
+        take_count: usize,
+    ) -> Vec<LogEvent> {
+        let mut events = Vec::with_capacity(take_count);
+        let mut passed_rows = 0;
+
+        for batch in batches {
+            let b_rows = batch.num_rows();
+            if passed_rows + b_rows <= start_idx {
+                passed_rows += b_rows;
+                continue;
+            }
+
+            let batch_skip = start_idx.saturating_sub(passed_rows);
+            let to_take = (b_rows - batch_skip).min(take_count - events.len());
+            let cols = BatchColumns::extract(batch);
+
+            for r in batch_skip..(batch_skip + to_take) {
+                events.push(cols.materialize_row(r));
+            }
+            passed_rows += b_rows;
+
+            if events.len() >= take_count {
+                break;
+            }
+        }
+
+        events
+    }
+
+    /// Tìm chỉ số toàn cục (global row index) của một log ID chỉ định trong danh sách batch.
+    fn find_log_index_by_id(batches: &[RecordBatch], target_id: u64) -> Option<usize> {
+        let mut global_offset = 0;
+        for batch in batches {
+            let b_rows = batch.num_rows();
+            if b_rows == 0 {
+                continue;
+            }
+            if let Some(col) = batch
+                .column_by_name("__id")
+                .and_then(|c| c.as_any().downcast_ref::<UInt64Array>())
+            {
+                let first_id = col.value(0);
+                let last_id = col.value(b_rows - 1);
+                if target_id >= first_id && target_id <= last_id {
+                    for r in 0..b_rows {
+                        if col.value(r) == target_id {
+                            return Some(global_offset + r);
+                        }
+                    }
+                }
+            }
+            global_offset += b_rows;
+        }
+        None
     }
 }
