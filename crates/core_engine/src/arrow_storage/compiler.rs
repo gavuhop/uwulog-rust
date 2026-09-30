@@ -2,7 +2,7 @@ use arrow::array::{
     Array, ArrayRef, BooleanArray, Float64Array, Int64Array, RecordBatch, StringArray, UInt64Array,
 };
 use arrow::buffer::BooleanBuffer;
-use arrow::compute::kernels::cmp::{eq, gt, gt_eq, lt, lt_eq};
+use arrow::compute::kernels::cmp::eq;
 use arrow::datatypes::DataType;
 use uwu_core_filter::parser::{Expr, NumOp};
 use uwu_core_schema::StandardField;
@@ -131,7 +131,7 @@ impl QueryCompiler {
             }
 
             Expr::Not(inner) => {
-                let inner_res = Self::eval_batch_with_mask(inner, batch, now, None);
+                let inner_res = Self::eval_batch_with_mask(inner, batch, now, mask);
                 let not_buf = !inner_res.values();
                 match mask {
                     Some(m) => BooleanArray::new(&not_buf & m, None),
@@ -146,16 +146,27 @@ impl QueryCompiler {
                 if is_ts {
                     if let Some(col) = batch.column_by_name("__timestamp_secs") {
                         if let Some(float_col) = col.as_any().downcast_ref::<Float64Array>() {
-                            let scalar = Float64Array::new_scalar(*value);
-                            let res = match op {
-                                NumOp::Gt => gt(float_col, &scalar),
-                                NumOp::Lt => lt(float_col, &scalar),
-                                NumOp::Gte => gt_eq(float_col, &scalar),
-                                NumOp::Lte => lt_eq(float_col, &scalar),
-                            };
-                            if let Ok(b_arr) = res {
-                                return Self::apply_mask(b_arr, mask);
-                            }
+                            let vals = float_col.values();
+                            let target = *value;
+                            let buf = BooleanBuffer::collect_bool(num_rows, |i| {
+                                if let Some(m) = mask {
+                                    if !m.value(i) {
+                                        return false;
+                                    }
+                                }
+                                if float_col.is_valid(i) {
+                                    let v = vals[i];
+                                    match op {
+                                        NumOp::Gt => v > target,
+                                        NumOp::Lt => v < target,
+                                        NumOp::Gte => v >= target,
+                                        NumOp::Lte => v <= target,
+                                    }
+                                } else {
+                                    false
+                                }
+                            });
+                            return BooleanArray::new(buf, None);
                         }
                     }
                     return Self::all_false(num_rows);
@@ -164,16 +175,27 @@ impl QueryCompiler {
                 if is_id {
                     if let Some(col) = batch.column_by_name("__id") {
                         if let Some(u_col) = col.as_any().downcast_ref::<UInt64Array>() {
-                            let scalar = UInt64Array::new_scalar(*value as u64);
-                            let res = match op {
-                                NumOp::Gt => gt(u_col, &scalar),
-                                NumOp::Lt => lt(u_col, &scalar),
-                                NumOp::Gte => gt_eq(u_col, &scalar),
-                                NumOp::Lte => lt_eq(u_col, &scalar),
-                            };
-                            if let Ok(b_arr) = res {
-                                return Self::apply_mask(b_arr, mask);
-                            }
+                            let vals = u_col.values();
+                            let target = *value as u64;
+                            let buf = BooleanBuffer::collect_bool(num_rows, |i| {
+                                if let Some(m) = mask {
+                                    if !m.value(i) {
+                                        return false;
+                                    }
+                                }
+                                if u_col.is_valid(i) {
+                                    let v = vals[i];
+                                    match op {
+                                        NumOp::Gt => v > target,
+                                        NumOp::Lt => v < target,
+                                        NumOp::Gte => v >= target,
+                                        NumOp::Lte => v <= target,
+                                    }
+                                } else {
+                                    false
+                                }
+                            });
+                            return BooleanArray::new(buf, None);
                         }
                     }
                     return Self::all_false(num_rows);
@@ -187,30 +209,52 @@ impl QueryCompiler {
                 match col.data_type() {
                     DataType::Float64 => {
                         if let Some(float_col) = col.as_any().downcast_ref::<Float64Array>() {
-                            let scalar = Float64Array::new_scalar(*value);
-                            let res = match op {
-                                NumOp::Gt => gt(float_col, &scalar),
-                                NumOp::Lt => lt(float_col, &scalar),
-                                NumOp::Gte => gt_eq(float_col, &scalar),
-                                NumOp::Lte => lt_eq(float_col, &scalar),
-                            };
-                            if let Ok(b_arr) = res {
-                                return Self::apply_mask(b_arr, mask);
-                            }
+                            let vals = float_col.values();
+                            let target = *value;
+                            let buf = BooleanBuffer::collect_bool(num_rows, |i| {
+                                if let Some(m) = mask {
+                                    if !m.value(i) {
+                                        return false;
+                                    }
+                                }
+                                if float_col.is_valid(i) {
+                                    let v = vals[i];
+                                    match op {
+                                        NumOp::Gt => v > target,
+                                        NumOp::Lt => v < target,
+                                        NumOp::Gte => v >= target,
+                                        NumOp::Lte => v <= target,
+                                    }
+                                } else {
+                                    false
+                                }
+                            });
+                            return BooleanArray::new(buf, None);
                         }
                     }
                     DataType::Int64 => {
                         if let Some(int_col) = col.as_any().downcast_ref::<Int64Array>() {
-                            let scalar = Int64Array::new_scalar(*value as i64);
-                            let res = match op {
-                                NumOp::Gt => gt(int_col, &scalar),
-                                NumOp::Lt => lt(int_col, &scalar),
-                                NumOp::Gte => gt_eq(int_col, &scalar),
-                                NumOp::Lte => lt_eq(int_col, &scalar),
-                            };
-                            if let Ok(b_arr) = res {
-                                return Self::apply_mask(b_arr, mask);
-                            }
+                            let vals = int_col.values();
+                            let target = *value as i64;
+                            let buf = BooleanBuffer::collect_bool(num_rows, |i| {
+                                if let Some(m) = mask {
+                                    if !m.value(i) {
+                                        return false;
+                                    }
+                                }
+                                if int_col.is_valid(i) {
+                                    let v = vals[i];
+                                    match op {
+                                        NumOp::Gt => v > target,
+                                        NumOp::Lt => v < target,
+                                        NumOp::Gte => v >= target,
+                                        NumOp::Lte => v <= target,
+                                    }
+                                } else {
+                                    false
+                                }
+                            });
+                            return BooleanArray::new(buf, None);
                         }
                     }
                     DataType::Utf8 => {
@@ -252,14 +296,21 @@ impl QueryCompiler {
                 if is_ts {
                     if let Some(col) = batch.column_by_name("__timestamp_secs") {
                         if let Some(float_col) = col.as_any().downcast_ref::<Float64Array>() {
-                            let min_scalar = Float64Array::new_scalar(min);
-                            let max_scalar = Float64Array::new_scalar(max);
-                            if let (Ok(c1), Ok(c2)) =
-                                (gt_eq(float_col, &min_scalar), lt_eq(float_col, &max_scalar))
-                            {
-                                let res_buf = c1.values() & c2.values();
-                                return Self::apply_mask(BooleanArray::new(res_buf, None), mask);
-                            }
+                            let vals = float_col.values();
+                            let buf = BooleanBuffer::collect_bool(num_rows, |i| {
+                                if let Some(m) = mask {
+                                    if !m.value(i) {
+                                        return false;
+                                    }
+                                }
+                                if float_col.is_valid(i) {
+                                    let v = vals[i];
+                                    v >= min && v <= max
+                                } else {
+                                    false
+                                }
+                            });
+                            return BooleanArray::new(buf, None);
                         }
                     }
                     return Self::all_false(num_rows);
@@ -268,14 +319,23 @@ impl QueryCompiler {
                 if is_id {
                     if let Some(col) = batch.column_by_name("__id") {
                         if let Some(u_col) = col.as_any().downcast_ref::<UInt64Array>() {
-                            let min_scalar = UInt64Array::new_scalar(min as u64);
-                            let max_scalar = UInt64Array::new_scalar(max as u64);
-                            if let (Ok(c1), Ok(c2)) =
-                                (gt_eq(u_col, &min_scalar), lt_eq(u_col, &max_scalar))
-                            {
-                                let res_buf = c1.values() & c2.values();
-                                return Self::apply_mask(BooleanArray::new(res_buf, None), mask);
-                            }
+                            let vals = u_col.values();
+                            let min_u = min as u64;
+                            let max_u = max as u64;
+                            let buf = BooleanBuffer::collect_bool(num_rows, |i| {
+                                if let Some(m) = mask {
+                                    if !m.value(i) {
+                                        return false;
+                                    }
+                                }
+                                if u_col.is_valid(i) {
+                                    let v = vals[i];
+                                    v >= min_u && v <= max_u
+                                } else {
+                                    false
+                                }
+                            });
+                            return BooleanArray::new(buf, None);
                         }
                     }
                     return Self::all_false(num_rows);
@@ -289,26 +349,42 @@ impl QueryCompiler {
                 match col.data_type() {
                     DataType::Float64 => {
                         if let Some(float_col) = col.as_any().downcast_ref::<Float64Array>() {
-                            let min_scalar = Float64Array::new_scalar(min);
-                            let max_scalar = Float64Array::new_scalar(max);
-                            if let (Ok(c1), Ok(c2)) =
-                                (gt_eq(float_col, &min_scalar), lt_eq(float_col, &max_scalar))
-                            {
-                                let res_buf = c1.values() & c2.values();
-                                return Self::apply_mask(BooleanArray::new(res_buf, None), mask);
-                            }
+                            let vals = float_col.values();
+                            let buf = BooleanBuffer::collect_bool(num_rows, |i| {
+                                if let Some(m) = mask {
+                                    if !m.value(i) {
+                                        return false;
+                                    }
+                                }
+                                if float_col.is_valid(i) {
+                                    let v = vals[i];
+                                    v >= min && v <= max
+                                } else {
+                                    false
+                                }
+                            });
+                            return BooleanArray::new(buf, None);
                         }
                     }
                     DataType::Int64 => {
                         if let Some(int_col) = col.as_any().downcast_ref::<Int64Array>() {
-                            let min_scalar = Int64Array::new_scalar(min as i64);
-                            let max_scalar = Int64Array::new_scalar(max as i64);
-                            if let (Ok(c1), Ok(c2)) =
-                                (gt_eq(int_col, &min_scalar), lt_eq(int_col, &max_scalar))
-                            {
-                                let res_buf = c1.values() & c2.values();
-                                return Self::apply_mask(BooleanArray::new(res_buf, None), mask);
-                            }
+                            let vals = int_col.values();
+                            let min_i = min as i64;
+                            let max_i = max as i64;
+                            let buf = BooleanBuffer::collect_bool(num_rows, |i| {
+                                if let Some(m) = mask {
+                                    if !m.value(i) {
+                                        return false;
+                                    }
+                                }
+                                if int_col.is_valid(i) {
+                                    let v = vals[i];
+                                    v >= min_i && v <= max_i
+                                } else {
+                                    false
+                                }
+                            });
+                            return BooleanArray::new(buf, None);
                         }
                     }
                     DataType::Utf8 => {
@@ -342,13 +418,49 @@ impl QueryCompiler {
                 };
 
                 if let Some(str_col) = col.as_any().downcast_ref::<StringArray>() {
+                    let data = str_col.value_data();
+                    if data.is_empty() {
+                        return Self::all_false(num_rows);
+                    }
+                    // Chunk pruning on raw contiguous buffer
+                    let can_match = if value.is_ascii() {
+                        contains_ignore_case_ascii_bytes(data, value.as_bytes())
+                    } else {
+                        contains_ignore_case(std::str::from_utf8(data).unwrap_or(""), value)
+                    };
+                    if !can_match {
+                        return Self::all_false(num_rows);
+                    }
+
+                    let offsets = str_col.value_offsets();
+                    let val_len = value.len();
+                    let val_bytes = value.as_bytes();
+                    let is_ascii = value.is_ascii();
+
                     let buf = BooleanBuffer::collect_bool(num_rows, |i| {
                         if let Some(m) = mask {
                             if !m.value(i) {
                                 return false;
                             }
                         }
-                        str_col.is_valid(i) && str_col.value(i).eq_ignore_ascii_case(value)
+                        if str_col.is_valid(i) {
+                            let start = offsets[i] as usize;
+                            let end = offsets[i + 1] as usize;
+                            if end - start == val_len {
+                                let slice = &data[start..end];
+                                if is_ascii {
+                                    slice.eq_ignore_ascii_case(val_bytes)
+                                } else {
+                                    std::str::from_utf8(slice)
+                                        .map(|s| s.eq_ignore_ascii_case(value))
+                                        .unwrap_or(false)
+                                }
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        }
                     });
                     return BooleanArray::new(buf, None);
                 }
@@ -363,16 +475,46 @@ impl QueryCompiler {
                 };
 
                 if let Some(str_col) = col.as_any().downcast_ref::<StringArray>() {
+                    let data = str_col.value_data();
+                    if data.is_empty() {
+                        return Self::all_false(num_rows);
+                    }
+                    // Chunk pruning
+                    let can_match = values.iter().any(|v| {
+                        if v.is_ascii() {
+                            contains_ignore_case_ascii_bytes(data, v.as_bytes())
+                        } else {
+                            contains_ignore_case(std::str::from_utf8(data).unwrap_or(""), v)
+                        }
+                    });
+                    if !can_match {
+                        return Self::all_false(num_rows);
+                    }
+
+                    let offsets = str_col.value_offsets();
                     let buf = BooleanBuffer::collect_bool(num_rows, |i| {
                         if let Some(m) = mask {
                             if !m.value(i) {
                                 return false;
                             }
                         }
-                        str_col.is_valid(i)
-                            && values
-                                .iter()
-                                .any(|v| contains_ignore_case(str_col.value(i), v))
+                        if str_col.is_valid(i) {
+                            let start = offsets[i] as usize;
+                            let end = offsets[i + 1] as usize;
+                            let slice = &data[start..end];
+                            values.iter().any(|v| {
+                                if v.is_ascii() {
+                                    contains_ignore_case_ascii_bytes(slice, v.as_bytes())
+                                } else {
+                                    contains_ignore_case(
+                                        std::str::from_utf8(slice).unwrap_or(""),
+                                        v,
+                                    )
+                                }
+                            })
+                        } else {
+                            false
+                        }
                     });
                     return BooleanArray::new(buf, None);
                 }

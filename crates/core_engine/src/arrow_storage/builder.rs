@@ -226,15 +226,14 @@ impl ActiveRecordBatchBuilder {
         columns.push(Arc::new(self.message_builder.finish()) as ArrayRef);
 
         // Sort dynamic column names deterministically
-        let mut dyn_keys: Vec<String> = self.dynamic_builders.keys().cloned().collect();
-        dyn_keys.sort();
+        let mut dyn_items: Vec<(String, DynamicColumnBuilder)> =
+            self.dynamic_builders.drain().collect();
+        dyn_items.sort_by(|a, b| a.0.cmp(&b.0));
 
-        for k in dyn_keys {
-            if let Some(dyn_b) = self.dynamic_builders.remove(&k) {
-                let (dtype, array) = dyn_b.finish();
-                fields.push(Field::new(k, dtype, true));
-                columns.push(array);
-            }
+        for (k, dyn_b) in dyn_items {
+            let (dtype, array) = dyn_b.finish();
+            fields.push(Field::new(k, dtype, true));
+            columns.push(array);
         }
 
         let schema = Arc::new(Schema::new(fields));

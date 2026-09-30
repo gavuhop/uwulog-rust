@@ -195,6 +195,12 @@ impl SystemEngine {
 
                 // Push vào Arrow Storage
                 storage_clone.push_events(event_batch);
+
+                // Dual-Trigger: Nếu kênh nhận rỗng (log về chậm hoặc kết thúc đợt burst),
+                // flush ngay để đóng gói các log còn lại trong active_builder, đảm bảo real-time.
+                if raw_rx.is_empty() {
+                    storage_clone.flush();
+                }
             }
         });
 
