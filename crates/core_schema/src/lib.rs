@@ -43,7 +43,7 @@ impl StandardField {
             }
             "level" | "lvl" | "lv" | "severity" | "priority" | "loglevel" | "log_level"
             | "log.level" | "levelname" => Some(Self::Level),
-            "message" | "msg" | "text" | "body" => Some(Self::Message),
+            "message" | "msg" | "text" | "body" | "log" | "content" => Some(Self::Message),
             "id" => Some(Self::Id),
             _ => None,
         }
@@ -558,6 +558,14 @@ mod tests {
         );
         assert_eq!(
             StandardField::from_alias("text"),
+            Some(StandardField::Message)
+        );
+        assert_eq!(
+            StandardField::from_alias("log"),
+            Some(StandardField::Message)
+        );
+        assert_eq!(
+            StandardField::from_alias("content"),
             Some(StandardField::Message)
         );
         assert_eq!(StandardField::from_alias("custom_field"), None);

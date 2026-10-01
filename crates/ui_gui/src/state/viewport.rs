@@ -15,6 +15,8 @@ pub struct ViewportState {
     pub total_matched: usize,
     pub is_auto_scroll: bool,
     pub request_scroll_to_bottom: bool,
+    pub request_maintain_scroll_offset: Option<usize>,
+    pub reached_oldest: bool,
     pub has_new_data: bool,
     pub prev_table_row_count: usize,
     pub last_processed_count: u64,
@@ -34,6 +36,8 @@ impl ViewportState {
             total_matched: 0,
             is_auto_scroll: true,
             request_scroll_to_bottom: false,
+            request_maintain_scroll_offset: None,
+            reached_oldest: false,
             has_new_data: false,
             prev_table_row_count: 0,
             last_processed_count: 0,
@@ -45,6 +49,8 @@ impl ViewportState {
         let was_unlatched = !self.is_auto_scroll;
         self.is_auto_scroll = true;
         self.request_scroll_to_bottom = true;
+        self.reached_oldest = false;
+        self.request_maintain_scroll_offset = None;
         was_unlatched
     }
 

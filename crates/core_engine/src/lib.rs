@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use tokio::sync::mpsc;
-use uwu_core_filter::parser::{tokenize, Parser};
+use uwu_core_filter::parser::{tokenize, Expr, Parser};
 use uwu_core_schema::{FieldType, LogEvent, RawLogEntry, StandardField};
 use uwu_core_util::{detect_timestamp_format, now_secs, parse_with_format, TimestampFormat};
 use uwu_driver_sources::{LogNormalizer, LogSource};
@@ -232,6 +232,18 @@ impl SystemEngine {
         now_secs()
     }
 
+    fn parse_query_expr(&self, query: &str) -> (Option<Expr>, f64) {
+        let trimmed = query.trim();
+        let data_now = self.current_data_now();
+        if trimmed.is_empty() {
+            (None, data_now)
+        } else {
+            let tokens = tokenize(trimmed);
+            let mut parser = Parser::new(tokens, data_now);
+            (parser.parse(), data_now)
+        }
+    }
+
     pub fn search(&self, query: &str) -> Vec<LogEvent> {
         self.search_limited(query, usize::MAX)
     }
@@ -241,46 +253,23 @@ impl SystemEngine {
     }
 
     pub fn search_with_count(&self, query: &str, limit: usize) -> (usize, Vec<LogEvent>) {
-        let trimmed = query.trim();
-        let data_now = self.current_data_now();
-        if trimmed.is_empty() {
-            return self.storage.search_with_count(None, limit, data_now);
-        }
+        let (expr, now) = self.parse_query_expr(query);
+        self.storage.search_with_count(expr.as_ref(), limit, now)
+    }
 
-        let tokens = tokenize(trimmed);
-        let mut parser = Parser::new(tokens, data_now);
-        let ast = match parser.parse() {
-            Some(e) => e,
-            None => {
-                return self.storage.search_with_count(None, limit, data_now);
-            }
-        };
-
-        self.storage.search_with_count(Some(&ast), limit, data_now)
+    /// Tìm kiếm phân trang ngược (Reverse Pagination): lấy tối đa `limit` logs nằm ngay trước `before_id`.
+    /// Nếu `query` rỗng, trả về các bản ghi liên tục trước `before_id`.
+    /// Nếu có `query`, trả về các bản ghi khớp bộ lọc nằm trước `before_id`.
+    pub fn search_before(&self, query: &str, before_id: u64, limit: usize) -> Vec<LogEvent> {
+        let (expr, now) = self.parse_query_expr(query);
+        self.storage
+            .search_before(expr.as_ref(), before_id, limit, now)
     }
 
     pub fn filter_incremental(&self, query: &str, last_processed: u64) -> (usize, Vec<LogEvent>) {
-        let trimmed = query.trim();
-        let data_now = self.current_data_now();
-        if trimmed.is_empty() {
-            return self
-                .storage
-                .filter_incremental(None, last_processed, data_now);
-        }
-
-        let tokens = tokenize(trimmed);
-        let mut parser = Parser::new(tokens, data_now);
-        let ast = match parser.parse() {
-            Some(e) => e,
-            None => {
-                return self
-                    .storage
-                    .filter_incremental(None, last_processed, data_now);
-            }
-        };
-
+        let (expr, now) = self.parse_query_expr(query);
         self.storage
-            .filter_incremental(Some(&ast), last_processed, data_now)
+            .filter_incremental(expr.as_ref(), last_processed, now)
     }
 
     pub fn total_logs(&self) -> usize {
@@ -964,5 +953,45 @@ mod tests {
         assert_eq!(count_bool_exact, 1, "is_active=true should match");
         let (count_bool_false, _) = engine.search_with_count("is_active:false", 10);
         assert_eq!(count_bool_false, 0, "is_active:false should not match true");
+    }
+
+    #[tokio::test]
+    async fn test_system_engine_search_before() {
+        let engine = SystemEngine::new(50);
+        let tx = engine.get_channel();
+
+        for i in 0..20 {
+            tx.send(RawLogEntry {
+                payload: RawPayload::Text(format!("[INFO] Message index {}", i)),
+            })
+            .await
+            .unwrap();
+        }
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let all_logs = engine.search("");
+        assert_eq!(all_logs.len(), 20);
+
+        let target_id = all_logs[10].id; // Message index 10
+
+        // 1. Unfiltered search_before: lấy 5 logs trước Message index 10 (tức là 5..10)
+        let before_unfiltered = engine.search_before("", target_id, 5);
+        assert_eq!(before_unfiltered.len(), 5);
+        assert_eq!(before_unfiltered[0].message, "[INFO] Message index 5");
+        assert_eq!(before_unfiltered[4].message, "[INFO] Message index 9");
+
+        // 2. Unfiltered search_before tại log đầu tiên (index 0) -> phải trả về rỗng vì không có log cũ hơn
+        let oldest_id = all_logs[0].id;
+        let before_oldest = engine.search_before("", oldest_id, 5);
+        assert_eq!(before_oldest.len(), 0);
+
+        // 3. Filtered search_before: tìm message:~"index 1" trước Message index 15
+        // Các message có "index 1" là: 1, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19
+        // Trước index 15 có: 1, 10, 11, 12, 13, 14 (đúng 6 logs, không bị lẫn với ID ngẫu nhiên)
+        let before_filtered = engine.search_before("message:~\"index 1\"", all_logs[15].id, 10);
+        assert_eq!(before_filtered.len(), 6);
+        assert_eq!(before_filtered[0].message, "[INFO] Message index 1");
+        assert_eq!(before_filtered[5].message, "[INFO] Message index 14");
     }
 }

@@ -31,21 +31,34 @@ pub fn render_log_table(
     mode: TableMode,
     dispatch: &mut impl FnMut(AppAction),
 ) {
-    let row_count = match mode {
-        TableMode::Filtered => session.viewport.cached_logs.len(),
-        TableMode::Unfiltered => session.unfiltered.cached_unfiltered.len(),
+    let is_unfiltered = mode == TableMode::Unfiltered;
+    let row_count = if is_unfiltered {
+        session.unfiltered.cached_unfiltered.len()
+    } else {
+        session.viewport.cached_logs.len()
     };
     let text_height = egui::TextStyle::Monospace.resolve(ui.style()).size;
 
     let mut newly_selected_event = None;
+    let mut min_visible_row: Option<usize> = None;
     let mut last_row_visible = false;
+
+    let had_forced_scroll = if is_unfiltered {
+        session.unfiltered.request_scroll_to_bottom
+            || session.unfiltered.request_scroll_to_target
+            || session.unfiltered.request_maintain_scroll_offset.is_some()
+    } else {
+        session.viewport.request_scroll_to_bottom
+            || session.viewport.request_maintain_scroll_offset.is_some()
+    };
 
     // Đọc thao tác cuộn chuột trước khi vẽ TableBuilder
     let scroll_delta_y = ui.input(|i| i.smooth_scroll_delta.y);
     if scroll_delta_y > 0.0 {
-        match mode {
-            TableMode::Filtered => session.unlatch(),
-            TableMode::Unfiltered => session.unlatch_unfiltered(),
+        if is_unfiltered {
+            session.unlatch_unfiltered();
+        } else {
+            session.unlatch();
         }
     }
 
@@ -138,33 +151,45 @@ pub fn render_log_table(
                 builder = builder.column(Column::initial(initial_w).at_least(min_w).clip(true));
             }
 
-            match mode {
-                TableMode::Filtered => {
-                    let has_new_data = session.viewport.has_new_data;
-                    let force_scroll = session.viewport.request_scroll_to_bottom;
-                    if (force_scroll || (session.viewport.is_auto_scroll && has_new_data))
-                        && row_count > 0
-                    {
-                        builder = builder.scroll_to_row(row_count - 1, Some(egui::Align::Max));
+            let maintain_offset = if is_unfiltered {
+                session.unfiltered.request_maintain_scroll_offset.take()
+            } else {
+                session.viewport.request_maintain_scroll_offset.take()
+            };
+
+            if let Some(offset) = maintain_offset {
+                builder = builder.scroll_to_row(offset, Some(egui::Align::Min));
+            } else if is_unfiltered && session.unfiltered.request_scroll_to_target && row_count > 0
+            {
+                if let Some(target_idx) = session.unfiltered.target_index {
+                    builder = builder.scroll_to_row(target_idx, Some(egui::Align::Center));
+                }
+                session.unfiltered.request_scroll_to_target = false;
+            } else if row_count > 0 {
+                let (force, is_live, has_new) = if is_unfiltered {
+                    (
+                        session.unfiltered.request_scroll_to_bottom,
+                        session.unfiltered.is_live,
+                        session.unfiltered.has_new_data,
+                    )
+                } else {
+                    (
+                        session.viewport.request_scroll_to_bottom,
+                        session.viewport.is_auto_scroll,
+                        session.viewport.has_new_data,
+                    )
+                };
+                if force || (is_live && has_new) {
+                    builder = builder.scroll_to_row(row_count - 1, Some(egui::Align::Max));
+                    if is_unfiltered {
+                        session.unfiltered.request_scroll_to_bottom = false;
+                    } else {
                         session.viewport.request_scroll_to_bottom = false;
                     }
-                    session.viewport.prev_table_row_count = row_count;
                 }
-                TableMode::Unfiltered => {
-                    if session.unfiltered.request_scroll_to_target && row_count > 0 {
-                        if let Some(target_idx) = session.unfiltered.target_index {
-                            builder = builder.scroll_to_row(target_idx, Some(egui::Align::Center));
-                        }
-                        session.unfiltered.request_scroll_to_target = false;
-                    } else if session.unfiltered.is_live
-                        && (session.unfiltered.request_scroll_to_bottom
-                            || session.unfiltered.has_new_data)
-                        && row_count > 0
-                    {
-                        builder = builder.scroll_to_row(row_count - 1, Some(egui::Align::Max));
-                        session.unfiltered.request_scroll_to_bottom = false;
-                    }
-                }
+            }
+            if !is_unfiltered {
+                session.viewport.prev_table_row_count = row_count;
             }
 
             builder
@@ -192,6 +217,9 @@ pub fn render_log_table(
                     body.rows(text_height + 8.0, row_count, |mut row| {
                         let row_index = row.index();
 
+                        if min_visible_row.is_none() {
+                            min_visible_row = Some(row_index);
+                        }
                         if row_count > 0 && row_index == row_count - 1 {
                             last_row_visible = true;
                         }
@@ -259,16 +287,46 @@ pub fn render_log_table(
 
     if let Some(event) = newly_selected_event {
         dispatch(AppAction::SelectLog(Some(event)));
-        match mode {
-            TableMode::Filtered => session.unlatch(),
-            TableMode::Unfiltered => session.unlatch_unfiltered(),
+        if is_unfiltered {
+            session.unlatch_unfiltered();
+        } else {
+            session.unlatch();
         }
     }
 
+    // Nếu người dùng cuộn/kéo thanh cuộn rời khỏi dòng cuối (không phải do force scroll)
+    if row_count > 0 && !last_row_visible && !had_forced_scroll {
+        if is_unfiltered {
+            session.unlatch_unfiltered();
+        } else {
+            session.unlatch();
+        }
+    }
+
+    // Reverse pagination / Infinite scroll up:
+    // Khi cuộn gần đỉnh bảng (trong vòng 10 dòng đầu) và không ở đáy stream
+    let min_row = min_visible_row.unwrap_or(usize::MAX);
+    let is_at_bottom = if is_unfiltered {
+        session.unfiltered.is_live && last_row_visible
+    } else {
+        session.viewport.is_auto_scroll && last_row_visible
+    };
+    let reached_oldest = if is_unfiltered {
+        session.unfiltered.reached_oldest
+    } else {
+        session.viewport.reached_oldest
+    };
+
+    if min_row <= 10 && row_count > 0 && !is_at_bottom && !reached_oldest {
+        session.load_older_logs(is_unfiltered, 1000);
+        ui.ctx().request_repaint();
+    }
+
     if last_row_visible && scroll_delta_y < 0.0 {
-        match mode {
-            TableMode::Filtered => session.viewport.is_auto_scroll = true,
-            TableMode::Unfiltered => session.unfiltered.is_live = true,
+        if is_unfiltered {
+            session.unfiltered.is_live = true;
+        } else {
+            session.viewport.is_auto_scroll = true;
         }
     }
 }

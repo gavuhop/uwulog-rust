@@ -392,113 +392,121 @@ impl ArrowStorage {
     // Search & Filtering
     // ------------------------------------------------------------------------
 
+    /// Unified Window Fetcher: Hợp nhất truy vấn cho cả cuộn xuống (search_with_count) và cuộn lên (search_before).
+    /// - `before_id = None`: Lấy `limit` bản ghi mới nhất ở đáy stream (cuộn xuống).
+    /// - `before_id = Some(id)`: Lấy `limit` bản ghi nằm ngay trước `id` (cuộn lên).
+    fn fetch_window(
+        &self,
+        expr: Option<&Expr>,
+        before_id: Option<u64>,
+        limit: usize,
+        now: f64,
+    ) -> (usize, Vec<LogEvent>) {
+        self.flush();
+
+        let sealed = {
+            let guard = self.sealed_batches.read();
+            Arc::clone(&*guard)
+        };
+        if sealed.is_empty() || limit == 0 {
+            return (0, Vec::new());
+        }
+
+        let total_rows = self.total_stored_rows.load(Ordering::Acquire) as usize;
+        let pos = match before_id {
+            Some(id) => match Self::find_log_index_or_lower_bound(&sealed, id) {
+                Some(p) => p,
+                None => total_rows,
+            },
+            None => total_rows,
+        };
+
+        if pos == 0 {
+            return (0, Vec::new());
+        }
+
+        match expr {
+            None => {
+                let take_count = limit.min(pos);
+                let start_idx = pos - take_count;
+                (
+                    total_rows,
+                    Self::extract_row_slice(&sealed, start_idx, take_count),
+                )
+            }
+            Some(expr_ref) => {
+                let batch_evals: Vec<(BooleanArray, usize)> = sealed
+                    .par_iter()
+                    .map(|batch| {
+                        let mask = QueryCompiler::eval_batch(expr_ref, batch, now);
+                        let true_cnt = mask.true_count();
+                        (mask, true_cnt)
+                    })
+                    .collect();
+
+                let total_matched: usize = batch_evals.iter().map(|(_, c)| *c).sum();
+                if total_matched == 0 {
+                    return (0, Vec::new());
+                }
+
+                let take_matches = limit.min(total_matched);
+                let mut events = Vec::with_capacity(take_matches);
+                let mut current_offset = total_rows;
+
+                for (idx, batch) in sealed.iter().enumerate().rev() {
+                    let b_rows = batch.num_rows();
+                    let b_start = current_offset - b_rows;
+                    current_offset = b_start;
+
+                    if b_start >= pos {
+                        continue;
+                    }
+
+                    let (mask, true_cnt) = &batch_evals[idx];
+                    if *true_cnt == 0 {
+                        continue;
+                    }
+
+                    let end_in_batch = (pos - b_start).min(b_rows);
+                    let cols = BatchColumns::extract(batch);
+
+                    for r in (0..end_in_batch).rev() {
+                        if mask.value(r) {
+                            events.push(cols.materialize_row(r));
+                            if events.len() >= take_matches {
+                                break;
+                            }
+                        }
+                    }
+
+                    if events.len() >= take_matches {
+                        break;
+                    }
+                }
+
+                events.reverse();
+                (total_matched, events)
+            }
+        }
+    }
+
     pub fn search_with_count(
         &self,
         expr: Option<&Expr>,
         limit: usize,
         now: f64,
     ) -> (usize, Vec<LogEvent>) {
-        self.flush();
-
-        // Snapshot Read: Clone Arc in ~10 nanoseconds, releasing the lock immediately!
-        let sealed = {
-            let guard = self.sealed_batches.read();
-            Arc::clone(&*guard)
-        };
-        if sealed.is_empty() {
-            return (0, Vec::new());
-        }
-
-        match expr {
-            None => self.search_unfiltered(&sealed, limit),
-            Some(expr_ref) => self.search_filtered(&sealed, expr_ref, limit, now),
-        }
+        self.fetch_window(expr, None, limit, now)
     }
 
-    fn search_unfiltered(&self, sealed: &[RecordBatch], limit: usize) -> (usize, Vec<LogEvent>) {
-        let total_rows = self.total_stored_rows.load(Ordering::Acquire) as usize;
-        if total_rows == 0 {
-            return (0, Vec::new());
-        }
-
-        let take_count = limit.min(total_rows);
-        let mut events = Vec::with_capacity(take_count);
-
-        // Reverse scan from newest batch backwards for viewport!
-        for batch in sealed.iter().rev() {
-            let b_rows = batch.num_rows();
-            if b_rows == 0 {
-                continue;
-            }
-            let needed = take_count - events.len();
-            let to_take = b_rows.min(needed);
-            let start_idx = b_rows - to_take;
-
-            let cols = BatchColumns::extract(batch);
-            for r in (start_idx..b_rows).rev() {
-                events.push(cols.materialize_row(r));
-            }
-
-            if events.len() >= take_count {
-                break;
-            }
-        }
-
-        events.reverse();
-        (total_rows, events)
-    }
-
-    fn search_filtered(
+    pub fn search_before(
         &self,
-        sealed: &[RecordBatch],
-        expr: &Expr,
+        expr: Option<&Expr>,
+        before_id: u64,
         limit: usize,
         now: f64,
-    ) -> (usize, Vec<LogEvent>) {
-        // Parallel SIMD Vectorized Evaluation across batches outside of ANY lock
-        let batch_evals: Vec<(BooleanArray, usize)> = sealed
-            .par_iter()
-            .map(|batch| {
-                let mask = QueryCompiler::eval_batch(expr, batch, now);
-                let true_cnt = mask.true_count();
-                (mask, true_cnt)
-            })
-            .collect();
-
-        let total_matched: usize = batch_evals.iter().map(|(_, c)| *c).sum();
-        if total_matched == 0 {
-            return (0, Vec::new());
-        }
-
-        let take_matches = limit.min(total_matched);
-        let mut events = Vec::with_capacity(take_matches);
-
-        // Late Materialization: Reverse scan from newest batch backwards!
-        for (batch_idx, batch) in sealed.iter().enumerate().rev() {
-            let (mask, true_cnt) = &batch_evals[batch_idx];
-            if *true_cnt == 0 {
-                continue;
-            }
-
-            let cols = BatchColumns::extract(batch);
-            let b_rows = batch.num_rows();
-
-            for row_idx in (0..b_rows).rev() {
-                if mask.value(row_idx) {
-                    events.push(cols.materialize_row(row_idx));
-                    if events.len() >= take_matches {
-                        break;
-                    }
-                }
-            }
-
-            if events.len() >= take_matches {
-                break;
-            }
-        }
-
-        events.reverse();
-        (total_matched, events)
+    ) -> Vec<LogEvent> {
+        self.fetch_window(expr, Some(before_id), limit, now).1
     }
 
     pub fn filter_incremental(
@@ -632,6 +640,37 @@ impl ArrowStorage {
                 if target_id >= first_id && target_id <= last_id {
                     for r in 0..b_rows {
                         if col.value(r) == target_id {
+                            return Some(global_offset + r);
+                        }
+                    }
+                }
+            }
+            global_offset += b_rows;
+        }
+        None
+    }
+
+    /// Tìm vị trí dòng toàn cục (global row index) của log có ID = target_id,
+    /// hoặc vị trí đầu tiên có ID >= target_id nếu target_id không tồn tại chính xác.
+    fn find_log_index_or_lower_bound(batches: &[RecordBatch], target_id: u64) -> Option<usize> {
+        let mut global_offset = 0;
+        for batch in batches {
+            let b_rows = batch.num_rows();
+            if b_rows == 0 {
+                continue;
+            }
+            if let Some(col) = batch
+                .column_by_name("__id")
+                .and_then(|c| c.as_any().downcast_ref::<UInt64Array>())
+            {
+                let first_id = col.value(0);
+                let last_id = col.value(b_rows - 1);
+                if target_id < first_id {
+                    return Some(global_offset);
+                }
+                if target_id >= first_id && target_id <= last_id {
+                    for r in 0..b_rows {
+                        if col.value(r) >= target_id {
                             return Some(global_offset + r);
                         }
                     }

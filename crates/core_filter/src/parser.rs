@@ -365,7 +365,8 @@ fn parse_atom(s: &str, now: f64) -> Expr {
                     }
                 }
             }
-            if let Some(pattern) = v_str.strip_prefix('~') {
+            if let Some(raw_pattern) = v_str.strip_prefix('~') {
+                let pattern = strip_quotes(raw_pattern).unwrap_or(raw_pattern);
                 if !pattern.is_empty() {
                     if let Ok(re) = Regex::new(pattern) {
                         return atom_wrap(Expr::FieldRegex {

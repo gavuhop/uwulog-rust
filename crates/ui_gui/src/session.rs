@@ -70,10 +70,7 @@ impl GuiSession {
             }
         }
 
-        if !self.view.viewport.is_auto_scroll
-            && !self.view.search.query.trim().is_empty()
-            && new_logs_arrived
-        {
+        if !self.view.viewport.is_auto_scroll && new_logs_arrived {
             let (new_matched, _) = self.session.engine.filter_incremental(
                 &self.view.search.query,
                 self.view.viewport.pause_snapshot.filtered_processed,
@@ -115,6 +112,8 @@ impl GuiSession {
         self.view.viewport.total_matched = matched;
         self.sync_discovered_fields(&logs);
         self.view.viewport.cached_logs = logs;
+        self.view.viewport.reached_oldest = false;
+        self.view.viewport.request_maintain_scroll_offset = None;
         self.view.search.last_query = self.view.search.query.clone();
         self.view.viewport.last_processed_count = self.session.engine.total_processed();
         self.view.search.last_search_time = Instant::now();
@@ -215,8 +214,72 @@ impl GuiSession {
         self.view.active_tab = ActiveTab::Unfiltered;
     }
 
+    /// Unified Reverse Pagination / Infinite Scroll Up
+    pub fn load_older_logs(&mut self, is_unfiltered: bool, page_size: usize) {
+        let (query, oldest_id) = if is_unfiltered {
+            if self.view.unfiltered.reached_oldest {
+                return;
+            }
+            self.unlatch_unfiltered();
+            (
+                "",
+                self.view.unfiltered.cached_unfiltered.first().map(|e| e.id),
+            )
+        } else {
+            if self.view.viewport.reached_oldest {
+                return;
+            }
+            self.unlatch();
+            (
+                self.view.search.query.as_str(),
+                self.view.viewport.cached_logs.first().map(|e| e.id),
+            )
+        };
+
+        let Some(before_id) = oldest_id else {
+            return;
+        };
+        let older = self
+            .session
+            .engine
+            .search_before(query, before_id, page_size);
+        let count = older.len();
+        let reached = count < page_size;
+
+        if is_unfiltered {
+            if count > 0 {
+                let mut new_cache = older;
+                new_cache.extend(std::mem::take(&mut self.view.unfiltered.cached_unfiltered));
+                self.view.unfiltered.cached_unfiltered = new_cache;
+                self.view.unfiltered.request_maintain_scroll_offset = Some(count);
+            }
+            self.view.unfiltered.reached_oldest = reached;
+        } else {
+            if count > 0 {
+                self.sync_discovered_fields(&older);
+                let mut new_cache = older;
+                new_cache.extend(std::mem::take(&mut self.view.viewport.cached_logs));
+                self.view.viewport.cached_logs = new_cache;
+                self.view.viewport.request_maintain_scroll_offset = Some(count);
+            }
+            self.view.viewport.reached_oldest = reached;
+        }
+    }
+
+    #[inline]
+    pub fn load_more_older_logs(&mut self, page_size: usize) {
+        self.load_older_logs(false, page_size);
+    }
+
+    #[inline]
+    pub fn load_more_older_unfiltered(&mut self, page_size: usize) {
+        self.load_older_logs(true, page_size);
+    }
+
     pub fn refresh_unfiltered_snapshot(&mut self) {
         self.view.unfiltered.snapshot_processed_count = self.session.engine.total_processed();
+        self.view.unfiltered.reached_oldest = false;
+        self.view.unfiltered.request_maintain_scroll_offset = None;
         let (target_idx, unfiltered) = self
             .session
             .engine
@@ -331,6 +394,11 @@ impl GuiSession {
             }
             AppAction::FocusInMainAndClearFilter => {
                 self.focus_in_main_and_clear_filter();
+                true
+            }
+            AppAction::LoadOlderLogs(page_size) => {
+                let is_unfiltered = self.view.active_tab == ActiveTab::Unfiltered;
+                self.load_older_logs(is_unfiltered, *page_size);
                 true
             }
             AppAction::CommitSearch => {

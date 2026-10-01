@@ -44,6 +44,7 @@ pub enum AppAction {
     OpenUnfilteredStream(Option<u64>),
     CloseUnfilteredStream,
     FocusInMainAndClearFilter,
+    LoadOlderLogs(usize),
 
     // Project Picker
     ToggleProjectPicker,

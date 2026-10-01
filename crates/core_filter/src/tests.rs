@@ -128,6 +128,10 @@ fn test_regex_variants() {
         filter_logs(logs.clone(), "message:~user_\\d+".into()),
         vec![0]
     );
+    assert_eq!(
+        filter_logs(logs.clone(), "message:~\"user_\\d+\"".into()),
+        vec![0]
+    );
     // Negative regex
     assert_eq!(filter_logs(logs, "-message:~admin".into()), vec![0]);
 }
