@@ -5,7 +5,11 @@ edition = "2021"
 
 [dependencies]
 serde = { workspace = true }
-egui = { workspace = true }
+egui = { workspace = true, optional = true }
+
+[features]
+default = []
+egui = ["dep:egui"]
 
 [build-dependencies]
 roxmltree = "0.21"

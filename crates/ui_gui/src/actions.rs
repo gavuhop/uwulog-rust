@@ -39,6 +39,8 @@ pub enum AppAction {
 
     // Stream & Latch Controls
     ToggleLatch,
+    Unlatch,
+    Latch,
     ToggleUnfilteredLive,
     RefreshUnfilteredSnapshot,
     OpenUnfilteredStream(Option<u64>),
@@ -78,11 +80,61 @@ pub enum AppAction {
     AutocompleteConfirm,
 }
 
+/// Luồng sự kiện bất đồng bộ gửi từ Background Workers về UI Thread (Worker -> UI Pipeline)
+#[derive(Debug)]
+pub enum AppEvent {
+    SearchResultsReady {
+        session_id: uuid::Uuid,
+        query_id: u64,
+        total_matched: usize,
+        logs: Vec<LogEvent>,
+    },
+    IncrementalLogsReady {
+        session_id: uuid::Uuid,
+        matched: usize,
+        logs: Vec<LogEvent>,
+        total_processed: u64,
+    },
+    IncrementalUnfilteredReady {
+        session_id: uuid::Uuid,
+        logs: Vec<LogEvent>,
+    },
+    ReversePaginationReady {
+        session_id: uuid::Uuid,
+        before_id: u64,
+        logs: Vec<LogEvent>,
+        is_unfiltered: bool,
+        reached_oldest: bool,
+    },
+    SearchCancelled {
+        session_id: uuid::Uuid,
+        query_id: u64,
+    },
+}
+
 /// Unified render context passed down to subcomponents (tables, detail inspector, cells)
 pub struct ActionContext<'a> {
     pub highlighted_terms: &'a HashSet<String>,
     pub has_any_highlights: bool,
     pub action: &'a mut Option<AppAction>,
+    pub active_editing_cell: Option<&'a mut Option<eframe::egui::Id>>,
+}
+
+impl<'a> ActionContext<'a> {
+    #[inline]
+    pub fn is_cell_promoted(&self, cell_id: eframe::egui::Id) -> bool {
+        self.active_editing_cell
+            .as_ref()
+            .and_then(|opt| opt.as_ref())
+            .is_some_and(|&id| id == cell_id)
+    }
+
+    #[inline]
+    pub fn set_active_editing_cell(&mut self, cell_id: Option<eframe::egui::Id>) {
+        if let Some(ref mut cell_ref) = self.active_editing_cell {
+            **cell_ref = cell_id;
+        }
+    }
 }
 
 /// Formats a clean truncated label for context menus and tooltips (e.g. "very long tex...").

@@ -33,7 +33,7 @@ impl GuiSession {
 
         let query_changed = self.view.search.query != self.view.search.last_query;
         if query_changed {
-            self.trigger_full_search();
+            self.view.search.last_query = self.view.search.query.clone();
             if self.view.search.query.trim().is_empty()
                 && self.view.active_tab == ActiveTab::Unfiltered
             {
@@ -122,9 +122,102 @@ impl GuiSession {
             .record_pause(self.view.viewport.last_processed_count);
     }
 
+    /// Cập nhật kết quả tìm kiếm bất đồng bộ gửi về từ Background Search Worker (O(1))
+    pub fn apply_search_results(
+        &mut self,
+        query_id: u64,
+        total_matched: usize,
+        logs: Vec<LogEvent>,
+    ) {
+        // Loại bỏ kết quả lỗi thời nếu người dùng đã gõ query mới hơn
+        if query_id < self.view.search.active_query_id {
+            return;
+        }
+
+        self.view.viewport.total_matched = total_matched;
+        self.sync_discovered_fields(&logs);
+        self.view.viewport.cached_logs = logs;
+        self.view.viewport.reached_oldest = false;
+        self.view.viewport.request_maintain_scroll_offset = None;
+        self.view.search.last_query = self.view.search.query.clone();
+        self.view.viewport.last_processed_count = self.session.engine.total_processed();
+        self.view.search.last_search_time = Instant::now();
+        self.view
+            .viewport
+            .record_pause(self.view.viewport.last_processed_count);
+        self.view.viewport.has_new_data = true;
+    }
+
+    /// Cập nhật log tăng dần từ background worker cho Filtered stream
+    pub fn apply_incremental_logs(
+        &mut self,
+        matched: usize,
+        logs: Vec<LogEvent>,
+        total_processed: u64,
+    ) {
+        if matched > 0 && self.view.viewport.is_auto_scroll {
+            self.view.viewport.total_matched += matched;
+            self.sync_discovered_fields(&logs);
+            self.view.viewport.cached_logs.extend(logs);
+
+            if self.view.viewport.cached_logs.len() > self.session.display_limit {
+                let overflow = self.view.viewport.cached_logs.len() - self.session.display_limit;
+                self.view.viewport.cached_logs.drain(0..overflow);
+            }
+            self.view.viewport.has_new_data = true;
+        }
+        if self.view.viewport.is_auto_scroll {
+            self.view.viewport.record_pause(total_processed);
+        }
+        self.view.viewport.last_processed_count = total_processed;
+    }
+
+    /// Cập nhật log tăng dần từ background worker cho Unfiltered stream
+    pub fn apply_incremental_unfiltered(&mut self, logs: Vec<LogEvent>) {
+        if self.view.unfiltered.is_open && self.view.unfiltered.is_live && !logs.is_empty() {
+            self.view.unfiltered.cached_unfiltered.extend(logs);
+            if self.view.unfiltered.cached_unfiltered.len() > RAW_STREAM_LIMIT {
+                let overflow = self.view.unfiltered.cached_unfiltered.len() - RAW_STREAM_LIMIT;
+                self.view.unfiltered.cached_unfiltered.drain(0..overflow);
+            }
+            self.view.unfiltered.has_new_data = true;
+        }
+    }
+
+    /// Cập nhật kết quả phân trang ngược từ background worker
+    pub fn apply_reverse_pagination(
+        &mut self,
+        older: Vec<LogEvent>,
+        is_unfiltered: bool,
+        reached_oldest: bool,
+    ) {
+        let count = older.len();
+        if is_unfiltered {
+            self.view.unfiltered.is_loading_older = false;
+            self.view.unfiltered.reached_oldest = reached_oldest;
+            if count > 0 {
+                let mut new_cache = older;
+                new_cache.extend(std::mem::take(&mut self.view.unfiltered.cached_unfiltered));
+                self.view.unfiltered.cached_unfiltered = new_cache;
+                self.view.unfiltered.request_maintain_scroll_offset = Some(count);
+            }
+        } else {
+            self.view.viewport.is_loading_older = false;
+            self.view.viewport.reached_oldest = reached_oldest;
+            if count > 0 {
+                self.sync_discovered_fields(&older);
+                let mut new_cache = older;
+                new_cache.extend(std::mem::take(&mut self.view.viewport.cached_logs));
+                self.view.viewport.cached_logs = new_cache;
+                self.view.viewport.request_maintain_scroll_offset = Some(count);
+            }
+        }
+    }
+
     pub fn latch(&mut self) {
         if self.view.viewport.latch() {
             self.trigger_full_search();
+            self.view.search.mark_needs_search();
         }
     }
 
@@ -136,7 +229,7 @@ impl GuiSession {
     pub fn toggle_latch(&mut self) {
         let total = self.session.engine.total_processed();
         if self.view.viewport.toggle_latch(total) {
-            self.trigger_full_search();
+            self.view.search.mark_needs_search();
         }
     }
 
@@ -152,9 +245,7 @@ impl GuiSession {
     }
 
     pub fn apply_autocomplete_suggestion(&mut self, item: &SuggestionItem) {
-        if self.view.search.apply_autocomplete_suggestion(item) {
-            self.trigger_full_search();
-        }
+        self.view.search.apply_autocomplete_suggestion(item);
     }
 
     pub fn toggle_row_highlight(&mut self, id: u64) {
@@ -194,7 +285,6 @@ impl GuiSession {
         let q = self.view.search.query.clone();
         self.view.search.history.record(&q);
         self.view.search.history.mark_recorded();
-        self.trigger_full_search();
     }
 
     pub fn exclude_filter_term(&mut self, term: &str) {
@@ -202,7 +292,6 @@ impl GuiSession {
         let q = self.view.search.query.clone();
         self.view.search.history.record(&q);
         self.view.search.history.mark_recorded();
-        self.trigger_full_search();
     }
 
     pub fn open_unfiltered_stream(&mut self, target_id: Option<u64>) {
@@ -214,7 +303,7 @@ impl GuiSession {
         self.view.active_tab = ActiveTab::Unfiltered;
     }
 
-    /// Unified Reverse Pagination / Infinite Scroll Up
+    /// Unified Reverse Pagination / Infinite Scroll Up (Synchronous fallback cho unit test)
     pub fn load_older_logs(&mut self, is_unfiltered: bool, page_size: usize) {
         let (query, oldest_id) = if is_unfiltered {
             if self.view.unfiltered.reached_oldest {
@@ -243,27 +332,8 @@ impl GuiSession {
             .session
             .engine
             .search_before(query, before_id, page_size);
-        let count = older.len();
-        let reached = count < page_size;
-
-        if is_unfiltered {
-            if count > 0 {
-                let mut new_cache = older;
-                new_cache.extend(std::mem::take(&mut self.view.unfiltered.cached_unfiltered));
-                self.view.unfiltered.cached_unfiltered = new_cache;
-                self.view.unfiltered.request_maintain_scroll_offset = Some(count);
-            }
-            self.view.unfiltered.reached_oldest = reached;
-        } else {
-            if count > 0 {
-                self.sync_discovered_fields(&older);
-                let mut new_cache = older;
-                new_cache.extend(std::mem::take(&mut self.view.viewport.cached_logs));
-                self.view.viewport.cached_logs = new_cache;
-                self.view.viewport.request_maintain_scroll_offset = Some(count);
-            }
-            self.view.viewport.reached_oldest = reached;
-        }
+        let reached = older.len() < page_size;
+        self.apply_reverse_pagination(older, is_unfiltered, reached);
     }
 
     #[inline]
@@ -329,7 +399,6 @@ impl GuiSession {
             }
         }
         self.view.search.clear();
-        self.trigger_full_search();
         self.close_unfiltered_stream();
     }
 
@@ -357,7 +426,6 @@ impl GuiSession {
             }
             AppAction::ClearQuery => {
                 self.view.search.clear();
-                self.trigger_full_search();
                 true
             }
             AppAction::ToggleRowHighlight(id) => {
@@ -374,6 +442,22 @@ impl GuiSession {
             }
             AppAction::ToggleLatch => {
                 self.toggle_latch();
+                true
+            }
+            AppAction::Unlatch => {
+                if self.view.active_tab == ActiveTab::Unfiltered {
+                    self.unlatch_unfiltered();
+                } else {
+                    self.unlatch();
+                }
+                true
+            }
+            AppAction::Latch => {
+                if self.view.active_tab == ActiveTab::Unfiltered {
+                    self.view.unfiltered.is_live = true;
+                } else if self.view.viewport.latch() {
+                    self.view.search.mark_needs_search();
+                }
                 true
             }
             AppAction::ToggleUnfilteredLive => {

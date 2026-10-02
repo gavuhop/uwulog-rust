@@ -7,6 +7,7 @@ pub mod cli;
 pub mod components;
 pub mod keymap;
 pub mod overlay;
+pub mod reducer;
 pub mod session;
 pub mod state;
 pub mod theme;

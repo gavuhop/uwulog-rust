@@ -41,7 +41,7 @@ impl WorkspaceManager {
             self.active_index = index;
             self.store.active_workspace_id = Some(self.sessions[index].session.id);
             let _ = self.store.save();
-            self.active_session_mut().trigger_full_search();
+            self.active_session_mut().view.search.mark_needs_search();
         }
     }
 
@@ -89,7 +89,7 @@ impl WorkspaceManager {
 
         self.store.active_workspace_id = Some(self.sessions[self.active_index].session.id);
         let _ = self.store.save();
-        self.active_session_mut().trigger_full_search();
+        self.active_session_mut().view.search.mark_needs_search();
     }
 
     /// Chuyển đổi session theo vòng lặp (Next / Prev)
@@ -150,7 +150,7 @@ impl WorkspaceManager {
         let active_idx = self.active_index;
         self.sessions[active_idx].session.restart_source(rt);
         self.sessions[active_idx].view.reset_stream_data();
-        self.active_session_mut().trigger_full_search();
+        self.active_session_mut().view.search.mark_needs_search();
     }
 
     /// Chạy tác vụ tải biến môi trường trong nền

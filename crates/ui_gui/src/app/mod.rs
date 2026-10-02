@@ -4,7 +4,7 @@ pub mod workspace_manager;
 pub use overlay_manager::OverlayManager;
 pub use workspace_manager::WorkspaceManager;
 
-pub use crate::actions::AppAction;
+pub use crate::actions::{AppAction, AppEvent};
 pub use crate::cli::CliArgs;
 use crate::keymap::KeyActionExt;
 pub use crate::overlay::{OverlayLayer, OverlayStack, RemoteModalPlacement};
@@ -12,6 +12,7 @@ pub use crate::session::GuiSession;
 pub use crate::state::{ActiveTab, GuiViewState, RAW_STREAM_LIMIT};
 use clap::Parser;
 use eframe::egui;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::runtime::Handle;
 pub use uwu_core_workspace::SourceType;
@@ -28,6 +29,9 @@ pub struct UwuGuiApp {
     pub rt: Handle,
     pub prev_screen_width: f32,
     pub should_quit: bool,
+    pub event_tx: std::sync::mpsc::Sender<AppEvent>,
+    pub event_rx: std::sync::mpsc::Receiver<AppEvent>,
+    pub egui_ctx: Option<egui::Context>,
 }
 
 impl UwuGuiApp {
@@ -246,6 +250,146 @@ impl UwuGuiApp {
         self.workspaces.tick(std::time::Instant::now());
     }
 
+    /// Tiếp nhận và xử lý sự kiện trả về từ background workers thông qua State Reducer (O(1))
+    #[inline]
+    pub fn apply_event(&mut self, event: AppEvent) {
+        crate::reducer::reduce(self, event);
+    }
+
+    /// Khởi chạy tác vụ tìm kiếm bất đồng bộ trên threadpool (Non-blocking UI search với Cooperative Early Cancellation)
+    pub fn spawn_search(&mut self, ctx: Option<&egui::Context>) {
+        let active = self.workspaces.active_session_mut();
+        let (query_id, cancel_token) = active.view.search.advance_query();
+        let session_id = active.session.id;
+        let query = active.view.search.query.clone();
+        let limit = active.session.display_limit;
+        let engine = Arc::clone(&active.session.engine);
+        let tx = self.event_tx.clone();
+        let egui_ctx = ctx.cloned().or_else(|| self.egui_ctx.clone());
+
+        self.rt.spawn_blocking(move || {
+            // Early Cancellation Check 1: Trước khi tốn CPU quét dữ liệu
+            if cancel_token.load(std::sync::atomic::Ordering::Relaxed) != query_id {
+                return;
+            }
+            let (total_matched, logs) = engine.search_with_count(&query, limit);
+            // Early Cancellation Check 2: Sau khi quét xong (tránh gửi event/repaint nếu user vừa gõ tiếp)
+            if cancel_token.load(std::sync::atomic::Ordering::Relaxed) != query_id {
+                return;
+            }
+            let _ = tx.send(AppEvent::SearchResultsReady {
+                session_id,
+                query_id,
+                total_matched,
+                logs,
+            });
+            if let Some(c) = egui_ctx {
+                c.request_repaint();
+            }
+        });
+    }
+
+    /// Khởi chạy tác vụ lọc log tăng dần bất đồng bộ trên threadpool (Non-blocking incremental filter)
+    pub fn spawn_incremental_filter(&mut self, ctx: Option<&egui::Context>) {
+        let active = self.workspaces.active_session_mut();
+        let session_id = active.session.id;
+        let query = active.view.search.query.clone();
+        let prev_processed = active.view.viewport.last_processed_count;
+        let total_processed = active.session.engine.total_processed();
+        active.view.viewport.last_processed_count = total_processed;
+        active.view.search.last_search_time = std::time::Instant::now();
+
+        let is_auto_scroll = active.view.viewport.is_auto_scroll;
+        let is_unfiltered_live = active.view.unfiltered.is_open && active.view.unfiltered.is_live;
+        let engine = Arc::clone(&active.session.engine);
+        let tx = self.event_tx.clone();
+        let egui_ctx = ctx.cloned().or_else(|| self.egui_ctx.clone());
+
+        self.rt.spawn_blocking(move || {
+            if is_auto_scroll {
+                let (matched, logs) = engine.filter_incremental(&query, prev_processed);
+                if matched > 0 {
+                    let _ = tx.send(AppEvent::IncrementalLogsReady {
+                        session_id,
+                        matched,
+                        logs,
+                        total_processed,
+                    });
+                }
+            }
+            if is_unfiltered_live {
+                let (count, logs) = engine.filter_incremental("", prev_processed);
+                if count > 0 {
+                    let _ = tx.send(AppEvent::IncrementalUnfilteredReady { session_id, logs });
+                }
+            }
+            if let Some(c) = egui_ctx {
+                c.request_repaint();
+            }
+        });
+    }
+
+    /// Khởi chạy tác vụ nạp trang log cũ bất đồng bộ trên threadpool (Non-blocking reverse pagination)
+    pub fn spawn_reverse_pagination(&mut self, is_unfiltered: bool, page_size: usize) {
+        let active = self.workspaces.active_session_mut();
+        let session_id = active.session.id;
+
+        let (query, oldest_id) = if is_unfiltered {
+            if active.view.unfiltered.reached_oldest || active.view.unfiltered.is_loading_older {
+                return;
+            }
+            active.view.unfiltered.is_loading_older = true;
+            active.unlatch_unfiltered();
+            (
+                String::new(),
+                active
+                    .view
+                    .unfiltered
+                    .cached_unfiltered
+                    .first()
+                    .map(|e| e.id),
+            )
+        } else {
+            if active.view.viewport.reached_oldest || active.view.viewport.is_loading_older {
+                return;
+            }
+            active.view.viewport.is_loading_older = true;
+            active.unlatch();
+            (
+                active.view.search.query.clone(),
+                active.view.viewport.cached_logs.first().map(|e| e.id),
+            )
+        };
+
+        let Some(before_id) = oldest_id else {
+            if is_unfiltered {
+                active.view.unfiltered.is_loading_older = false;
+            } else {
+                active.view.viewport.is_loading_older = false;
+            }
+            return;
+        };
+
+        let engine = Arc::clone(&active.session.engine);
+        let tx = self.event_tx.clone();
+        let egui_ctx = self.egui_ctx.clone();
+
+        self.rt.spawn_blocking(move || {
+            let logs = engine.search_before(&query, before_id, page_size);
+            let reached_oldest = logs.len() < page_size;
+            let _ = tx.send(AppEvent::ReversePaginationReady {
+                session_id,
+                before_id,
+                logs,
+                is_unfiltered,
+                reached_oldest,
+            });
+            if let Some(c) = egui_ctx {
+                c.request_repaint();
+            }
+        });
+    }
+
     #[inline]
     pub fn format_field_term(field: &str, val: &str) -> String {
         GuiSession::format_field_term(field, val)
@@ -346,6 +490,8 @@ impl UwuGuiApp {
         let _ = crate::keymap::ensure_sample_config_file(None);
         let _ = crate::keymap::load_user_keymap(&mut keymap, None);
 
+        let (event_tx, event_rx) = std::sync::mpsc::channel();
+
         let mut app = Self {
             workspaces,
             overlays,
@@ -353,6 +499,9 @@ impl UwuGuiApp {
             rt,
             prev_screen_width: 0.0,
             should_quit: false,
+            event_tx,
+            event_rx,
+            egui_ctx: None,
         };
 
         // Background task nạp biến môi trường cho session đầu tiên
@@ -366,13 +515,44 @@ impl UwuGuiApp {
         if has_custom_source {
             app.start_configured_source();
         }
-        app.active_session_mut().trigger_full_search();
+        app.active_session_mut().view.search.mark_needs_search();
 
         app
     }
 
     /// Điều phối và thực thi các hành động cấp ứng dụng (Zed-style Command Dispatcher)
     pub fn dispatch_action(&mut self, action: AppAction) {
+        match &action {
+            AppAction::LoadOlderLogs(page_size) => {
+                let is_unfiltered = self.active_session().view.active_tab == ActiveTab::Unfiltered;
+                self.spawn_reverse_pagination(is_unfiltered, *page_size);
+                return;
+            }
+            AppAction::ToggleLatch => {
+                let active = self.workspaces.active_session_mut();
+                if active.view.active_tab == ActiveTab::Unfiltered {
+                    active.toggle_unfiltered_live();
+                } else if active.view.viewport.is_auto_scroll {
+                    active.unlatch();
+                } else {
+                    active.view.viewport.latch();
+                    active.view.search.mark_needs_search();
+                }
+                return;
+            }
+            AppAction::Latch => {
+                let active = self.workspaces.active_session_mut();
+                if active.view.active_tab == ActiveTab::Unfiltered {
+                    active.view.unfiltered.is_live = true;
+                } else {
+                    active.view.viewport.latch();
+                    active.view.search.mark_needs_search();
+                }
+                return;
+            }
+            _ => {}
+        }
+
         if self.workspaces.active_session_mut().handle_action(&action) {
             return;
         }
@@ -497,9 +677,47 @@ impl UwuGuiApp {
 impl eframe::App for UwuGuiApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        self.egui_ctx = Some(ctx.clone());
         if self.should_quit {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
+        }
+
+        // PHA 0: Drain background worker events in O(1) với Frame-Budget Guard
+        // Giới hạn tối đa 64 events mỗi frame để giữ vững ngân sách 144 FPS (< 6.94ms) khi gặp bão log
+        const MAX_EVENTS_PER_FRAME: usize = 64;
+        let mut drained = 0;
+        while let Ok(event) = self.event_rx.try_recv() {
+            self.apply_event(event);
+            drained += 1;
+            if drained >= MAX_EVENTS_PER_FRAME {
+                ctx.request_repaint(); // Còn event dở dang, lập tức repaint ở frame sau để drain tiếp
+                break;
+            }
+        }
+
+        // PHA 1: Detect search query change or needs_search and spawn async worker search
+        let query_changed = {
+            let active = self.workspaces.active_session_mut();
+            let changed = active.view.search.query != active.view.search.last_query
+                || active.view.search.needs_search;
+            if changed {
+                active.view.search.last_query = active.view.search.query.clone();
+                active.view.search.needs_search = false;
+            }
+            changed
+        };
+        if query_changed {
+            self.spawn_search(Some(&ctx));
+        } else {
+            let active = self.workspaces.active_session();
+            let new_logs_arrived = active.session.engine.total_processed()
+                != active.view.viewport.last_processed_count
+                && std::time::Instant::now().duration_since(active.view.search.last_search_time)
+                    > Duration::from_millis(150);
+            if new_logs_arrived {
+                self.spawn_incremental_filter(Some(&ctx));
+            }
         }
 
         self.tick();

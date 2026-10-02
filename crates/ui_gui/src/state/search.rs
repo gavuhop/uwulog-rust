@@ -3,16 +3,22 @@ use super::autocomplete::{
 };
 use super::history::SearchHistoryState;
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
 
 /// Trạng thái tìm kiếm, lọc truy vấn, gợi ý autocomplete và cache schema keys
 pub struct SearchState {
     pub query: String,
     pub last_query: String,
+    pub needs_search: bool,
     pub last_search_time: Instant,
     pub autocomplete: AutocompleteState,
     pub history: SearchHistoryState,
     pub schema_cache: BTreeMap<String, FieldType>,
+    pub active_query_id: u64,
+    /// Atomic token phục vụ cooperative early cancellation cho background search worker
+    pub active_query_atomic: Arc<AtomicU64>,
 }
 
 impl Default for SearchState {
@@ -20,15 +26,33 @@ impl Default for SearchState {
         Self {
             query: String::new(),
             last_query: String::new(),
+            needs_search: false,
             last_search_time: Instant::now(),
             autocomplete: AutocompleteState::default(),
             history: SearchHistoryState::default(),
             schema_cache: BTreeMap::new(),
+            active_query_id: 0,
+            active_query_atomic: Arc::new(AtomicU64::new(0)),
         }
     }
 }
 
 impl SearchState {
+    /// Đánh dấu cần chạy lại worker search ngay cả khi chuỗi query không thay đổi (ví dụ: unlatch -> latch)
+    #[inline]
+    pub fn mark_needs_search(&mut self) {
+        self.needs_search = true;
+    }
+
+    /// Tăng active_query_id và cập nhật atomic cancellation token đồng bộ
+    #[inline]
+    pub fn advance_query(&mut self) -> (u64, Arc<AtomicU64>) {
+        self.active_query_id += 1;
+        self.active_query_atomic
+            .store(self.active_query_id, Ordering::Release);
+        (self.active_query_id, Arc::clone(&self.active_query_atomic))
+    }
+
     pub fn new() -> Self {
         Self::default()
     }

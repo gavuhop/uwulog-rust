@@ -79,5 +79,5 @@ uwu-core-keymap = { path = "crates/core_keymap" }
 uwu-cli-agent = { path = "crates/cli_agent" }
 uwu-ui-tui = { path = "crates/ui_tui" }
 uwu-ui-gui = { path = "crates/ui_gui" }
-uwu-icons = { path = "crates/icons" }
+uwu-icons = { path = "crates/icons", default-features = false }
 uwu-cli = { path = "crates/cli" }

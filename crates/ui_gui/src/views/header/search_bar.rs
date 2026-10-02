@@ -56,7 +56,6 @@ pub fn render_search_bar(
                 .search
                 .history
                 .mark_query_changed(Instant::now());
-            session.trigger_full_search();
         }
     }
 

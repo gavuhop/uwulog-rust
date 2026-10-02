@@ -1,9 +1,13 @@
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "egui")]
 pub mod component;
+#[cfg(feature = "egui")]
 pub mod vector;
 
+#[cfg(feature = "egui")]
 pub use component::{paint_icon, Icon, IconSize};
+#[cfg(feature = "egui")]
 pub use vector::{get_icon_shapes, VectorShape};
 
 /// All standardized in-app UI icons in uwulog-rust.

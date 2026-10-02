@@ -15,7 +15,7 @@ uwu-driver-transport.workspace = true
 uwu-core-schema.workspace = true
 uwu-core-util.workspace = true
 uwu-core-keymap.workspace = true
-uwu-icons.workspace = true
+uwu-icons = { workspace = true, features = ["egui"] }
 tokio.workspace = true
 anyhow.workspace = true
 eframe.workspace = true

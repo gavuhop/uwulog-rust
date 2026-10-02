@@ -55,11 +55,7 @@ pub fn render_log_table(
     // Đọc thao tác cuộn chuột trước khi vẽ TableBuilder
     let scroll_delta_y = ui.input(|i| i.smooth_scroll_delta.y);
     if scroll_delta_y > 0.0 {
-        if is_unfiltered {
-            session.unlatch_unfiltered();
-        } else {
-            session.unlatch();
-        }
+        dispatch(AppAction::Unlatch);
     }
 
     let pointer_pos: Option<Pos2> = ui.input(|i| i.pointer.latest_pos());
@@ -93,6 +89,7 @@ pub fn render_log_table(
 
     let mut action_to_dispatch: Option<AppAction> = None;
     let has_any_highlights = session.has_any_highlights();
+    let mut active_cell = session.inspector.active_editing_cell;
 
     let default_ts = "2026-08-21 23:29:07";
     let logs = match mode {
@@ -206,6 +203,7 @@ pub fn render_log_table(
                         highlighted_terms: &session.inspector.highlighted_terms,
                         has_any_highlights,
                         action: &mut action_to_dispatch,
+                        active_editing_cell: Some(&mut active_cell),
                     };
 
                     let target_id = if mode == TableMode::Unfiltered {
@@ -264,6 +262,8 @@ pub fn render_log_table(
                 });
         });
 
+    session.inspector.active_editing_cell = active_cell;
+
     if let Some(action) = action_to_dispatch {
         dispatch(action);
     }
@@ -287,20 +287,12 @@ pub fn render_log_table(
 
     if let Some(event) = newly_selected_event {
         dispatch(AppAction::SelectLog(Some(event)));
-        if is_unfiltered {
-            session.unlatch_unfiltered();
-        } else {
-            session.unlatch();
-        }
+        dispatch(AppAction::Unlatch);
     }
 
     // Nếu người dùng cuộn/kéo thanh cuộn rời khỏi dòng cuối (không phải do force scroll)
     if row_count > 0 && !last_row_visible && !had_forced_scroll {
-        if is_unfiltered {
-            session.unlatch_unfiltered();
-        } else {
-            session.unlatch();
-        }
+        dispatch(AppAction::Unlatch);
     }
 
     // Reverse pagination / Infinite scroll up:
@@ -316,17 +308,17 @@ pub fn render_log_table(
     } else {
         session.viewport.reached_oldest
     };
+    let is_loading_older = if is_unfiltered {
+        session.unfiltered.is_loading_older
+    } else {
+        session.viewport.is_loading_older
+    };
 
-    if min_row <= 10 && row_count > 0 && !is_at_bottom && !reached_oldest {
-        session.load_older_logs(is_unfiltered, 1000);
-        ui.ctx().request_repaint();
+    if min_row <= 10 && row_count > 0 && !is_at_bottom && !reached_oldest && !is_loading_older {
+        dispatch(AppAction::LoadOlderLogs(1000));
     }
 
     if last_row_visible && scroll_delta_y < 0.0 {
-        if is_unfiltered {
-            session.unfiltered.is_live = true;
-        } else {
-            session.viewport.is_auto_scroll = true;
-        }
+        dispatch(AppAction::Latch);
     }
 }

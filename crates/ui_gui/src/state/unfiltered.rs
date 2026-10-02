@@ -20,6 +20,7 @@ pub struct UnfilteredViewState {
     pub request_scroll_to_bottom: bool,
     pub request_maintain_scroll_offset: Option<usize>,
     pub reached_oldest: bool,
+    pub is_loading_older: bool,
     pub has_new_data: bool,
     pub snapshot_processed_count: u64,
 }

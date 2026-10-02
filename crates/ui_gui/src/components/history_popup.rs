@@ -145,7 +145,6 @@ pub fn render_history_popup(
         session.search.autocomplete.is_open = false;
         session.search.autocomplete.suggestions.clear();
         session.search.autocomplete.just_applied = true;
-        session.trigger_full_search();
         ctx.request_repaint();
     }
 }

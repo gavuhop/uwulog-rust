@@ -30,6 +30,7 @@ pub fn create_test_app() -> UwuGuiApp {
     let workspaces = WorkspaceManager::new(gui_session, store);
     let overlays = OverlayManager::new();
     let keymap = crate::keymap::KeymapManager::new();
+    let (event_tx, event_rx) = std::sync::mpsc::channel();
 
     UwuGuiApp {
         workspaces,
@@ -38,5 +39,8 @@ pub fn create_test_app() -> UwuGuiApp {
         rt,
         prev_screen_width: 0.0,
         should_quit: false,
+        event_tx,
+        event_rx,
+        egui_ctx: None,
     }
 }
