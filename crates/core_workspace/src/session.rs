@@ -414,7 +414,13 @@ impl WorkspaceSession {
 
     pub fn restart_source(&mut self, rt: &Handle) {
         self.stop_source();
-        self.engine.clear();
+        self.capacity = self.source_config.capacity;
+        self.display_limit = self.source_config.display_limit;
+        if self.capacity != self.engine.max_capacity() {
+            self.engine = Arc::new(SystemEngine::new(self.capacity));
+        } else {
+            self.engine.clear();
+        }
         self.start_source(rt);
     }
 
