@@ -244,9 +244,8 @@ impl GuiSession {
                 } else if row_count > 0 {
                     let force = self.view.viewport.request_scroll_to_bottom;
                     let is_live = self.view.viewport.is_auto_scroll;
-                    let has_new = self.view.viewport.has_new_data;
                     self.view.viewport.prev_table_row_count = row_count;
-                    if force || (is_live && has_new) {
+                    if force || is_live {
                         self.view.viewport.request_scroll_to_bottom = false;
                         Some((row_count - 1, egui::Align::Max))
                     } else {
@@ -268,8 +267,7 @@ impl GuiSession {
                 } else if row_count > 0 {
                     let force = self.view.unfiltered.request_scroll_to_bottom;
                     let is_live = self.view.unfiltered.is_live;
-                    let has_new = self.view.unfiltered.has_new_data;
-                    if force || (is_live && has_new) {
+                    if force || is_live {
                         self.view.unfiltered.request_scroll_to_bottom = false;
                         Some((row_count - 1, egui::Align::Max))
                     } else {

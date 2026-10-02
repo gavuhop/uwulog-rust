@@ -37,7 +37,6 @@ pub fn render_log_table(
     let mut newly_selected_event = None;
     let mut min_visible_row: Option<usize> = None;
     let mut last_row_visible = false;
-    let had_forced_scroll = stream.had_forced_scroll;
 
     // Đọc thao tác cuộn chuột trước khi vẽ TableBuilder
     let scroll_delta_y = ui.input(|i| i.smooth_scroll_delta.y);
@@ -231,19 +230,18 @@ pub fn render_log_table(
         dispatch(AppAction::Unlatch);
     }
 
-    // Nếu người dùng cuộn/kéo thanh cuộn rời khỏi dòng cuối (không phải do force scroll)
-    if row_count > 0 && !last_row_visible && !had_forced_scroll {
+    // Nếu người dùng cuộn/kéo thanh cuộn rời khỏi dòng cuối
+    if ui.input(|i| i.pointer.is_decidedly_dragging()) && row_count > 0 && !last_row_visible {
         dispatch(AppAction::Unlatch);
     }
 
     // Reverse pagination / Infinite scroll up:
-    // Khi cuộn gần đỉnh bảng (trong vòng 10 dòng đầu) và không ở đáy stream
+    // Khi cuộn gần đỉnh bảng (trong vòng 10 dòng đầu) khi đang dừng xem log cũ
     let min_row = min_visible_row.unwrap_or(usize::MAX);
-    let is_at_bottom = stream.is_live && last_row_visible;
 
-    if min_row <= 10
+    if !stream.is_live
+        && min_row <= 10
         && row_count > 0
-        && !is_at_bottom
         && !stream.reached_oldest
         && !stream.is_loading_older
     {
