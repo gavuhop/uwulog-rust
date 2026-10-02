@@ -241,6 +241,11 @@ fn test_timestamp_free_text_and_field_search() {
         filter_logs(logs2, "\"Error: failed to connect\"".into()),
         vec![0]
     );
+
+    // 4. Partial unquoted time substring search (e.g. 16:28, 16:28:35)
+    assert_eq!(filter_logs(logs.clone(), "16:28".into()), vec![0]);
+    assert_eq!(filter_logs(logs.clone(), "16:28:35".into()), vec![0]);
+    assert_eq!(filter_logs(logs.clone(), "timestamp:16:28".into()), vec![0]);
 }
 
 #[test]

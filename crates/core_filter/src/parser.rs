@@ -223,7 +223,12 @@ fn try_build_cmp(field: &str, op: NumOp, val_str: &str, now: f64) -> Option<Expr
 }
 
 fn is_valid_field_name(s: &str) -> bool {
-    if s.is_empty() || s.contains('/') || s.contains('\\') || s.contains(':') {
+    if s.is_empty()
+        || s.contains('/')
+        || s.contains('\\')
+        || s.contains(':')
+        || s.chars().all(|c| c.is_ascii_digit())
+    {
         return false;
     }
     s.chars()
