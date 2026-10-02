@@ -36,24 +36,28 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     let is_launch_open = app.is_overlay_open(crate::overlay::OverlayLayer::LaunchModal);
     let is_about_open = app.is_overlay_open(crate::overlay::OverlayLayer::AboutModal);
     let is_remote_open = app.is_overlay_open(crate::overlay::OverlayLayer::RemoteServersModal);
+    let is_project_picker_open = app.is_overlay_open(crate::overlay::OverlayLayer::ProjectPicker);
 
     let active_index = app.workspaces.active_index;
-    let session_summaries: Vec<modals::ProjectPickerSessionInfo> = app
-        .workspaces
-        .sessions
-        .iter()
-        .map(|s| {
-            let icon = s.session.icon();
-            modals::ProjectPickerSessionInfo {
-                id: s.session.id,
-                name: s.session.name.clone(),
-                server_name: s.session.server_name().map(|n| n.to_string()),
-                icon,
-                target_summary: s.session.target_summary(),
-                normalized_dir: s.session.location.normalized_dir(),
-            }
-        })
-        .collect();
+    let session_summaries: Vec<modals::ProjectPickerSessionInfo> = if is_project_picker_open {
+        app.workspaces
+            .sessions
+            .iter()
+            .map(|s| {
+                let icon = s.session.icon();
+                modals::ProjectPickerSessionInfo {
+                    id: s.session.id,
+                    name: s.session.name.clone(),
+                    server_name: s.session.server_name().map(|n| n.to_string()),
+                    icon,
+                    target_summary: s.session.target_summary(),
+                    normalized_dir: s.session.location.normalized_dir(),
+                }
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
 
     let project_shortcut = app
         .keymap
@@ -157,17 +161,15 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                         .fill(theme.surfaces.base)
                         .inner_margin(egui::Margin::symmetric(8, 4)),
                 )
-                .show(ui, |ui| match active_session.view.active_tab {
-                    crate::state::ActiveTab::Filtered => {
-                        ui.push_id("main_filtered_table_scope", |ui| {
-                            table::render_table(ui, active_session, &mut dispatch);
-                        });
-                    }
-                    crate::state::ActiveTab::Unfiltered => {
-                        ui.push_id("unfiltered_table_scope", |ui| {
-                            unfiltered::render_unfiltered_table(ui, active_session, &mut dispatch);
-                        });
-                    }
+                .show(ui, |ui| {
+                    let tab = active_session.view.active_tab;
+                    let scope = match tab {
+                        crate::state::ActiveTab::Filtered => "main_filtered_table_scope",
+                        crate::state::ActiveTab::Unfiltered => "unfiltered_table_scope",
+                    };
+                    ui.push_id(scope, |ui| {
+                        table::render_log_table(ui, active_session, tab, &mut dispatch);
+                    });
                 });
         });
 

@@ -144,7 +144,7 @@ pub fn render_autocomplete_popup(ctx: &egui::Context, session: &mut GuiSession, 
     }
 
     if let Some(item) = item_to_apply {
-        session.apply_autocomplete_suggestion(&item);
+        session.search.apply_autocomplete_suggestion(&item);
         ctx.request_repaint();
     }
 }

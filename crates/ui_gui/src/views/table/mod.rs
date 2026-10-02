@@ -4,53 +4,40 @@ pub mod header;
 
 use crate::actions::{ActionContext, AppAction};
 use crate::session::GuiSession;
-use crate::state::ColumnItem;
+use crate::state::{ActiveTab, ColumnItem};
 use crate::theme;
 use cell::render_cell;
 use eframe::egui::{self, Pos2};
 use egui_extras::{Column, TableBuilder};
 use header::{render_drag_ghost, render_table_headers};
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum TableMode {
-    Filtered,
-    Unfiltered,
-}
+use std::hash::{Hash, Hasher};
 
 pub fn render_table(
     ui: &mut egui::Ui,
     session: &mut GuiSession,
     dispatch: &mut impl FnMut(AppAction),
 ) {
-    render_log_table(ui, session, TableMode::Filtered, dispatch);
+    render_log_table(ui, session, ActiveTab::Filtered, dispatch);
 }
 
 pub fn render_log_table(
     ui: &mut egui::Ui,
     session: &mut GuiSession,
-    mode: TableMode,
+    tab: ActiveTab,
     dispatch: &mut impl FnMut(AppAction),
 ) {
-    let is_unfiltered = mode == TableMode::Unfiltered;
-    let row_count = if is_unfiltered {
-        session.unfiltered.cached_unfiltered.len()
-    } else {
-        session.viewport.cached_logs.len()
+    let row_count = match tab {
+        ActiveTab::Filtered => session.viewport.cached_logs.len(),
+        ActiveTab::Unfiltered => session.unfiltered.cached_unfiltered.len(),
     };
+    let scroll_target = session.consume_scroll_request(tab, row_count);
+    let stream = session.stream_summary(tab);
     let text_height = egui::TextStyle::Monospace.resolve(ui.style()).size;
 
     let mut newly_selected_event = None;
     let mut min_visible_row: Option<usize> = None;
     let mut last_row_visible = false;
-
-    let had_forced_scroll = if is_unfiltered {
-        session.unfiltered.request_scroll_to_bottom
-            || session.unfiltered.request_scroll_to_target
-            || session.unfiltered.request_maintain_scroll_offset.is_some()
-    } else {
-        session.viewport.request_scroll_to_bottom
-            || session.viewport.request_maintain_scroll_offset.is_some()
-    };
+    let had_forced_scroll = stream.had_forced_scroll;
 
     // Đọc thao tác cuộn chuột trước khi vẽ TableBuilder
     let scroll_delta_y = ui.input(|i| i.smooth_scroll_delta.y);
@@ -72,39 +59,34 @@ pub fn render_log_table(
         return;
     }
 
-    let salt_prefix = match mode {
-        TableMode::Filtered => "main",
-        TableMode::Unfiltered => "unfiltered",
-    };
-
-    let table_salt = format!(
-        "{}_tbl_{}",
-        salt_prefix,
-        visible_cols
-            .iter()
-            .map(|c| c.name.as_str())
-            .collect::<Vec<_>>()
-            .join(",")
-    );
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    tab.hash(&mut hasher);
+    for c in &visible_cols {
+        c.name.hash(&mut hasher);
+    }
+    let table_salt = hasher.finish();
 
     let mut action_to_dispatch: Option<AppAction> = None;
     let has_any_highlights = session.has_any_highlights();
 
     let default_ts = "2026-08-21 23:29:07";
-    let logs = match mode {
-        TableMode::Filtered => &session.viewport.cached_logs[..],
-        TableMode::Unfiltered => &session.unfiltered.cached_unfiltered[..],
-    };
-    let sample_ts = logs
-        .iter()
-        .take(50)
-        .map(|e| e.timestamp.as_str())
-        .max_by_key(|s| s.chars().count())
-        .unwrap_or(default_ts);
+    let sample_ts = match tab {
+        ActiveTab::Filtered => session
+            .viewport
+            .cached_logs
+            .first()
+            .map(|e| e.timestamp.as_str()),
+        ActiveTab::Unfiltered => session
+            .unfiltered
+            .cached_unfiltered
+            .first()
+            .map(|e| e.timestamp.as_str()),
+    }
+    .unwrap_or(default_ts);
 
     let ts_text_width = ui.fonts_mut(|f| {
         let job = egui::text::LayoutJob::simple_singleline(
-            sample_ts.to_string(),
+            sample_ts.to_owned(),
             egui::FontId::monospace(12.0),
             egui::Color32::WHITE,
         );
@@ -113,9 +95,9 @@ pub fn render_log_table(
     let ts_needed_width = (ts_text_width + 8.0).max(80.0);
     let level_needed_width = 56.0;
 
-    let hscroll_id = match mode {
-        TableMode::Filtered => "main_table_hscroll",
-        TableMode::Unfiltered => "unfiltered_table_hscroll",
+    let hscroll_id = match tab {
+        ActiveTab::Filtered => "main_table_hscroll",
+        ActiveTab::Unfiltered => "unfiltered_table_hscroll",
     };
 
     egui::ScrollArea::horizontal()
@@ -124,7 +106,7 @@ pub fn render_log_table(
         .show(ui, |ui| {
             let ctx = ui.ctx().clone();
             let mut builder = TableBuilder::new(ui)
-                .id_salt(format!("{}_{}", salt_prefix, table_salt))
+                .id_salt(table_salt)
                 .striped(false)
                 .resizable(true)
                 .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
@@ -147,45 +129,8 @@ pub fn render_log_table(
                 builder = builder.column(Column::initial(initial_w).at_least(min_w).clip(true));
             }
 
-            let maintain_offset = if is_unfiltered {
-                session.unfiltered.request_maintain_scroll_offset.take()
-            } else {
-                session.viewport.request_maintain_scroll_offset.take()
-            };
-
-            if let Some(offset) = maintain_offset {
-                builder = builder.scroll_to_row(offset, Some(egui::Align::Min));
-            } else if is_unfiltered && session.unfiltered.request_scroll_to_target && row_count > 0
-            {
-                if let Some(target_idx) = session.unfiltered.target_index {
-                    builder = builder.scroll_to_row(target_idx, Some(egui::Align::Center));
-                }
-                session.unfiltered.request_scroll_to_target = false;
-            } else if row_count > 0 {
-                let (force, is_live, has_new) = if is_unfiltered {
-                    (
-                        session.unfiltered.request_scroll_to_bottom,
-                        session.unfiltered.is_live,
-                        session.unfiltered.has_new_data,
-                    )
-                } else {
-                    (
-                        session.viewport.request_scroll_to_bottom,
-                        session.viewport.is_auto_scroll,
-                        session.viewport.has_new_data,
-                    )
-                };
-                if force || (is_live && has_new) {
-                    builder = builder.scroll_to_row(row_count - 1, Some(egui::Align::Max));
-                    if is_unfiltered {
-                        session.unfiltered.request_scroll_to_bottom = false;
-                    } else {
-                        session.viewport.request_scroll_to_bottom = false;
-                    }
-                }
-            }
-            if !is_unfiltered {
-                session.viewport.prev_table_row_count = row_count;
+            if let Some((target_row, align)) = scroll_target {
+                builder = builder.scroll_to_row(target_row, Some(align));
             }
 
             builder
@@ -204,7 +149,7 @@ pub fn render_log_table(
                         action: &mut action_to_dispatch,
                     };
 
-                    let target_id = if mode == TableMode::Unfiltered {
+                    let target_id = if tab == ActiveTab::Unfiltered {
                         session.unfiltered.target_id
                     } else {
                         None
@@ -220,9 +165,9 @@ pub fn render_log_table(
                             last_row_visible = true;
                         }
 
-                        let maybe_event = match mode {
-                            TableMode::Filtered => session.viewport.cached_logs.get(row_index),
-                            TableMode::Unfiltered => {
+                        let maybe_event = match tab {
+                            ActiveTab::Filtered => session.viewport.cached_logs.get(row_index),
+                            ActiveTab::Unfiltered => {
                                 session.unfiltered.cached_unfiltered.get(row_index)
                             }
                         };
@@ -294,23 +239,14 @@ pub fn render_log_table(
     // Reverse pagination / Infinite scroll up:
     // Khi cuộn gần đỉnh bảng (trong vòng 10 dòng đầu) và không ở đáy stream
     let min_row = min_visible_row.unwrap_or(usize::MAX);
-    let is_at_bottom = if is_unfiltered {
-        session.unfiltered.is_live && last_row_visible
-    } else {
-        session.viewport.is_auto_scroll && last_row_visible
-    };
-    let reached_oldest = if is_unfiltered {
-        session.unfiltered.reached_oldest
-    } else {
-        session.viewport.reached_oldest
-    };
-    let is_loading_older = if is_unfiltered {
-        session.unfiltered.is_loading_older
-    } else {
-        session.viewport.is_loading_older
-    };
+    let is_at_bottom = stream.is_live && last_row_visible;
 
-    if min_row <= 10 && row_count > 0 && !is_at_bottom && !reached_oldest && !is_loading_older {
+    if min_row <= 10
+        && row_count > 0
+        && !is_at_bottom
+        && !stream.reached_oldest
+        && !stream.is_loading_older
+    {
         dispatch(AppAction::LoadOlderLogs(1000));
     }
 

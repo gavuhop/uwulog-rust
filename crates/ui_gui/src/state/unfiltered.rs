@@ -2,7 +2,7 @@ use uwu_core_schema::LogEvent;
 
 pub const RAW_STREAM_LIMIT: usize = 500;
 
-#[derive(PartialEq, Eq, Clone, Copy, Debug, Default)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Default, Hash)]
 pub enum ActiveTab {
     #[default]
     Filtered,

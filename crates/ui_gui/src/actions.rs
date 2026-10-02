@@ -101,7 +101,6 @@ pub enum AppEvent {
     },
     ReversePaginationReady {
         session_id: uuid::Uuid,
-        before_id: u64,
         logs: Vec<LogEvent>,
         is_unfiltered: bool,
         reached_oldest: bool,

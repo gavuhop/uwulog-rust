@@ -1,10 +1,18 @@
 use crate::actions::AppAction;
-use crate::state::{
-    ActiveTab, FieldType, GuiViewState, SearchState, SuggestionItem, RAW_STREAM_LIMIT,
-};
+use crate::state::{ActiveTab, GuiViewState, RAW_STREAM_LIMIT};
+use eframe::egui;
 use std::time::{Duration, Instant};
 use uwu_core_schema::LogEvent;
 use uwu_core_workspace::{Workspace, WorkspaceSession};
+
+/// Trích xuất nhẹ (Copy) trạng thái stream hiển thị cho bảng log
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StreamSummary {
+    pub is_live: bool,
+    pub reached_oldest: bool,
+    pub is_loading_older: bool,
+    pub had_forced_scroll: bool,
+}
 
 /// Thực thể đại diện cho một Workspace đang mở trong GUI.
 /// Hợp nhất: `session` (SSOT cho Runtime/Engine/Process/Store) + `view` (ViewModel với các Sub-Models chuyên trách).
@@ -55,19 +63,7 @@ impl GuiSession {
                 .session
                 .engine
                 .filter_incremental(&self.view.search.query, prev_processed);
-
-            if new_matched_count > 0 {
-                self.view.viewport.total_matched += new_matched_count;
-                self.sync_discovered_fields(&new_matching_logs);
-                self.view.viewport.cached_logs.extend(new_matching_logs);
-
-                if self.view.viewport.cached_logs.len() > self.session.display_limit {
-                    let overflow =
-                        self.view.viewport.cached_logs.len() - self.session.display_limit;
-                    self.view.viewport.cached_logs.drain(0..overflow);
-                }
-                self.view.viewport.has_new_data = true;
-            }
+            self.apply_incremental_logs(new_matched_count, new_matching_logs, total_processed);
         }
 
         if !self.view.viewport.is_auto_scroll && new_logs_arrived {
@@ -78,21 +74,9 @@ impl GuiSession {
             self.view.viewport.pause_snapshot.paused_new_matched_count = new_matched;
         }
 
-        if self.view.viewport.is_auto_scroll {
-            self.view.viewport.record_pause(total_processed);
-        }
-
-        self.view.unfiltered.has_new_data = false;
         if self.view.unfiltered.is_open && self.view.unfiltered.is_live && new_logs_arrived {
-            let (new_count, new_logs) = self.session.engine.filter_incremental("", prev_processed);
-            if new_count > 0 {
-                self.view.unfiltered.cached_unfiltered.extend(new_logs);
-                if self.view.unfiltered.cached_unfiltered.len() > RAW_STREAM_LIMIT {
-                    let overflow = self.view.unfiltered.cached_unfiltered.len() - RAW_STREAM_LIMIT;
-                    self.view.unfiltered.cached_unfiltered.drain(0..overflow);
-                }
-                self.view.unfiltered.has_new_data = true;
-            }
+            let (_new_count, new_logs) = self.session.engine.filter_incremental("", prev_processed);
+            self.apply_incremental_unfiltered(new_logs);
         }
 
         if new_logs_arrived {
@@ -109,17 +93,7 @@ impl GuiSession {
             .session
             .engine
             .search_with_count(&self.view.search.query, self.session.display_limit);
-        self.view.viewport.total_matched = matched;
-        self.sync_discovered_fields(&logs);
-        self.view.viewport.cached_logs = logs;
-        self.view.viewport.reached_oldest = false;
-        self.view.viewport.request_maintain_scroll_offset = None;
-        self.view.search.last_query = self.view.search.query.clone();
-        self.view.viewport.last_processed_count = self.session.engine.total_processed();
-        self.view.search.last_search_time = Instant::now();
-        self.view
-            .viewport
-            .record_pause(self.view.viewport.last_processed_count);
+        self.apply_search_results(self.view.search.active_query_id, matched, logs);
     }
 
     /// Cập nhật kết quả tìm kiếm bất đồng bộ gửi về từ Background Search Worker (O(1))
@@ -232,19 +206,87 @@ impl GuiSession {
         }
     }
 
+    /// Trích xuất nhẹ (Copy) trạng thái stream hiển thị cho bảng log
+    pub fn stream_summary(&self, tab: ActiveTab) -> StreamSummary {
+        match tab {
+            ActiveTab::Filtered => StreamSummary {
+                is_live: self.view.viewport.is_auto_scroll,
+                reached_oldest: self.view.viewport.reached_oldest,
+                is_loading_older: self.view.viewport.is_loading_older,
+                had_forced_scroll: self.view.viewport.request_scroll_to_bottom
+                    || self.view.viewport.request_maintain_scroll_offset.is_some(),
+            },
+            ActiveTab::Unfiltered => StreamSummary {
+                is_live: self.view.unfiltered.is_live,
+                reached_oldest: self.view.unfiltered.reached_oldest,
+                is_loading_older: self.view.unfiltered.is_loading_older,
+                had_forced_scroll: self.view.unfiltered.request_scroll_to_bottom
+                    || self.view.unfiltered.request_scroll_to_target
+                    || self
+                        .view
+                        .unfiltered
+                        .request_maintain_scroll_offset
+                        .is_some(),
+            },
+        }
+    }
+
+    /// Tiêu thụ yêu cầu cuộn (scroll intent) và trả về vị trí cần cuộn đến (nếu có)
+    pub fn consume_scroll_request(
+        &mut self,
+        tab: ActiveTab,
+        row_count: usize,
+    ) -> Option<(usize, egui::Align)> {
+        match tab {
+            ActiveTab::Filtered => {
+                if let Some(offset) = self.view.viewport.request_maintain_scroll_offset.take() {
+                    Some((offset, egui::Align::Min))
+                } else if row_count > 0 {
+                    let force = self.view.viewport.request_scroll_to_bottom;
+                    let is_live = self.view.viewport.is_auto_scroll;
+                    let has_new = self.view.viewport.has_new_data;
+                    self.view.viewport.prev_table_row_count = row_count;
+                    if force || (is_live && has_new) {
+                        self.view.viewport.request_scroll_to_bottom = false;
+                        Some((row_count - 1, egui::Align::Max))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            ActiveTab::Unfiltered => {
+                if let Some(offset) = self.view.unfiltered.request_maintain_scroll_offset.take() {
+                    Some((offset, egui::Align::Min))
+                } else if self.view.unfiltered.request_scroll_to_target && row_count > 0 {
+                    self.view.unfiltered.request_scroll_to_target = false;
+                    self.view
+                        .unfiltered
+                        .target_index
+                        .map(|idx| (idx, egui::Align::Center))
+                } else if row_count > 0 {
+                    let force = self.view.unfiltered.request_scroll_to_bottom;
+                    let is_live = self.view.unfiltered.is_live;
+                    let has_new = self.view.unfiltered.has_new_data;
+                    if force || (is_live && has_new) {
+                        self.view.unfiltered.request_scroll_to_bottom = false;
+                        Some((row_count - 1, egui::Align::Max))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
     pub fn sync_discovered_fields(&mut self, logs: &[LogEvent]) {
         self.view.columns.sync_discovered_keys(logs);
         self.view
             .search
             .sync_schema(self.session.engine.get_schema_map());
-    }
-
-    pub fn get_available_log_fields(&self) -> Vec<(String, FieldType)> {
-        self.view.search.get_available_fields()
-    }
-
-    pub fn apply_autocomplete_suggestion(&mut self, item: &SuggestionItem) {
-        self.view.search.apply_autocomplete_suggestion(item);
     }
 
     pub fn toggle_row_highlight(&mut self, id: u64) {
@@ -269,14 +311,6 @@ impl GuiSession {
 
     pub fn clear_all_highlights(&mut self) {
         self.view.inspector.clear_all_highlights();
-    }
-
-    pub fn format_field_term(field: &str, val: &str) -> String {
-        SearchState::format_field_term(field, val)
-    }
-
-    pub fn format_selection_term(text: &str) -> String {
-        SearchState::format_selection_term(text)
     }
 
     pub fn apply_filter_term(&mut self, term: &str) {
@@ -483,11 +517,6 @@ impl GuiSession {
                 self.focus_in_main_and_clear_filter();
                 true
             }
-            AppAction::LoadOlderLogs(page_size) => {
-                let is_unfiltered = self.view.active_tab == ActiveTab::Unfiltered;
-                self.load_older_logs(is_unfiltered, *page_size);
-                true
-            }
             AppAction::CommitSearch => {
                 let q = self.view.search.query.clone();
                 self.view.search.history.record(&q);
@@ -524,7 +553,7 @@ impl GuiSession {
                     .get(self.view.search.autocomplete.selected_index)
                     .cloned()
                 {
-                    self.apply_autocomplete_suggestion(&item);
+                    self.view.search.apply_autocomplete_suggestion(&item);
                     true
                 } else {
                     false

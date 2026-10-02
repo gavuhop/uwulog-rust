@@ -41,7 +41,7 @@ pub fn render_search_bar(
         // Khi gõ chữ hoặc focus vào ô tìm kiếm: luôn ẩn menu lịch sử
         session.view.search.history.close_popup();
 
-        let available_fields = session.get_available_log_fields();
+        let available_fields = session.view.search.get_available_fields();
         let (suggestions, token_range) =
             generate_suggestions(&session.view.search.query, &available_fields);
         session.view.search.autocomplete.suggestions = suggestions;

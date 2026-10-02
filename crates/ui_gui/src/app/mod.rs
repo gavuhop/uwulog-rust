@@ -257,7 +257,7 @@ impl UwuGuiApp {
     }
 
     /// Khởi chạy tác vụ tìm kiếm bất đồng bộ trên threadpool (Non-blocking UI search với Cooperative Early Cancellation)
-    pub fn spawn_search(&mut self, ctx: Option<&egui::Context>) {
+    pub fn spawn_search(&mut self) {
         let active = self.workspaces.active_session_mut();
         let (query_id, cancel_token) = active.view.search.advance_query();
         let session_id = active.session.id;
@@ -265,7 +265,7 @@ impl UwuGuiApp {
         let limit = active.session.display_limit;
         let engine = Arc::clone(&active.session.engine);
         let tx = self.event_tx.clone();
-        let egui_ctx = ctx.cloned().or_else(|| self.egui_ctx.clone());
+        let egui_ctx = self.egui_ctx.clone();
 
         self.rt.spawn_blocking(move || {
             // Early Cancellation Check 1: Trước khi tốn CPU quét dữ liệu
@@ -290,7 +290,7 @@ impl UwuGuiApp {
     }
 
     /// Khởi chạy tác vụ lọc log tăng dần bất đồng bộ trên threadpool (Non-blocking incremental filter)
-    pub fn spawn_incremental_filter(&mut self, ctx: Option<&egui::Context>) {
+    pub fn spawn_incremental_filter(&mut self) {
         let active = self.workspaces.active_session_mut();
         let session_id = active.session.id;
         let query = active.view.search.query.clone();
@@ -303,7 +303,7 @@ impl UwuGuiApp {
         let is_unfiltered_live = active.view.unfiltered.is_open && active.view.unfiltered.is_live;
         let engine = Arc::clone(&active.session.engine);
         let tx = self.event_tx.clone();
-        let egui_ctx = ctx.cloned().or_else(|| self.egui_ctx.clone());
+        let egui_ctx = self.egui_ctx.clone();
 
         self.rt.spawn_blocking(move || {
             if is_auto_scroll {
@@ -379,7 +379,6 @@ impl UwuGuiApp {
             let reached_oldest = logs.len() < page_size;
             let _ = tx.send(AppEvent::ReversePaginationReady {
                 session_id,
-                before_id,
                 logs,
                 is_unfiltered,
                 reached_oldest,
@@ -388,16 +387,6 @@ impl UwuGuiApp {
                 c.request_repaint();
             }
         });
-    }
-
-    #[inline]
-    pub fn format_field_term(field: &str, val: &str) -> String {
-        GuiSession::format_field_term(field, val)
-    }
-
-    #[inline]
-    pub fn format_selection_term(text: &str) -> String {
-        GuiSession::format_selection_term(text)
     }
 
     /// Khởi tạo GuiSession ban đầu từ tham số CLI và lịch sử WorkspaceStore đã lưu
@@ -683,7 +672,7 @@ impl eframe::App for UwuGuiApp {
             changed
         };
         if query_changed {
-            self.spawn_search(Some(&ctx));
+            self.spawn_search();
         } else {
             let active = self.workspaces.active_session();
             let new_logs_arrived = active.session.engine.total_processed()
@@ -691,7 +680,7 @@ impl eframe::App for UwuGuiApp {
                 && std::time::Instant::now().duration_since(active.view.search.last_search_time)
                     > Duration::from_millis(150);
             if new_logs_arrived {
-                self.spawn_incremental_filter(Some(&ctx));
+                self.spawn_incremental_filter();
             }
         }
 

@@ -1,30 +1,29 @@
 use super::test_helpers::create_test_app;
 use crate::actions::AppAction;
-use crate::app::UwuGuiApp;
-use crate::state::{SuggestionItem, SuggestionKind};
+use crate::state::{SearchState, SuggestionItem, SuggestionKind};
 use std::collections::HashMap;
 use uwu_core_schema::{LogColor, LogEvent};
 
 #[tokio::test]
 async fn test_format_field_and_selection_term() {
     assert_eq!(
-        UwuGuiApp::format_field_term("level", "ERROR"),
+        SearchState::format_field_term("level", "ERROR"),
         "level:error"
     );
     assert_eq!(
-        UwuGuiApp::format_field_term("source", "auth-service"),
+        SearchState::format_field_term("source", "auth-service"),
         "source:auth-service"
     );
     assert_eq!(
-        UwuGuiApp::format_field_term("message", "connection refused"),
+        SearchState::format_field_term("message", "connection refused"),
         "message:\"connection refused\""
     );
 
     assert_eq!(
-        UwuGuiApp::format_selection_term("connection refused"),
+        SearchState::format_selection_term("connection refused"),
         "\"connection refused\""
     );
-    assert_eq!(UwuGuiApp::format_selection_term("simple"), "simple");
+    assert_eq!(SearchState::format_selection_term("simple"), "simple");
 }
 
 #[tokio::test]
@@ -68,7 +67,7 @@ async fn test_apply_autocomplete_suggestion() {
         insert_text: "level:".to_string(),
     };
     session.search.autocomplete.active_token_range = (0, 0);
-    session.apply_autocomplete_suggestion(&item_key);
+    session.search.apply_autocomplete_suggestion(&item_key);
     assert_eq!(session.search.query, "level:");
 
     let item_val = SuggestionItem {
@@ -79,7 +78,7 @@ async fn test_apply_autocomplete_suggestion() {
         insert_text: "error".to_string(),
     };
     session.search.autocomplete.active_token_range = (6, 6);
-    session.apply_autocomplete_suggestion(&item_val);
+    session.search.apply_autocomplete_suggestion(&item_val);
     assert_eq!(session.search.query, "level:error");
     assert!(!session.search.autocomplete.is_open);
 }
@@ -87,7 +86,7 @@ async fn test_apply_autocomplete_suggestion() {
 #[tokio::test]
 async fn test_get_available_log_fields_inference() {
     let app = create_test_app();
-    let fields = app.active_session().get_available_log_fields();
+    let fields = app.active_session().search.get_available_fields();
     assert!(!fields.is_empty());
     assert!(fields.iter().any(|(k, _)| k == "level"));
     assert!(fields.iter().any(|(k, _)| k == "timestamp"));
@@ -105,7 +104,7 @@ async fn test_sync_discovered_fields_replaces_aliases() {
 
     let session = app.active_session_mut();
     session.sync_discovered_fields(&[log]);
-    let fields = session.get_available_log_fields();
+    let fields = session.search.get_available_fields();
     assert!(fields.iter().any(|(k, _)| k == "level"));
 }
 
