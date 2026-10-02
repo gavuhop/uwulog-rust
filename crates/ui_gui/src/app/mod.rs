@@ -522,35 +522,10 @@ impl UwuGuiApp {
 
     /// Điều phối và thực thi các hành động cấp ứng dụng (Zed-style Command Dispatcher)
     pub fn dispatch_action(&mut self, action: AppAction) {
-        match &action {
-            AppAction::LoadOlderLogs(page_size) => {
-                let is_unfiltered = self.active_session().view.active_tab == ActiveTab::Unfiltered;
-                self.spawn_reverse_pagination(is_unfiltered, *page_size);
-                return;
-            }
-            AppAction::ToggleLatch => {
-                let active = self.workspaces.active_session_mut();
-                if active.view.active_tab == ActiveTab::Unfiltered {
-                    active.toggle_unfiltered_live();
-                } else if active.view.viewport.is_auto_scroll {
-                    active.unlatch();
-                } else {
-                    active.view.viewport.latch();
-                    active.view.search.mark_needs_search();
-                }
-                return;
-            }
-            AppAction::Latch => {
-                let active = self.workspaces.active_session_mut();
-                if active.view.active_tab == ActiveTab::Unfiltered {
-                    active.view.unfiltered.is_live = true;
-                } else {
-                    active.view.viewport.latch();
-                    active.view.search.mark_needs_search();
-                }
-                return;
-            }
-            _ => {}
+        if let AppAction::LoadOlderLogs(page_size) = action {
+            let is_unfiltered = self.active_session().view.active_tab == ActiveTab::Unfiltered;
+            self.spawn_reverse_pagination(is_unfiltered, page_size);
+            return;
         }
 
         if self.workspaces.active_session_mut().handle_action(&action) {

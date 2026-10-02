@@ -106,10 +106,6 @@ pub enum AppEvent {
         is_unfiltered: bool,
         reached_oldest: bool,
     },
-    SearchCancelled {
-        session_id: uuid::Uuid,
-        query_id: u64,
-    },
 }
 
 /// Unified render context passed down to subcomponents (tables, detail inspector, cells)
@@ -117,24 +113,6 @@ pub struct ActionContext<'a> {
     pub highlighted_terms: &'a HashSet<String>,
     pub has_any_highlights: bool,
     pub action: &'a mut Option<AppAction>,
-    pub active_editing_cell: Option<&'a mut Option<eframe::egui::Id>>,
-}
-
-impl<'a> ActionContext<'a> {
-    #[inline]
-    pub fn is_cell_promoted(&self, cell_id: eframe::egui::Id) -> bool {
-        self.active_editing_cell
-            .as_ref()
-            .and_then(|opt| opt.as_ref())
-            .is_some_and(|&id| id == cell_id)
-    }
-
-    #[inline]
-    pub fn set_active_editing_cell(&mut self, cell_id: Option<eframe::egui::Id>) {
-        if let Some(ref mut cell_ref) = self.active_editing_cell {
-            **cell_ref = cell_id;
-        }
-    }
 }
 
 /// Formats a clean truncated label for context menus and tooltips (e.g. "very long tex...").

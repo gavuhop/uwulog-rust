@@ -99,7 +99,6 @@ pub fn render_detail(
                         highlighted_terms: &session.inspector.highlighted_terms,
                         has_any_highlights,
                         action: &mut action_to_dispatch,
-                        active_editing_cell: None,
                     };
 
                     render_meta_field(
@@ -128,7 +127,6 @@ pub fn render_detail(
                         highlighted_terms: &session.inspector.highlighted_terms,
                         has_any_highlights,
                         action: &mut action_to_dispatch,
-                        active_editing_cell: None,
                     };
 
                     render_text_box(
@@ -162,7 +160,6 @@ pub fn render_detail(
                             highlighted_terms: &session.inspector.highlighted_terms,
                             has_any_highlights,
                             action: &mut action_to_dispatch,
-                            active_editing_cell: None,
                         };
 
                         for (i, (key, val)) in custom_fields.iter().enumerate() {
@@ -250,7 +247,6 @@ pub fn render_detail(
                         highlighted_terms: &session.inspector.highlighted_terms,
                         has_any_highlights,
                         action: &mut action_to_dispatch,
-                        active_editing_cell: None,
                     };
 
                     let display_str = if is_beauty {

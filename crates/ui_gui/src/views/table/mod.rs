@@ -89,7 +89,6 @@ pub fn render_log_table(
 
     let mut action_to_dispatch: Option<AppAction> = None;
     let has_any_highlights = session.has_any_highlights();
-    let mut active_cell = session.inspector.active_editing_cell;
 
     let default_ts = "2026-08-21 23:29:07";
     let logs = match mode {
@@ -203,7 +202,6 @@ pub fn render_log_table(
                         highlighted_terms: &session.inspector.highlighted_terms,
                         has_any_highlights,
                         action: &mut action_to_dispatch,
-                        active_editing_cell: Some(&mut active_cell),
                     };
 
                     let target_id = if mode == TableMode::Unfiltered {
@@ -261,8 +259,6 @@ pub fn render_log_table(
                     });
                 });
         });
-
-    session.inspector.active_editing_cell = active_cell;
 
     if let Some(action) = action_to_dispatch {
         dispatch(action);

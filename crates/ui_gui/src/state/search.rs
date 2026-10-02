@@ -130,13 +130,6 @@ impl SearchState {
         self.schema_cache = schema.into_iter().collect();
     }
 
-    pub fn sync_discovered_fields(
-        &mut self,
-        schema: impl IntoIterator<Item = (String, FieldType)>,
-    ) {
-        self.sync_schema(schema);
-    }
-
     pub fn get_available_fields(&self) -> Vec<(String, FieldType)> {
         self.schema_cache
             .iter()

@@ -43,7 +43,6 @@ pub fn reduce(app: &mut UwuGuiApp, event: AppEvent) {
                 reduce_reverse_pagination(session, logs, is_unfiltered, reached_oldest);
             }
         }
-        AppEvent::SearchCancelled { .. } => {}
     }
 }
 

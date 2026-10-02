@@ -7,7 +7,6 @@ pub struct InspectorState {
     pub width_ratio: f32,
     pub highlighted_row_ids: HashSet<u64>,
     pub highlighted_terms: HashSet<String>,
-    pub active_editing_cell: Option<eframe::egui::Id>,
 }
 
 impl Default for InspectorState {
@@ -23,7 +22,6 @@ impl InspectorState {
             width_ratio: 0.35,
             highlighted_row_ids: HashSet::new(),
             highlighted_terms: HashSet::new(),
-            active_editing_cell: None,
         }
     }
 

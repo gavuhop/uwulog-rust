@@ -217,7 +217,6 @@ impl GuiSession {
     pub fn latch(&mut self) {
         if self.view.viewport.latch() {
             self.trigger_full_search();
-            self.view.search.mark_needs_search();
         }
     }
 
@@ -441,7 +440,11 @@ impl GuiSession {
                 true
             }
             AppAction::ToggleLatch => {
-                self.toggle_latch();
+                if self.view.active_tab == ActiveTab::Unfiltered {
+                    self.toggle_unfiltered_live();
+                } else {
+                    self.toggle_latch();
+                }
                 true
             }
             AppAction::Unlatch => {
