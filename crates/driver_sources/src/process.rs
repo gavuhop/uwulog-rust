@@ -81,14 +81,7 @@ impl LogSource for ProcessSource {
         let child_pid = child.id();
 
         let stdout_handle = crate::spawn_line_reader(child.stdout.take(), tx.clone());
-        let stderr_handle =
-            crate::spawn_line_reader_mapped(child.stderr.take(), tx.clone(), |line| {
-                if line.to_uppercase().contains("ERROR") {
-                    line
-                } else {
-                    format!("[ERROR] {}", line)
-                }
-            });
+        let stderr_handle = crate::spawn_line_reader(child.stderr.take(), tx.clone());
 
         // Task giám sát lifecycle: khi channel đóng (Stop/Restart hoặc thoát app), diệt TỨC THÌ Cây Tiến Trình (Process Tree).
         // Khi tiến trình kết thúc tự nhiên, đợi stdout/stderr drain hết pipe trước khi shutdown.
@@ -238,8 +231,8 @@ mod tests {
         }
 
         assert!(!received.is_empty());
-        assert!(received[0].contains("[ERROR]"));
-        assert!(received[0].contains("Critical stderr failure"));
+        assert_eq!(received[0], "Critical stderr failure");
+        assert!(!received[0].contains("[ERROR]"));
     }
 
     #[tokio::test]

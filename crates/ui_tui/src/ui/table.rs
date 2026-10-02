@@ -24,12 +24,15 @@ pub fn render_table(f: &mut Frame, app: &mut App, area: Rect) {
                 LogColor::Default => Color::Reset,
             };
 
-            let lvl_cow = log
-                .get_field_cow("level")
-                .or_else(|| log.get_field_cow("lvl"))
-                .unwrap_or(Cow::Borrowed("-"));
-
-            let line_content = format!("[{}] [{:<5}] {}", log.timestamp, lvl_cow, log.message);
+            let line_content = if log.fields.is_empty() && log.timestamp.is_empty() {
+                log.message.clone()
+            } else {
+                let lvl_cow = log
+                    .get_field_cow("level")
+                    .or_else(|| log.get_field_cow("lvl"))
+                    .unwrap_or(Cow::Borrowed("-"));
+                format!("[{}] [{:<5}] {}", log.timestamp, lvl_cow, log.message)
+            };
 
             ListItem::new(line_content).style(Style::default().fg(level_color))
         })
