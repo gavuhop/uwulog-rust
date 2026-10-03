@@ -9,6 +9,37 @@ pub struct OverlayManager {
     pub launch_modal_draft: Option<SourceConfig>,
     pub project_search_query: String,
     pub remote_placement: RemoteModalPlacement,
+    pub keymap_modal_state: Option<KeymapModalState>,
+}
+
+/// Trạng thái nháp tương tác khi mở Modal quản lý Key Map
+#[derive(Debug, Clone)]
+pub struct KeymapModalState {
+    pub draft: uwu_core_keymap::KeymapManager,
+    pub search_query: String,
+    pub selected_context: Option<uwu_core_keymap::KeyContext>,
+    pub recording: Option<(uwu_core_keymap::KeyAction, uwu_core_keymap::KeyContext)>,
+    pub pending_keystroke: Option<uwu_core_keymap::Keystroke>,
+    pub conflict_warning: Option<String>,
+    pub search_recording: bool,
+    pub is_recording_keystroke: bool,
+    pub pending_context: uwu_core_keymap::KeyContext,
+}
+
+impl KeymapModalState {
+    pub fn new(current_manager: &uwu_core_keymap::KeymapManager) -> Self {
+        Self {
+            draft: current_manager.clone(),
+            search_query: String::new(),
+            selected_context: None,
+            recording: None,
+            pending_keystroke: None,
+            conflict_warning: None,
+            search_recording: false,
+            is_recording_keystroke: false,
+            pending_context: uwu_core_keymap::KeyContext::Global,
+        }
+    }
 }
 
 impl OverlayManager {
@@ -18,6 +49,7 @@ impl OverlayManager {
             launch_modal_draft: None,
             project_search_query: String::new(),
             remote_placement: RemoteModalPlacement::TopCenter,
+            keymap_modal_state: None,
         }
     }
 
@@ -60,6 +92,9 @@ impl OverlayManager {
                 }
                 OverlayLayer::ThemeSubmenu => {}
                 OverlayLayer::AboutModal => {}
+                OverlayLayer::KeymapModal => {
+                    self.keymap_modal_state = None;
+                }
                 OverlayLayer::LaunchModal => {
                     self.launch_modal_draft = None;
                 }

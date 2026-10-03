@@ -35,6 +35,7 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
 
     let is_launch_open = app.is_overlay_open(crate::overlay::OverlayLayer::LaunchModal);
     let is_about_open = app.is_overlay_open(crate::overlay::OverlayLayer::AboutModal);
+    let is_keymap_open = app.is_overlay_open(crate::overlay::OverlayLayer::KeymapModal);
     let is_remote_open = app.is_overlay_open(crate::overlay::OverlayLayer::RemoteServersModal);
     let is_project_picker_open = app.is_overlay_open(crate::overlay::OverlayLayer::ProjectPicker);
 
@@ -193,6 +194,14 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
 
     // Modal Dialog: About uwulog
     modals::render_about_modal(ctx, is_about_open, &app.keymap, &mut dispatch);
+
+    // Modal Dialog: Keyboard Shortcuts (Key Map Manager)
+    modals::render_keymap_modal(
+        ctx,
+        is_keymap_open,
+        &mut app.overlays.keymap_modal_state,
+        &mut dispatch,
+    );
 
     // Modal Dialog: Remote Projects (WSL)
     remote_servers::render_remote_servers_modal(

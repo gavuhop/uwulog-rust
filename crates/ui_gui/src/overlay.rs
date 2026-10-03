@@ -13,6 +13,8 @@ pub enum OverlayLayer {
     ProjectPicker,
     /// Modal tùy biến cột và thứ tự hiển thị
     ColumnsModal,
+    /// Modal quản lý phím tắt
+    KeymapModal,
     /// Modal chọn Remote Server / WSL Distro theo phong cách Zed
     RemoteServersModal,
 }

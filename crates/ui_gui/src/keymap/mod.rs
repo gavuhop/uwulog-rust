@@ -23,6 +23,7 @@ impl KeyActionExt for KeyAction {
             Self::ToggleRemoteServers => Some(AppAction::ToggleRemoteServersModal),
             Self::OpenLaunchModal => Some(AppAction::OpenLaunchModal),
             Self::OpenColumnsModal => Some(AppAction::OpenColumnsModal),
+            Self::OpenKeymapModal => Some(AppAction::OpenKeymapModal),
             Self::ToggleLatch => Some(AppAction::ToggleLatch),
             Self::CommitSearch => Some(AppAction::CommitSearch),
             Self::ClearSearch => Some(AppAction::ClearQuery),

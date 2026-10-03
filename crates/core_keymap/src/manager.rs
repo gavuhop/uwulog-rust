@@ -1,10 +1,11 @@
 //! KeymapManager & Hierarchical Fall-through Resolver (Tầng 2 & 3).
 
 use crate::action::KeyAction;
+use crate::config::{KeymapConfigFile, KeymapSection};
 use crate::context::KeyContext;
 use crate::key::Key;
 use crate::keystroke::Keystroke;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// Một liên kết phím tắt (Key Binding) gồm: Tổ hợp phím, Hành động và Ngữ cảnh.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -124,6 +125,11 @@ impl KeymapManager {
         self.bind_keystroke_internal(
             Keystroke::ctrl(Key::L),
             KeyAction::ToggleLatch,
+            KeyContext::Global,
+        );
+        self.bind_keystroke_internal(
+            Keystroke::ctrl(Key::Comma),
+            KeyAction::OpenKeymapModal,
             KeyContext::Global,
         );
 
@@ -347,6 +353,102 @@ impl KeymapManager {
         self.get_label_str(action, context).map(|s| s.to_string())
     }
 
+    /// Lấy danh sách tất cả các phím tắt đang được gán cho một hành động trong ngữ cảnh chỉ định (bao gồm cả kế thừa).
+    pub fn keystrokes_for_action(&self, action: &KeyAction, context: KeyContext) -> Vec<Keystroke> {
+        let mut result = Vec::new();
+        for b in &self.bindings {
+            if b.context == context
+                && &b.action == action
+                && self.resolve_keystroke(&b.keystroke, context) == Some(action)
+            {
+                result.push(b.keystroke);
+            }
+        }
+        if result.is_empty() {
+            if let Some(parent) = context.parent() {
+                return self.keystrokes_for_action(action, parent);
+            }
+        }
+        result
+    }
+
+    /// Kiểm tra xem một tổ hợp phím có bị xung đột với hành động nào khác trong cùng ngữ cảnh không.
+    pub fn find_conflict(
+        &self,
+        keystroke: &Keystroke,
+        context: KeyContext,
+        except_action: &KeyAction,
+    ) -> Option<KeyAction> {
+        if let Some(existing_action) = self.resolve_keystroke(keystroke, context) {
+            if existing_action != except_action && existing_action != &KeyAction::Unbind {
+                return Some(existing_action.clone());
+            }
+        }
+        None
+    }
+
+    /// Gỡ bỏ hoàn toàn một tổ hợp phím trong ngữ cảnh chỉ định (nếu có).
+    pub fn remove_keystroke(&mut self, keystroke: &Keystroke, context: KeyContext) {
+        let initial_len = self.bindings.len();
+        self.bindings
+            .retain(|b| !(b.keystroke == *keystroke && b.context == context));
+
+        // Nếu phím này được kế thừa từ context cha, ta unbind rõ ràng để ghi đè
+        if self.bindings.len() == initial_len
+            && context.parent().is_some()
+            && self.resolve_keystroke(keystroke, context).is_some()
+        {
+            self.unbind_keystroke(*keystroke, context);
+            return;
+        }
+
+        self.rebuild_cache();
+    }
+
+    /// Gỡ bỏ toàn bộ phím tắt đang gán cho một hành động trong ngữ cảnh cụ thể.
+    pub fn remove_action_binding(&mut self, action: &KeyAction, context: KeyContext) {
+        let current_keys = self.keystrokes_for_action(action, context);
+        for ks in current_keys {
+            self.remove_keystroke(&ks, context);
+        }
+    }
+
+    /// Xuất toàn bộ cấu hình phím tắt hiện tại ra cấu trúc `KeymapConfigFile` để lưu JSON.
+    pub fn export_config(&self) -> KeymapConfigFile {
+        let mut sections = Vec::new();
+        for &ctx in KeyContext::all() {
+            let mut bindings_map = BTreeMap::new();
+            let mut unbind_list = Vec::new();
+
+            for b in &self.bindings {
+                if b.context == ctx {
+                    if b.action == KeyAction::Unbind {
+                        unbind_list.push(b.keystroke);
+                    } else {
+                        bindings_map.insert(b.keystroke, b.action.clone());
+                    }
+                }
+            }
+
+            if !bindings_map.is_empty() || !unbind_list.is_empty() {
+                sections.push(KeymapSection {
+                    context: ctx,
+                    bindings: if bindings_map.is_empty() {
+                        None
+                    } else {
+                        Some(bindings_map)
+                    },
+                    unbind: if unbind_list.is_empty() {
+                        None
+                    } else {
+                        Some(unbind_list)
+                    },
+                });
+            }
+        }
+        KeymapConfigFile(sections)
+    }
+
     // -----------------------------------------------------------------------
     // egui methods
     // -----------------------------------------------------------------------
@@ -547,5 +649,39 @@ mod tests {
         // 3. Escape trong context RemoteServers -> Back (ghi đè Dismiss của Global)
         let esc_remote = manager.get_label_for_action(&KeyAction::Back, KeyContext::RemoteServers);
         assert_eq!(esc_remote.as_deref(), Some("Esc"));
+    }
+
+    #[test]
+    fn test_keystrokes_for_action_and_conflict() {
+        let mut manager = KeymapManager::new();
+
+        let keys =
+            manager.keystrokes_for_action(&KeyAction::ToggleProjectPicker, KeyContext::Global);
+        assert!(keys.contains(&Keystroke::alt(Key::P)));
+
+        // Conflict check: alt-p is already bound to ToggleProjectPicker
+        let conflict = manager.find_conflict(
+            &Keystroke::alt(Key::P),
+            KeyContext::Global,
+            &KeyAction::Quit,
+        );
+        assert_eq!(conflict, Some(KeyAction::ToggleProjectPicker));
+
+        // No conflict if except_action is the same action
+        let no_conflict = manager.find_conflict(
+            &Keystroke::alt(Key::P),
+            KeyContext::Global,
+            &KeyAction::ToggleProjectPicker,
+        );
+        assert_eq!(no_conflict, None);
+
+        // Rebind alt-p to Quit
+        manager.bind_keystroke(Keystroke::alt(Key::P), KeyAction::Quit, KeyContext::Global);
+        let quit_keys = manager.keystrokes_for_action(&KeyAction::Quit, KeyContext::Global);
+        assert!(quit_keys.contains(&Keystroke::alt(Key::P)));
+
+        // Export config
+        let cfg = manager.export_config();
+        assert!(!cfg.0.is_empty());
     }
 }

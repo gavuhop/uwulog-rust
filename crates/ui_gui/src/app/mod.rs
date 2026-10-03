@@ -59,6 +59,7 @@ impl UwuGuiApp {
             Some(OverlayLayer::RemoteServersModal) => crate::keymap::KeyContext::RemoteServers,
             Some(OverlayLayer::LaunchModal)
             | Some(OverlayLayer::AboutModal)
+            | Some(OverlayLayer::KeymapModal)
             | Some(OverlayLayer::ColumnsModal)
             | Some(OverlayLayer::ProjectPicker)
             | Some(OverlayLayer::MainMenu)
@@ -99,6 +100,17 @@ impl UwuGuiApp {
             return;
         }
 
+        // Nếu KeymapModal đang ở chế độ recording phím tắt: không tiêu thụ phím tắt ở đây
+        if self.is_overlay_open(OverlayLayer::KeymapModal)
+            && self
+                .overlays
+                .keymap_modal_state
+                .as_ref()
+                .is_some_and(|s| s.recording.is_some() || s.search_recording)
+        {
+            return;
+        }
+
         if let Some(key_action) = self.keymap.consume_input_ctx(ctx, active_context) {
             match key_action {
                 crate::keymap::KeyAction::ZoomIn => {
@@ -122,6 +134,15 @@ impl UwuGuiApp {
                         }
                         Some(OverlayLayer::AboutModal) => {
                             dispatch(AppAction::CloseAboutModal);
+                        }
+                        Some(OverlayLayer::KeymapModal) => {
+                            if let Some(state) = &self.overlays.keymap_modal_state {
+                                if state.recording.is_none() {
+                                    dispatch(AppAction::ApplyKeymapModal(Box::new(
+                                        state.draft.clone(),
+                                    )));
+                                }
+                            }
                         }
                         _ => {}
                     },
@@ -621,6 +642,23 @@ impl UwuGuiApp {
             }
             AppAction::CloseAboutModal => {
                 self.close_overlay(OverlayLayer::AboutModal);
+            }
+            AppAction::OpenKeymapModal => {
+                self.close_main_menu();
+                self.overlays.keymap_modal_state = Some(
+                    crate::app::overlay_manager::KeymapModalState::new(&self.keymap),
+                );
+                self.push_overlay(OverlayLayer::KeymapModal);
+            }
+            AppAction::CloseKeymapModal => {
+                self.close_overlay(OverlayLayer::KeymapModal);
+                self.overlays.keymap_modal_state = None;
+            }
+            AppAction::ApplyKeymapModal(new_keymap) => {
+                self.keymap = *new_keymap;
+                let _ = crate::keymap::save_user_keymap(&self.keymap, None);
+                self.close_overlay(OverlayLayer::KeymapModal);
+                self.overlays.keymap_modal_state = None;
             }
             AppAction::QuitApp => {
                 self.close_main_menu();

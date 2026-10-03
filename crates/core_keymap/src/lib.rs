@@ -15,8 +15,8 @@ pub mod manager;
 
 pub use action::KeyAction;
 pub use config::{
-    default_config_path, ensure_sample_config_file, load_user_keymap, KeymapConfigFile,
-    KeymapSection,
+    default_config_path, ensure_sample_config_file, load_user_keymap, reset_user_keymap_file,
+    save_user_keymap, KeymapConfigFile, KeymapSection,
 };
 pub use context::KeyContext;
 pub use key::{format_key, parse_key, Key};

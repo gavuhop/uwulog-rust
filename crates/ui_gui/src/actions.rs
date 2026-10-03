@@ -62,6 +62,9 @@ pub enum AppAction {
     CloseMainMenu,
     OpenAboutModal,
     CloseAboutModal,
+    OpenKeymapModal,
+    CloseKeymapModal,
+    ApplyKeymapModal(Box<uwu_core_keymap::KeymapManager>),
     SwitchTheme(String),
     QuitApp,
 

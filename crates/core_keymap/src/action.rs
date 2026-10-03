@@ -50,6 +50,7 @@ define_actions! {
     ZoomIn => ("window::ZoomIn", ["ZoomIn"]),
     ZoomOut => ("window::ZoomOut", ["ZoomOut"]),
     ResetZoom => ("window::ResetZoom", ["ResetZoom"]),
+    OpenKeymapModal => ("window::OpenKeymapModal", ["OpenKeymapModal", "Keybindings", "Keymap"]),
 
     // Workspace & Session Controls
     ToggleProjectPicker => ("workspace::ToggleProjectPicker", ["ToggleProjectPicker"]),
@@ -75,6 +76,124 @@ define_actions! {
 
     // Đặc biệt: Hủy gán phím tắt (Unbind)
     Unbind => ("unbind", ["Unbind"]),
+}
+
+impl KeyAction {
+    /// Danh sách tất cả các hành động có thể gán phím tắt trong ứng dụng.
+    pub const fn all() -> &'static [Self] {
+        &[
+            Self::OpenKeymapModal,
+            Self::ToggleProjectPicker,
+            Self::PreviousSession,
+            Self::NextSession,
+            Self::ToggleRemoteServers,
+            Self::OpenLaunchModal,
+            Self::OpenColumnsModal,
+            Self::ToggleLatch,
+            Self::CommitSearch,
+            Self::ClearSearch,
+            Self::ZoomIn,
+            Self::ZoomOut,
+            Self::ResetZoom,
+            Self::Dismiss,
+            Self::Quit,
+            Self::SelectNext,
+            Self::SelectPrev,
+            Self::ConfirmSelection,
+            Self::Back,
+            Self::TabComplete,
+        ]
+    }
+
+    /// Nhóm phân loại chức năng (Category).
+    pub const fn category(&self) -> &'static str {
+        match self {
+            Self::OpenKeymapModal
+            | Self::ZoomIn
+            | Self::ZoomOut
+            | Self::ResetZoom
+            | Self::Dismiss
+            | Self::Quit => "Window",
+
+            Self::ToggleProjectPicker
+            | Self::PreviousSession
+            | Self::NextSession
+            | Self::ToggleRemoteServers
+            | Self::OpenLaunchModal
+            | Self::OpenColumnsModal
+            | Self::ToggleLatch => "Workspace",
+
+            Self::CommitSearch | Self::ClearSearch => "Search",
+
+            Self::SelectNext
+            | Self::SelectPrev
+            | Self::ConfirmSelection
+            | Self::Back
+            | Self::TabComplete => "Navigation",
+
+            Self::Unbind => "System",
+        }
+    }
+
+    /// Tên hiển thị người dùng thân thiện (Human-Readable Display Name).
+    pub const fn display_name(&self) -> &'static str {
+        match self {
+            Self::OpenKeymapModal => "Keyboard Shortcuts",
+            Self::Dismiss => "Dismiss Top Layer",
+            Self::Quit => "Quit Application",
+            Self::ZoomIn => "Zoom In",
+            Self::ZoomOut => "Zoom Out",
+            Self::ResetZoom => "Reset Zoom (100%)",
+
+            Self::ToggleProjectPicker => "Switch Project / Workspace",
+            Self::PreviousSession => "Previous Workspace Session",
+            Self::NextSession => "Next Workspace Session",
+            Self::ToggleRemoteServers => "Remote Servers & WSL",
+            Self::OpenLaunchModal => "Log Source Configuration",
+            Self::OpenColumnsModal => "Customize Table Columns",
+            Self::ToggleLatch => "Toggle Latch / Follow Mode",
+
+            Self::CommitSearch => "Commit Search Query",
+            Self::ClearSearch => "Clear Search Bar",
+
+            Self::SelectNext => "Select Next Item",
+            Self::SelectPrev => "Select Previous Item",
+            Self::ConfirmSelection => "Confirm Selection",
+            Self::Back => "Back / Previous Screen",
+            Self::TabComplete => "Tab Autocomplete",
+            Self::Unbind => "Unbind Shortcut",
+        }
+    }
+
+    /// Mô tả chi tiết hành động.
+    pub const fn description(&self) -> &'static str {
+        match self {
+            Self::OpenKeymapModal => "Open keyboard shortcuts management dialog",
+            Self::Dismiss => "Close top modal, context menu, or popup dialog",
+            Self::Quit => "Exit and quit the application",
+            Self::ZoomIn => "Increase interface scale and font size",
+            Self::ZoomOut => "Decrease interface scale and font size",
+            Self::ResetZoom => "Reset interface scale back to default 100%",
+
+            Self::ToggleProjectPicker => "Open the Zed-style workspace and project switcher",
+            Self::PreviousSession => "Cycle to the previous active workspace tab",
+            Self::NextSession => "Cycle to the next active workspace tab",
+            Self::ToggleRemoteServers => "Open the WSL distribution and remote server picker",
+            Self::OpenLaunchModal => "Open log source connection and arguments configuration",
+            Self::OpenColumnsModal => "Open column visibility and reordering dialog",
+            Self::ToggleLatch => "Toggle auto-scrolling to the latest live log entries",
+
+            Self::CommitSearch => "Execute and apply filter query to the log stream",
+            Self::ClearSearch => "Clear all text in the search input field",
+
+            Self::SelectNext => "Move selection highlight down to next item",
+            Self::SelectPrev => "Move selection highlight up to previous item",
+            Self::ConfirmSelection => "Confirm the highlighted item or autocomplete token",
+            Self::Back => "Navigate back to previous screen or close modal",
+            Self::TabComplete => "Accept suggested autocomplete text",
+            Self::Unbind => "Disable or unbind an existing key combination",
+        }
+    }
 }
 
 impl fmt::Display for KeyAction {

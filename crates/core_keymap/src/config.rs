@@ -198,6 +198,48 @@ pub fn ensure_sample_config_file(path: Option<&Path>) -> Result<(), String> {
     Ok(())
 }
 
+/// Ghi cấu hình phím tắt của người dùng từ KeymapManager xuống file keymap.json (hoặc đường dẫn được chỉ định).
+pub fn save_user_keymap(manager: &KeymapManager, path: Option<&Path>) -> Result<(), String> {
+    let target_path = path.map(PathBuf::from).unwrap_or_else(default_config_path);
+
+    if let Some(parent) = target_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create config directory '{:?}': {}", parent, e))?;
+    }
+
+    let config = manager.export_config();
+    let json = serde_json::to_string_pretty(&config)
+        .map_err(|e| format!("Failed to serialize keymap config: {}", e))?;
+
+    std::fs::write(&target_path, json)
+        .map_err(|e| format!("Failed to write keymap file '{:?}': {}", target_path, e))?;
+
+    Ok(())
+}
+
+/// Đặt lại file cấu hình phím tắt về trạng thái mẫu mặc định.
+pub fn reset_user_keymap_file(path: Option<&Path>) -> Result<(), String> {
+    let target_path = path.map(PathBuf::from).unwrap_or_else(default_config_path);
+
+    if let Some(parent) = target_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create config directory '{:?}': {}", parent, e))?;
+    }
+
+    let sample = KeymapConfigFile::generate_default_sample();
+    let json = serde_json::to_string_pretty(&sample)
+        .map_err(|e| format!("Failed to serialize sample keymap: {}", e))?;
+
+    std::fs::write(&target_path, json).map_err(|e| {
+        format!(
+            "Failed to write sample keymap file '{:?}': {}",
+            target_path, e
+        )
+    })?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

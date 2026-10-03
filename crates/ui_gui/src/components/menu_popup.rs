@@ -15,7 +15,7 @@ pub fn render_main_menu_popup(
 
     let theme = ctx.app_theme();
     let popup_pos = Pos2::new(trigger_rect.min.x, trigger_rect.max.y + 6.0);
-    let popup_width = 170.0;
+    let popup_width = 190.0;
     let submenu_width = 240.0;
     let is_theme_sub_open = overlay_stack.is_open(OverlayLayer::ThemeSubmenu);
 
@@ -117,7 +117,17 @@ pub fn render_main_menu_popup(
                         overlay_stack.close(OverlayLayer::ThemeSubmenu);
                     }
 
-                    // --- Item 2: Theme ---
+                    // --- Item 2: Keyboard Shortcuts ---
+                    let keymap_resp =
+                        render_menu_item(ui, "Keyboard Shortcuts", theme.text.primary, false, None);
+                    if keymap_resp.clicked() {
+                        action_to_dispatch = Some(AppAction::OpenKeymapModal);
+                    }
+                    if keymap_resp.hovered() {
+                        overlay_stack.close(OverlayLayer::ThemeSubmenu);
+                    }
+
+                    // --- Item 3: Theme ---
                     let is_theme_open = overlay_stack.is_open(OverlayLayer::ThemeSubmenu);
                     let theme_resp = render_menu_item(
                         ui,

@@ -164,3 +164,321 @@ fn test_keymap_remote_servers_and_modal_context() {
     let action = app.keymap.process_input(&ctx, KeyContext::Modal);
     assert_eq!(action, Some(KeyAction::ConfirmSelection));
 }
+
+#[test]
+fn test_keymap_modal_open_close_and_apply() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let _guard = rt.enter();
+    let mut app = create_test_app();
+
+    // 1. Mở Keymap Modal qua AppAction
+    app.dispatch_action(AppAction::OpenKeymapModal);
+    assert!(app.is_overlay_open(OverlayLayer::KeymapModal));
+    assert_eq!(app.current_key_context(), KeyContext::Modal);
+    assert!(app.overlays.keymap_modal_state.is_some());
+
+    // 2. Thay đổi phím trong draft
+    if let Some(ref mut state) = app.overlays.keymap_modal_state {
+        state
+            .draft
+            .bind("ctrl-shift-z", KeyAction::ResetZoom, KeyContext::Global);
+    }
+
+    // 3. Đóng bằng CloseKeymapModal (Cancel) -> keymap thực tế chưa bị đổi
+    app.dispatch_action(AppAction::CloseKeymapModal);
+    assert!(!app.is_overlay_open(OverlayLayer::KeymapModal));
+    assert!(app.overlays.keymap_modal_state.is_none());
+    assert_ne!(
+        app.keymap
+            .get_label_for_action(&KeyAction::ResetZoom, KeyContext::Global)
+            .as_deref(),
+        Some("Ctrl+Shift+Z")
+    );
+
+    // 4. Mở lại và ApplyKeymapModal
+    app.dispatch_action(AppAction::OpenKeymapModal);
+    let mut draft = app
+        .overlays
+        .keymap_modal_state
+        .as_ref()
+        .unwrap()
+        .draft
+        .clone();
+    draft.bind("ctrl-shift-z", KeyAction::ResetZoom, KeyContext::Global);
+    app.dispatch_action(AppAction::ApplyKeymapModal(Box::new(draft)));
+
+    // 5. Kiểm tra phím mới đã có hiệu lực trên app.keymap
+    assert!(!app.is_overlay_open(OverlayLayer::KeymapModal));
+    assert_eq!(
+        app.keymap
+            .get_label_for_action(&KeyAction::ResetZoom, KeyContext::Global)
+            .as_deref(),
+        Some("Ctrl+Shift+Z")
+    );
+
+    // 6. Mở lại và test DismissTopLayer
+    app.dispatch_action(AppAction::OpenKeymapModal);
+    assert!(app.is_overlay_open(OverlayLayer::KeymapModal));
+    app.dispatch_action(AppAction::DismissTopLayer);
+    assert!(!app.is_overlay_open(OverlayLayer::KeymapModal));
+}
+
+#[test]
+fn test_keymap_modal_record_key_search() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let _guard = rt.enter();
+    let mut app = create_test_app();
+    let ctx = eframe::egui::Context::default();
+
+    // 1. Mở Keymap Modal
+    app.dispatch_action(AppAction::OpenKeymapModal);
+    assert!(app.is_overlay_open(OverlayLayer::KeymapModal));
+
+    // 2. Kích hoạt search_recording (tương tự như khi bấm nút ⌨)
+    app.overlays
+        .keymap_modal_state
+        .as_mut()
+        .unwrap()
+        .search_recording = true;
+
+    // 3. Giả lập bấm phím Ctrl+F trên bàn phím
+    let mut raw_input = RawInput::default();
+    raw_input.events.push(eframe::egui::Event::Key {
+        key: Key::F,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::CTRL,
+    });
+
+    let mut out = ctx.run_ui(raw_input, |ui| {
+        crate::views::render_ui(ui, &mut app);
+    });
+    out.textures_delta.clear();
+
+    // 4. Modal vẫn mở, search_recording được tắt, và search_query được gán giá trị "Ctrl-F"
+    assert!(app.is_overlay_open(OverlayLayer::KeymapModal));
+    let state = app.overlays.keymap_modal_state.as_ref().unwrap();
+    assert!(!state.search_recording);
+    assert_eq!(state.search_query, "Ctrl-F");
+}
+
+#[test]
+fn test_keymap_modal_record_key_search_escape_cancels() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let _guard = rt.enter();
+    let mut app = create_test_app();
+    let ctx = eframe::egui::Context::default();
+
+    app.dispatch_action(AppAction::OpenKeymapModal);
+    app.overlays
+        .keymap_modal_state
+        .as_mut()
+        .unwrap()
+        .search_recording = true;
+
+    let mut raw_input = RawInput::default();
+    raw_input.events.push(eframe::egui::Event::Key {
+        key: Key::Escape,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    });
+
+    let mut out = ctx.run_ui(raw_input, |ui| {
+        crate::views::render_ui(ui, &mut app);
+    });
+    out.textures_delta.clear();
+
+    assert!(app.is_overlay_open(OverlayLayer::KeymapModal));
+    let state = app.overlays.keymap_modal_state.as_ref().unwrap();
+    assert!(!state.search_recording);
+}
+
+#[test]
+fn test_key_customizer_popup_recording_and_escape() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let _guard = rt.enter();
+    let mut app = create_test_app();
+    let ctx = eframe::egui::Context::default();
+
+    // 1. Mở Keymap modal
+    app.dispatch_action(AppAction::OpenKeymapModal);
+    assert!(app.is_overlay_open(OverlayLayer::KeymapModal));
+
+    // 2. Kích hoạt chỉnh sửa một action trong popup
+    let target_action = uwu_core_keymap::KeyAction::ToggleProjectPicker;
+    let target_context = uwu_core_keymap::KeyContext::Global;
+    {
+        let state = app.overlays.keymap_modal_state.as_mut().unwrap();
+        state.recording = Some((target_action.clone(), target_context));
+        state.pending_context = target_context;
+        state.is_recording_keystroke = false;
+    }
+
+    // 3. Nhấn phím Enter để bắt đầu Record Keystroke
+    let mut raw_input = RawInput::default();
+    raw_input.events.push(eframe::egui::Event::Key {
+        key: Key::Enter,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    });
+
+    let mut out = ctx.run_ui(raw_input, |ui| {
+        crate::views::render_ui(ui, &mut app);
+    });
+    out.textures_delta.clear();
+
+    // Kiểm tra đã vào chế độ record keystroke
+    {
+        let state = app.overlays.keymap_modal_state.as_ref().unwrap();
+        assert!(state.recording.is_some());
+        assert!(state.is_recording_keystroke);
+    }
+
+    // 4. Nhấn phím Escape: Chỉ hủy mode recording, không làm đóng dialog
+    let mut raw_input2 = RawInput::default();
+    raw_input2.events.push(eframe::egui::Event::Key {
+        key: Key::Escape,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    });
+
+    let mut out2 = ctx.run_ui(raw_input2, |ui| {
+        crate::views::render_ui(ui, &mut app);
+    });
+    out2.textures_delta.clear();
+
+    {
+        let state = app.overlays.keymap_modal_state.as_ref().unwrap();
+        assert!(
+            state.recording.is_some(),
+            "Dialog popup vẫn phải mở sau khi hủy record"
+        );
+        assert!(!state.is_recording_keystroke, "Phải tắt chế độ record");
+    }
+
+    // 5. Nhấn Escape lần nữa: Đóng dialog popup
+    let mut raw_input3 = RawInput::default();
+    raw_input3.events.push(eframe::egui::Event::Key {
+        key: Key::Escape,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    });
+
+    let mut out3 = ctx.run_ui(raw_input3, |ui| {
+        crate::views::render_ui(ui, &mut app);
+    });
+    out3.textures_delta.clear();
+
+    {
+        let state = app.overlays.keymap_modal_state.as_ref().unwrap();
+        assert!(
+            state.recording.is_none(),
+            "Dialog popup phải đóng khi nhấn Escape lúc không record"
+        );
+    }
+}
+
+#[test]
+fn test_key_customizer_context_selection_and_save() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let _guard = rt.enter();
+    let mut app = create_test_app();
+    let ctx = eframe::egui::Context::default();
+
+    // 1. Mở Keymap modal
+    app.dispatch_action(AppAction::OpenKeymapModal);
+    assert!(app.is_overlay_open(OverlayLayer::KeymapModal));
+
+    // 2. Kích hoạt chỉnh sửa: gán pending keystroke và đổi context từ Global sang Table
+    let target_action = uwu_core_keymap::KeyAction::ToggleProjectPicker;
+    let original_context = uwu_core_keymap::KeyContext::Global;
+    let new_context = uwu_core_keymap::KeyContext::Table;
+    let custom_keystroke = uwu_core_keymap::Keystroke {
+        key: uwu_core_keymap::Key::K,
+        ctrl: true,
+        alt: false,
+        shift: false,
+        mac_cmd: false,
+    };
+
+    {
+        let state = app.overlays.keymap_modal_state.as_mut().unwrap();
+        state.recording = Some((target_action.clone(), original_context));
+        state.pending_keystroke = Some(custom_keystroke);
+        state.pending_context = new_context;
+        state.is_recording_keystroke = false;
+    }
+
+    // 3. Render UI để đảm bảo không panic và ComboBox hiển thị chính xác
+    let mut out = ctx.run_ui(RawInput::default(), |ui| {
+        crate::views::render_ui(ui, &mut app);
+    });
+    out.textures_delta.clear();
+
+    {
+        let state = app.overlays.keymap_modal_state.as_ref().unwrap();
+        assert_eq!(state.pending_context, new_context);
+        assert!(state.recording.is_some());
+    }
+
+    // Kiểm tra rằng khi không có phím trùng (Ctrl+K là duy nhất), không có text conflict nào được render
+    let shapes_contain_conflict = out.shapes.iter().any(|clipped| match &clipped.shape {
+        eframe::egui::epaint::Shape::Text(text_shape) => {
+            text_shape
+                .galley
+                .job
+                .text
+                .contains("bindings with the same keystrokes")
+                || text_shape.galley.job.text.contains("conflicting")
+        }
+        _ => false,
+    });
+    assert!(
+        !shapes_contain_conflict,
+        "Không được hiển thị thông tin conflict khi không trùng phím"
+    );
+
+    // 4. Kiểm tra khi CÓ phím trùng: gán pending_keystroke trùng với một action khác
+    {
+        let state = app.overlays.keymap_modal_state.as_mut().unwrap();
+        state.draft.bind(
+            "alt-p",
+            uwu_core_keymap::KeyAction::OpenLaunchModal,
+            uwu_core_keymap::KeyContext::Global,
+        );
+        state.pending_keystroke = Some(uwu_core_keymap::Keystroke::alt(uwu_core_keymap::Key::P));
+    }
+
+    let mut out_conflict = ctx.run_ui(RawInput::default(), |ui| {
+        crate::views::render_ui(ui, &mut app);
+    });
+    out_conflict.textures_delta.clear();
+
+    fn shape_contains_text(shape: &eframe::egui::epaint::Shape, target: &str) -> bool {
+        match shape {
+            eframe::egui::epaint::Shape::Text(t) => t.galley.job.text.contains(target),
+            eframe::egui::epaint::Shape::Vec(children) => {
+                children.iter().any(|c| shape_contains_text(c, target))
+            }
+            _ => false,
+        }
+    }
+
+    let shapes_contain_conflict_when_duplicated = out_conflict
+        .shapes
+        .iter()
+        .any(|clipped| shape_contains_text(&clipped.shape, "with the same keystrokes"));
+    assert!(
+        shapes_contain_conflict_when_duplicated,
+        "Phải hiển thị thông tin conflict khi có phím trùng"
+    );
+}
