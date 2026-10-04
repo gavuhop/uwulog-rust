@@ -26,6 +26,7 @@ pub enum AppAction {
     ApplyColumnsModal,
     SelectLog(Option<LogEvent>),
     SwitchTab(ActiveTab),
+    ToggleStreamView,
 
     // Search Query & Filtering
     FocusSearch,

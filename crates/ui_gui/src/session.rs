@@ -447,6 +447,17 @@ impl GuiSession {
                 self.view.active_tab = *tab;
                 true
             }
+            AppAction::ToggleStreamView => {
+                let next = match self.view.active_tab {
+                    ActiveTab::Filtered => ActiveTab::Unfiltered,
+                    ActiveTab::Unfiltered => ActiveTab::Filtered,
+                };
+                if next == ActiveTab::Unfiltered && !self.view.unfiltered.is_open {
+                    self.open_unfiltered_stream(None);
+                }
+                self.view.active_tab = next;
+                true
+            }
             AppAction::ApplyFilterTerm(term) => {
                 self.apply_filter_term(term);
                 true

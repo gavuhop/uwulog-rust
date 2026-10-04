@@ -171,9 +171,15 @@ pub fn render_header(
 
             let filtered_tab_text = if is_filtering { "Filtered" } else { "Main" };
 
+            let filtered_tooltip = if is_filtering {
+                "Switch to Filtered Logs view (Alt+1, Ctrl+Tab)"
+            } else {
+                "Switch to Main Logs view (Alt+1, Ctrl+Tab)"
+            };
+
             if crate::components::ui::TabButton::new(filtered_tab_text, is_filtered_tab)
                 .show(ui)
-                .on_hover_text("Switch to Filtered Logs view")
+                .on_hover_text(filtered_tooltip)
                 .clicked()
             {
                 dispatch(AppAction::SwitchTab(ActiveTab::Filtered));
@@ -185,7 +191,7 @@ pub fn render_header(
 
                 if crate::components::ui::TabButton::new("Raw", is_unfiltered_tab)
                     .show(ui)
-                    .on_hover_text("Switch to Raw Stream view (500 logs buffer)")
+                    .on_hover_text("Switch to Raw Stream view (Alt+2, Ctrl+Tab)")
                     .clicked()
                 {
                     dispatch(AppAction::SwitchTab(ActiveTab::Unfiltered));

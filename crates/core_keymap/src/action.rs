@@ -61,6 +61,9 @@ define_actions! {
     OpenColumnsModal => ("workspace::OpenColumnsModal", ["OpenColumnsModal", "ColumnsSettings", "ConfigureColumns"]),
     RestartSource => ("workspace::RestartSource", ["RestartSource", "RerunCommand", "Rerun", "Restart"]),
     ToggleLatch => ("workspace::ToggleLatch", ["ToggleLatch"]),
+    ToggleStreamView => ("workspace::ToggleStreamView", ["ToggleStreamView", "ToggleRawStream", "ToggleRawView", "ToggleView"]),
+    SelectMainView => ("workspace::SelectMainView", ["SelectMainView", "SelectFilteredView", "ActivateMainView"]),
+    SelectRawView => ("workspace::SelectRawView", ["SelectRawView", "SelectUnfilteredView", "ActivateRawView"]),
 
     // Search Controls
     FocusFilter => ("search::Focus", ["FocusFilter", "FocusSearch", "Filter"]),
@@ -94,6 +97,9 @@ impl KeyAction {
             Self::OpenColumnsModal,
             Self::RestartSource,
             Self::ToggleLatch,
+            Self::ToggleStreamView,
+            Self::SelectMainView,
+            Self::SelectRawView,
             Self::FocusFilter,
             Self::ToggleSearchHistory,
             Self::CommitSearch,
@@ -128,7 +134,10 @@ impl KeyAction {
             | Self::OpenLaunchModal
             | Self::OpenColumnsModal
             | Self::RestartSource
-            | Self::ToggleLatch => "Workspace",
+            | Self::ToggleLatch
+            | Self::ToggleStreamView
+            | Self::SelectMainView
+            | Self::SelectRawView => "Workspace",
 
             Self::FocusFilter
             | Self::ToggleSearchHistory
@@ -163,6 +172,9 @@ impl KeyAction {
             Self::OpenColumnsModal => "Customize Table Columns",
             Self::RestartSource => "Rerun Command / Restart Source",
             Self::ToggleLatch => "Toggle Latch / Follow Mode",
+            Self::ToggleStreamView => "Toggle Main / Raw View",
+            Self::SelectMainView => "Switch to Main View",
+            Self::SelectRawView => "Switch to Raw Stream View",
 
             Self::FocusFilter => "Focus Search / Filter Bar",
             Self::ToggleSearchHistory => "Search & Filter History",
@@ -196,6 +208,11 @@ impl KeyAction {
             Self::OpenColumnsModal => "Open column visibility and reordering dialog",
             Self::RestartSource => "Restart running command source and re-fetch log stream",
             Self::ToggleLatch => "Toggle auto-scrolling to the latest live log entries",
+            Self::ToggleStreamView => {
+                "Toggle between filtered main table and raw unfiltered stream"
+            }
+            Self::SelectMainView => "Switch to main filtered log table view",
+            Self::SelectRawView => "Switch to raw unfiltered log stream view",
 
             Self::FocusFilter => "Focus the search and filter query input",
             Self::ToggleSearchHistory => "Toggle filter and search query history dropdown",

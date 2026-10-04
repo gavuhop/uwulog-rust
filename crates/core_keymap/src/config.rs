@@ -92,6 +92,9 @@ impl KeymapConfigFile {
         global_bindings.insert(Keystroke::new(Key::F5), KeyAction::RestartSource);
         global_bindings.insert(Keystroke::alt(Key::R), KeyAction::OpenLaunchModal);
         global_bindings.insert(Keystroke::alt(Key::C), KeyAction::OpenColumnsModal);
+        global_bindings.insert(Keystroke::ctrl(Key::Tab), KeyAction::ToggleStreamView);
+        global_bindings.insert(Keystroke::alt(Key::Num1), KeyAction::SelectMainView);
+        global_bindings.insert(Keystroke::alt(Key::Num2), KeyAction::SelectRawView);
 
         let mut auto_bindings = BTreeMap::new();
         auto_bindings.insert(Keystroke::new(Key::ArrowDown), KeyAction::SelectNext);

@@ -168,6 +168,21 @@ impl KeymapManager {
             KeyAction::OpenColumnsModal,
             KeyContext::Global,
         );
+        self.bind_keystroke_internal(
+            Keystroke::ctrl(Key::Tab),
+            KeyAction::ToggleStreamView,
+            KeyContext::Global,
+        );
+        self.bind_keystroke_internal(
+            Keystroke::alt(Key::Num1),
+            KeyAction::SelectMainView,
+            KeyContext::Global,
+        );
+        self.bind_keystroke_internal(
+            Keystroke::alt(Key::Num2),
+            KeyAction::SelectRawView,
+            KeyContext::Global,
+        );
 
         // --- 2. Autocomplete Popup Context ---
         self.bind_keystroke_internal(

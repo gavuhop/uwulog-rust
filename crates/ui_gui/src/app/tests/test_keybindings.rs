@@ -901,4 +901,114 @@ fn test_default_shortcuts_run_command_filter_columns_and_rerun() {
         !app.active_session().view.search.history.is_open,
         "Ctrl+H lần thứ hai phải toggle đóng dropdown lịch sử tìm kiếm"
     );
+
+    // 7. Test Stream View Switching shortcuts (Ctrl+Tab, Alt+1, Alt+2)
+    assert_eq!(
+        app.active_session().view.active_tab,
+        crate::state::ActiveTab::Filtered
+    );
+
+    // Bấm Ctrl+Tab -> chuyển sang Raw View (Unfiltered)
+    let mut input_ctrl_tab = RawInput::default();
+    input_ctrl_tab.events.push(eframe::egui::Event::Key {
+        key: Key::Tab,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::CTRL,
+    });
+    let mut out = ctx.run_ui(input_ctrl_tab, |ui| {
+        ui.ctx().input_mut(|i| {
+            i.modifiers = Modifiers::CTRL;
+        });
+        let mut dispatched = Vec::new();
+        app.handle_keybindings(ui.ctx(), &mut |act| dispatched.push(act));
+        for a in dispatched {
+            app.dispatch_action(a);
+        }
+    });
+    out.textures_delta.clear();
+    assert_eq!(
+        app.active_session().view.active_tab,
+        crate::state::ActiveTab::Unfiltered,
+        "Ctrl+Tab phải toggle sang Raw View (Unfiltered)"
+    );
+
+    // Bấm Ctrl+Tab lần nữa -> quay về Main View (Filtered)
+    let mut input_ctrl_tab2 = RawInput::default();
+    input_ctrl_tab2.events.push(eframe::egui::Event::Key {
+        key: Key::Tab,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::CTRL,
+    });
+    let mut out = ctx.run_ui(input_ctrl_tab2, |ui| {
+        ui.ctx().input_mut(|i| {
+            i.modifiers = Modifiers::CTRL;
+        });
+        let mut dispatched = Vec::new();
+        app.handle_keybindings(ui.ctx(), &mut |act| dispatched.push(act));
+        for a in dispatched {
+            app.dispatch_action(a);
+        }
+    });
+    out.textures_delta.clear();
+    assert_eq!(
+        app.active_session().view.active_tab,
+        crate::state::ActiveTab::Filtered,
+        "Ctrl+Tab lần 2 phải toggle về Main View (Filtered)"
+    );
+
+    // Bấm Alt+2 -> trực tiếp nhảy sang Raw View
+    let mut input_alt_2 = RawInput::default();
+    input_alt_2.events.push(eframe::egui::Event::Key {
+        key: Key::Num2,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::ALT,
+    });
+    let mut out = ctx.run_ui(input_alt_2, |ui| {
+        ui.ctx().input_mut(|i| {
+            i.modifiers = Modifiers::ALT;
+        });
+        let mut dispatched = Vec::new();
+        app.handle_keybindings(ui.ctx(), &mut |act| dispatched.push(act));
+        for a in dispatched {
+            app.dispatch_action(a);
+        }
+    });
+    out.textures_delta.clear();
+    assert_eq!(
+        app.active_session().view.active_tab,
+        crate::state::ActiveTab::Unfiltered,
+        "Alt+2 phải kích hoạt trực tiếp Raw View (Unfiltered)"
+    );
+
+    // Bấm Alt+1 -> trực tiếp nhảy về Main View
+    let mut input_alt_1 = RawInput::default();
+    input_alt_1.events.push(eframe::egui::Event::Key {
+        key: Key::Num1,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::ALT,
+    });
+    let mut out = ctx.run_ui(input_alt_1, |ui| {
+        ui.ctx().input_mut(|i| {
+            i.modifiers = Modifiers::ALT;
+        });
+        let mut dispatched = Vec::new();
+        app.handle_keybindings(ui.ctx(), &mut |act| dispatched.push(act));
+        for a in dispatched {
+            app.dispatch_action(a);
+        }
+    });
+    out.textures_delta.clear();
+    assert_eq!(
+        app.active_session().view.active_tab,
+        crate::state::ActiveTab::Filtered,
+        "Alt+1 phải kích hoạt trực tiếp Main View (Filtered)"
+    );
 }
