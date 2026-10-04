@@ -194,6 +194,44 @@ impl KeyAction {
             Self::Unbind => "Disable or unbind an existing key combination",
         }
     }
+
+    /// Chuyển đổi tên Action canonical sang tên humanized chuẩn Zed Editor (dựa trên thuật toán `command_palette::humanize_action_name` của Zed)
+    /// Ví dụ: `workspace::ToggleProjectPicker` -> `workspace: toggle project picker`
+    pub fn humanized_name(&self) -> String {
+        let canonical = self.canonical_name();
+        let mut result = String::with_capacity(canonical.len() + 4);
+        let mut prev_char: Option<char> = None;
+        let mut in_name_part = false;
+
+        for c in canonical.chars() {
+            if c == ':' {
+                if !result.ends_with(':') {
+                    result.push(':');
+                } else if !result.ends_with(": ") {
+                    result.push(' ');
+                    in_name_part = true;
+                }
+            } else if in_name_part {
+                if c.is_uppercase() {
+                    if let Some(p) = prev_char {
+                        if !p.is_uppercase() && p != ' ' && p != ':' {
+                            result.push(' ');
+                        }
+                    }
+                    for lower in c.to_lowercase() {
+                        result.push(lower);
+                    }
+                } else {
+                    result.push(c);
+                }
+            } else {
+                result.push(c);
+            }
+            prev_char = Some(c);
+        }
+
+        result
+    }
 }
 
 impl fmt::Display for KeyAction {

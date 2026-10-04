@@ -36,6 +36,9 @@ pub fn render_key_customizer_popup(
         state.pending_keystroke = None;
         state.is_recording_keystroke = false;
         state.pending_context = KeyContext::Global;
+        state.context_text.clear();
+        state.context_autocomplete_open = false;
+        state.context_selected_index = 0;
         return;
     }
 
@@ -242,7 +245,7 @@ pub fn render_key_customizer_popup(
                                     tip.push_str(&format!(
                                         " • {} ({})\n",
                                         humanize_action_name(&b.action),
-                                        format_context_path(b.context)
+                                        format_context_path(&b.context)
                                     ));
                                 }
                                 tip.push_str("\nClick to filter table by this keystroke.");
@@ -257,65 +260,270 @@ pub fn render_key_customizer_popup(
 
                     ui.add_space(14.0);
 
-                    // 3. Section: Edit Context
-                    ui.label(
-                        egui::RichText::new("Edit Context")
-                            .size(12.5)
-                            .color(theme.text.primary),
-                    );
+                    // 3. Section: Edit Context (Zed-style Editable Context Input with Autocomplete)
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new("Edit Context")
+                                .size(12.5)
+                                .color(theme.text.primary),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                egui::RichText::new("Ctrl+Space: Suggestions")
+                                    .size(10.5)
+                                    .color(theme.text.muted),
+                            );
+                        });
+                    });
                     ui.add_space(6.0);
 
-                    ui.scope(|ui| {
-                        ui.visuals_mut().widgets.inactive.bg_fill = theme.surfaces.surface1;
-                        ui.visuals_mut().widgets.inactive.bg_stroke =
-                            Stroke::new(1.0, theme.borders.border);
-                        ui.visuals_mut().widgets.inactive.corner_radius = CornerRadius::same(5);
-                        ui.visuals_mut().widgets.hovered.bg_fill = theme.surfaces.surface1;
-                        ui.visuals_mut().widgets.hovered.bg_stroke =
-                            Stroke::new(1.0, theme.borders.border_focused);
-                        ui.visuals_mut().widgets.hovered.corner_radius = CornerRadius::same(5);
-                        ui.visuals_mut().widgets.active.bg_fill = theme.surfaces.surface1;
-                        ui.visuals_mut().widgets.active.bg_stroke =
-                            Stroke::new(1.0, theme.borders.border_focused);
-                        ui.visuals_mut().widgets.active.corner_radius = CornerRadius::same(5);
-                        ui.visuals_mut().widgets.open.bg_fill = theme.surfaces.surface1;
-                        ui.visuals_mut().widgets.open.bg_stroke =
-                            Stroke::new(1.5, theme.borders.border_focused);
-                        ui.visuals_mut().widgets.open.corner_radius = CornerRadius::same(5);
+                    // Thu thập danh sách contexts đã biết (built-in + các context tùy biến hiện có trong keymap)
+                    let mut known_contexts: Vec<String> = state
+                        .draft
+                        .active_contexts()
+                        .into_iter()
+                        .map(|c| c.display_path().to_string())
+                        .collect();
+                    known_contexts.sort();
+                    known_contexts.dedup();
 
-                        egui::ComboBox::from_id_salt("key_customizer_context_combo")
-                            .selected_text(
-                                egui::RichText::new(format_context_path(state.pending_context))
-                                    .size(12.5)
-                                    .color(theme.text.primary),
+                    let query = state.context_text.trim().to_lowercase();
+                    let candidates: Vec<&String> = if query.is_empty() {
+                        known_contexts.iter().collect()
+                    } else {
+                        known_contexts
+                            .iter()
+                            .filter(|c| c.to_lowercase().contains(&query))
+                            .collect()
+                    };
+
+                    let mut toggle_autocomplete = false;
+                    let mut select_candidate = None;
+
+                    // Textbox nhập liệu context + nút toggle dropdown
+                    let input_w = ui.available_width();
+                    let input_h = 30.0;
+
+                    ui.horizontal(|ui| {
+                        let text_w = (input_w - 30.0).max(120.0);
+                        let edit_resp = ui.add_sized(
+                            Vec2::new(text_w, input_h),
+                            egui::TextEdit::singleline(&mut state.context_text)
+                                .hint_text("e.g. Workspace > Table")
+                                .font(FontId::proportional(12.5))
+                                .margin(egui::Margin::symmetric(8, 6)),
+                        );
+
+                        if edit_resp.changed() {
+                            state.context_autocomplete_open = true;
+                            state.context_selected_index = 0;
+                        }
+
+                        let chevron = if state.context_autocomplete_open { "▴" } else { "▾" };
+                        let toggle_btn = ui.add_sized(
+                            Vec2::new(24.0, input_h),
+                            egui::Button::new(
+                                egui::RichText::new(chevron)
+                                    .size(11.0)
+                                    .color(theme.text.muted),
                             )
-                            .width(ui.available_width())
-                            .show_ui(ui, |ui| {
-                                for &ctx_variant in KeyContext::all() {
-                                    let label = format_context_path(ctx_variant);
-                                    ui.selectable_value(
-                                        &mut state.pending_context,
-                                        ctx_variant,
-                                        egui::RichText::new(label)
-                                            .size(12.0)
-                                            .color(theme.text.primary),
-                                    );
+                            .corner_radius(CornerRadius::same(5)),
+                        );
+                        if toggle_btn.clicked() {
+                            toggle_autocomplete = true;
+                        }
+                    });
+
+                    // Kiểm tra cú pháp và ngữ cảnh tức thì (Real-time Context Validation)
+                    let trimmed_ctx = state.context_text.trim();
+                    let (syntax_valid, syntax_err, parsed_ctx) = if trimmed_ctx.is_empty() {
+                        (true, None, KeyContext::Global)
+                    } else {
+                        match KeyContext::parse_normalized(trimmed_ctx) {
+                            Ok(ctx) => (true, None, ctx),
+                            Err(err) => (false, Some(err.to_string()), KeyContext::new(trimmed_ctx)),
+                        }
+                    };
+
+                    // Phản hồi kiểm tra cú pháp và cảnh báo context không xác định (Zed-style Feedback)
+                    if !syntax_valid {
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new("⚠")
+                                    .size(11.0)
+                                    .color(theme.status.error),
+                            );
+                            if let Some(ref err) = syntax_err {
+                                ui.label(
+                                    egui::RichText::new(format!("Syntax error: {}", err))
+                                        .size(11.0)
+                                        .color(theme.status.error),
+                                );
+                            }
+                        });
+                    } else if !trimmed_ctx.is_empty() {
+                        let is_known = parsed_ctx.is_builtin()
+                            || state.draft.bindings().iter().any(|b| b.context == parsed_ctx);
+                        if !is_known {
+                            ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new("ℹ")
+                                        .size(11.0)
+                                        .color(theme.status.warning),
+                                );
+                                ui.label(
+                                    egui::RichText::new(
+                                        "Custom context: won't trigger until a view registers this tag",
+                                    )
+                                    .size(11.0)
+                                    .color(theme.status.warning),
+                                );
+                            });
+                        }
+                    }
+
+                    // Xử lý phím tắt cho Autocomplete (Ctrl+Space, Arrow Up/Down, Enter, Tab, Esc)
+                    let ctrl_space = ctx.input_mut(|i| {
+                        i.consume_key(egui::Modifiers::CTRL, egui::Key::Space)
+                    });
+                    if ctrl_space || toggle_autocomplete {
+                        state.context_autocomplete_open = !state.context_autocomplete_open;
+                        state.context_selected_index = 0;
+                    }
+
+                    if state.context_autocomplete_open && !candidates.is_empty() {
+                        let up = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp));
+                        let down = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown));
+                        let enter = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+                        let tab = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Tab));
+                        let esc = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+
+                        if esc {
+                            state.context_autocomplete_open = false;
+                        } else if down {
+                            state.context_selected_index = (state.context_selected_index + 1) % candidates.len();
+                        } else if up {
+                            state.context_selected_index = if state.context_selected_index == 0 {
+                                candidates.len().saturating_sub(1)
+                            } else {
+                                state.context_selected_index - 1
+                            };
+                        } else if enter || tab {
+                            if let Some(cand) = candidates.get(state.context_selected_index) {
+                                select_candidate = Some((*cand).clone());
+                            }
+                        }
+                    }
+
+                    // Render popover gợi ý Autocomplete bên dưới ô nhập
+                    if state.context_autocomplete_open {
+                        ui.add_space(3.0);
+                        egui::Frame::default()
+                            .fill(theme.surfaces.surface1)
+                            .stroke(Stroke::new(1.0, theme.borders.border_focused))
+                            .corner_radius(CornerRadius::same(6))
+                            .inner_margin(egui::Margin::symmetric(4, 4))
+                            .show(ui, |ui| {
+                                if candidates.is_empty() {
+                                    ui.horizontal(|ui| {
+                                        ui.add_space(6.0);
+                                        ui.label(
+                                            egui::RichText::new("No matching contexts (custom will be used)")
+                                                .size(11.0)
+                                                .italics()
+                                                .color(theme.text.muted),
+                                        );
+                                    });
+                                } else {
+                                    egui::ScrollArea::vertical()
+                                        .max_height(140.0)
+                                        .show(ui, |ui| {
+                                            for (idx, cand) in candidates.iter().enumerate() {
+                                                let is_selected = idx == state.context_selected_index;
+                                                let text_color = if is_selected {
+                                                    theme.text.accent
+                                                } else {
+                                                    theme.text.primary
+                                                };
+
+                                                let (cand_rect, cand_resp) = ui.allocate_exact_size(
+                                                    Vec2::new(ui.available_width(), 22.0),
+                                                    egui::Sense::click(),
+                                                );
+
+                                                if is_selected || cand_resp.hovered() {
+                                                    ui.painter().rect_filled(
+                                                        cand_rect,
+                                                        CornerRadius::same(4),
+                                                        theme.surfaces.surface0,
+                                                    );
+                                                }
+
+                                                // Context name bên trái
+                                                ui.painter().text(
+                                                    Pos2::new(cand_rect.min.x + 8.0, cand_rect.center().y),
+                                                    egui::Align2::LEFT_CENTER,
+                                                    cand.as_str(),
+                                                    FontId::proportional(11.5),
+                                                    text_color,
+                                                );
+
+                                                // Badge [Built-in] / [Custom] bên phải
+                                                let is_builtin = KeyContext::all().iter().any(|b| {
+                                                    b.display_path() == cand.as_str() || b.as_str() == cand.as_str()
+                                                });
+                                                let (badge_text, badge_color) = if is_builtin {
+                                                    ("Built-in", theme.text.muted)
+                                                } else {
+                                                    ("Custom", theme.text.accent)
+                                                };
+
+                                                ui.painter().text(
+                                                    Pos2::new(cand_rect.max.x - 8.0, cand_rect.center().y),
+                                                    egui::Align2::RIGHT_CENTER,
+                                                    badge_text,
+                                                    FontId::proportional(10.0),
+                                                    badge_color,
+                                                );
+
+                                                if cand_resp.clicked() {
+                                                    select_candidate = Some((*cand).clone());
+                                                }
+                                            }
+                                        });
                                 }
                             });
-                    });
+                    }
+
+                    if let Some(chosen) = select_candidate {
+                        state.context_text = chosen;
+                        state.context_autocomplete_open = false;
+                    }
 
                     ui.add_space(18.0);
 
                     // 4. Modal Footer: Cancel & Save (Aligned Bottom-Right)
                     ui.horizontal(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if AppButton::new()
+                            let save_tooltip = if syntax_valid {
+                                "Save and apply this keybinding"
+                            } else {
+                                "Cannot save: context syntax is invalid"
+                            };
+
+                            let save_resp = AppButton::new()
                                 .label("Save")
-                                .variant(ButtonVariant::Default)
-                                .tooltip("Save and apply this keybinding")
-                                .show(ui)
-                                .clicked()
-                            {
+                                .variant(if syntax_valid {
+                                    ButtonVariant::Default
+                                } else {
+                                    ButtonVariant::Ghost
+                                })
+                                .tooltip(save_tooltip)
+                                .show(ui);
+
+                            if save_resp.clicked() && syntax_valid {
                                 save_dialog = true;
                             }
 
@@ -336,27 +544,25 @@ pub fn render_key_customizer_popup(
         });
 
     if save_dialog {
-        let target_ctx = state.pending_context;
+        let trimmed_ctx = state.context_text.trim();
+        let target_ctx = if trimmed_ctx.is_empty() {
+            KeyContext::Global
+        } else {
+            KeyContext::parse_normalized(trimmed_ctx)
+                .unwrap_or_else(|_| KeyContext::new(trimmed_ctx))
+        };
+
         if let Some(ks) = state.pending_keystroke {
             if target_ctx != context {
-                state.draft.remove_action_binding(action, context);
+                state.draft.remove_action_binding(action, &context);
             }
             state.draft.bind_keystroke(ks, action.clone(), target_ctx);
         }
-        state.recording = None;
-        state.pending_keystroke = None;
-        state.is_recording_keystroke = false;
-        state.pending_context = KeyContext::Global;
+        state.close_customizer();
     } else if close_dialog {
-        state.recording = None;
-        state.pending_keystroke = None;
-        state.is_recording_keystroke = false;
-        state.pending_context = KeyContext::Global;
+        state.close_customizer();
     } else if let Some(shortcut_label) = filter_by_shortcut {
         state.search_query = format!("\"{}\"", shortcut_label);
-        state.recording = None;
-        state.pending_keystroke = None;
-        state.is_recording_keystroke = false;
-        state.pending_context = KeyContext::Global;
+        state.close_customizer();
     }
 }

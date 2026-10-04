@@ -312,7 +312,7 @@ fn test_key_customizer_popup_recording_and_escape() {
     let target_context = uwu_core_keymap::KeyContext::Global;
     {
         let state = app.overlays.keymap_modal_state.as_mut().unwrap();
-        state.recording = Some((target_action.clone(), target_context));
+        state.recording = Some((target_action.clone(), target_context.clone()));
         state.pending_context = target_context;
         state.is_recording_keystroke = false;
     }
@@ -414,7 +414,8 @@ fn test_key_customizer_context_selection_and_save() {
         let state = app.overlays.keymap_modal_state.as_mut().unwrap();
         state.recording = Some((target_action.clone(), original_context));
         state.pending_keystroke = Some(custom_keystroke);
-        state.pending_context = new_context;
+        state.pending_context = new_context.clone();
+        state.context_text = new_context.display_path().to_string();
         state.is_recording_keystroke = false;
     }
 
@@ -463,16 +464,6 @@ fn test_key_customizer_context_selection_and_save() {
     });
     out_conflict.textures_delta.clear();
 
-    fn shape_contains_text(shape: &eframe::egui::epaint::Shape, target: &str) -> bool {
-        match shape {
-            eframe::egui::epaint::Shape::Text(t) => t.galley.job.text.contains(target),
-            eframe::egui::epaint::Shape::Vec(children) => {
-                children.iter().any(|c| shape_contains_text(c, target))
-            }
-            _ => false,
-        }
-    }
-
     let shapes_contain_conflict_when_duplicated = out_conflict
         .shapes
         .iter()
@@ -480,5 +471,188 @@ fn test_key_customizer_context_selection_and_save() {
     assert!(
         shapes_contain_conflict_when_duplicated,
         "Phải hiển thị thông tin conflict khi có phím trùng"
+    );
+}
+
+fn shape_contains_text(shape: &eframe::egui::epaint::Shape, target: &str) -> bool {
+    match shape {
+        eframe::egui::epaint::Shape::Text(t) => t.galley.job.text.contains(target),
+        eframe::egui::epaint::Shape::Vec(children) => {
+            children.iter().any(|c| shape_contains_text(c, target))
+        }
+        _ => false,
+    }
+}
+
+#[test]
+fn test_key_customizer_context_typing_and_ctrl_space_autocomplete() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let _guard = rt.enter();
+    let mut app = create_test_app();
+    let ctx = eframe::egui::Context::default();
+
+    // 1. Mở Keymap modal
+    app.dispatch_action(AppAction::OpenKeymapModal);
+    assert!(app.is_overlay_open(OverlayLayer::KeymapModal));
+
+    // 2. Kích hoạt chỉnh sửa một action
+    let target_action = uwu_core_keymap::KeyAction::ToggleProjectPicker;
+    let original_context = uwu_core_keymap::KeyContext::Global;
+    let custom_keystroke = uwu_core_keymap::Keystroke {
+        key: uwu_core_keymap::Key::P,
+        ctrl: true,
+        alt: true,
+        shift: false,
+        mac_cmd: false,
+    };
+
+    {
+        let state = app.overlays.keymap_modal_state.as_mut().unwrap();
+        state.recording = Some((target_action.clone(), original_context.clone()));
+        state.pending_keystroke = Some(custom_keystroke);
+        state.pending_context = original_context;
+        state.context_text = "search".to_string();
+        state.context_autocomplete_open = true;
+        state.is_recording_keystroke = false;
+    }
+
+    // 3. Render 2 frames để egui Area hoàn tất đo đạc và vẽ popover
+    let mut first_out = ctx.run_ui(RawInput::default(), |ui| {
+        crate::views::render_ui(ui, &mut app);
+    });
+    first_out.textures_delta.clear();
+    let mut out = ctx.run_ui(RawInput::default(), |ui| {
+        crate::views::render_ui(ui, &mut app);
+    });
+    out.textures_delta.clear();
+
+    // Kiểm tra state vẫn mở
+    {
+        let state = app.overlays.keymap_modal_state.as_ref().unwrap();
+        assert!(state.recording.is_some());
+        assert!(
+            state.context_autocomplete_open,
+            "context_autocomplete_open phải là true"
+        );
+    }
+
+    fn collect_texts(shape: &eframe::egui::epaint::Shape, out: &mut Vec<String>) {
+        match shape {
+            eframe::egui::epaint::Shape::Text(t) => out.push(t.galley.job.text.clone()),
+            eframe::egui::epaint::Shape::Vec(children) => {
+                for c in children {
+                    collect_texts(c, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut texts = Vec::new();
+    for clipped in &out.shapes {
+        collect_texts(&clipped.shape, &mut texts);
+    }
+
+    // Kiểm tra popover hiển thị mục khớp "SearchBar"
+    let has_search_suggestion = texts.iter().any(|t| t.contains("SearchBar"));
+    assert!(
+        has_search_suggestion,
+        "Autocomplete popover phải hiển thị mục chứa SearchBar khi tìm kiếm 'search'"
+    );
+
+    // 4. Kiểm tra gõ ngữ cảnh tùy biến hoàn toàn (Custom Context) và lưu
+    {
+        let state = app.overlays.keymap_modal_state.as_mut().unwrap();
+        state.context_text = "Plugin > MyConsole".to_string();
+        state.context_autocomplete_open = false;
+    }
+
+    // Giả lập lưu với custom context
+    {
+        let state = app.overlays.keymap_modal_state.as_mut().unwrap();
+        let target_ctx = uwu_core_keymap::KeyContext::parse(&state.context_text).unwrap();
+        state
+            .draft
+            .bind_keystroke(custom_keystroke, target_action.clone(), target_ctx.clone());
+        assert_eq!(target_ctx.display_path(), "Plugin > MyConsole");
+        assert_eq!(
+            target_ctx.parent(),
+            Some(uwu_core_keymap::KeyContext::new("Plugin"))
+        );
+    }
+}
+
+#[test]
+fn test_key_customizer_context_syntax_validation_and_feedback() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let _guard = rt.enter();
+    let mut app = create_test_app();
+    let ctx = eframe::egui::Context::default();
+
+    // 1. Mở Keymap modal
+    app.dispatch_action(AppAction::OpenKeymapModal);
+    let target_action = uwu_core_keymap::KeyAction::ToggleProjectPicker;
+    let target_context = uwu_core_keymap::KeyContext::Global;
+    {
+        let state = app.overlays.keymap_modal_state.as_mut().unwrap();
+        state.recording = Some((target_action.clone(), target_context.clone()));
+        state.pending_context = target_context;
+        state.is_recording_keystroke = false;
+        // Nhập cú pháp sai: phân đoạn rỗng
+        state.context_text = "Workspace > > Table".to_string();
+    }
+
+    fn collect_texts(shape: &eframe::egui::epaint::Shape, out: &mut Vec<String>) {
+        match shape {
+            eframe::egui::epaint::Shape::Text(t) => out.push(t.galley.job.text.clone()),
+            eframe::egui::epaint::Shape::Vec(children) => {
+                for c in children {
+                    collect_texts(c, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Pass 1 & 2 để egui tính toán layout
+    let mut out1 = ctx.run_ui(RawInput::default(), |ui| {
+        crate::views::render_ui(ui, &mut app);
+    });
+    out1.textures_delta.clear();
+    let mut out2 = ctx.run_ui(RawInput::default(), |ui| {
+        crate::views::render_ui(ui, &mut app);
+    });
+    out2.textures_delta.clear();
+
+    let mut texts = Vec::new();
+    for clipped in &out2.shapes {
+        collect_texts(&clipped.shape, &mut texts);
+    }
+
+    let has_syntax_error = texts.iter().any(|t| t.contains("Syntax error"));
+    assert!(
+        has_syntax_error,
+        "Phải hiển thị cảnh báo lỗi cú pháp khi gõ 'Workspace > > Table'"
+    );
+
+    // 2. Nhập cú pháp hợp lệ nhưng là Context chưa có view nào sử dụng (Unknown Custom Context)
+    {
+        let state = app.overlays.keymap_modal_state.as_mut().unwrap();
+        state.context_text = "Workspace > NewExtensionTag".to_string();
+    }
+    let mut out3 = ctx.run_ui(RawInput::default(), |ui| {
+        crate::views::render_ui(ui, &mut app);
+    });
+    out3.textures_delta.clear();
+
+    texts.clear();
+    for clipped in &out3.shapes {
+        collect_texts(&clipped.shape, &mut texts);
+    }
+    let has_custom_hint = texts
+        .iter()
+        .any(|t| t.contains("Custom context: won't trigger until a view registers this tag"));
+    assert!(
+        has_custom_hint,
+        "Phải hiển thị gợi ý thông tin cho context tùy biến chưa kích hoạt"
     );
 }

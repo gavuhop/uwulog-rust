@@ -47,20 +47,26 @@ impl KeymapManager {
     pub fn rebuild_cache(&mut self) {
         self.label_cache.clear();
 
-        for &ctx in KeyContext::all() {
-            let mut current = Some(ctx);
-            let mut visited_mask = 0u32;
+        let mut all_contexts: Vec<KeyContext> = KeyContext::all().to_vec();
+        for b in &self.bindings {
+            if !all_contexts.contains(&b.context) {
+                all_contexts.push(b.context.clone());
+            }
+        }
+
+        for ctx in &all_contexts {
+            let mut current = Some(ctx.clone());
+            let mut depth = 0;
 
             while let Some(c) = current {
-                let bit = 1u32.checked_shl(c as u32).unwrap_or(0);
-                if bit == 0 || (visited_mask & bit != 0) {
+                depth += 1;
+                if depth > 16 {
                     break;
                 }
-                visited_mask |= bit;
 
                 for b in self.bindings.iter().rev() {
                     if b.context == c && b.action != KeyAction::Unbind {
-                        let key = (b.action.clone(), ctx);
+                        let key = (b.action.clone(), ctx.clone());
                         if !self.label_cache.contains_key(&key)
                             && self.resolve_keystroke(&b.keystroke, ctx) == Some(&b.action)
                         {
@@ -266,21 +272,20 @@ impl KeymapManager {
     /// cho đến `Global`.
     pub fn resolve_matching<F>(
         &self,
-        active_context: KeyContext,
+        active_context: impl std::borrow::Borrow<KeyContext>,
         mut matcher: F,
     ) -> Option<(&KeyAction, &Keystroke)>
     where
         F: FnMut(&Keystroke) -> bool,
     {
-        let mut current = Some(active_context);
-        let mut visited_mask = 0u32;
+        let mut current = Some(active_context.borrow().clone());
+        let mut depth = 0;
 
         while let Some(ctx) = current {
-            let bit = 1u32.checked_shl(ctx as u32).unwrap_or(0);
-            if bit == 0 || (visited_mask & bit != 0) {
+            depth += 1;
+            if depth > 16 {
                 break;
             }
-            visited_mask |= bit;
 
             for binding in self.bindings.iter().rev() {
                 if binding.context == ctx && matcher(&binding.keystroke) {
@@ -301,9 +306,9 @@ impl KeymapManager {
     pub fn resolve_keystroke(
         &self,
         keystroke: &Keystroke,
-        active_context: KeyContext,
+        active_context: impl std::borrow::Borrow<KeyContext>,
     ) -> Option<&KeyAction> {
-        self.resolve_matching(active_context, |k| k == keystroke)
+        self.resolve_matching(active_context.borrow(), |k| k == keystroke)
             .map(|(act, _)| act)
     }
 
@@ -313,22 +318,22 @@ impl KeymapManager {
     pub fn find_keystroke_for_action(
         &self,
         action: &KeyAction,
-        active_context: KeyContext,
+        active_context: impl std::borrow::Borrow<KeyContext>,
     ) -> Option<Keystroke> {
-        let mut current = Some(active_context);
-        let mut visited_mask = 0u32;
+        let active_ref = active_context.borrow();
+        let mut current = Some(active_ref.clone());
+        let mut depth = 0;
 
         while let Some(ctx) = current {
-            let bit = 1u32.checked_shl(ctx as u32).unwrap_or(0);
-            if bit == 0 || (visited_mask & bit != 0) {
+            depth += 1;
+            if depth > 16 {
                 break;
             }
-            visited_mask |= bit;
 
             for b in self.bindings.iter().rev() {
                 if b.context == ctx
                     && &b.action == action
-                    && self.resolve_keystroke(&b.keystroke, active_context) == Some(action)
+                    && self.resolve_keystroke(&b.keystroke, active_ref) == Some(action)
                 {
                     return Some(b.keystroke);
                 }
@@ -342,30 +347,44 @@ impl KeymapManager {
 
     /// Lấy chuỗi phím tắt hiển thị UI (dạng mượn `&str`, Zero-Allocation, $O(1)$ Hash Lookup).
     /// Ví dụ: "Alt+P", "Ctrl+PageUp". Rất thích hợp gọi trong vòng lặp render 60 FPS.
-    pub fn get_label_str(&self, action: &KeyAction, context: KeyContext) -> Option<&str> {
+    pub fn get_label_str(
+        &self,
+        action: &KeyAction,
+        context: impl std::borrow::Borrow<KeyContext>,
+    ) -> Option<&str> {
         self.label_cache
-            .get(&(action.clone(), context))
+            .get(&(action.clone(), context.borrow().clone()))
             .map(|s| s.as_str())
     }
 
     /// Lấy chuỗi phím tắt hiển thị lên tooltip UI hoặc nút bấm (trả về String để tương thích ngược).
-    pub fn get_label_for_action(&self, action: &KeyAction, context: KeyContext) -> Option<String> {
-        self.get_label_str(action, context).map(|s| s.to_string())
+    pub fn get_label_for_action(
+        &self,
+        action: &KeyAction,
+        context: impl std::borrow::Borrow<KeyContext>,
+    ) -> Option<String> {
+        self.get_label_str(action, context.borrow())
+            .map(|s| s.to_string())
     }
 
     /// Lấy danh sách tất cả các phím tắt đang được gán cho một hành động trong ngữ cảnh chỉ định (bao gồm cả kế thừa).
-    pub fn keystrokes_for_action(&self, action: &KeyAction, context: KeyContext) -> Vec<Keystroke> {
+    pub fn keystrokes_for_action(
+        &self,
+        action: &KeyAction,
+        context: impl std::borrow::Borrow<KeyContext>,
+    ) -> Vec<Keystroke> {
+        let ctx_ref = context.borrow();
         let mut result = Vec::new();
         for b in &self.bindings {
-            if b.context == context
+            if &b.context == ctx_ref
                 && &b.action == action
-                && self.resolve_keystroke(&b.keystroke, context) == Some(action)
+                && self.resolve_keystroke(&b.keystroke, ctx_ref) == Some(action)
             {
                 result.push(b.keystroke);
             }
         }
         if result.is_empty() {
-            if let Some(parent) = context.parent() {
+            if let Some(parent) = ctx_ref.parent() {
                 return self.keystrokes_for_action(action, parent);
             }
         }
@@ -376,10 +395,10 @@ impl KeymapManager {
     pub fn find_conflict(
         &self,
         keystroke: &Keystroke,
-        context: KeyContext,
+        context: impl std::borrow::Borrow<KeyContext>,
         except_action: &KeyAction,
     ) -> Option<KeyAction> {
-        if let Some(existing_action) = self.resolve_keystroke(keystroke, context) {
+        if let Some(existing_action) = self.resolve_keystroke(keystroke, context.borrow()) {
             if existing_action != except_action && existing_action != &KeyAction::Unbind {
                 return Some(existing_action.clone());
             }
@@ -388,17 +407,22 @@ impl KeymapManager {
     }
 
     /// Gỡ bỏ hoàn toàn một tổ hợp phím trong ngữ cảnh chỉ định (nếu có).
-    pub fn remove_keystroke(&mut self, keystroke: &Keystroke, context: KeyContext) {
+    pub fn remove_keystroke(
+        &mut self,
+        keystroke: &Keystroke,
+        context: impl std::borrow::Borrow<KeyContext>,
+    ) {
+        let ctx_ref = context.borrow();
         let initial_len = self.bindings.len();
         self.bindings
-            .retain(|b| !(b.keystroke == *keystroke && b.context == context));
+            .retain(|b| !(b.keystroke == *keystroke && &b.context == ctx_ref));
 
         // Nếu phím này được kế thừa từ context cha, ta unbind rõ ràng để ghi đè
         if self.bindings.len() == initial_len
-            && context.parent().is_some()
-            && self.resolve_keystroke(keystroke, context).is_some()
+            && ctx_ref.parent().is_some()
+            && self.resolve_keystroke(keystroke, ctx_ref).is_some()
         {
-            self.unbind_keystroke(*keystroke, context);
+            self.unbind_keystroke(*keystroke, ctx_ref.clone());
             return;
         }
 
@@ -406,22 +430,40 @@ impl KeymapManager {
     }
 
     /// Gỡ bỏ toàn bộ phím tắt đang gán cho một hành động trong ngữ cảnh cụ thể.
-    pub fn remove_action_binding(&mut self, action: &KeyAction, context: KeyContext) {
-        let current_keys = self.keystrokes_for_action(action, context);
+    pub fn remove_action_binding(
+        &mut self,
+        action: &KeyAction,
+        context: impl std::borrow::Borrow<KeyContext>,
+    ) {
+        let ctx = context.borrow();
+        let current_keys = self.keystrokes_for_action(action, ctx);
         for ks in current_keys {
-            self.remove_keystroke(&ks, context);
+            self.remove_keystroke(&ks, ctx);
         }
     }
 
-    /// Xuất toàn bộ cấu hình phím tắt hiện tại ra cấu trúc `KeymapConfigFile` để lưu JSON.
-    pub fn export_config(&self) -> KeymapConfigFile {
+    /// Trả về danh sách tất cả các ngữ cảnh hiện có (bao gồm các built-in mặc định và các context tùy biến đang được gán).
+    pub fn active_contexts(&self) -> Vec<KeyContext> {
+        let mut all_contexts: Vec<KeyContext> = KeyContext::all().to_vec();
+        for b in &self.bindings {
+            if !all_contexts.contains(&b.context) {
+                all_contexts.push(b.context.clone());
+            }
+        }
+        all_contexts
+    }
+
+    /// Xuất toàn bộ cấu hình phím tắt hiện tại ra cấu trúc `KeymapConfigFile` (bao gồm cả phím mặc định).
+    pub fn export_full_config(&self) -> KeymapConfigFile {
         let mut sections = Vec::new();
-        for &ctx in KeyContext::all() {
+        let all_contexts = self.active_contexts();
+
+        for ctx in &all_contexts {
             let mut bindings_map = BTreeMap::new();
             let mut unbind_list = Vec::new();
 
             for b in &self.bindings {
-                if b.context == ctx {
+                if &b.context == ctx {
                     if b.action == KeyAction::Unbind {
                         unbind_list.push(b.keystroke);
                     } else {
@@ -432,7 +474,81 @@ impl KeymapManager {
 
             if !bindings_map.is_empty() || !unbind_list.is_empty() {
                 sections.push(KeymapSection {
-                    context: ctx,
+                    context: ctx.clone(),
+                    bindings: if bindings_map.is_empty() {
+                        None
+                    } else {
+                        Some(bindings_map)
+                    },
+                    unbind: if unbind_list.is_empty() {
+                        None
+                    } else {
+                        Some(unbind_list)
+                    },
+                });
+            }
+        }
+        KeymapConfigFile(sections)
+    }
+
+    /// Xuất cấu hình phím tắt khác biệt (delta / user overrides) so với mặc định hệ thống.
+    /// File cấu hình người dùng chỉ lưu phần thay đổi (thêm mới, đổi phím, hoặc unbind)
+    /// chuẩn theo triết lý của Zed Editor, không đóng băng toàn bộ phím hệ thống.
+    pub fn export_config(&self) -> KeymapConfigFile {
+        let defaults = Self::new();
+        let mut sections = Vec::new();
+        let mut all_contexts = self.active_contexts();
+        for db in &defaults.bindings {
+            if !all_contexts.contains(&db.context) {
+                all_contexts.push(db.context.clone());
+            }
+        }
+
+        for ctx in &all_contexts {
+            let mut bindings_map = BTreeMap::new();
+            let mut unbind_list = Vec::new();
+
+            // 1. Phím mặc định bị xóa hoặc chuyển sang Unbind
+            for def_b in &defaults.bindings {
+                if &def_b.context == ctx && def_b.action != KeyAction::Unbind {
+                    let self_matching = self
+                        .bindings
+                        .iter()
+                        .find(|b| b.keystroke == def_b.keystroke && &b.context == ctx);
+                    let is_unbound_or_removed = match self_matching {
+                        None => true,
+                        Some(b) => b.action == KeyAction::Unbind,
+                    };
+                    if is_unbound_or_removed && !unbind_list.contains(&def_b.keystroke) {
+                        unbind_list.push(def_b.keystroke);
+                    }
+                }
+            }
+
+            // 2. Phím người dùng thêm mới hoặc đổi sang hành động khác
+            for b in &self.bindings {
+                if &b.context == ctx {
+                    if b.action == KeyAction::Unbind {
+                        if !unbind_list.contains(&b.keystroke) {
+                            unbind_list.push(b.keystroke);
+                        }
+                    } else {
+                        let def_matching = defaults
+                            .bindings
+                            .iter()
+                            .find(|db| db.keystroke == b.keystroke && &db.context == ctx);
+                        let is_same_as_default =
+                            def_matching.is_some_and(|db| db.action == b.action);
+                        if !is_same_as_default {
+                            bindings_map.insert(b.keystroke, b.action.clone());
+                        }
+                    }
+                }
+            }
+
+            if !bindings_map.is_empty() || !unbind_list.is_empty() {
+                sections.push(KeymapSection {
+                    context: ctx.clone(),
                     bindings: if bindings_map.is_empty() {
                         None
                     } else {
@@ -456,7 +572,7 @@ impl KeymapManager {
     pub fn resolve_binding<'a>(
         &'a self,
         input: &egui::InputState,
-        active_context: KeyContext,
+        active_context: impl std::borrow::Borrow<KeyContext>,
     ) -> Option<(&'a KeyAction, &'a Keystroke)> {
         // Fast-path: Nếu frame hiện tại không có bất kỳ phím nào được nhấn, thoát ngay lập tức!
         // Giúp loại bỏ 99.9% chi phí CPU khi ứng dụng ở trạng thái idle/chỉ di chuột.
@@ -475,7 +591,7 @@ impl KeymapManager {
     pub fn resolve_action(
         &self,
         input: &egui::InputState,
-        active_context: KeyContext,
+        active_context: impl std::borrow::Borrow<KeyContext>,
     ) -> Option<KeyAction> {
         self.resolve_binding(input, active_context)
             .map(|(act, _)| act.clone())
@@ -485,19 +601,21 @@ impl KeymapManager {
     pub fn process_input(
         &self,
         ctx: &egui::Context,
-        active_context: KeyContext,
+        active_context: impl std::borrow::Borrow<KeyContext>,
     ) -> Option<KeyAction> {
-        ctx.input(|input| self.resolve_action(input, active_context))
+        let active = active_context.borrow();
+        ctx.input(|input| self.resolve_action(input, active))
     }
 
     #[cfg(feature = "egui")]
     pub fn consume_input_ctx(
         &self,
         ctx: &egui::Context,
-        active_context: KeyContext,
+        active_context: impl std::borrow::Borrow<KeyContext>,
     ) -> Option<KeyAction> {
+        let active = active_context.borrow();
         let matched = ctx.input(|input| {
-            self.resolve_binding(input, active_context)
+            self.resolve_binding(input, active)
                 .map(|(act, ks)| (act.clone(), *ks))
         });
 
@@ -515,7 +633,7 @@ impl KeymapManager {
     pub fn consume_input(
         &self,
         ui: &mut egui::Ui,
-        active_context: KeyContext,
+        active_context: impl std::borrow::Borrow<KeyContext>,
     ) -> Option<KeyAction> {
         self.consume_input_ctx(ui.ctx(), active_context)
     }
@@ -527,7 +645,7 @@ impl KeymapManager {
     pub fn resolve_crossterm_binding<'a>(
         &'a self,
         event: &crossterm::event::KeyEvent,
-        active_context: KeyContext,
+        active_context: impl std::borrow::Borrow<KeyContext>,
     ) -> Option<(&'a KeyAction, &'a Keystroke)> {
         self.resolve_matching(active_context, |k| k.matches_crossterm(event))
     }
@@ -536,7 +654,7 @@ impl KeymapManager {
     pub fn process_crossterm_event(
         &self,
         event: &crossterm::event::KeyEvent,
-        active_context: KeyContext,
+        active_context: impl std::borrow::Borrow<KeyContext>,
     ) -> Option<KeyAction> {
         self.resolve_crossterm_binding(event, active_context)
             .map(|(act, _)| act.clone())
@@ -683,5 +801,21 @@ mod tests {
         // Export config
         let cfg = manager.export_config();
         assert!(!cfg.0.is_empty());
+    }
+
+    #[test]
+    fn test_export_delta_clean_when_unchanged() {
+        let manager = KeymapManager::new();
+        let delta = manager.export_config();
+        assert!(
+            delta.0.is_empty(),
+            "Khi không có thay đổi, delta phải rỗng chuẩn Zed"
+        );
+
+        let full = manager.export_full_config();
+        assert!(
+            !full.0.is_empty(),
+            "Full config phải chứa toàn bộ phím mặc định"
+        );
     }
 }

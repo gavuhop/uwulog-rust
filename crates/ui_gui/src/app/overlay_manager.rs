@@ -24,6 +24,9 @@ pub struct KeymapModalState {
     pub search_recording: bool,
     pub is_recording_keystroke: bool,
     pub pending_context: uwu_core_keymap::KeyContext,
+    pub context_text: String,
+    pub context_autocomplete_open: bool,
+    pub context_selected_index: usize,
 }
 
 impl KeymapModalState {
@@ -38,7 +41,21 @@ impl KeymapModalState {
             search_recording: false,
             is_recording_keystroke: false,
             pending_context: uwu_core_keymap::KeyContext::Global,
+            context_text: String::new(),
+            context_autocomplete_open: false,
+            context_selected_index: 0,
         }
+    }
+
+    /// Đóng và đặt lại toàn bộ trạng thái hộp thoại tùy biến phím tắt (Key Customizer).
+    pub fn close_customizer(&mut self) {
+        self.recording = None;
+        self.pending_keystroke = None;
+        self.is_recording_keystroke = false;
+        self.pending_context = uwu_core_keymap::KeyContext::Global;
+        self.context_text.clear();
+        self.context_autocomplete_open = false;
+        self.context_selected_index = 0;
     }
 }
 

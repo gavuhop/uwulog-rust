@@ -325,7 +325,7 @@ pub fn render_keymap_modal(
                                     {
                                         row_action_edit = Some((
                                             item.action.clone(),
-                                            item.context,
+                                            item.context.clone(),
                                             item.keystroke,
                                         ));
                                     }
@@ -364,7 +364,7 @@ pub fn render_keymap_modal(
                                 if resp.double_clicked() {
                                     row_action_edit = Some((
                                         item.action.clone(),
-                                        item.context,
+                                        item.context.clone(),
                                         item.keystroke,
                                     ));
                                 }
@@ -411,7 +411,7 @@ pub fn render_keymap_modal(
                                 if resp.double_clicked() {
                                     row_action_edit = Some((
                                         item.action.clone(),
-                                        item.context,
+                                        item.context.clone(),
                                         item.keystroke,
                                     ));
                                 }
@@ -447,12 +447,12 @@ pub fn render_keymap_modal(
                                 if resp.double_clicked() {
                                     row_action_edit = Some((
                                         item.action.clone(),
-                                        item.context,
+                                        item.context.clone(),
                                         item.keystroke,
                                     ));
                                 }
 
-                                let ctx_str = format_context_path(item.context);
+                                let ctx_str = format_context_path(&item.context);
                                 ui.painter().text(
                                     Pos2::new(cell_rect.min.x + 6.0, cell_rect.center().y),
                                     egui::Align2::LEFT_CENTER,
@@ -507,7 +507,7 @@ pub fn render_keymap_modal(
                                         {
                                             row_action_reset = Some((
                                                 item.action.clone(),
-                                                item.context,
+                                                item.context.clone(),
                                             ));
                                         }
                                     } else if item.keystroke.is_some() {
@@ -520,7 +520,7 @@ pub fn render_keymap_modal(
                                         {
                                             row_action_remove = Some((
                                                 item.action.clone(),
-                                                item.context,
+                                                item.context.clone(),
                                                 item.keystroke,
                                             ));
                                         }
@@ -543,24 +543,27 @@ pub fn render_keymap_modal(
 
                 // Xử lý các thao tác phát sinh từ các hàng của bảng
                 if let Some((action, context, keystroke)) = row_action_edit {
-                    state.recording = Some((action, context));
+                    state.context_text = context.display_path().to_string();
+                    state.context_autocomplete_open = false;
+                    state.context_selected_index = 0;
+                    state.recording = Some((action, context.clone()));
                     state.pending_keystroke = keystroke;
                     state.pending_context = context;
                     state.is_recording_keystroke = false;
                     state.conflict_warning = None;
                 }
                 if let Some((action, context)) = row_action_reset {
-                    let def_keys = KeymapManager::new().keystrokes_for_action(&action, context);
-                    state.draft.remove_action_binding(&action, context);
+                    let def_keys = KeymapManager::new().keystrokes_for_action(&action, &context);
+                    state.draft.remove_action_binding(&action, &context);
                     for def_ks in def_keys {
-                        state.draft.bind_keystroke(def_ks, action.clone(), context);
+                        state.draft.bind_keystroke(def_ks, action.clone(), context.clone());
                     }
                 }
                 if let Some((action, context, ks_opt)) = row_action_remove {
                     if let Some(ks) = ks_opt {
-                        state.draft.remove_keystroke(&ks, context);
+                        state.draft.remove_keystroke(&ks, &context);
                     } else {
-                        state.draft.remove_action_binding(&action, context);
+                        state.draft.remove_action_binding(&action, &context);
                     }
                 }
             },
@@ -635,16 +638,16 @@ fn collect_display_rows(draft: &KeymapManager, search_query: &str) -> Vec<Displa
         if b.action == KeyAction::Unbind {
             continue;
         }
-        actions_with_bindings.insert((b.action.clone(), b.context));
+        actions_with_bindings.insert((b.action.clone(), b.context.clone()));
 
-        let default_keys = default_mgr.keystrokes_for_action(&b.action, b.context);
+        let default_keys = default_mgr.keystrokes_for_action(&b.action, &b.context);
         let is_user = !default_keys.contains(&b.keystroke);
 
         rows.push(DisplayRow {
             action: b.action.clone(),
             arguments: "",
             keystroke: Some(b.keystroke),
-            context: b.context,
+            context: b.context.clone(),
             is_user,
         });
     }
@@ -655,7 +658,7 @@ fn collect_display_rows(draft: &KeymapManager, search_query: &str) -> Vec<Displa
             continue;
         }
         let natural_ctx = default_context_for_action(action);
-        if !actions_with_bindings.contains(&(action.clone(), natural_ctx)) {
+        if !actions_with_bindings.contains(&(action.clone(), natural_ctx.clone())) {
             rows.push(DisplayRow {
                 action: action.clone(),
                 arguments: "",
@@ -672,7 +675,7 @@ fn collect_display_rows(draft: &KeymapManager, search_query: &str) -> Vec<Displa
         let b_str = humanize_action_name(&b.action);
         a_str
             .cmp(&b_str)
-            .then_with(|| (a.context as u8).cmp(&(b.context as u8)))
+            .then_with(|| a.context.display_path().cmp(b.context.display_path()))
     });
 
     // 4. Lọc theo search_query (nếu có)
@@ -682,7 +685,7 @@ fn collect_display_rows(draft: &KeymapManager, search_query: &str) -> Vec<Displa
             let action_name = humanize_action_name(&r.action).to_lowercase();
             let display_name = r.action.display_name().to_lowercase();
             let desc = r.action.description().to_lowercase();
-            let ctx_str = format_context_path(r.context).to_lowercase();
+            let ctx_str = format_context_path(&r.context).to_lowercase();
             let ks_str = r
                 .keystroke
                 .as_ref()
@@ -703,51 +706,9 @@ fn collect_display_rows(draft: &KeymapManager, search_query: &str) -> Vec<Displa
     rows
 }
 
-/// Chuyển đổi tên Action canonical sang tên humanized chuẩn Zed Editor (dựa trên thuật toán `command_palette::humanize_action_name` của Zed)
-/// Ví dụ: `workspace::ToggleProjectPicker` -> `workspace: toggle project picker`
+/// Chuyển đổi tên Action canonical sang tên humanized chuẩn Zed Editor (ủy quyền cho `core_keymap`)
 pub(crate) fn humanize_action_name(action: &KeyAction) -> String {
-    let canonical = action.canonical_name();
-    let mut result = String::with_capacity(canonical.len() + 4);
-    let mut prev_char: Option<char> = None;
-    let mut in_name_part = false;
-
-    for c in canonical.chars() {
-        if c == ':' {
-            if !result.ends_with(':') {
-                result.push(':');
-            } else if !result.ends_with(": ") {
-                result.push(' ');
-                in_name_part = true;
-            }
-        } else if in_name_part {
-            if c.is_uppercase() {
-                if let Some(p) = prev_char {
-                    if !p.is_uppercase() && p != ' ' && p != ':' {
-                        result.push(' ');
-                    }
-                }
-                result.extend(c.to_lowercase());
-            } else {
-                result.push(c);
-            }
-        } else {
-            result.extend(c.to_lowercase());
-        }
-        prev_char = Some(c);
-    }
-
-    if !in_name_part && !result.contains(':') {
-        let cat = match action.category() {
-            "Window" => "window",
-            "Workspace" => "workspace",
-            "Search" => "search",
-            "Navigation" => "menu",
-            _ => "app",
-        };
-        return format!("{}: {}", cat, action.display_name().to_lowercase());
-    }
-
-    result
+    action.humanized_name()
 }
 
 /// Định dạng chuỗi phím bấm phong cách Zed: `Ctrl-Alt-Shift-PageDown`, `Shift-Enter`, `Enter`, `F3`
@@ -800,15 +761,8 @@ pub(crate) fn format_keystroke_zed(ks: &Keystroke) -> String {
 }
 
 /// Định dạng đường dẫn ngữ cảnh phân cấp rõ ràng (phong cách Zed: `Workspace > SearchBar > Autocomplete`)
-pub(crate) fn format_context_path(context: KeyContext) -> &'static str {
-    match context {
-        KeyContext::Global => "Workspace",
-        KeyContext::Table => "Workspace > Table",
-        KeyContext::SearchInput => "Workspace > SearchBar",
-        KeyContext::Autocomplete => "Workspace > SearchBar > Autocomplete",
-        KeyContext::Modal => "Modal",
-        KeyContext::RemoteServers => "Modal > RemoteServers",
-    }
+pub(crate) fn format_context_path(context: &KeyContext) -> &str {
+    context.display_path()
 }
 
 /// Mở file keymap.json bằng trình chỉnh sửa mặc định của hệ thống

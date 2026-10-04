@@ -57,19 +57,19 @@ impl KeymapConfigFile {
     /// Áp dụng các cấu hình trong file này vào một `KeymapManager`.
     pub fn apply_to(&self, manager: &mut KeymapManager) {
         for section in &self.0 {
-            let context = section.context;
+            let context = &section.context;
 
             // 1. Áp dụng unbind trước
             if let Some(ref unbinds) = section.unbind {
                 for ks in unbinds {
-                    manager.unbind_keystroke(*ks, context);
+                    manager.unbind_keystroke(*ks, context.clone());
                 }
             }
 
             // 2. Áp dụng bindings mới
             if let Some(ref bindings) = section.bindings {
                 for (ks, action) in bindings {
-                    manager.bind_keystroke(*ks, action.clone(), context);
+                    manager.bind_keystroke(*ks, action.clone(), context.clone());
                 }
             }
         }

@@ -111,7 +111,7 @@ impl UwuGuiApp {
             return;
         }
 
-        if let Some(key_action) = self.keymap.consume_input_ctx(ctx, active_context) {
+        if let Some(key_action) = self.keymap.consume_input_ctx(ctx, &active_context) {
             match key_action {
                 crate::keymap::KeyAction::ZoomIn => {
                     let current = ctx.zoom_factor();
@@ -124,33 +124,33 @@ impl UwuGuiApp {
                 crate::keymap::KeyAction::ResetZoom => {
                     ctx.set_zoom_factor(1.0);
                 }
-                crate::keymap::KeyAction::ConfirmSelection => match active_context {
-                    crate::keymap::KeyContext::Modal => match self.overlays.stack.top() {
-                        Some(OverlayLayer::LaunchModal) => {
-                            dispatch(AppAction::ApplyLaunchModal);
-                        }
-                        Some(OverlayLayer::ColumnsModal) => {
-                            dispatch(AppAction::ApplyColumnsModal);
-                        }
-                        Some(OverlayLayer::AboutModal) => {
-                            dispatch(AppAction::CloseAboutModal);
-                        }
-                        Some(OverlayLayer::KeymapModal) => {
-                            if let Some(state) = &self.overlays.keymap_modal_state {
-                                if state.recording.is_none() {
-                                    dispatch(AppAction::ApplyKeymapModal(Box::new(
-                                        state.draft.clone(),
-                                    )));
+                crate::keymap::KeyAction::ConfirmSelection => {
+                    if active_context == crate::keymap::KeyContext::Modal {
+                        match self.overlays.stack.top() {
+                            Some(OverlayLayer::LaunchModal) => {
+                                dispatch(AppAction::ApplyLaunchModal);
+                            }
+                            Some(OverlayLayer::ColumnsModal) => {
+                                dispatch(AppAction::ApplyColumnsModal);
+                            }
+                            Some(OverlayLayer::AboutModal) => {
+                                dispatch(AppAction::CloseAboutModal);
+                            }
+                            Some(OverlayLayer::KeymapModal) => {
+                                if let Some(state) = &self.overlays.keymap_modal_state {
+                                    if state.recording.is_none() {
+                                        dispatch(AppAction::ApplyKeymapModal(Box::new(
+                                            state.draft.clone(),
+                                        )));
+                                    }
                                 }
                             }
+                            _ => {}
                         }
-                        _ => {}
-                    },
-                    crate::keymap::KeyContext::Autocomplete => {
+                    } else if active_context == crate::keymap::KeyContext::Autocomplete {
                         dispatch(AppAction::AutocompleteConfirm);
                     }
-                    _ => {}
-                },
+                }
                 _ => {
                     if let Some(app_action) = key_action.to_app_action() {
                         dispatch(app_action);
