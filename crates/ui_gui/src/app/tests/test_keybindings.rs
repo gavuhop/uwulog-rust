@@ -1011,4 +1011,44 @@ fn test_default_shortcuts_run_command_filter_columns_and_rerun() {
         crate::state::ActiveTab::Filtered,
         "Alt+1 phải kích hoạt trực tiếp Main View (Filtered)"
     );
+
+    // 8. Test View Raw Context (Alt+V)
+    let mock_event = uwu_core_schema::LogEvent::new(
+        "2026-10-04T10:00:00Z",
+        uwu_core_schema::LogColor::Default,
+        "test log event",
+        uwu_core_schema::LogFields::default(),
+    )
+    .with_id(42);
+    app.active_session_mut().view.inspector.selected_log = Some(mock_event);
+
+    let mut input_alt_v = RawInput::default();
+    input_alt_v.events.push(eframe::egui::Event::Key {
+        key: Key::V,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::ALT,
+    });
+    let mut out = ctx.run_ui(input_alt_v, |ui| {
+        ui.ctx().input_mut(|i| {
+            i.modifiers = Modifiers::ALT;
+        });
+        let mut dispatched = Vec::new();
+        app.handle_keybindings(ui.ctx(), &mut |act| dispatched.push(act));
+        for a in dispatched {
+            app.dispatch_action(a);
+        }
+    });
+    out.textures_delta.clear();
+    assert_eq!(
+        app.active_session().view.active_tab,
+        crate::state::ActiveTab::Unfiltered,
+        "Alt+V phải mở Raw View (Unfiltered)"
+    );
+    assert_eq!(
+        app.active_session().view.unfiltered.target_id,
+        Some(42),
+        "Alt+V phải định vị đúng target_id của dòng log đã chọn trong raw stream"
+    );
 }

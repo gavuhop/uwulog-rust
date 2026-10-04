@@ -183,6 +183,11 @@ impl KeymapManager {
             KeyAction::SelectRawView,
             KeyContext::Global,
         );
+        self.bind_keystroke_internal(
+            Keystroke::alt(Key::V),
+            KeyAction::ViewRawContext,
+            KeyContext::Global,
+        );
 
         // --- 2. Autocomplete Popup Context ---
         self.bind_keystroke_internal(

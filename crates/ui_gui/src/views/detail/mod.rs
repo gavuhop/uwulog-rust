@@ -49,7 +49,7 @@ pub fn render_detail(
                     ui.add_space(4.0);
                     let locate_btn = AppButton::new()
                         .label("View context")
-                        .tooltip("View surrounding logs in full unfiltered stream");
+                        .tooltip("View surrounding logs in full unfiltered stream (Alt+V)");
                     if locate_btn.show(ui).clicked() {
                         action_to_dispatch = Some(AppAction::OpenUnfilteredStream(Some(event_id)));
                     }

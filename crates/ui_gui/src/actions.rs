@@ -47,6 +47,7 @@ pub enum AppAction {
     ToggleUnfilteredLive,
     RefreshUnfilteredSnapshot,
     OpenUnfilteredStream(Option<u64>),
+    ViewRawContext,
     CloseUnfilteredStream,
     FocusInMainAndClearFilter,
     LoadOlderLogs(usize),

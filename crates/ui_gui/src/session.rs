@@ -518,6 +518,11 @@ impl GuiSession {
                 self.open_unfiltered_stream(*id);
                 true
             }
+            AppAction::ViewRawContext => {
+                let target_id = self.view.inspector.selected_log.as_ref().map(|l| l.id);
+                self.open_unfiltered_stream(target_id);
+                true
+            }
             AppAction::CloseUnfilteredStream => {
                 self.close_unfiltered_stream();
                 true

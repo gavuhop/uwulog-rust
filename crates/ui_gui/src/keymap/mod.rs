@@ -29,6 +29,7 @@ impl KeyActionExt for KeyAction {
             Self::ToggleStreamView => Some(AppAction::ToggleStreamView),
             Self::SelectMainView => Some(AppAction::SwitchTab(crate::state::ActiveTab::Filtered)),
             Self::SelectRawView => Some(AppAction::SwitchTab(crate::state::ActiveTab::Unfiltered)),
+            Self::ViewRawContext => Some(AppAction::ViewRawContext),
             Self::FocusFilter => Some(AppAction::FocusSearch),
             Self::ToggleSearchHistory => Some(AppAction::ToggleSearchHistory),
             Self::CommitSearch => Some(AppAction::CommitSearch),

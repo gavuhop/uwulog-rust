@@ -64,6 +64,7 @@ define_actions! {
     ToggleStreamView => ("workspace::ToggleStreamView", ["ToggleStreamView", "ToggleRawStream", "ToggleRawView", "ToggleView"]),
     SelectMainView => ("workspace::SelectMainView", ["SelectMainView", "SelectFilteredView", "ActivateMainView"]),
     SelectRawView => ("workspace::SelectRawView", ["SelectRawView", "SelectUnfilteredView", "ActivateRawView"]),
+    ViewRawContext => ("workspace::ViewRawContext", ["ViewRawContext", "ViewInUnfilteredStream", "LocateInRawStream", "ViewRawLine"]),
 
     // Search Controls
     FocusFilter => ("search::Focus", ["FocusFilter", "FocusSearch", "Filter"]),
@@ -100,6 +101,7 @@ impl KeyAction {
             Self::ToggleStreamView,
             Self::SelectMainView,
             Self::SelectRawView,
+            Self::ViewRawContext,
             Self::FocusFilter,
             Self::ToggleSearchHistory,
             Self::CommitSearch,
@@ -137,7 +139,8 @@ impl KeyAction {
             | Self::ToggleLatch
             | Self::ToggleStreamView
             | Self::SelectMainView
-            | Self::SelectRawView => "Workspace",
+            | Self::SelectRawView
+            | Self::ViewRawContext => "Workspace",
 
             Self::FocusFilter
             | Self::ToggleSearchHistory
@@ -175,6 +178,7 @@ impl KeyAction {
             Self::ToggleStreamView => "Toggle Main / Raw View",
             Self::SelectMainView => "Switch to Main View",
             Self::SelectRawView => "Switch to Raw Stream View",
+            Self::ViewRawContext => "View in Raw Stream",
 
             Self::FocusFilter => "Focus Search / Filter Bar",
             Self::ToggleSearchHistory => "Search & Filter History",
@@ -213,6 +217,7 @@ impl KeyAction {
             }
             Self::SelectMainView => "Switch to main filtered log table view",
             Self::SelectRawView => "Switch to raw unfiltered log stream view",
+            Self::ViewRawContext => "View selected log event context in the unfiltered stream",
 
             Self::FocusFilter => "Focus the search and filter query input",
             Self::ToggleSearchHistory => "Toggle filter and search query history dropdown",
