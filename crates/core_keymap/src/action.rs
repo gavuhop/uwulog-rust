@@ -57,11 +57,13 @@ define_actions! {
     PreviousSession => ("workspace::PreviousSession", ["PreviousSession"]),
     NextSession => ("workspace::NextSession", ["NextSession"]),
     ToggleRemoteServers => ("workspace::ToggleRemoteServers", ["ToggleRemoteServers"]),
-    OpenLaunchModal => ("workspace::OpenLaunchModal", ["OpenLaunchModal"]),
-    OpenColumnsModal => ("workspace::OpenColumnsModal", ["OpenColumnsModal"]),
+    OpenLaunchModal => ("workspace::OpenLaunchModal", ["OpenLaunchModal", "ConfigureSource", "RunCommandSettings"]),
+    OpenColumnsModal => ("workspace::OpenColumnsModal", ["OpenColumnsModal", "ColumnsSettings", "ConfigureColumns"]),
+    RestartSource => ("workspace::RestartSource", ["RestartSource", "RerunCommand", "Rerun", "Restart"]),
     ToggleLatch => ("workspace::ToggleLatch", ["ToggleLatch"]),
 
     // Search Controls
+    FocusFilter => ("search::Focus", ["FocusFilter", "FocusSearch", "Filter"]),
     CommitSearch => ("search::Commit", ["CommitSearch"]),
     ClearSearch => ("search::Clear", ["ClearSearch"]),
 
@@ -89,7 +91,9 @@ impl KeyAction {
             Self::ToggleRemoteServers,
             Self::OpenLaunchModal,
             Self::OpenColumnsModal,
+            Self::RestartSource,
             Self::ToggleLatch,
+            Self::FocusFilter,
             Self::CommitSearch,
             Self::ClearSearch,
             Self::ZoomIn,
@@ -121,9 +125,10 @@ impl KeyAction {
             | Self::ToggleRemoteServers
             | Self::OpenLaunchModal
             | Self::OpenColumnsModal
+            | Self::RestartSource
             | Self::ToggleLatch => "Workspace",
 
-            Self::CommitSearch | Self::ClearSearch => "Search",
+            Self::FocusFilter | Self::CommitSearch | Self::ClearSearch => "Search",
 
             Self::SelectNext
             | Self::SelectPrev
@@ -149,10 +154,12 @@ impl KeyAction {
             Self::PreviousSession => "Previous Workspace Session",
             Self::NextSession => "Next Workspace Session",
             Self::ToggleRemoteServers => "Remote Servers & WSL",
-            Self::OpenLaunchModal => "Log Source Configuration",
+            Self::OpenLaunchModal => "Run Command & Source Settings",
             Self::OpenColumnsModal => "Customize Table Columns",
+            Self::RestartSource => "Rerun Command / Restart Source",
             Self::ToggleLatch => "Toggle Latch / Follow Mode",
 
+            Self::FocusFilter => "Focus Search / Filter Bar",
             Self::CommitSearch => "Commit Search Query",
             Self::ClearSearch => "Clear Search Bar",
 
@@ -179,10 +186,12 @@ impl KeyAction {
             Self::PreviousSession => "Cycle to the previous active workspace tab",
             Self::NextSession => "Cycle to the next active workspace tab",
             Self::ToggleRemoteServers => "Open the WSL distribution and remote server picker",
-            Self::OpenLaunchModal => "Open log source connection and arguments configuration",
+            Self::OpenLaunchModal => "Open log source and run command configuration modal",
             Self::OpenColumnsModal => "Open column visibility and reordering dialog",
+            Self::RestartSource => "Restart running command source and re-fetch log stream",
             Self::ToggleLatch => "Toggle auto-scrolling to the latest live log entries",
 
+            Self::FocusFilter => "Focus the search and filter query input",
             Self::CommitSearch => "Execute and apply filter query to the log stream",
             Self::ClearSearch => "Clear all text in the search input field",
 

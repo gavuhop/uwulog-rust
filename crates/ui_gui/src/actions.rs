@@ -28,6 +28,7 @@ pub enum AppAction {
     SwitchTab(ActiveTab),
 
     // Search Query & Filtering
+    FocusSearch,
     ApplyFilterTerm(String),
     ExcludeFilterTerm(String),
     ClearQuery,

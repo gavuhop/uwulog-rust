@@ -18,6 +18,23 @@ pub fn render_search_bar(
     let search_box_width = (available_w - button_extras - 6.0).max(40.0);
 
     let search_id = Id::new("search_query_input");
+
+    // Xử lý yêu cầu focus từ phím tắt FocusSearch (Ctrl+F)
+    if session.view.search.focus_requested {
+        session.view.search.focus_requested = false;
+        ui.ctx().memory_mut(|m| m.request_focus(search_id));
+        if let Some(mut state) = egui::text_edit::TextEditState::load(ui.ctx(), search_id) {
+            let char_count = session.view.search.query.chars().count();
+            state
+                .cursor
+                .set_char_range(Some(egui::text::CCursorRange::two(
+                    egui::text::CCursor::new(0),
+                    egui::text::CCursor::new(char_count),
+                )));
+            state.store(ui.ctx(), search_id);
+        }
+    }
+
     let search_response = crate::components::ui::TextInput::new(&mut session.view.search.query)
         .id(search_id)
         .hint_text("Filter query (e.g. level:error, status:500, time:now..10m)...")

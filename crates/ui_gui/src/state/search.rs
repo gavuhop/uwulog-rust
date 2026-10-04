@@ -19,6 +19,8 @@ pub struct SearchState {
     pub active_query_id: u64,
     /// Atomic token phục vụ cooperative early cancellation cho background search worker
     pub active_query_atomic: Arc<AtomicU64>,
+    /// Cờ yêu cầu focus con trỏ vào ô nhập tìm kiếm khi người dùng nhấn Ctrl+F
+    pub focus_requested: bool,
 }
 
 impl Default for SearchState {
@@ -33,6 +35,7 @@ impl Default for SearchState {
             schema_cache: BTreeMap::new(),
             active_query_id: 0,
             active_query_atomic: Arc::new(AtomicU64::new(0)),
+            focus_requested: false,
         }
     }
 }

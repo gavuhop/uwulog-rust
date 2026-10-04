@@ -515,6 +515,10 @@ impl GuiSession {
                 self.focus_in_main_and_clear_filter();
                 true
             }
+            AppAction::FocusSearch => {
+                self.view.search.focus_requested = true;
+                false
+            }
             AppAction::CommitSearch => {
                 let q = self.view.search.query.clone();
                 self.view.search.history.record(&q);

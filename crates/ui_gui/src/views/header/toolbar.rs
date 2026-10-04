@@ -23,7 +23,7 @@ pub fn render_toolbar(
         .size(24.0)
         .variant(col_variant)
         .selected(session.view.columns.is_modal_open)
-        .tooltip("Configure visible columns and adjust their display order")
+        .tooltip("Configure visible columns and adjust their display order (Alt+C)")
         .show(ui)
         .clicked()
     {
@@ -32,11 +32,11 @@ pub fn render_toolbar(
 
     ui.add_space(2.0);
 
-    // Source Parameters Modal Button
+    // Source Parameters Modal Button (Run Command Settings)
     if crate::components::ui::IconButton::new(IconName::Settings)
         .size(24.0)
         .variant(crate::components::ui::ButtonVariant::Default)
-        .tooltip("Configure engine buffer, display limits & sources")
+        .tooltip("Configure run command, engine buffer & sources (Alt+R)")
         .show(ui)
         .clicked()
     {
@@ -61,7 +61,7 @@ pub fn render_toolbar(
         .size(24.0)
         .fill(theme.controls.restart_bg)
         .text_color(theme.status.info)
-        .tooltip("Clear logs and restart source")
+        .tooltip("Clear logs and restart command source (Ctrl+R, F5)")
         .show(ui)
         .clicked()
     {

@@ -656,3 +656,198 @@ fn test_key_customizer_context_syntax_validation_and_feedback() {
         "Phải hiển thị gợi ý thông tin cho context tùy biến chưa kích hoạt"
     );
 }
+
+#[test]
+fn test_default_shortcuts_run_command_filter_columns_and_rerun() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let _guard = rt.enter();
+    let mut app = create_test_app();
+    let ctx = eframe::egui::Context::default();
+
+    // 1. Test Filter shortcut (Ctrl+F)
+    assert!(!app.active_session().view.search.focus_requested);
+    let mut input_ctrl_f = RawInput::default();
+    input_ctrl_f.events.push(eframe::egui::Event::Key {
+        key: Key::F,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::CTRL,
+    });
+    let mut out = ctx.run_ui(input_ctrl_f, |ui| {
+        ui.ctx().input_mut(|i| {
+            i.modifiers = Modifiers::CTRL;
+        });
+        let mut dispatched = Vec::new();
+        app.handle_keybindings(ui.ctx(), &mut |act| dispatched.push(act));
+        for a in dispatched {
+            app.dispatch_action(a);
+        }
+        crate::views::render_ui(ui, &mut app);
+    });
+    out.textures_delta.clear();
+    assert!(
+        ctx.memory(|m| m.has_focus(egui::Id::new("search_query_input"))),
+        "Ctrl+F phải kích hoạt focus vào ô tìm kiếm/lọc"
+    );
+
+    // 2. Test Column Settings shortcut (Alt+C) - không có phím phụ
+    assert!(!app.is_overlay_open(OverlayLayer::ColumnsModal));
+    let mut input_alt_c = RawInput::default();
+    input_alt_c.events.push(eframe::egui::Event::Key {
+        key: Key::C,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::ALT,
+    });
+    let mut out = ctx.run_ui(input_alt_c, |ui| {
+        ui.ctx().input_mut(|i| {
+            i.modifiers = Modifiers::ALT;
+        });
+        let mut dispatched = Vec::new();
+        app.handle_keybindings(ui.ctx(), &mut |act| dispatched.push(act));
+        for a in dispatched {
+            app.dispatch_action(a);
+        }
+    });
+    out.textures_delta.clear();
+    assert!(
+        app.is_overlay_open(OverlayLayer::ColumnsModal),
+        "Alt+C phải mở ColumnsModal"
+    );
+    app.close_overlay(OverlayLayer::ColumnsModal);
+
+    // Kiểm tra phím phụ cũ (Ctrl+Shift+C) đã được bỏ
+    let mut input_ctrl_shift_c = RawInput::default();
+    input_ctrl_shift_c.events.push(eframe::egui::Event::Key {
+        key: Key::C,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::CTRL | Modifiers::SHIFT,
+    });
+    let mut out = ctx.run_ui(input_ctrl_shift_c, |ui| {
+        ui.ctx().input_mut(|i| {
+            i.modifiers = Modifiers::CTRL | Modifiers::SHIFT;
+        });
+        let mut dispatched = Vec::new();
+        app.handle_keybindings(ui.ctx(), &mut |act| dispatched.push(act));
+        for a in dispatched {
+            app.dispatch_action(a);
+        }
+    });
+    out.textures_delta.clear();
+    assert!(
+        !app.is_overlay_open(OverlayLayer::ColumnsModal),
+        "Ctrl+Shift+C không còn được gắn cho ColumnsModal"
+    );
+
+    // 3. Test Run Command Settings shortcut (Alt+R) - không có phím phụ
+    assert!(!app.is_overlay_open(OverlayLayer::LaunchModal));
+    let mut input_alt_r = RawInput::default();
+    input_alt_r.events.push(eframe::egui::Event::Key {
+        key: Key::R,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::ALT,
+    });
+    let mut out = ctx.run_ui(input_alt_r, |ui| {
+        ui.ctx().input_mut(|i| {
+            i.modifiers = Modifiers::ALT;
+        });
+        let mut dispatched = Vec::new();
+        app.handle_keybindings(ui.ctx(), &mut |act| dispatched.push(act));
+        for a in dispatched {
+            app.dispatch_action(a);
+        }
+    });
+    out.textures_delta.clear();
+    assert!(
+        app.is_overlay_open(OverlayLayer::LaunchModal),
+        "Alt+R phải mở LaunchModal (Run command settings)"
+    );
+    app.close_overlay(OverlayLayer::LaunchModal);
+
+    // Kiểm tra phím phụ cũ (Ctrl+Shift+R) đã được bỏ
+    let mut input_ctrl_shift_r = RawInput::default();
+    input_ctrl_shift_r.events.push(eframe::egui::Event::Key {
+        key: Key::R,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::CTRL | Modifiers::SHIFT,
+    });
+    let mut out = ctx.run_ui(input_ctrl_shift_r, |ui| {
+        ui.ctx().input_mut(|i| {
+            i.modifiers = Modifiers::CTRL | Modifiers::SHIFT;
+        });
+        let mut dispatched = Vec::new();
+        app.handle_keybindings(ui.ctx(), &mut |act| dispatched.push(act));
+        for a in dispatched {
+            app.dispatch_action(a);
+        }
+    });
+    out.textures_delta.clear();
+    assert!(
+        !app.is_overlay_open(OverlayLayer::LaunchModal),
+        "Ctrl+Shift+R không còn được gắn cho LaunchModal"
+    );
+
+    // 4. Test Rerun Command shortcut chính (Ctrl+R)
+    let mut input_ctrl_r = RawInput::default();
+    input_ctrl_r.events.push(eframe::egui::Event::Key {
+        key: Key::R,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::CTRL,
+    });
+    let mut restart_dispatched = false;
+    let mut out = ctx.run_ui(input_ctrl_r, |ui| {
+        ui.ctx().input_mut(|i| {
+            i.modifiers = Modifiers::CTRL;
+        });
+        let mut dispatched = Vec::new();
+        app.handle_keybindings(ui.ctx(), &mut |act| dispatched.push(act));
+        for a in dispatched {
+            if matches!(a, AppAction::RestartSource) {
+                restart_dispatched = true;
+            }
+        }
+    });
+    out.textures_delta.clear();
+    assert!(
+        restart_dispatched,
+        "Ctrl+R phải dispatch AppAction::RestartSource"
+    );
+
+    // 5. Test Rerun Command shortcut phụ (F5)
+    let mut input_f5 = RawInput::default();
+    input_f5.events.push(eframe::egui::Event::Key {
+        key: Key::F5,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    });
+    let mut f5_restart_dispatched = false;
+    let mut out = ctx.run_ui(input_f5, |ui| {
+        ui.ctx().input_mut(|i| {
+            i.modifiers = Modifiers::NONE;
+        });
+        let mut dispatched = Vec::new();
+        app.handle_keybindings(ui.ctx(), &mut |act| dispatched.push(act));
+        for a in dispatched {
+            if matches!(a, AppAction::RestartSource) {
+                f5_restart_dispatched = true;
+            }
+        }
+    });
+    out.textures_delta.clear();
+    assert!(
+        f5_restart_dispatched,
+        "F5 phải dispatch AppAction::RestartSource"
+    );
+}

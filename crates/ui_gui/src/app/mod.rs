@@ -671,6 +671,14 @@ impl UwuGuiApp {
             AppAction::DismissTopLayer => {
                 self.dismiss_top_layer();
             }
+            AppAction::FocusSearch => {
+                self.active_session_mut().view.search.focus_requested = true;
+                let search_id = egui::Id::new("search_query_input");
+                if let Some(ctx) = &self.egui_ctx {
+                    ctx.memory_mut(|m| m.request_focus(search_id));
+                    ctx.request_repaint();
+                }
+            }
             _ => {}
         }
     }

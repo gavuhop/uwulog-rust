@@ -138,6 +138,31 @@ impl KeymapManager {
             KeyAction::OpenKeymapModal,
             KeyContext::Global,
         );
+        self.bind_keystroke_internal(
+            Keystroke::ctrl(Key::F),
+            KeyAction::FocusFilter,
+            KeyContext::Global,
+        );
+        self.bind_keystroke_internal(
+            Keystroke::ctrl(Key::R),
+            KeyAction::RestartSource,
+            KeyContext::Global,
+        );
+        self.bind_keystroke_internal(
+            Keystroke::new(Key::F5),
+            KeyAction::RestartSource,
+            KeyContext::Global,
+        );
+        self.bind_keystroke_internal(
+            Keystroke::alt(Key::R),
+            KeyAction::OpenLaunchModal,
+            KeyContext::Global,
+        );
+        self.bind_keystroke_internal(
+            Keystroke::alt(Key::C),
+            KeyAction::OpenColumnsModal,
+            KeyContext::Global,
+        );
 
         // --- 2. Autocomplete Popup Context ---
         self.bind_keystroke_internal(
