@@ -144,6 +144,11 @@ impl KeymapManager {
             KeyContext::Global,
         );
         self.bind_keystroke_internal(
+            Keystroke::ctrl(Key::H),
+            KeyAction::ToggleSearchHistory,
+            KeyContext::Global,
+        );
+        self.bind_keystroke_internal(
             Keystroke::ctrl(Key::R),
             KeyAction::RestartSource,
             KeyContext::Global,

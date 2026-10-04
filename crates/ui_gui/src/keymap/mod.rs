@@ -27,6 +27,7 @@ impl KeyActionExt for KeyAction {
             Self::RestartSource => Some(AppAction::RestartSource),
             Self::ToggleLatch => Some(AppAction::ToggleLatch),
             Self::FocusFilter => Some(AppAction::FocusSearch),
+            Self::ToggleSearchHistory => Some(AppAction::ToggleSearchHistory),
             Self::CommitSearch => Some(AppAction::CommitSearch),
             Self::ClearSearch => Some(AppAction::ClearQuery),
             Self::SelectNext => Some(AppAction::AutocompleteNext),

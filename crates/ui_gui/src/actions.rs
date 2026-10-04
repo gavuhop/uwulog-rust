@@ -29,6 +29,7 @@ pub enum AppAction {
 
     // Search Query & Filtering
     FocusSearch,
+    ToggleSearchHistory,
     ApplyFilterTerm(String),
     ExcludeFilterTerm(String),
     ClearQuery,

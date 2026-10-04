@@ -519,6 +519,14 @@ impl GuiSession {
                 self.view.search.focus_requested = true;
                 false
             }
+            AppAction::ToggleSearchHistory => {
+                let opened = self.view.search.history.toggle_popup();
+                if opened {
+                    self.view.search.autocomplete.is_open = false;
+                    self.view.search.autocomplete.suggestions.clear();
+                }
+                true
+            }
             AppAction::CommitSearch => {
                 let q = self.view.search.query.clone();
                 self.view.search.history.record(&q);

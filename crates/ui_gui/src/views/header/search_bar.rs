@@ -100,7 +100,7 @@ pub fn render_search_bar(
         crate::components::ui::IconButton::new(crate::components::ui::IconName::History)
             .size(24.0)
             .selected(session.view.search.history.is_open)
-            .tooltip("Search history")
+            .tooltip("Search history (Ctrl+H)")
             .show(ui);
     if history_resp.clicked() {
         let opened = session.view.search.history.toggle_popup();

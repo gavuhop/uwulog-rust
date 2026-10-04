@@ -87,6 +87,7 @@ impl KeymapConfigFile {
         global_bindings.insert(Keystroke::ctrl(Key::Num0), KeyAction::ResetZoom);
         global_bindings.insert(Keystroke::new(Key::Escape), KeyAction::Dismiss);
         global_bindings.insert(Keystroke::ctrl(Key::F), KeyAction::FocusFilter);
+        global_bindings.insert(Keystroke::ctrl(Key::H), KeyAction::ToggleSearchHistory);
         global_bindings.insert(Keystroke::ctrl(Key::R), KeyAction::RestartSource);
         global_bindings.insert(Keystroke::new(Key::F5), KeyAction::RestartSource);
         global_bindings.insert(Keystroke::alt(Key::R), KeyAction::OpenLaunchModal);

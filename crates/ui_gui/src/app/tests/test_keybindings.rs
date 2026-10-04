@@ -850,4 +850,55 @@ fn test_default_shortcuts_run_command_filter_columns_and_rerun() {
         f5_restart_dispatched,
         "F5 phải dispatch AppAction::RestartSource"
     );
+
+    // 6. Test Search History shortcut (Ctrl+H)
+    assert!(!app.active_session().view.search.history.is_open);
+    let mut input_ctrl_h = RawInput::default();
+    input_ctrl_h.events.push(eframe::egui::Event::Key {
+        key: Key::H,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::CTRL,
+    });
+    let mut out = ctx.run_ui(input_ctrl_h, |ui| {
+        ui.ctx().input_mut(|i| {
+            i.modifiers = Modifiers::CTRL;
+        });
+        let mut dispatched = Vec::new();
+        app.handle_keybindings(ui.ctx(), &mut |act| dispatched.push(act));
+        for a in dispatched {
+            app.dispatch_action(a);
+        }
+    });
+    out.textures_delta.clear();
+    assert!(
+        app.active_session().view.search.history.is_open,
+        "Ctrl+H phải mở dropdown lịch sử tìm kiếm (search history)"
+    );
+
+    // Bấm Ctrl+H lần nữa để toggle đóng
+    let mut input_ctrl_h_toggle = RawInput::default();
+    input_ctrl_h_toggle.events.push(eframe::egui::Event::Key {
+        key: Key::H,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::CTRL,
+    });
+    let mut out = ctx.run_ui(input_ctrl_h_toggle, |ui| {
+        ui.ctx().input_mut(|i| {
+            i.modifiers = Modifiers::CTRL;
+        });
+        let mut dispatched = Vec::new();
+        app.handle_keybindings(ui.ctx(), &mut |act| dispatched.push(act));
+        for a in dispatched {
+            app.dispatch_action(a);
+        }
+    });
+    out.textures_delta.clear();
+    assert!(
+        !app.active_session().view.search.history.is_open,
+        "Ctrl+H lần thứ hai phải toggle đóng dropdown lịch sử tìm kiếm"
+    );
 }

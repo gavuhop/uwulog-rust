@@ -64,6 +64,7 @@ define_actions! {
 
     // Search Controls
     FocusFilter => ("search::Focus", ["FocusFilter", "FocusSearch", "Filter"]),
+    ToggleSearchHistory => ("search::ToggleHistory", ["ToggleSearchHistory", "SearchHistory", "FilterHistory"]),
     CommitSearch => ("search::Commit", ["CommitSearch"]),
     ClearSearch => ("search::Clear", ["ClearSearch"]),
 
@@ -94,6 +95,7 @@ impl KeyAction {
             Self::RestartSource,
             Self::ToggleLatch,
             Self::FocusFilter,
+            Self::ToggleSearchHistory,
             Self::CommitSearch,
             Self::ClearSearch,
             Self::ZoomIn,
@@ -128,7 +130,10 @@ impl KeyAction {
             | Self::RestartSource
             | Self::ToggleLatch => "Workspace",
 
-            Self::FocusFilter | Self::CommitSearch | Self::ClearSearch => "Search",
+            Self::FocusFilter
+            | Self::ToggleSearchHistory
+            | Self::CommitSearch
+            | Self::ClearSearch => "Search",
 
             Self::SelectNext
             | Self::SelectPrev
@@ -160,6 +165,7 @@ impl KeyAction {
             Self::ToggleLatch => "Toggle Latch / Follow Mode",
 
             Self::FocusFilter => "Focus Search / Filter Bar",
+            Self::ToggleSearchHistory => "Search & Filter History",
             Self::CommitSearch => "Commit Search Query",
             Self::ClearSearch => "Clear Search Bar",
 
@@ -192,6 +198,7 @@ impl KeyAction {
             Self::ToggleLatch => "Toggle auto-scrolling to the latest live log entries",
 
             Self::FocusFilter => "Focus the search and filter query input",
+            Self::ToggleSearchHistory => "Toggle filter and search query history dropdown",
             Self::CommitSearch => "Execute and apply filter query to the log stream",
             Self::ClearSearch => "Clear all text in the search input field",
 
