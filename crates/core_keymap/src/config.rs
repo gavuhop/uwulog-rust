@@ -103,6 +103,10 @@ impl KeymapConfigFile {
         auto_bindings.insert(Keystroke::new(Key::Enter), KeyAction::ConfirmSelection);
         auto_bindings.insert(Keystroke::new(Key::Tab), KeyAction::ConfirmSelection);
 
+        let mut table_bindings = BTreeMap::new();
+        table_bindings.insert(Keystroke::new(Key::ArrowDown), KeyAction::SelectNext);
+        table_bindings.insert(Keystroke::new(Key::ArrowUp), KeyAction::SelectPrev);
+
         Self(vec![
             KeymapSection {
                 context: KeyContext::Global,
@@ -112,6 +116,11 @@ impl KeymapConfigFile {
             KeymapSection {
                 context: KeyContext::Autocomplete,
                 bindings: Some(auto_bindings),
+                unbind: None,
+            },
+            KeymapSection {
+                context: KeyContext::Table,
+                bindings: Some(table_bindings),
                 unbind: None,
             },
         ])

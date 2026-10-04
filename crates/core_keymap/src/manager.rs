@@ -218,7 +218,19 @@ impl KeymapManager {
             KeyContext::SearchInput,
         );
 
-        // --- 4. Remote Servers Modal Context ---
+        // --- 4. Table Context ---
+        self.bind_keystroke_internal(
+            Keystroke::new(Key::ArrowDown),
+            KeyAction::SelectNext,
+            KeyContext::Table,
+        );
+        self.bind_keystroke_internal(
+            Keystroke::new(Key::ArrowUp),
+            KeyAction::SelectPrev,
+            KeyContext::Table,
+        );
+
+        // --- 5. Remote Servers Modal Context ---
         self.bind_keystroke_internal(
             Keystroke::new(Key::Escape),
             KeyAction::Back,

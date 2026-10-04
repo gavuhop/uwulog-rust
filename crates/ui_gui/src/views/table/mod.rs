@@ -129,7 +129,7 @@ pub fn render_log_table(
             }
 
             if let Some((target_row, align)) = scroll_target {
-                builder = builder.scroll_to_row(target_row, Some(align));
+                builder = builder.scroll_to_row(target_row, align);
             }
 
             builder
@@ -203,6 +203,15 @@ pub fn render_log_table(
                     });
                 });
         });
+
+    match tab {
+        ActiveTab::Filtered => {
+            session.viewport.first_visible_row = min_visible_row;
+        }
+        ActiveTab::Unfiltered => {
+            session.unfiltered.first_visible_row = min_visible_row;
+        }
+    }
 
     if let Some(action) = action_to_dispatch {
         dispatch(action);

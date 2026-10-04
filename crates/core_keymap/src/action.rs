@@ -73,8 +73,8 @@ define_actions! {
     ClearSearch => ("search::Clear", ["ClearSearch"]),
 
     // Autocomplete & List Navigation
-    SelectNext => ("autocomplete::SelectNext", ["SelectNext", "menu::SelectNext"]),
-    SelectPrev => ("autocomplete::SelectPrev", ["SelectPrev", "menu::SelectPrev"]),
+    SelectNext => ("autocomplete::SelectNext", ["SelectNext", "menu::SelectNext", "table::SelectNext", "table::NextRow"]),
+    SelectPrev => ("autocomplete::SelectPrev", ["SelectPrev", "menu::SelectPrev", "table::SelectPrev", "table::PrevRow"]),
     ConfirmSelection => ("autocomplete::Confirm", ["ConfirmSelection", "menu::Confirm"]),
 
     // Navigation & Editing

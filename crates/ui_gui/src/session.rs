@@ -236,18 +236,22 @@ impl GuiSession {
         &mut self,
         tab: ActiveTab,
         row_count: usize,
-    ) -> Option<(usize, egui::Align)> {
+    ) -> Option<(usize, Option<egui::Align>)> {
         match tab {
             ActiveTab::Filtered => {
-                if let Some(offset) = self.view.viewport.request_maintain_scroll_offset.take() {
-                    Some((offset, egui::Align::Min))
+                if let Some(target) = self.view.viewport.request_scroll_to_row.take() {
+                    Some(target)
+                } else if let Some(offset) =
+                    self.view.viewport.request_maintain_scroll_offset.take()
+                {
+                    Some((offset, Some(egui::Align::Min)))
                 } else if row_count > 0 {
                     let force = self.view.viewport.request_scroll_to_bottom;
                     let is_live = self.view.viewport.is_auto_scroll;
                     self.view.viewport.prev_table_row_count = row_count;
                     if force || is_live {
                         self.view.viewport.request_scroll_to_bottom = false;
-                        Some((row_count - 1, egui::Align::Max))
+                        Some((row_count - 1, Some(egui::Align::Max)))
                     } else {
                         None
                     }
@@ -256,20 +260,24 @@ impl GuiSession {
                 }
             }
             ActiveTab::Unfiltered => {
-                if let Some(offset) = self.view.unfiltered.request_maintain_scroll_offset.take() {
-                    Some((offset, egui::Align::Min))
+                if let Some(target) = self.view.unfiltered.request_scroll_to_row.take() {
+                    Some(target)
+                } else if let Some(offset) =
+                    self.view.unfiltered.request_maintain_scroll_offset.take()
+                {
+                    Some((offset, Some(egui::Align::Min)))
                 } else if self.view.unfiltered.request_scroll_to_target && row_count > 0 {
                     self.view.unfiltered.request_scroll_to_target = false;
                     self.view
                         .unfiltered
                         .target_index
-                        .map(|idx| (idx, egui::Align::Center))
+                        .map(|idx| (idx, Some(egui::Align::Center)))
                 } else if row_count > 0 {
                     let force = self.view.unfiltered.request_scroll_to_bottom;
                     let is_live = self.view.unfiltered.is_live;
                     if force || is_live {
                         self.view.unfiltered.request_scroll_to_bottom = false;
-                        Some((row_count - 1, egui::Align::Max))
+                        Some((row_count - 1, Some(egui::Align::Max)))
                     } else {
                         None
                     }
@@ -377,6 +385,92 @@ impl GuiSession {
         self.load_older_logs(true, page_size);
     }
 
+    /// Trả về danh sách logs hiện đang được hiển thị theo tab tích cực (Filtered hoặc Unfiltered)
+    #[inline]
+    pub fn active_logs(&self) -> &[LogEvent] {
+        match self.view.active_tab {
+            ActiveTab::Filtered => &self.view.viewport.cached_logs,
+            ActiveTab::Unfiltered => &self.view.unfiltered.cached_unfiltered,
+        }
+    }
+
+    /// Đặt yêu cầu cuộn bảng tới dòng chỉ định kèm kiểu căn lề tương ứng cho tab hiện tại
+    #[inline]
+    pub fn scroll_to_row(&mut self, row: usize, align: Option<egui::Align>) {
+        match self.view.active_tab {
+            ActiveTab::Filtered => self.view.viewport.request_scroll_to_row = Some((row, align)),
+            ActiveTab::Unfiltered => {
+                self.view.unfiltered.request_scroll_to_row = Some((row, align))
+            }
+        }
+    }
+
+    /// Trả về chỉ số dòng log đầu tiên đang nhìn thấy trong viewport
+    #[inline]
+    pub fn first_visible_row(&self) -> usize {
+        match self.view.active_tab {
+            ActiveTab::Filtered => self.view.viewport.first_visible_row.unwrap_or(0),
+            ActiveTab::Unfiltered => self.view.unfiltered.first_visible_row.unwrap_or(0),
+        }
+    }
+
+    /// Tạm dừng auto-scroll (latch) cho tab đang xem
+    pub fn unlatch_active(&mut self) {
+        match self.view.active_tab {
+            ActiveTab::Filtered => self.unlatch(),
+            ActiveTab::Unfiltered => self.unlatch_unfiltered(),
+        }
+    }
+
+    /// Kích hoạt auto-scroll (latch) cho tab đang xem
+    pub fn latch_active(&mut self) {
+        match self.view.active_tab {
+            ActiveTab::Filtered => {
+                if self.view.viewport.latch() {
+                    self.view.search.mark_needs_search();
+                }
+            }
+            ActiveTab::Unfiltered => self.view.unfiltered.is_live = true,
+        }
+    }
+
+    /// Di chuyển lựa chọn dòng log (khi đã pick dòng) hoặc cuộn bảng (khi chưa chọn dòng nào)
+    pub fn navigate_row(&mut self, is_up: bool) {
+        let row_count = self.active_logs().len();
+        if row_count == 0 {
+            return;
+        }
+
+        if let Some(selected_id) = self.view.inspector.selected_log.as_ref().map(|l| l.id) {
+            // 1. Khi đang pick/chọn một dòng log: phím lên/xuống chuyển dòng nhanh
+            let logs = self.active_logs();
+            let curr = logs.iter().position(|e| e.id == selected_id).unwrap_or(0);
+            let next = if is_up {
+                curr.saturating_sub(1)
+            } else {
+                (curr + 1).min(row_count - 1)
+            };
+            self.view.inspector.selected_log = Some(logs[next].clone());
+            self.scroll_to_row(next, None);
+            self.unlatch_active();
+        } else {
+            // 2. Khi không focus/chọn dòng nào: phím lên/xuống dùng để scroll bảng
+            const SCROLL_STEP: usize = 4;
+            let curr = self.first_visible_row();
+            let next = if is_up {
+                curr.saturating_sub(SCROLL_STEP)
+            } else {
+                (curr + SCROLL_STEP).min(row_count - 1)
+            };
+            self.scroll_to_row(next, Some(egui::Align::Min));
+            if !is_up && next >= row_count - 1 {
+                self.latch_active();
+            } else {
+                self.unlatch_active();
+            }
+        }
+    }
+
     pub fn refresh_unfiltered_snapshot(&mut self) {
         self.view.unfiltered.snapshot_processed_count = self.session.engine.total_processed();
         self.view.unfiltered.reached_oldest = false;
@@ -440,6 +534,14 @@ impl GuiSession {
                 self.view.inspector.selected_log = log.clone();
                 true
             }
+            AppAction::NavigateUp => {
+                self.navigate_row(true);
+                true
+            }
+            AppAction::NavigateDown => {
+                self.navigate_row(false);
+                true
+            }
             AppAction::SwitchTab(tab) => {
                 if *tab == ActiveTab::Unfiltered && !self.view.unfiltered.is_open {
                     self.open_unfiltered_stream(None);
@@ -491,19 +593,11 @@ impl GuiSession {
                 true
             }
             AppAction::Unlatch => {
-                if self.view.active_tab == ActiveTab::Unfiltered {
-                    self.unlatch_unfiltered();
-                } else {
-                    self.unlatch();
-                }
+                self.unlatch_active();
                 true
             }
             AppAction::Latch => {
-                if self.view.active_tab == ActiveTab::Unfiltered {
-                    self.view.unfiltered.is_live = true;
-                } else if self.view.viewport.latch() {
-                    self.view.search.mark_needs_search();
-                }
+                self.latch_active();
                 true
             }
             AppAction::ToggleUnfilteredLive => {

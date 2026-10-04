@@ -19,6 +19,8 @@ pub struct UnfilteredViewState {
     pub is_live: bool,
     pub request_scroll_to_bottom: bool,
     pub request_maintain_scroll_offset: Option<usize>,
+    pub first_visible_row: Option<usize>,
+    pub request_scroll_to_row: Option<(usize, Option<eframe::egui::Align>)>,
     pub reached_oldest: bool,
     pub is_loading_older: bool,
     pub has_new_data: bool,

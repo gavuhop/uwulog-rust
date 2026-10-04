@@ -77,10 +77,12 @@ impl UwuGuiApp {
     /// Tự động suy luận KeyContext hiện tại dựa trên Overlay Stack, Autocomplete Popup và trạng thái Focus
     pub fn resolve_active_key_context(&self, ctx: &egui::Context) -> crate::keymap::KeyContext {
         let base = self.current_key_context();
-        if base == crate::keymap::KeyContext::Global
-            && ctx.memory(|m| m.has_focus(egui::Id::new("search_query_input")))
-        {
-            crate::keymap::KeyContext::SearchInput
+        if base == crate::keymap::KeyContext::Global {
+            if ctx.memory(|m| m.has_focus(egui::Id::new("search_query_input"))) {
+                crate::keymap::KeyContext::SearchInput
+            } else {
+                crate::keymap::KeyContext::Table
+            }
         } else {
             base
         }
@@ -123,6 +125,20 @@ impl UwuGuiApp {
                 }
                 crate::keymap::KeyAction::ResetZoom => {
                     ctx.set_zoom_factor(1.0);
+                }
+                crate::keymap::KeyAction::SelectNext => {
+                    if active_context == crate::keymap::KeyContext::Autocomplete {
+                        dispatch(AppAction::AutocompleteNext);
+                    } else {
+                        dispatch(AppAction::NavigateDown);
+                    }
+                }
+                crate::keymap::KeyAction::SelectPrev => {
+                    if active_context == crate::keymap::KeyContext::Autocomplete {
+                        dispatch(AppAction::AutocompletePrev);
+                    } else {
+                        dispatch(AppAction::NavigateUp);
+                    }
                 }
                 crate::keymap::KeyAction::ConfirmSelection => {
                     if active_context == crate::keymap::KeyContext::Modal {

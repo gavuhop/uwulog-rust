@@ -1052,3 +1052,150 @@ fn test_default_shortcuts_run_command_filter_columns_and_rerun() {
         "Alt+V phải định vị đúng target_id của dòng log đã chọn trong raw stream"
     );
 }
+
+#[test]
+fn test_arrow_keys_row_navigation_and_scroll() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let _guard = rt.enter();
+    let mut app = create_test_app();
+    let ctx = eframe::egui::Context::default();
+
+    // Chuẩn bị 5 dòng log mẫu trong cached_logs
+    let events: Vec<uwu_core_schema::LogEvent> = (0..5)
+        .map(|i| {
+            uwu_core_schema::LogEvent::new(
+                "2026-10-04T10:00:00Z",
+                uwu_core_schema::LogColor::Default,
+                format!("log row {i}"),
+                uwu_core_schema::LogFields::default(),
+            )
+            .with_id(100 + i)
+        })
+        .collect();
+    app.active_session_mut().view.viewport.cached_logs = events.clone();
+
+    // --- Trường hợp 1: Đã chọn 1 dòng log -> Phím lên / xuống đổi dòng được chọn ---
+    app.active_session_mut().view.inspector.selected_log = Some(events[1].clone()); // Đang chọn dòng 1
+
+    // Bấm ArrowDown
+    let mut input_down = RawInput::default();
+    input_down.events.push(eframe::egui::Event::Key {
+        key: Key::ArrowDown,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    });
+    let mut out = ctx.run_ui(input_down, |ui| {
+        let mut dispatched = Vec::new();
+        app.handle_keybindings(ui.ctx(), &mut |act| dispatched.push(act));
+        for a in dispatched {
+            app.dispatch_action(a);
+        }
+    });
+    out.textures_delta.clear();
+
+    assert_eq!(
+        app.active_session()
+            .view
+            .inspector
+            .selected_log
+            .as_ref()
+            .map(|e| e.id),
+        Some(102),
+        "ArrowDown phải chuyển selection từ dòng 1 (id 101) sang dòng 2 (id 102)"
+    );
+
+    // Bấm ArrowUp
+    let mut input_up = RawInput::default();
+    input_up.events.push(eframe::egui::Event::Key {
+        key: Key::ArrowUp,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    });
+    let mut out = ctx.run_ui(input_up, |ui| {
+        let mut dispatched = Vec::new();
+        app.handle_keybindings(ui.ctx(), &mut |act| dispatched.push(act));
+        for a in dispatched {
+            app.dispatch_action(a);
+        }
+    });
+    out.textures_delta.clear();
+
+    assert_eq!(
+        app.active_session()
+            .view
+            .inspector
+            .selected_log
+            .as_ref()
+            .map(|e| e.id),
+        Some(101),
+        "ArrowUp phải chuyển selection từ dòng 2 (id 102) quay lại dòng 1 (id 101)"
+    );
+
+    // --- Trường hợp 2: Không focus/chọn dòng nào -> Phím lên / xuống cuộn bảng ---
+    app.active_session_mut().view.inspector.selected_log = None;
+    app.active_session_mut().view.viewport.first_visible_row = Some(1);
+
+    // Bấm ArrowDown khi không có log được chọn
+    let mut input_down = RawInput::default();
+    input_down.events.push(eframe::egui::Event::Key {
+        key: Key::ArrowDown,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    });
+    let mut out = ctx.run_ui(input_down, |ui| {
+        let mut dispatched = Vec::new();
+        app.handle_keybindings(ui.ctx(), &mut |act| dispatched.push(act));
+        for a in dispatched {
+            app.dispatch_action(a);
+        }
+    });
+    out.textures_delta.clear();
+
+    assert!(
+        app.active_session().view.inspector.selected_log.is_none(),
+        "Khi không có dòng nào được chọn, ArrowDown không được tự ý chọn dòng"
+    );
+    assert_eq!(
+        app.active_session().view.viewport.request_scroll_to_row,
+        Some((4, Some(eframe::egui::Align::Min))),
+        "ArrowDown phải cuộn bảng xuống (1 + 4 = 4 khi max là 4)"
+    );
+
+    // --- Trường hợp 3: Khi ô tìm kiếm nhận focus -> Arrow keys không bị Table nuốt ---
+    let search_id = eframe::egui::Id::new("search_query_input");
+    let input_focus = RawInput::default();
+    let mut out = ctx.run_ui(input_focus, |ui| {
+        ui.ctx().memory_mut(|m| m.request_focus(search_id));
+    });
+    out.textures_delta.clear();
+
+    let mut input_down = RawInput::default();
+    input_down.events.push(eframe::egui::Event::Key {
+        key: Key::ArrowDown,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    });
+    let mut out = ctx.run_ui(input_down, |ui| {
+        let active_ctx = app.resolve_active_key_context(ui.ctx());
+        assert_eq!(
+            active_ctx,
+            KeyContext::SearchInput,
+            "Khi search input có focus, active context phải là SearchInput"
+        );
+        let mut dispatched = Vec::new();
+        app.handle_keybindings(ui.ctx(), &mut |act| dispatched.push(act));
+        assert!(
+            dispatched.is_empty(),
+            "Trong SearchInput context (không mở autocomplete), ArrowDown không được dispatch NavigateDown"
+        );
+    });
+    out.textures_delta.clear();
+}

@@ -25,6 +25,8 @@ pub enum AppAction {
     CloseColumnsModal,
     ApplyColumnsModal,
     SelectLog(Option<LogEvent>),
+    NavigateUp,
+    NavigateDown,
     SwitchTab(ActiveTab),
     ToggleStreamView,
 
