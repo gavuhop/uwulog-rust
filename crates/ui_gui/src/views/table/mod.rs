@@ -1,3 +1,4 @@
+pub mod autoscroll;
 pub mod cell;
 pub mod context_menu;
 pub mod header;
@@ -116,30 +117,25 @@ pub fn render_log_table(
         hstate_changed = true;
     }
 
-    // 3. Nhấn giữ chuột giữa (Middle Mouse Pan / Drag) theo chuẩn Excel
-    let is_middle_down = ui.input(|i| i.pointer.button_down(egui::PointerButton::Middle));
-    if is_middle_down {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::AllScroll);
-        let pointer_delta = ui.input(|i| i.pointer.delta());
-        if pointer_delta.x != 0.0 {
-            hstate.offset.x = (hstate.offset.x - pointer_delta.x).max(0.0);
+    // 3. Cuộn tự động theo tâm bằng chuột giữa (Web-style Center-Anchor Autoscroll)
+    let vscroll_key = format!("{table_salt}_vscroll_offset");
+    let vscroll_id = ui.make_persistent_id(vscroll_key);
+    let mut current_v_offset = ui.data(|d| d.get_temp::<f32>(vscroll_id)).unwrap_or(0.0);
+    let mut vstate_changed = false;
+
+    let table_rect = ui.available_rect_before_wrap();
+    let autoscroll = autoscroll::handle_middle_autoscroll(ui, table_rect);
+    if autoscroll.is_active {
+        if autoscroll.scroll_delta.x != 0.0 {
+            hstate.offset.x = (hstate.offset.x + autoscroll.scroll_delta.x).max(0.0);
             hstate_changed = true;
         }
-        if pointer_delta.y != 0.0 {
-            let pan_id = ui.make_persistent_id("table_middle_pan_accum_y");
-            let mut accum = ui.data(|d| d.get_temp::<f32>(pan_id)).unwrap_or(0.0);
-            accum -= pointer_delta.y;
-            let row_h = text_height + 8.0;
-            if accum.abs() >= row_h {
-                let step = (accum / row_h) as i32;
-                accum -= step as f32 * row_h;
-                if step > 0 {
-                    session.navigate_row_by_step(step as usize, false);
-                } else if step < 0 {
-                    session.navigate_row_by_step((-step) as usize, true);
-                }
+        if autoscroll.scroll_delta.y != 0.0 {
+            current_v_offset = (current_v_offset + autoscroll.scroll_delta.y).max(0.0);
+            vstate_changed = true;
+            if autoscroll.scroll_delta.y < 0.0 {
+                dispatch(AppAction::Unlatch);
             }
-            ui.data_mut(|d| d.insert_temp(pan_id, accum));
         }
     }
 
@@ -155,7 +151,7 @@ pub fn render_log_table(
         scroll_area = scroll_area.horizontal_scroll_offset(hstate.offset.x);
     }
 
-    scroll_area.show(ui, |ui| {
+    let hscroll_out = scroll_area.show(ui, |ui| {
         let ctx = ui.ctx().clone();
         let mut builder = TableBuilder::new(ui)
             .id_salt(table_salt)
@@ -183,9 +179,11 @@ pub fn render_log_table(
 
         if let Some((target_row, align)) = scroll_target {
             builder = builder.scroll_to_row(target_row, align);
+        } else if vstate_changed {
+            builder = builder.vertical_scroll_offset(current_v_offset);
         }
 
-        builder
+        let body_output = builder
             .header(26.0, |mut tbl_header| {
                 render_table_headers(&mut tbl_header, &ctx, &visible_cols, &mut session.columns);
             })
@@ -252,7 +250,11 @@ pub fn render_log_table(
                     }
                 });
             });
+
+        body_output.state.offset.y
     });
+
+    ui.data_mut(|d| d.insert_temp(vscroll_id, hscroll_out.inner));
 
     match tab {
         ActiveTab::Filtered => {
@@ -307,7 +309,10 @@ pub fn render_log_table(
         dispatch(AppAction::LoadOlderLogs(1000));
     }
 
-    if last_row_visible && scroll_delta_y < 0.0 && !is_shift_down {
+    if last_row_visible
+        && (scroll_delta_y < 0.0 || (autoscroll.is_active && autoscroll.scroll_delta.y > 0.0))
+        && !is_shift_down
+    {
         dispatch(AppAction::Latch);
     }
 }
