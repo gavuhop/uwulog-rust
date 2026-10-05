@@ -239,3 +239,104 @@ pub fn render_header(
         crate::views::modals::render_project_picker_popup(ui.ctx(), args, dispatch);
     }
 }
+
+/// Render Header tinh giản khi ứng dụng chưa mở dự án nào
+pub fn render_empty_header(
+    ui: &mut egui::Ui,
+    cx: &mut HeaderContext<'_>,
+    dispatch: &mut impl FnMut(AppAction),
+) {
+    let theme = ui.app_theme();
+    let mut proj_btn_rect = None;
+    let mut menu_btn_rect = None;
+
+    let header_rect = ui.max_rect();
+    let mut bg_response = ui.interact(
+        header_rect,
+        ui.id().with("__header_titlebar_drag_bg"),
+        egui::Sense::click_and_drag(),
+    );
+    bg_response = bg_response.on_hover_cursor(egui::CursorIcon::Default);
+    if bg_response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
+    }
+    handle_titlebar_drag_interaction(ui.ctx(), &bg_response);
+
+    let available_w = ui.available_width();
+    ui.allocate_ui_with_layout(
+        egui::vec2(available_w, TITLEBAR_HEIGHT),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            if render_left_window_controls(ui) {
+                ui.add_space(4.0);
+            }
+
+            // 1. Menu Icon Button
+            let is_menu_open = cx.overlay_stack.is_open(OverlayLayer::MainMenu);
+            let menu_resp =
+                crate::components::ui::IconButton::new(crate::components::ui::IconName::Menu)
+                    .size(24.0)
+                    .selected(is_menu_open)
+                    .tooltip("Open Application Menu")
+                    .show(ui);
+            menu_btn_rect = Some(menu_resp.rect);
+
+            if menu_resp.clicked() {
+                dispatch(AppAction::ToggleMainMenu);
+            }
+
+            // 2. Project Button (No Project Open)
+            let is_project_picker_open = cx.overlay_stack.is_open(OverlayLayer::ProjectPicker);
+            let shortcut_suffix = if cx.project_shortcut.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", cx.project_shortcut)
+            };
+            let tooltip = format!("Switch or open workspace projects{}", shortcut_suffix);
+            let proj_variant = if is_project_picker_open {
+                crate::components::ui::ButtonVariant::Selected
+            } else {
+                crate::components::ui::ButtonVariant::Ghost
+            };
+            let proj_resp = crate::components::ui::AppButton::new()
+                .label("No Project Open")
+                .variant(proj_variant)
+                .text_color(if is_project_picker_open {
+                    theme.text.accent
+                } else {
+                    theme.text.muted
+                })
+                .tooltip(&tooltip)
+                .show(ui);
+            proj_btn_rect = Some(proj_resp.rect);
+
+            if proj_resp.clicked() {
+                dispatch(AppAction::ToggleProjectPicker);
+            }
+
+            // 3. Phía bên phải: Window Controls
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                render_right_window_controls(ui);
+            });
+        },
+    );
+
+    // Render Main Menu Popover
+    if let Some(rect) = menu_btn_rect {
+        crate::components::render_main_menu_popup(ui.ctx(), cx.overlay_stack, dispatch, rect);
+    }
+
+    // Render Zed-Style Project Picker Popover
+    if let Some(rect) = proj_btn_rect {
+        let is_open = cx.overlay_stack.is_open(OverlayLayer::ProjectPicker);
+        let args = crate::views::modals::ProjectPickerArgs {
+            is_open,
+            store: cx.store,
+            sessions: cx.sessions,
+            active_index: cx.active_index,
+            project_search_query: cx.project_search_query,
+            trigger_rect: rect,
+        };
+        crate::views::modals::render_project_picker_popup(ui.ctx(), args, dispatch);
+    }
+}

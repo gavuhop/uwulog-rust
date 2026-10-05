@@ -4,6 +4,7 @@ pub mod modals;
 pub mod remote_servers;
 pub mod table;
 pub mod unfiltered;
+pub mod welcome;
 
 pub use detail::render_detail;
 pub use header::render_header;
@@ -12,6 +13,7 @@ pub use modals::{
 };
 pub use table::render_table;
 pub use unfiltered::render_unfiltered_table;
+pub use welcome::render_welcome_view;
 
 use crate::app::UwuGuiApp;
 use crate::theme::ActiveTheme;
@@ -76,11 +78,50 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
         project_shortcut,
     };
 
+    let platform = header::WindowControlsPlatform::current();
+
+    if !app.workspaces.has_active_session() {
+        egui::Panel::top("header_panel")
+            .frame(
+                egui::Frame::default()
+                    .fill(theme.surfaces.mantle)
+                    .inner_margin(platform.header_panel_margin())
+                    .stroke(egui::Stroke::new(1.0, theme.borders.border)),
+            )
+            .exact_size(header::TITLEBAR_HEIGHT)
+            .resizable(false)
+            .show(ui, |ui| {
+                header::render_empty_header(ui, &mut header_cx, &mut dispatch);
+            });
+
+        welcome::render_welcome_view(ui, &mut app.workspaces.store, &mut dispatch);
+
+        modals::render_about_modal(ctx, is_about_open, &app.keymap, &mut dispatch);
+        modals::render_keymap_modal(
+            ctx,
+            is_keymap_open,
+            &mut app.overlays.keymap_modal_state,
+            &mut dispatch,
+        );
+        remote_servers::render_remote_servers_modal(
+            ctx,
+            is_remote_open,
+            app.overlays.remote_placement,
+            &app.keymap,
+            &mut app.workspaces.store,
+            &mut dispatch,
+        );
+        header::render_window_resize_borders(ctx);
+
+        for action in pending_actions {
+            app.dispatch_action(action);
+        }
+        return;
+    }
+
     let active_session = &mut app.workspaces.sessions[active_index];
 
     // Top Panel: Unified 1-Tier Modern Custom Title & Header Bar
-    let platform = header::WindowControlsPlatform::current();
-
     egui::Panel::top("header_panel")
         .frame(
             egui::Frame::default()

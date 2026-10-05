@@ -1,7 +1,11 @@
 use super::test_helpers::create_test_app;
 use crate::actions::AppAction;
+use crate::app::WorkspaceManager;
 use crate::overlay::{OverlayLayer, RemoteModalPlacement};
-use uwu_core_workspace::{extract_project_name, SourceType, Workspace, WorkspaceLocation};
+use crate::session::GuiSession;
+use uwu_core_workspace::{
+    extract_project_name, SourceType, Workspace, WorkspaceLocation, WorkspaceStore,
+};
 
 #[tokio::test]
 async fn test_multi_project_switch_and_close() {
@@ -370,16 +374,16 @@ async fn test_close_and_switch_session_behaviors() {
     assert_eq!(app.workspaces.active_index, 1);
     assert_eq!(app.active_session().session.name, "P2");
 
-    // 3. Đóng hết các session -> tạo session mặc định và kế thừa capacity
+    // 3. Đóng hết các session -> chuyển sang trạng thái 0 session (màn hình Welcome, không fallback current_dir)
     app.close_session(1);
     assert_eq!(app.workspaces.sessions.len(), 1);
     assert_eq!(app.workspaces.active_index, 0);
 
     app.close_session(0);
-    assert_eq!(app.workspaces.sessions.len(), 1);
-    assert_eq!(app.workspaces.active_index, 0);
-    assert_eq!(app.active_session().session.source_config.capacity, 100);
-    assert_eq!(app.active_session().session.display_limit, 50);
+    assert_eq!(app.workspaces.sessions.len(), 0);
+    assert!(!app.workspaces.has_active_session());
+    assert!(app.workspaces.store.active_workspace_id.is_none());
+    assert!(app.workspaces.store.open_workspace_ids.is_empty());
 }
 
 #[tokio::test]
@@ -468,4 +472,156 @@ async fn test_project_picker_and_server_list_consistency() {
     assert!(!server_items_after
         .iter()
         .any(|it| it.label == "/home/user/backend"));
+}
+
+#[tokio::test]
+async fn test_start_at_shutdown_save_and_restore() {
+    use eframe::App;
+    let mut app = create_test_app();
+    let temp_dir1 = std::env::temp_dir().join(format!("uwu_test_dir1_{}", uuid::Uuid::new_v4()));
+    let temp_dir2 = std::env::temp_dir().join(format!("uwu_test_dir2_{}", uuid::Uuid::new_v4()));
+    let _ = std::fs::create_dir_all(&temp_dir1);
+    let _ = std::fs::create_dir_all(&temp_dir2);
+
+    let ws1 = Workspace::new(
+        "Project-1",
+        WorkspaceLocation::local(temp_dir1.to_string_lossy().to_string()),
+        SourceType::Process,
+    );
+    let ws2 = Workspace::new(
+        "Project-2",
+        WorkspaceLocation::local(temp_dir2.to_string_lossy().to_string()),
+        SourceType::Process,
+    );
+    let id1 = ws1.id;
+    let id2 = ws2.id;
+
+    // Đóng session mặc định ban đầu
+    app.close_session(0);
+    assert_eq!(app.workspaces.sessions.len(), 0);
+
+    // Mở 2 projects
+    app.open_or_switch_workspace(&ws1);
+    app.open_or_switch_workspace(&ws2);
+    assert_eq!(app.workspaces.sessions.len(), 2);
+    assert_eq!(app.workspaces.active_index, 1);
+
+    // Shutdown / exit
+    app.on_exit();
+
+    let store = &app.workspaces.store;
+    assert_eq!(store.open_workspace_ids.len(), 2);
+    assert_eq!(store.open_workspace_ids[0], id1);
+    assert_eq!(store.open_workspace_ids[1], id2);
+    assert_eq!(store.active_workspace_id, Some(id2));
+
+    // Khôi phục lại từ store như lúc khởi chạy ứng dụng không có CLI target
+    let rt = tokio::runtime::Handle::current();
+    let mut restored_sessions = Vec::new();
+    let mut active_index = 0;
+    for id in &store.open_workspace_ids {
+        if let Some(ws) = store
+            .recent_workspaces
+            .iter()
+            .find(|w| w.id == *id)
+            .cloned()
+        {
+            if ws.is_valid_to_open() {
+                let mut gui_session = GuiSession::from_workspace(&ws, 100, 50);
+                gui_session.session.spawn_load_environment(&rt);
+                restored_sessions.push(gui_session);
+            }
+        }
+    }
+    if !restored_sessions.is_empty() {
+        if let Some(act_id) = store.active_workspace_id {
+            if let Some(pos) = restored_sessions
+                .iter()
+                .position(|s| s.session.id == act_id)
+            {
+                active_index = pos;
+            }
+        }
+    }
+    let restored_mgr =
+        WorkspaceManager::with_sessions(restored_sessions, active_index, store.clone());
+
+    assert_eq!(restored_mgr.sessions.len(), 2);
+    assert_eq!(restored_mgr.active_index, 1);
+    assert_eq!(restored_mgr.sessions[0].session.name, "Project-1");
+    assert_eq!(restored_mgr.sessions[1].session.name, "Project-2");
+
+    let _ = std::fs::remove_dir_all(&temp_dir1);
+    let _ = std::fs::remove_dir_all(&temp_dir2);
+}
+
+#[tokio::test]
+async fn test_reopen_failure_keeps_in_recent() {
+    let mut store = WorkspaceStore::default();
+    let dead_path = "/non/existent/path/uwulog/dead_project_12345";
+    let ws = Workspace::new(
+        "DeadProject",
+        WorkspaceLocation::local(dead_path),
+        SourceType::Process,
+    );
+    let ws_id = ws.id;
+    store.add_or_update(ws);
+    store.open_workspace_ids = vec![ws_id];
+    store.active_workspace_id = Some(ws_id);
+
+    // Xác nhận is_valid_to_open trả về false vì đường dẫn không tồn tại
+    let saved_ws = store
+        .recent_workspaces
+        .iter()
+        .find(|w| w.id == ws_id)
+        .unwrap();
+    assert!(!saved_ws.is_valid_to_open());
+
+    // Khởi chạy khôi phục
+    let rt = tokio::runtime::Handle::current();
+    let mut sessions = Vec::new();
+    for id in &store.open_workspace_ids {
+        if let Some(w) = store
+            .recent_workspaces
+            .iter()
+            .find(|w| w.id == *id)
+            .cloned()
+        {
+            if w.is_valid_to_open() {
+                let mut gui_session = GuiSession::from_workspace(&w, 100, 50);
+                gui_session.session.spawn_load_environment(&rt);
+                sessions.push(gui_session);
+            }
+            // Không mở lại nhưng không xóa khỏi store
+        }
+    }
+
+    // Sessions rỗng vì mở lại fail
+    assert_eq!(sessions.len(), 0);
+
+    // VẪN CÒN trong recent_workspaces!
+    assert!(store.recent_workspaces.iter().any(|w| w.id == ws_id));
+}
+
+#[tokio::test]
+async fn test_no_project_open_does_not_use_current_dir() {
+    let mut store = WorkspaceStore::default();
+    store.open_workspace_ids.clear();
+    store.active_workspace_id = None;
+
+    let mgr = WorkspaceManager::with_sessions(Vec::new(), 0, store);
+    assert!(!mgr.has_active_session());
+    assert_eq!(mgr.sessions.len(), 0);
+    assert!(mgr.active_session_opt().is_none());
+
+    // Đảm bảo không có project nào trỏ vào current_dir
+    let current_dir = std::env::current_dir()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+    assert!(!mgr
+        .store
+        .recent_workspaces
+        .iter()
+        .any(|w| w.location.working_dir() == current_dir));
 }

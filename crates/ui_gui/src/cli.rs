@@ -74,6 +74,16 @@ pub struct CliArgs {
 }
 
 impl CliArgs {
+    /// Kiểm tra xem người dùng có truyền tham số chỉ định mục tiêu (path, cmd, file, dir, remote...) hay không
+    pub fn has_target(&self) -> bool {
+        self.path.is_some()
+            || self.cmd.is_some()
+            || self.file.is_some()
+            || self.working_dir.is_some()
+            || self.remote.is_some()
+            || !self.trailing_cmd.is_empty()
+    }
+
     /// Phân giải vị trí làm việc và cấu hình nguồn chạy (cmd, file, hoặc thư mục) từ các cờ dòng lệnh
     pub fn resolve_target(&self) -> (WorkspaceLocation, SourceType, String, String, bool) {
         let mut cmd = self.cmd.clone().unwrap_or_default();

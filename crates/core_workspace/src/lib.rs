@@ -214,6 +214,28 @@ impl Workspace {
             self.location.summary()
         }
     }
+
+    /// Kiểm tra xem workspace này có hợp lệ để mở lại hay không
+    pub fn is_valid_to_open(&self) -> bool {
+        match &self.location {
+            WorkspaceLocation::Local { working_dir } => {
+                if !working_dir.trim().is_empty() {
+                    Path::new(working_dir).exists()
+                } else if !self.file_path.trim().is_empty() {
+                    Path::new(&self.file_path).exists()
+                } else {
+                    false
+                }
+            }
+            WorkspaceLocation::Remote(remote) => match remote {
+                #[cfg(not(target_os = "windows"))]
+                RemoteConnectionOptions::Wsl(_) => false,
+                #[cfg(target_os = "windows")]
+                RemoteConnectionOptions::Wsl(wsl) => !wsl.distro.trim().is_empty(),
+                RemoteConnectionOptions::Ssh(ssh) => !ssh.host.trim().is_empty(),
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -226,6 +248,8 @@ pub struct WorkspaceStore {
     pub wsl_connections: Vec<WslConnection>,
     #[serde(default)]
     pub ssh_connections: Vec<SshConnection>,
+    #[serde(default)]
+    pub open_workspace_ids: Vec<Uuid>,
     #[serde(skip)]
     storage_path: Option<PathBuf>,
 }
@@ -350,8 +374,13 @@ impl WorkspaceStore {
                 self.remove_remote_project_from_server(remote.display_name(), remote.working_dir());
             }
         }
+        self.open_workspace_ids.retain(|&oid| oid != id);
         if self.active_workspace_id == Some(id) {
-            self.active_workspace_id = self.recent_workspaces.first().map(|w| w.id);
+            self.active_workspace_id = self
+                .open_workspace_ids
+                .first()
+                .copied()
+                .or_else(|| self.recent_workspaces.first().map(|w| w.id));
         }
         let _ = self.save();
     }

@@ -35,6 +35,18 @@ pub struct UwuGuiApp {
 }
 
 impl UwuGuiApp {
+    /// Lấy tham chiếu bất biến tùy chọn tới session đang hoạt động
+    #[inline]
+    pub fn active_session_opt(&self) -> Option<&GuiSession> {
+        self.workspaces.active_session_opt()
+    }
+
+    /// Lấy tham chiếu khả biến tùy chọn tới session đang hoạt động
+    #[inline]
+    pub fn active_session_opt_mut(&mut self) -> Option<&mut GuiSession> {
+        self.workspaces.active_session_opt_mut()
+    }
+
     /// Lấy tham chiếu bất biến tới session đang hoạt động
     #[inline]
     pub fn active_session(&self) -> &GuiSession {
@@ -65,8 +77,12 @@ impl UwuGuiApp {
             | Some(OverlayLayer::MainMenu)
             | Some(OverlayLayer::ThemeSubmenu) => crate::keymap::KeyContext::Modal,
             None => {
-                if self.active_session().view.search.autocomplete.is_open {
-                    crate::keymap::KeyContext::Autocomplete
+                if let Some(active) = self.active_session_opt() {
+                    if active.view.search.autocomplete.is_open {
+                        crate::keymap::KeyContext::Autocomplete
+                    } else {
+                        crate::keymap::KeyContext::Global
+                    }
                 } else {
                     crate::keymap::KeyContext::Global
                 }
@@ -217,8 +233,11 @@ impl UwuGuiApp {
     /// Đóng lớp giao diện trên cùng theo thứ tự ngăn xếp (Navigation Stack LIFO)
     #[inline]
     pub fn dismiss_top_layer(&mut self) -> bool {
-        self.overlays
-            .dismiss_top_layer(self.workspaces.active_session_mut())
+        if let Some(active) = self.workspaces.active_session_opt_mut() {
+            self.overlays.dismiss_top_layer(active)
+        } else {
+            self.overlays.stack.pop().is_some()
+        }
     }
 
     /// Lưu trạng thái workspace hiện tại vào file lưu trữ cấu hình
@@ -485,7 +504,7 @@ impl UwuGuiApp {
 
     pub fn new(cc: &eframe::CreationContext<'_>, rt: Handle) -> Self {
         let cli = CliArgs::parse();
-        let mut store = WorkspaceStore::load();
+        let store = WorkspaceStore::load();
 
         // Đảm bảo file template mẫu luôn tồn tại sẵn trong thư mục themes
         let _ = crate::theme::ensure_template_file();
@@ -500,15 +519,43 @@ impl UwuGuiApp {
         #[cfg(target_os = "windows")]
         crate::theme::apply_windows_titlebar_theme(cc);
 
-        let (initial_gui_session, has_custom_source, saved_id) =
-            Self::build_initial_session(&cli, &store);
+        let mut sessions: Vec<GuiSession> = Vec::new();
+        let mut has_custom_source = false;
+        let mut active_index = 0;
+        let mut saved_id = None;
 
-        if let (Some(id), false) = (saved_id, has_custom_source) {
-            store.active_workspace_id = Some(id);
-            let _ = store.save();
+        if cli.has_target() {
+            let (initial_gui_session, custom_source, sid) =
+                Self::build_initial_session(&cli, &store);
+            has_custom_source = custom_source;
+            saved_id = sid;
+            sessions.push(initial_gui_session);
+            active_index = 0;
+        } else {
+            // Khôi phục các project đã mở lúc shutdown (start at shutdown)
+            let open_ids = store.open_workspace_ids.clone();
+            for id in open_ids {
+                if let Some(ws) = store.recent_workspaces.iter().find(|w| w.id == id).cloned() {
+                    if ws.is_valid_to_open() {
+                        let mut gui_session =
+                            GuiSession::from_workspace(&ws, cli.capacity, cli.display_limit);
+                        gui_session.session.spawn_load_environment(&rt);
+                        sessions.push(gui_session);
+                    }
+                    // Nếu mở lại fail thì thôi, nó vẫn là recent project (không xóa khỏi store.recent_workspaces)
+                }
+            }
+
+            if !sessions.is_empty() {
+                if let Some(active_id) = store.active_workspace_id {
+                    if let Some(pos) = sessions.iter().position(|s| s.session.id == active_id) {
+                        active_index = pos;
+                    }
+                }
+            }
         }
 
-        let workspaces = WorkspaceManager::new(initial_gui_session, store);
+        let workspaces = WorkspaceManager::with_sessions(sessions, active_index, store);
         let overlays = OverlayManager::new();
 
         let mut keymap = crate::keymap::KeymapManager::new();
@@ -530,24 +577,105 @@ impl UwuGuiApp {
             egui_ctx: None,
         };
 
-        // Background task nạp biến môi trường cho session đầu tiên
-        app.spawn_load_environment();
+        if app.workspaces.has_active_session() {
+            // Background task nạp biến môi trường cho session đầu tiên
+            app.spawn_load_environment();
 
-        if saved_id.is_none() || has_custom_source {
-            // Tự động lưu workspace mới hoặc cấu hình nguồn mới vào store
-            app.save_current_workspace();
-        }
+            if (saved_id.is_none() || has_custom_source) && cli.has_target() {
+                // Tự động lưu workspace mới hoặc cấu hình nguồn mới vào store
+                app.save_current_workspace();
+            }
 
-        if has_custom_source {
-            app.start_configured_source();
+            if has_custom_source {
+                app.start_configured_source();
+            }
+            app.active_session_mut().view.search.mark_needs_search();
         }
-        app.active_session_mut().view.search.mark_needs_search();
 
         app
     }
 
     /// Điều phối và thực thi các hành động cấp ứng dụng (Zed-style Command Dispatcher)
     pub fn dispatch_action(&mut self, action: AppAction) {
+        if !self.workspaces.has_active_session() {
+            match action {
+                AppAction::OpenWorkspace(ws) => {
+                    self.open_or_switch_workspace(&ws);
+                    self.close_project_picker();
+                }
+                AppAction::DeleteWorkspace(id) => self.workspaces.store.remove(id),
+                AppAction::ToggleProjectPicker => {
+                    if self.is_overlay_open(OverlayLayer::ProjectPicker) {
+                        self.close_project_picker();
+                    } else {
+                        self.close_overlay(OverlayLayer::RemoteServersModal);
+                        self.push_overlay(OverlayLayer::ProjectPicker);
+                    }
+                }
+                AppAction::CloseProjectPicker => self.close_project_picker(),
+                AppAction::OpenRemoteServersModal => {
+                    self.close_project_picker();
+                    self.overlays.remote_placement = RemoteModalPlacement::TopCenter;
+                    self.push_overlay(OverlayLayer::RemoteServersModal);
+                }
+                AppAction::CloseRemoteServersModal => {
+                    self.close_overlay(OverlayLayer::RemoteServersModal);
+                }
+                AppAction::ToggleRemoteServersModal => {
+                    if self.is_overlay_open(OverlayLayer::RemoteServersModal) {
+                        self.close_overlay(OverlayLayer::RemoteServersModal);
+                    } else {
+                        self.close_project_picker();
+                        self.overlays.remote_placement = RemoteModalPlacement::TopLeft;
+                        self.push_overlay(OverlayLayer::RemoteServersModal);
+                    }
+                }
+                AppAction::ToggleMainMenu => {
+                    if self.is_overlay_open(OverlayLayer::MainMenu) {
+                        self.close_main_menu();
+                    } else {
+                        self.push_overlay(OverlayLayer::MainMenu);
+                    }
+                }
+                AppAction::CloseMainMenu => self.close_main_menu(),
+                AppAction::OpenAboutModal => {
+                    self.close_main_menu();
+                    self.push_overlay(OverlayLayer::AboutModal);
+                }
+                AppAction::CloseAboutModal => self.close_overlay(OverlayLayer::AboutModal),
+                AppAction::OpenKeymapModal => {
+                    self.close_main_menu();
+                    self.overlays.keymap_modal_state = Some(
+                        crate::app::overlay_manager::KeymapModalState::new(&self.keymap),
+                    );
+                    self.push_overlay(OverlayLayer::KeymapModal);
+                }
+                AppAction::CloseKeymapModal => {
+                    self.close_overlay(OverlayLayer::KeymapModal);
+                    self.overlays.keymap_modal_state = None;
+                }
+                AppAction::ApplyKeymapModal(new_keymap) => {
+                    self.keymap = *new_keymap;
+                    let _ = crate::keymap::save_user_keymap(&self.keymap, None);
+                    self.close_overlay(OverlayLayer::KeymapModal);
+                    self.overlays.keymap_modal_state = None;
+                }
+                AppAction::QuitApp => {
+                    self.close_main_menu();
+                    self.should_quit = true;
+                }
+                AppAction::SwitchTheme(theme_id) => {
+                    self.workspaces.store.active_theme = Some(theme_id);
+                    let _ = self.workspaces.store.save();
+                }
+                AppAction::DismissTopLayer => {
+                    self.dismiss_top_layer();
+                }
+                _ => {}
+            }
+            return;
+        }
+
         if let AppAction::LoadOlderLogs(page_size) = action {
             let is_unfiltered = self.active_session().view.active_tab == ActiveTab::Unfiltered;
             self.spawn_reverse_pagination(is_unfiltered, page_size);
@@ -760,26 +888,29 @@ impl eframe::App for UwuGuiApp {
         }
 
         // PHA 1: Detect search query change or needs_search and spawn async worker search
-        let query_changed = {
-            let active = self.workspaces.active_session_mut();
-            let changed = active.view.search.query != active.view.search.last_query
-                || active.view.search.needs_search;
-            if changed {
-                active.view.search.last_query = active.view.search.query.clone();
-                active.view.search.needs_search = false;
-            }
-            changed
-        };
-        if query_changed {
-            self.spawn_search();
-        } else {
-            let active = self.workspaces.active_session();
-            let new_logs_arrived = active.session.engine.total_processed()
-                != active.view.viewport.last_processed_count
-                && std::time::Instant::now().duration_since(active.view.search.last_search_time)
-                    > Duration::from_millis(150);
-            if new_logs_arrived {
-                self.spawn_incremental_filter();
+        if self.workspaces.has_active_session() {
+            let query_changed = {
+                let active = self.workspaces.active_session_mut();
+                let changed = active.view.search.query != active.view.search.last_query
+                    || active.view.search.needs_search;
+                if changed {
+                    active.view.search.last_query = active.view.search.query.clone();
+                    active.view.search.needs_search = false;
+                }
+                changed
+            };
+            if query_changed {
+                self.spawn_search();
+            } else {
+                let active = self.workspaces.active_session();
+                let new_logs_arrived = active.session.engine.total_processed()
+                    != active.view.viewport.last_processed_count
+                    && std::time::Instant::now()
+                        .duration_since(active.view.search.last_search_time)
+                        > Duration::from_millis(150);
+                if new_logs_arrived {
+                    self.spawn_incremental_filter();
+                }
             }
         }
 
@@ -789,7 +920,7 @@ impl eframe::App for UwuGuiApp {
     }
 
     fn on_exit(&mut self) {
-        self.save_current_workspace();
+        self.workspaces.save_all_open_workspaces();
         for s in &mut self.workspaces.sessions {
             s.session.stop_source();
         }
