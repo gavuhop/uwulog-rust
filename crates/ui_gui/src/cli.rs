@@ -64,7 +64,7 @@ pub struct CliArgs {
         short = 'C',
         long = "capacity",
         visible_alias = "cap",
-        default_value_t = 200_000
+        default_value_t = 500_000
     )]
     pub capacity: usize,
 

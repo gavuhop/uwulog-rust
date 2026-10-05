@@ -115,7 +115,7 @@ impl WorkspaceManager {
                 active.session.display_limit,
             )
         } else {
-            (200_000, 5_000)
+            (500_000, 5_000)
         };
         let mut gui_session = GuiSession::from_workspace(ws, cap, limit);
         gui_session.session.spawn_load_environment(rt);

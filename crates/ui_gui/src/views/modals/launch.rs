@@ -73,8 +73,8 @@ pub fn render_launch_modal(
                                         ui.add_sized(
                                             [right_col_w, 24.0],
                                             egui::DragValue::new(&mut draft.capacity)
-                                                .range(1_000..=1_000_000)
-                                                .speed(5000),
+                                                .range(1_000..=50_000_000)
+                                                .speed(5_000),
                                         );
                                     },
                                 );

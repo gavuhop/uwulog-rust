@@ -40,7 +40,7 @@ impl Default for SourceConfig {
             command_str: String::new(),
             file_path: String::new(),
             working_dir: String::new(),
-            capacity: 200_000,
+            capacity: 5_000_000,
             display_limit: 5_000,
         }
     }

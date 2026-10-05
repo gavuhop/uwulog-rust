@@ -53,7 +53,7 @@ fn test_cli_args_parsing() {
     // 1. Test default arguments
     let defaults = CliArgs::try_parse_from(["uwu-gui"]).unwrap();
     assert_eq!(defaults.display_limit, 5000);
-    assert_eq!(defaults.capacity, 200_000);
+    assert_eq!(defaults.capacity, 500_000);
     assert_eq!(defaults.cmd, None);
     assert_eq!(defaults.file, None);
     assert_eq!(defaults.working_dir, None);

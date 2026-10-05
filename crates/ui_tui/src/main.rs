@@ -19,7 +19,7 @@ use uwu_driver_sources::{FileSource, ProcessSource, WslSource, WslTargetMode};
 async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let mut display_limit: usize = 5_000;
-    let mut capacity: usize = 200_000;
+    let mut capacity: usize = 5_000_000;
 
     let mut i = 1;
     while i < args.len() {
