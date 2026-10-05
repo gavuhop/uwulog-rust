@@ -135,6 +135,8 @@ impl DynamicColumnBuilder {
     }
 }
 
+const MIN_ROW_CAPACITY: usize = 32;
+
 pub struct ActiveRecordBatchBuilder {
     capacity: usize,
     row_count: usize,
@@ -148,14 +150,15 @@ pub struct ActiveRecordBatchBuilder {
 
 impl ActiveRecordBatchBuilder {
     pub fn new(capacity: usize) -> Self {
+        let initial_cap = capacity.min(MIN_ROW_CAPACITY);
         Self {
             capacity,
             row_count: 0,
-            id_builder: UInt64Builder::with_capacity(capacity),
-            color_builder: UInt8Builder::with_capacity(capacity),
-            timestamp_builder: StringBuilder::with_capacity(capacity, capacity * 24),
-            timestamp_secs_builder: Float64Builder::with_capacity(capacity),
-            message_builder: StringBuilder::with_capacity(capacity, capacity * 64),
+            id_builder: UInt64Builder::with_capacity(initial_cap),
+            color_builder: UInt8Builder::with_capacity(initial_cap),
+            timestamp_builder: StringBuilder::with_capacity(initial_cap, initial_cap * 24),
+            timestamp_secs_builder: Float64Builder::with_capacity(initial_cap),
+            message_builder: StringBuilder::with_capacity(initial_cap, initial_cap * 64),
             dynamic_builders: AHashMap::new(),
         }
     }
@@ -187,7 +190,8 @@ impl ActiveRecordBatchBuilder {
             if let Some(dyn_b) = self.dynamic_builders.get_mut(k) {
                 dyn_b.append_value(v);
             } else {
-                let dyn_b = DynamicColumnBuilder::new_for_value(v, row_idx, self.capacity);
+                let dyn_cap = (row_idx + 16).min(self.capacity);
+                let dyn_b = DynamicColumnBuilder::new_for_value(v, row_idx, dyn_cap);
                 self.dynamic_builders.insert(k.clone(), dyn_b);
             }
         }
@@ -241,11 +245,12 @@ impl ActiveRecordBatchBuilder {
 
         // Reset state
         self.row_count = 0;
-        self.id_builder = UInt64Builder::with_capacity(self.capacity);
-        self.color_builder = UInt8Builder::with_capacity(self.capacity);
-        self.timestamp_builder = StringBuilder::with_capacity(self.capacity, self.capacity * 24);
-        self.timestamp_secs_builder = Float64Builder::with_capacity(self.capacity);
-        self.message_builder = StringBuilder::with_capacity(self.capacity, self.capacity * 64);
+        let initial_cap = self.capacity.min(MIN_ROW_CAPACITY);
+        self.id_builder = UInt64Builder::with_capacity(initial_cap);
+        self.color_builder = UInt8Builder::with_capacity(initial_cap);
+        self.timestamp_builder = StringBuilder::with_capacity(initial_cap, initial_cap * 24);
+        self.timestamp_secs_builder = Float64Builder::with_capacity(initial_cap);
+        self.message_builder = StringBuilder::with_capacity(initial_cap, initial_cap * 64);
         self.dynamic_builders.clear();
 
         batch

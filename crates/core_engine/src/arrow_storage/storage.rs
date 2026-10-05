@@ -1,8 +1,10 @@
 use super::builder::ActiveRecordBatchBuilder;
 use super::compiler::{ColumnView, QueryCompiler};
 use arrow::array::{
-    Array, BooleanArray, Float64Array, RecordBatch, StringArray, UInt64Array, UInt8Array,
+    new_null_array, Array, BooleanArray, Float64Array, RecordBatch, StringArray, UInt64Array,
+    UInt8Array,
 };
+use arrow::compute::concat_batches;
 use parking_lot::{Mutex, RwLock};
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -178,6 +180,89 @@ impl<'a> BatchColumns<'a> {
 // ArrowStorage: Concurrent Columnar In-Memory Store
 // ============================================================================
 
+const TARGET_BATCH_SIZE: usize = 4096;
+
+/// Hợp nhất hai RecordBatches nếu tổng số dòng <= TARGET_BATCH_SIZE.
+/// - Nếu cùng Schema: gộp trực tiếp qua Arrow concat_batches kernel.
+/// - Nếu Schema khác nhau do thiếu cột động: đồng bộ hóa schema (bổ sung cột null) rồi gộp.
+/// - Nếu xung đột kiểu dữ liệu hoặc quá TARGET_BATCH_SIZE: trả về None để lưu thành batch riêng.
+fn unify_and_concat(a: &RecordBatch, b: &RecordBatch) -> Option<RecordBatch> {
+    if a.num_rows() + b.num_rows() > TARGET_BATCH_SIZE {
+        return None;
+    }
+
+    if a.schema() == b.schema() {
+        return concat_batches(&a.schema(), [a, b]).ok();
+    }
+
+    let schema_a = a.schema();
+    let schema_b = b.schema();
+
+    // Kiểm tra xung đột kiểu dữ liệu trên các trường chung
+    for field_a in schema_a.fields() {
+        if let Ok(field_b) = schema_b.field_with_name(field_a.name()) {
+            if field_a.data_type() != field_b.data_type() {
+                return None;
+            }
+        }
+    }
+
+    // Thu thập tất cả tên trường không trùng lặp
+    let mut field_names: Vec<String> = schema_a
+        .fields()
+        .iter()
+        .chain(schema_b.fields().iter())
+        .map(|f| f.name().clone())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+
+    // Sắp xếp xác định: các trường cố định '__' trước, sau đó sắp xếp theo alphabet
+    field_names.sort_by(|x, y| {
+        let x_core = x.starts_with("__");
+        let y_core = y.starts_with("__");
+        match (x_core, y_core) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => x.cmp(y),
+        }
+    });
+
+    let mut unified_fields = Vec::with_capacity(field_names.len());
+    for name in &field_names {
+        if let Ok(f) = schema_a.field_with_name(name) {
+            unified_fields.push(f.clone());
+        } else if let Ok(f) = schema_b.field_with_name(name) {
+            unified_fields.push(f.clone());
+        }
+    }
+    let unified_schema = Arc::new(arrow::datatypes::Schema::new(unified_fields));
+
+    // Căn chỉnh các cột cho batch a
+    let mut cols_a = Vec::with_capacity(unified_schema.fields().len());
+    for field in unified_schema.fields() {
+        if let Some(col) = a.column_by_name(field.name()) {
+            cols_a.push(Arc::clone(col));
+        } else {
+            cols_a.push(new_null_array(field.data_type(), a.num_rows()));
+        }
+    }
+    let aligned_a = RecordBatch::try_new(Arc::clone(&unified_schema), cols_a).ok()?;
+
+    // Căn chỉnh các cột cho batch b
+    let mut cols_b = Vec::with_capacity(unified_schema.fields().len());
+    for field in unified_schema.fields() {
+        if let Some(col) = b.column_by_name(field.name()) {
+            cols_b.push(Arc::clone(col));
+        } else {
+            cols_b.push(new_null_array(field.data_type(), b.num_rows()));
+        }
+    }
+    let aligned_b = RecordBatch::try_new(Arc::clone(&unified_schema), cols_b).ok()?;
+
+    concat_batches(&unified_schema, [&aligned_a, &aligned_b]).ok()
+}
+
 pub struct ArrowStorage {
     max_capacity: usize,
     sealed_batches: RwLock<Arc<Vec<RecordBatch>>>,
@@ -205,6 +290,10 @@ impl ArrowStorage {
 
     pub fn max_capacity(&self) -> usize {
         self.max_capacity
+    }
+
+    pub fn sealed_batches_count(&self) -> usize {
+        self.sealed_batches.read().len()
     }
 
     pub fn total_logs(&self) -> usize {
@@ -269,7 +358,20 @@ impl ArrowStorage {
 
         let mut guard = self.sealed_batches.write();
         let mut new_list = (**guard).clone();
-        new_list.extend(batches);
+
+        // Gộp vi batch (Micro-Batch Compaction) vào batch cuối nếu batch cuối chưa đầy (TARGET_BATCH_SIZE)
+        for batch in batches {
+            if batch.num_rows() == 0 {
+                continue;
+            }
+            if let Some(last) = new_list.last_mut() {
+                if let Some(merged) = unify_and_concat(last, &batch) {
+                    *last = merged;
+                    continue;
+                }
+            }
+            new_list.push(batch);
+        }
 
         let mut current_total =
             self.total_stored_rows
