@@ -334,12 +334,27 @@ impl GuiSession {
     }
 
     pub fn open_unfiltered_stream(&mut self, target_id: Option<u64>) {
+        self.view.viewport.selected_log = self.view.inspector.selected_log.clone();
         self.view.unfiltered.is_open = true;
         self.view.unfiltered.target_id = target_id;
         self.view.unfiltered.is_live = target_id.is_none();
         self.refresh_unfiltered_snapshot();
         self.view.unfiltered.has_new_data = false;
         self.view.active_tab = ActiveTab::Unfiltered;
+
+        if let Some(id) = target_id {
+            let target_event = self
+                .view
+                .unfiltered
+                .cached_unfiltered
+                .iter()
+                .find(|e| e.id == id)
+                .cloned();
+            self.view.unfiltered.selected_log = target_event.clone();
+            self.view.inspector.selected_log = target_event;
+        } else {
+            self.view.inspector.selected_log = self.view.unfiltered.selected_log.clone();
+        }
     }
 
     /// Unified Reverse Pagination / Infinite Scroll Up (Synchronous fallback cho unit test)
@@ -434,6 +449,41 @@ impl GuiSession {
         }
     }
 
+    /// Cập nhật dòng log đang chọn cho tab hiện tại và đồng bộ sang Inspector
+    pub fn set_selected_log(&mut self, log: Option<LogEvent>) {
+        match self.view.active_tab {
+            ActiveTab::Filtered => {
+                self.view.viewport.selected_log = log.clone();
+            }
+            ActiveTab::Unfiltered => {
+                self.view.unfiltered.selected_log = log.clone();
+                self.view.unfiltered.target_id = log.as_ref().map(|l| l.id);
+            }
+        }
+        self.view.inspector.selected_log = log;
+    }
+
+    /// Chuyển đổi giữa tab Filtered (Main) và Unfiltered (Raw), lưu nhớ và khôi phục dòng đang chọn
+    pub fn switch_tab(&mut self, next_tab: ActiveTab) {
+        if self.view.active_tab == next_tab {
+            return;
+        }
+        // Lưu lại lựa chọn hiện tại vào tab cũ
+        match self.view.active_tab {
+            ActiveTab::Filtered => {
+                self.view.viewport.selected_log = self.view.inspector.selected_log.clone();
+            }
+            ActiveTab::Unfiltered => {
+                self.view.unfiltered.selected_log = self.view.inspector.selected_log.clone();
+            }
+        }
+        self.view.active_tab = next_tab;
+        self.view.inspector.selected_log = match next_tab {
+            ActiveTab::Filtered => self.view.viewport.selected_log.clone(),
+            ActiveTab::Unfiltered => self.view.unfiltered.selected_log.clone(),
+        };
+    }
+
     /// Di chuyển lựa chọn dòng log (khi đã pick dòng) hoặc cuộn bảng với bước nhảy tuỳ ý
     pub fn navigate_row_by_step(&mut self, step: usize, is_up: bool) {
         let row_count = self.active_logs().len();
@@ -450,7 +500,7 @@ impl GuiSession {
             } else {
                 (curr + step).min(row_count - 1)
             };
-            self.view.inspector.selected_log = Some(logs[next].clone());
+            self.set_selected_log(Some(logs[next].clone()));
             self.scroll_to_row(next, None);
             self.unlatch_active();
         } else {
@@ -463,7 +513,7 @@ impl GuiSession {
             };
             let logs = self.active_logs();
             if step == 1 && next < logs.len() {
-                self.view.inspector.selected_log = Some(logs[next].clone());
+                self.set_selected_log(Some(logs[next].clone()));
             }
             self.scroll_to_row(next, Some(egui::Align::Min));
             if !is_up && next >= row_count - 1 {
@@ -513,7 +563,7 @@ impl GuiSession {
         }
         if self.view.inspector.selected_log.is_some() {
             let logs = self.active_logs();
-            self.view.inspector.selected_log = Some(logs[0].clone());
+            self.set_selected_log(Some(logs[0].clone()));
         }
         self.scroll_to_row(0, Some(egui::Align::Min));
         self.unlatch_active();
@@ -528,7 +578,7 @@ impl GuiSession {
         let target_idx = row_count - 1;
         if self.view.inspector.selected_log.is_some() {
             let logs = self.active_logs();
-            self.view.inspector.selected_log = Some(logs[target_idx].clone());
+            self.set_selected_log(Some(logs[target_idx].clone()));
         }
         self.scroll_to_row(target_idx, Some(egui::Align::Max));
         self.latch_active();
@@ -596,7 +646,7 @@ impl GuiSession {
         self.view.unfiltered.target_id = None;
         self.view.unfiltered.target_index = None;
         self.view.unfiltered.cached_unfiltered.clear();
-        self.view.active_tab = ActiveTab::Filtered;
+        self.switch_tab(ActiveTab::Filtered);
     }
 
     pub fn focus_in_main_and_clear_filter(&mut self) {
@@ -609,6 +659,7 @@ impl GuiSession {
                 .find(|e| e.id == target_id)
                 .cloned()
             {
+                self.view.viewport.selected_log = Some(target_event.clone());
                 self.view.inspector.selected_log = Some(target_event);
             }
         }
@@ -620,7 +671,7 @@ impl GuiSession {
     pub fn handle_action(&mut self, action: &AppAction) -> bool {
         match action {
             AppAction::SelectLog(log) => {
-                self.view.inspector.selected_log = log.clone();
+                self.set_selected_log(log.clone());
                 true
             }
             AppAction::NavigateUp => {
@@ -668,7 +719,7 @@ impl GuiSession {
                         self.open_unfiltered_stream(None);
                     }
                 }
-                self.view.active_tab = *tab;
+                self.switch_tab(*tab);
                 true
             }
             AppAction::ToggleStreamView => {
@@ -682,7 +733,7 @@ impl GuiSession {
                 if next == ActiveTab::Unfiltered && !self.view.unfiltered.is_open {
                     self.open_unfiltered_stream(None);
                 }
-                self.view.active_tab = next;
+                self.switch_tab(next);
                 true
             }
             AppAction::ApplyFilterTerm(term) => {
@@ -745,7 +796,7 @@ impl GuiSession {
             }
             AppAction::ViewRawContext => {
                 if self.view.active_tab == ActiveTab::Unfiltered {
-                    self.view.active_tab = ActiveTab::Filtered;
+                    self.switch_tab(ActiveTab::Filtered);
                     return true;
                 }
                 if self.view.search.query.trim().is_empty() {

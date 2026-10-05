@@ -99,3 +99,99 @@ async fn test_close_unfiltered_stream_frees_ram() {
     session.close_unfiltered_stream();
     assert!(session.unfiltered.cached_unfiltered.is_empty());
 }
+
+#[tokio::test]
+async fn test_switch_tab_preserves_picked_row_and_inspector() {
+    let mut app = create_test_app();
+    app.active_session_mut().view.search.query = "error".to_string();
+
+    let event_main = uwu_core_schema::LogEvent::new(
+        "2026-08-20T10:00:00Z",
+        uwu_core_schema::LogColor::Green,
+        "main log event",
+        std::collections::HashMap::new(),
+    )
+    .with_id(101);
+
+    let event_raw = uwu_core_schema::LogEvent::new(
+        "2026-08-20T10:00:05Z",
+        uwu_core_schema::LogColor::Red,
+        "raw log event",
+        std::collections::HashMap::new(),
+    )
+    .with_id(202);
+
+    // 1. Ở Main (Filtered), pick dòng event_main
+    app.dispatch_action(crate::actions::AppAction::SelectLog(Some(
+        event_main.clone(),
+    )));
+    assert_eq!(
+        app.active_session()
+            .inspector
+            .selected_log
+            .as_ref()
+            .map(|l| l.id),
+        Some(101)
+    );
+    assert_eq!(
+        app.active_session()
+            .viewport
+            .selected_log
+            .as_ref()
+            .map(|l| l.id),
+        Some(101)
+    );
+
+    // 2. Chuyển sang Raw (Unfiltered)
+    app.dispatch_action(crate::actions::AppAction::SwitchTab(ActiveTab::Unfiltered));
+    assert_eq!(app.active_session().active_tab, ActiveTab::Unfiltered);
+    // Tab Raw chưa pick dòng nào -> inspector chưa có dòng nào
+    assert!(app.active_session().inspector.selected_log.is_none());
+
+    // 3. Ở Raw, pick dòng event_raw
+    app.dispatch_action(crate::actions::AppAction::SelectLog(Some(
+        event_raw.clone(),
+    )));
+    assert_eq!(
+        app.active_session()
+            .inspector
+            .selected_log
+            .as_ref()
+            .map(|l| l.id),
+        Some(202)
+    );
+    assert_eq!(
+        app.active_session()
+            .unfiltered
+            .selected_log
+            .as_ref()
+            .map(|l| l.id),
+        Some(202)
+    );
+
+    // 4. Chuyển ngược về Main (Filtered)
+    app.dispatch_action(crate::actions::AppAction::SwitchTab(ActiveTab::Filtered));
+    assert_eq!(app.active_session().active_tab, ActiveTab::Filtered);
+    // Inspector tự động khôi phục đúng dòng đang pick của tab Main (event_main)!
+    assert_eq!(
+        app.active_session()
+            .inspector
+            .selected_log
+            .as_ref()
+            .map(|l| l.id),
+        Some(101)
+    );
+
+    // 5. Chuyển lại sang Raw (Unfiltered)
+    app.dispatch_action(crate::actions::AppAction::SwitchTab(ActiveTab::Unfiltered));
+    assert_eq!(app.active_session().active_tab, ActiveTab::Unfiltered);
+    // Inspector tự động khôi phục đúng dòng đang pick của tab Raw (event_raw)!
+    assert_eq!(
+        app.active_session()
+            .inspector
+            .selected_log
+            .as_ref()
+            .map(|l| l.id),
+        Some(202)
+    );
+}

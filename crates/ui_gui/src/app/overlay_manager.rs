@@ -134,7 +134,7 @@ impl OverlayManager {
             active_session.close_unfiltered_stream();
             true
         } else if active_session.view.inspector.selected_log.is_some() {
-            active_session.view.inspector.selected_log = None;
+            active_session.set_selected_log(None);
             true
         } else {
             false

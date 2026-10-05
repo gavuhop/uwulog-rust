@@ -12,6 +12,7 @@ pub struct PauseSnapshot {
 /// Trạng thái hiển thị luồng log, bộ đệm cuộn và latch auto-scroll
 pub struct ViewportState {
     pub cached_logs: Vec<LogEvent>,
+    pub selected_log: Option<LogEvent>,
     pub total_matched: usize,
     pub is_auto_scroll: bool,
     pub request_scroll_to_bottom: bool,
@@ -37,6 +38,7 @@ impl ViewportState {
     pub fn new() -> Self {
         Self {
             cached_logs: Vec::new(),
+            selected_log: None,
             total_matched: 0,
             is_auto_scroll: true,
             request_scroll_to_bottom: false,

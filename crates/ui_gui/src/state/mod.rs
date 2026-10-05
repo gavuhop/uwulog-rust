@@ -43,10 +43,12 @@ impl GuiViewState {
     /// Reset bộ đệm hiển thị khi khởi động lại nguồn log
     pub fn reset_stream_data(&mut self) {
         self.viewport.cached_logs.clear();
+        self.viewport.selected_log = None;
         self.viewport.total_matched = 0;
         self.viewport.last_processed_count = 0;
         self.inspector.selected_log = None;
         self.unfiltered.cached_unfiltered.clear();
+        self.unfiltered.selected_log = None;
         self.search.autocomplete.is_open = false;
         self.search.autocomplete.suggestions.clear();
     }

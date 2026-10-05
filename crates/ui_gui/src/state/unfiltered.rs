@@ -14,6 +14,7 @@ pub struct UnfilteredViewState {
     pub is_open: bool,
     pub target_id: Option<u64>,
     pub cached_unfiltered: Vec<LogEvent>,
+    pub selected_log: Option<LogEvent>,
     pub target_index: Option<usize>,
     pub request_scroll_to_target: bool,
     pub is_live: bool,

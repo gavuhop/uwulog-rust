@@ -221,12 +221,12 @@ pub fn render_log_table(
 
                     if let Some(event) = maybe_event {
                         let is_target = target_id.is_some_and(|id| id == event.id);
-                        let is_selected = is_target
-                            || session
-                                .inspector
-                                .selected_log
-                                .as_ref()
-                                .is_some_and(|s| s.id == event.id);
+                        let tab_selected = match tab {
+                            ActiveTab::Filtered => session.viewport.selected_log.as_ref(),
+                            ActiveTab::Unfiltered => session.unfiltered.selected_log.as_ref(),
+                        };
+                        let is_selected =
+                            is_target || tab_selected.is_some_and(|s| s.id == event.id);
 
                         let is_highlighted = session.is_row_highlighted(&event.id);
                         let row_color = theme::log_color_to_egui(event.color);
