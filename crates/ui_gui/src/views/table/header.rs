@@ -180,7 +180,7 @@ fn render_header_cell(
     crate::components::ui::IconName::GripVertical.paint(ui.painter(), grip_rect, grip_color);
 
     // 4. Vẽ tên nhãn cột
-    let font_id = FontId::monospace(11.0);
+    let font_id = FontId::monospace(crate::theme::TABLE_FONT_SIZE);
     let text_color = if is_drop_target {
         theme.text.primary
     } else {
@@ -282,7 +282,7 @@ pub fn render_drag_ghost(
         Pos2::new(ghost_rect.min.x + 16.0, ghost_rect.center().y),
         egui::Align2::LEFT_CENTER,
         dragged_name.to_uppercase(),
-        FontId::monospace(11.0),
+        FontId::monospace(crate::theme::TABLE_FONT_SIZE),
         theme.text.primary,
     );
 }

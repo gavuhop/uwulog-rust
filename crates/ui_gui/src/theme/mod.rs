@@ -223,16 +223,16 @@ mod tests {
                 let text_styles = &ui.style().text_styles;
                 assert_eq!(
                     text_styles.get(&egui::TextStyle::Monospace).unwrap().size,
-                    12.0
+                    13.0
                 );
-                assert_eq!(text_styles.get(&egui::TextStyle::Body).unwrap().size, 12.0);
+                assert_eq!(text_styles.get(&egui::TextStyle::Body).unwrap().size, 13.0);
                 assert_eq!(
                     text_styles.get(&egui::TextStyle::Heading).unwrap().size,
-                    15.0
+                    16.0
                 );
                 assert_eq!(
                     text_styles.get(&egui::TextStyle::Button).unwrap().size,
-                    12.0
+                    13.0
                 );
                 assert_eq!(text_styles.get(&egui::TextStyle::Small).unwrap().size, 11.0);
             });

@@ -18,7 +18,7 @@ pub fn render_text_box(
         let mut job = theme::create_highlighted_layout_job(
             text,
             text_color,
-            egui::FontId::monospace(12.0),
+            egui::FontId::monospace(theme::TABLE_FONT_SIZE),
             highlighted_terms_ref,
         );
         job.wrap.max_width = wrap_width;
@@ -27,7 +27,7 @@ pub fn render_text_box(
 
     let edit = egui::TextEdit::multiline(&mut val)
         .id(box_id)
-        .font(egui::FontId::monospace(12.0))
+        .font(egui::FontId::monospace(theme::TABLE_FONT_SIZE))
         .text_color(text_color)
         .frame(egui::Frame::NONE)
         .desired_width(f32::INFINITY)

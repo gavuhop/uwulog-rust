@@ -2,9 +2,15 @@ use eframe::egui::{self, FontData, FontDefinitions, FontFamily, FontId, TextStyl
 use std::sync::Arc;
 
 pub const FONT_SEGOE_ICONS: &str = "segoe_icons";
+pub const TABLE_FONT_SIZE: f32 = 13.0;
 
 /// Cấu hình typography và nạp font Monospace sắc nét trên Windows và Linux
 pub fn setup_fonts(ctx: &egui::Context) {
+    // 1. Kích hoạt Pixel Snapping: làm tròn toạ độ text vào đúng lưới pixel vật lý, chống mờ do nội suy float
+    ctx.tessellation_options_mut(|options| {
+        options.round_text_to_pixels = true;
+    });
+
     let mut fonts = FontDefinitions::default();
 
     #[cfg(target_os = "windows")]
@@ -128,16 +134,16 @@ pub fn setup_fonts(ctx: &egui::Context) {
 
     ctx.set_fonts(fonts);
 
-    // Typography & Text Styles (Chuẩn hóa font size số nguyên: 12.0, 15.0, 11.0)
+    // Typography & Text Styles (Chuẩn hóa font size số nguyên: 13.0, 16.0, 11.0)
     ctx.all_styles_mut(|style| {
         style.text_styles = [
-            (TextStyle::Heading, FontId::new(15.0, FontFamily::Monospace)),
-            (TextStyle::Body, FontId::new(12.0, FontFamily::Monospace)),
+            (TextStyle::Heading, FontId::new(16.0, FontFamily::Monospace)),
+            (TextStyle::Body, FontId::new(13.0, FontFamily::Monospace)),
             (
                 TextStyle::Monospace,
-                FontId::new(12.0, FontFamily::Monospace),
+                FontId::new(13.0, FontFamily::Monospace),
             ),
-            (TextStyle::Button, FontId::new(12.0, FontFamily::Monospace)),
+            (TextStyle::Button, FontId::new(13.0, FontFamily::Monospace)),
             (TextStyle::Small, FontId::new(11.0, FontFamily::Monospace)),
         ]
         .into();

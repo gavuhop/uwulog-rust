@@ -88,13 +88,13 @@ pub fn render_log_table(
     let ts_text_width = ui.fonts_mut(|f| {
         let job = egui::text::LayoutJob::simple_singleline(
             sample_ts.to_owned(),
-            egui::FontId::monospace(12.0),
+            egui::FontId::monospace(crate::theme::TABLE_FONT_SIZE),
             egui::Color32::WHITE,
         );
         f.layout_job(job).size().x
     });
     let ts_needed_width = (ts_text_width + 8.0).max(80.0);
-    let level_needed_width = 56.0;
+    let level_needed_width = 60.0;
 
     let hscroll_id = match tab {
         ActiveTab::Filtered => "main_table_hscroll",
