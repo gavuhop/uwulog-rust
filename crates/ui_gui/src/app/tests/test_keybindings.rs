@@ -1638,6 +1638,114 @@ fn test_excel_like_navigation_and_copy_shortcuts() {
         Some(-120.0),
         "ArrowLeft phải yêu cầu cuộn ngang sang trái -120.0 px"
     );
+
+    // --- Kiểm tra 6: Ctrl + ArrowLeft nhảy về cột đầu tiên (mép trái) ---
+    let mut input_ctrl_arrow_left = RawInput::default();
+    input_ctrl_arrow_left.events.push(eframe::egui::Event::Key {
+        key: Key::ArrowLeft,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::CTRL,
+    });
+    let mut out = ctx.run_ui(input_ctrl_arrow_left, |ui| {
+        ui.ctx().input_mut(|i| i.modifiers = Modifiers::CTRL);
+        let mut dispatched = Vec::new();
+        app.handle_keybindings(ui.ctx(), &mut |act| dispatched.push(act));
+        for a in dispatched {
+            app.dispatch_action(a);
+        }
+    });
+    out.textures_delta.clear();
+    assert_eq!(
+        app.active_session_mut()
+            .consume_horizontal_scroll(crate::state::ActiveTab::Filtered),
+        Some(-999_999.0),
+        "Ctrl+ArrowLeft phải yêu cầu cuộn hết sang mép trái"
+    );
+}
+
+#[test]
+fn test_scroll_id_match() {
+    let ctx = eframe::egui::Context::default();
+    let raw_input = eframe::egui::RawInput {
+        screen_rect: Some(eframe::egui::Rect::from_min_size(
+            eframe::egui::Pos2::ZERO,
+            eframe::egui::vec2(200.0, 200.0),
+        )),
+        ..Default::default()
+    };
+    let hscroll_id = "main_table_hscroll";
+
+    // Frame 1: Scroll to 120.0
+    let mut out1 = ctx.run_ui(raw_input.clone(), |ui| {
+        let scroll_id = ui.id().with(eframe::egui::IdSalt::new(hscroll_id));
+        let mut hstate =
+            eframe::egui::scroll_area::State::load(ui.ctx(), scroll_id).unwrap_or_default();
+        hstate.offset.x = 120.0;
+        hstate.store(ui.ctx(), scroll_id);
+
+        let out = eframe::egui::ScrollArea::horizontal()
+            .id_salt(hscroll_id)
+            .horizontal_scroll_offset(hstate.offset.x)
+            .show(ui, |ui| {
+                ui.add_sized([1000.0, 100.0], eframe::egui::Label::new("wide"));
+            });
+        assert_eq!(out.state.offset.x, 120.0);
+    });
+    out1.textures_delta.clear();
+
+    // Frame 2: No scroll requested (hstate_changed = false), verify offset persists at 120.0
+    let mut out2 = ctx.run_ui(raw_input.clone(), |ui| {
+        let scroll_id = ui.id().with(eframe::egui::IdSalt::new(hscroll_id));
+        let hstate =
+            eframe::egui::scroll_area::State::load(ui.ctx(), scroll_id).unwrap_or_default();
+        assert_eq!(hstate.offset.x, 120.0, "State must persist across frames");
+
+        let out = eframe::egui::ScrollArea::horizontal()
+            .id_salt(hscroll_id)
+            .show(ui, |ui| {
+                ui.add_sized([1000.0, 100.0], eframe::egui::Label::new("wide"));
+            });
+        assert_eq!(out.state.offset.x, 120.0);
+    });
+    out2.textures_delta.clear();
+
+    // Frame 3: Scroll by +120.0 more -> 240.0
+    let mut out3 = ctx.run_ui(raw_input.clone(), |ui| {
+        let scroll_id = ui.id().with(eframe::egui::IdSalt::new(hscroll_id));
+        let mut hstate =
+            eframe::egui::scroll_area::State::load(ui.ctx(), scroll_id).unwrap_or_default();
+        hstate.offset.x += 120.0;
+        hstate.store(ui.ctx(), scroll_id);
+
+        let out = eframe::egui::ScrollArea::horizontal()
+            .id_salt(hscroll_id)
+            .horizontal_scroll_offset(hstate.offset.x)
+            .show(ui, |ui| {
+                ui.add_sized([1000.0, 100.0], eframe::egui::Label::new("wide"));
+            });
+        assert_eq!(out.state.offset.x, 240.0);
+    });
+    out3.textures_delta.clear();
+
+    // Frame 4: Scroll by -120.0 (ArrowLeft) -> 120.0
+    let mut out4 = ctx.run_ui(raw_input, |ui| {
+        let scroll_id = ui.id().with(eframe::egui::IdSalt::new(hscroll_id));
+        let mut hstate =
+            eframe::egui::scroll_area::State::load(ui.ctx(), scroll_id).unwrap_or_default();
+        hstate.offset.x = (hstate.offset.x - 120.0).max(0.0);
+        hstate.store(ui.ctx(), scroll_id);
+
+        let out = eframe::egui::ScrollArea::horizontal()
+            .id_salt(hscroll_id)
+            .horizontal_scroll_offset(hstate.offset.x)
+            .show(ui, |ui| {
+                ui.add_sized([1000.0, 100.0], eframe::egui::Label::new("wide"));
+            });
+        assert_eq!(out.state.offset.x, 120.0);
+    });
+    out4.textures_delta.clear();
 }
 
 #[tokio::test]

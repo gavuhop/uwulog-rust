@@ -99,7 +99,7 @@ pub fn render_log_table(
         ActiveTab::Filtered => "main_table_hscroll",
         ActiveTab::Unfiltered => "unfiltered_table_hscroll",
     };
-    let scroll_id = ui.make_persistent_id(hscroll_id);
+    let scroll_id = ui.id().with(egui::IdSalt::new(hscroll_id));
     let mut hstate = egui::scroll_area::State::load(ui.ctx(), scroll_id).unwrap_or_default();
     let mut hstate_changed = false;
 
@@ -109,20 +109,10 @@ pub fn render_log_table(
         hstate_changed = true;
     }
 
-    // 2. Lăn chuột ngang: Shift + Con lăn chuột hoặc Chuột có bánh lăn ngang (Tilt Wheel)
-    let smooth_x = ui.input(|i| i.smooth_scroll_delta.x);
+    // 2. Lăn chuột ngang: Shift + Con lăn chuột (cuộn dọc smooth_y khi giữ Shift)
     let smooth_y = ui.input(|i| i.smooth_scroll_delta.y);
-    let h_wheel = if is_shift_down {
-        if smooth_x != 0.0 {
-            smooth_x
-        } else {
-            smooth_y
-        }
-    } else {
-        smooth_x
-    };
-    if h_wheel != 0.0 {
-        hstate.offset.x = (hstate.offset.x - h_wheel).max(0.0);
+    if is_shift_down && smooth_y != 0.0 {
+        hstate.offset.x = (hstate.offset.x - smooth_y).max(0.0);
         hstate_changed = true;
     }
 
@@ -157,112 +147,112 @@ pub fn render_log_table(
         hstate.store(ui.ctx(), scroll_id);
     }
 
-    egui::ScrollArea::horizontal()
+    let mut scroll_area = egui::ScrollArea::horizontal()
         .id_salt(hscroll_id)
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            let ctx = ui.ctx().clone();
-            let mut builder = TableBuilder::new(ui)
-                .id_salt(table_salt)
-                .striped(false)
-                .resizable(true)
-                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                .auto_shrink([false, false]);
+        .auto_shrink([false, false]);
 
-            for col in &visible_cols {
-                let std_field = uwu_core_schema::StandardField::from_alias(&col.name);
-                let (initial_w, min_w) = match std_field {
-                    Some(uwu_core_schema::StandardField::Timestamp) => {
-                        (ts_needed_width, ts_needed_width)
-                    }
-                    Some(uwu_core_schema::StandardField::Level) => {
-                        (level_needed_width, level_needed_width)
-                    }
-                    Some(uwu_core_schema::StandardField::Message) => (col.width.max(350.0), 100.0),
-                    _ if col.width >= 40.0 => (col.width, 40.0),
-                    _ => (120.0, 40.0),
+    if hstate_changed {
+        scroll_area = scroll_area.horizontal_scroll_offset(hstate.offset.x);
+    }
+
+    scroll_area.show(ui, |ui| {
+        let ctx = ui.ctx().clone();
+        let mut builder = TableBuilder::new(ui)
+            .id_salt(table_salt)
+            .striped(false)
+            .resizable(true)
+            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+            .auto_shrink([false, false]);
+
+        for col in &visible_cols {
+            let std_field = uwu_core_schema::StandardField::from_alias(&col.name);
+            let (initial_w, min_w) = match std_field {
+                Some(uwu_core_schema::StandardField::Timestamp) => {
+                    (ts_needed_width, ts_needed_width)
+                }
+                Some(uwu_core_schema::StandardField::Level) => {
+                    (level_needed_width, level_needed_width)
+                }
+                Some(uwu_core_schema::StandardField::Message) => (col.width.max(350.0), 100.0),
+                _ if col.width >= 40.0 => (col.width, 40.0),
+                _ => (120.0, 40.0),
+            };
+
+            builder = builder.column(Column::initial(initial_w).at_least(min_w).clip(true));
+        }
+
+        if let Some((target_row, align)) = scroll_target {
+            builder = builder.scroll_to_row(target_row, align);
+        }
+
+        builder
+            .header(26.0, |mut tbl_header| {
+                render_table_headers(&mut tbl_header, &ctx, &visible_cols, &mut session.columns);
+            })
+            .body(|body| {
+                let mut render_ctx = ActionContext {
+                    highlighted_terms: &session.inspector.highlighted_terms,
+                    has_any_highlights,
+                    is_filtering: !session.view.search.query.trim().is_empty(),
+                    is_unfiltered_tab: tab == ActiveTab::Unfiltered,
+                    action: &mut action_to_dispatch,
                 };
 
-                builder = builder.column(Column::initial(initial_w).at_least(min_w).clip(true));
-            }
+                let target_id = if tab == ActiveTab::Unfiltered {
+                    session.unfiltered.target_id
+                } else {
+                    None
+                };
 
-            if let Some((target_row, align)) = scroll_target {
-                builder = builder.scroll_to_row(target_row, align);
-            }
+                body.rows(text_height + 8.0, row_count, |mut row| {
+                    let row_index = row.index();
 
-            builder
-                .header(26.0, |mut tbl_header| {
-                    render_table_headers(
-                        &mut tbl_header,
-                        &ctx,
-                        &visible_cols,
-                        &mut session.columns,
-                    );
-                })
-                .body(|body| {
-                    let mut render_ctx = ActionContext {
-                        highlighted_terms: &session.inspector.highlighted_terms,
-                        has_any_highlights,
-                        is_filtering: !session.view.search.query.trim().is_empty(),
-                        is_unfiltered_tab: tab == ActiveTab::Unfiltered,
-                        action: &mut action_to_dispatch,
+                    if min_visible_row.is_none() {
+                        min_visible_row = Some(row_index);
+                    }
+                    if row_count > 0 && row_index == row_count - 1 {
+                        last_row_visible = true;
+                    }
+
+                    let maybe_event = match tab {
+                        ActiveTab::Filtered => session.viewport.cached_logs.get(row_index),
+                        ActiveTab::Unfiltered => {
+                            session.unfiltered.cached_unfiltered.get(row_index)
+                        }
                     };
 
-                    let target_id = if tab == ActiveTab::Unfiltered {
-                        session.unfiltered.target_id
-                    } else {
-                        None
-                    };
+                    if let Some(event) = maybe_event {
+                        let is_target = target_id.is_some_and(|id| id == event.id);
+                        let is_selected = is_target
+                            || session
+                                .inspector
+                                .selected_log
+                                .as_ref()
+                                .is_some_and(|s| s.id == event.id);
 
-                    body.rows(text_height + 8.0, row_count, |mut row| {
-                        let row_index = row.index();
+                        let is_highlighted = session.is_row_highlighted(&event.id);
+                        let row_color = theme::log_color_to_egui(event.color);
 
-                        if min_visible_row.is_none() {
-                            min_visible_row = Some(row_index);
+                        for col in &visible_cols {
+                            row.col(|ui| {
+                                let cell_clicked = render_cell(
+                                    ui,
+                                    event,
+                                    &col.name,
+                                    row_color,
+                                    is_selected,
+                                    is_highlighted,
+                                    &mut render_ctx,
+                                );
+                                if cell_clicked {
+                                    newly_selected_event = Some(event.clone());
+                                }
+                            });
                         }
-                        if row_count > 0 && row_index == row_count - 1 {
-                            last_row_visible = true;
-                        }
-
-                        let maybe_event = match tab {
-                            ActiveTab::Filtered => session.viewport.cached_logs.get(row_index),
-                            ActiveTab::Unfiltered => {
-                                session.unfiltered.cached_unfiltered.get(row_index)
-                            }
-                        };
-
-                        if let Some(event) = maybe_event {
-                            let is_target = target_id.is_some_and(|id| id == event.id);
-                            let is_selected = is_target
-                                || session
-                                    .inspector
-                                    .selected_log
-                                    .as_ref()
-                                    .is_some_and(|s| s.id == event.id);
-
-                            let is_highlighted = session.is_row_highlighted(&event.id);
-                            let row_color = theme::log_color_to_egui(event.color);
-
-                            for col in &visible_cols {
-                                row.col(|ui| {
-                                    let cell_clicked = render_cell(
-                                        ui,
-                                        event,
-                                        &col.name,
-                                        row_color,
-                                        is_selected,
-                                        is_highlighted,
-                                        &mut render_ctx,
-                                    );
-                                    if cell_clicked {
-                                        newly_selected_event = Some(event.clone());
-                                    }
-                                });
-                            }
-                        }
-                    });
+                    }
                 });
-        });
+            });
+    });
 
     match tab {
         ActiveTab::Filtered => {

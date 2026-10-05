@@ -39,6 +39,7 @@ impl KeyActionExt for KeyAction {
             Self::ConfirmSelection => Some(AppAction::AutocompleteConfirm),
             Self::ScrollLeft => Some(AppAction::ScrollTableLeft),
             Self::ScrollRight => Some(AppAction::ScrollTableRight),
+            Self::ScrollToLeft => Some(AppAction::ScrollTableLeftMost),
             Self::PageUp => Some(AppAction::PageUp),
             Self::PageDown => Some(AppAction::PageDown),
             Self::ScrollToTop => Some(AppAction::ScrollToTop),

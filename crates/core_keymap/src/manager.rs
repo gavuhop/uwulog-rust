@@ -240,6 +240,11 @@ impl KeymapManager {
             KeyContext::Table,
         );
         self.bind_keystroke_internal(
+            Keystroke::ctrl(Key::ArrowLeft),
+            KeyAction::ScrollToLeft,
+            KeyContext::Table,
+        );
+        self.bind_keystroke_internal(
             Keystroke::new(Key::PageUp),
             KeyAction::PageUp,
             KeyContext::Table,

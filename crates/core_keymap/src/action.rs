@@ -84,6 +84,7 @@ define_actions! {
     // Table Navigation & Excel Controls
     ScrollLeft => ("table::ScrollLeft", ["ScrollLeft", "table::Left"]),
     ScrollRight => ("table::ScrollRight", ["ScrollRight", "table::Right"]),
+    ScrollToLeft => ("table::ScrollToLeft", ["ScrollToLeft", "table::LeftEdge", "table::ScrollToStart"]),
     PageUp => ("table::PageUp", ["PageUp"]),
     PageDown => ("table::PageDown", ["PageDown"]),
     ScrollToTop => ("table::ScrollToTop", ["ScrollToTop", "table::Top"]),
@@ -127,6 +128,7 @@ impl KeyAction {
             Self::TabComplete,
             Self::ScrollLeft,
             Self::ScrollRight,
+            Self::ScrollToLeft,
             Self::PageUp,
             Self::PageDown,
             Self::ScrollToTop,
@@ -171,6 +173,7 @@ impl KeyAction {
             | Self::TabComplete
             | Self::ScrollLeft
             | Self::ScrollRight
+            | Self::ScrollToLeft
             | Self::PageUp
             | Self::PageDown
             | Self::ScrollToTop
@@ -215,6 +218,7 @@ impl KeyAction {
             Self::TabComplete => "Tab Autocomplete",
             Self::ScrollLeft => "Scroll Table Left",
             Self::ScrollRight => "Scroll Table Right",
+            Self::ScrollToLeft => "Scroll to Leftmost Column",
             Self::PageUp => "Page Up (Jump Screen Up)",
             Self::PageDown => "Page Down (Jump Screen Down)",
             Self::ScrollToTop => "Jump to First Log Row",
@@ -261,6 +265,7 @@ impl KeyAction {
             Self::TabComplete => "Accept suggested autocomplete text",
             Self::ScrollLeft => "Scroll the log table horizontally to the left",
             Self::ScrollRight => "Scroll the log table horizontally to the right",
+            Self::ScrollToLeft => "Scroll table horizontally all the way to the first column",
             Self::PageUp => "Jump up by one page of log entries",
             Self::PageDown => "Jump down by one page of log entries",
             Self::ScrollToTop => "Jump immediately to the first log row in the view",

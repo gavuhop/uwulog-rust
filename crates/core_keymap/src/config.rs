@@ -108,6 +108,7 @@ impl KeymapConfigFile {
         table_bindings.insert(Keystroke::new(Key::ArrowUp), KeyAction::SelectPrev);
         table_bindings.insert(Keystroke::new(Key::ArrowLeft), KeyAction::ScrollLeft);
         table_bindings.insert(Keystroke::new(Key::ArrowRight), KeyAction::ScrollRight);
+        table_bindings.insert(Keystroke::ctrl(Key::ArrowLeft), KeyAction::ScrollToLeft);
         table_bindings.insert(Keystroke::new(Key::PageUp), KeyAction::PageUp);
         table_bindings.insert(Keystroke::new(Key::PageDown), KeyAction::PageDown);
         table_bindings.insert(Keystroke::new(Key::Home), KeyAction::ScrollToTop);

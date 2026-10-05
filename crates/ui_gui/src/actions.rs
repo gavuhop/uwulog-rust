@@ -29,6 +29,7 @@ pub enum AppAction {
     NavigateDown,
     ScrollTableLeft,
     ScrollTableRight,
+    ScrollTableLeftMost,
     PageUp,
     PageDown,
     ScrollToTop,

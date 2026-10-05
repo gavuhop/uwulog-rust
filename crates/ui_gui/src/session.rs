@@ -639,6 +639,10 @@ impl GuiSession {
                 self.scroll_horizontal(120.0);
                 true
             }
+            AppAction::ScrollTableLeftMost => {
+                self.scroll_horizontal(-999_999.0);
+                true
+            }
             AppAction::PageUp => {
                 self.navigate_page(true);
                 true
