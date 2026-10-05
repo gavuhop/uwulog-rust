@@ -691,13 +691,14 @@ impl KeymapManager {
         input: &egui::InputState,
         active_context: impl std::borrow::Borrow<KeyContext>,
     ) -> Option<(&'a KeyAction, &'a Keystroke)> {
-        // Fast-path: Nếu frame hiện tại không có bất kỳ phím nào được nhấn, thoát ngay lập tức!
+        // Fast-path: Nếu frame hiện tại không có bất kỳ phím hoặc sự kiện copy nào, thoát ngay lập tức!
         // Giúp loại bỏ 99.9% chi phí CPU khi ứng dụng ở trạng thái idle/chỉ di chuột.
-        if !input
-            .events
-            .iter()
-            .any(|e| matches!(e, egui::Event::Key { pressed: true, .. }))
-        {
+        if !input.events.iter().any(|e| {
+            matches!(
+                e,
+                egui::Event::Key { pressed: true, .. } | egui::Event::Copy
+            )
+        }) {
             return None;
         }
 
@@ -739,6 +740,9 @@ impl KeymapManager {
         if let Some((action, keystroke)) = matched {
             if let Some(egui_key) = keystroke.key.to_egui() {
                 ctx.input_mut(|i| i.consume_key(keystroke.to_egui_modifiers(), egui_key));
+            }
+            if keystroke.key == Key::C && (keystroke.ctrl || keystroke.mac_cmd) {
+                ctx.input_mut(|i| i.events.retain(|e| !matches!(e, egui::Event::Copy)));
             }
             Some(action)
         } else {

@@ -461,6 +461,10 @@ impl GuiSession {
             } else {
                 (curr + step).min(row_count - 1)
             };
+            let logs = self.active_logs();
+            if step == 1 && next < logs.len() {
+                self.view.inspector.selected_log = Some(logs[next].clone());
+            }
             self.scroll_to_row(next, Some(egui::Align::Min));
             if !is_up && next >= row_count - 1 {
                 self.latch_active();

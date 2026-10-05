@@ -1334,6 +1334,60 @@ fn test_excel_like_navigation_and_copy_shortcuts() {
         "Beauty copy phải là chuỗi JSON có thụt dòng đẹp"
     );
 
+    // 1.3 Kiểm tra Ctrl+C sao chép chính xác dòng đang pick (kể cả qua egui-winit Event::Copy)
+    app.active_session_mut().view.inspector.selected_log = Some(events[3].clone());
+    let mut input_event_copy = RawInput::default();
+    input_event_copy.events.push(eframe::egui::Event::Copy);
+    let mut out = ctx.run_ui(input_event_copy, |ui| {
+        app.egui_ctx = Some(ui.ctx().clone());
+        let mut dispatched = Vec::new();
+        app.handle_keybindings(ui.ctx(), &mut |act| dispatched.push(act));
+        for a in dispatched {
+            app.dispatch_action(a);
+        }
+    });
+    out.textures_delta.clear();
+    assert!(
+        out.platform_output.commands.iter().any(|c| matches!(c, eframe::egui::OutputCommand::CopyText(t) if t == &events[3].beauty_display().into_owned())),
+        "Ctrl+C qua Event::Copy phải sao chép toàn bộ dòng log đang pick"
+    );
+
+    // 1.4 Khi có text đang bôi đen: Ctrl+C ưu tiên sao chép đúng đoạn bôi đen đó
+    let dummy_id = eframe::egui::Id::new("test_cell");
+    let mut state = eframe::egui::text_edit::TextEditState::default();
+    state
+        .cursor
+        .set_char_range(Some(eframe::egui::text::CCursorRange::two(
+            eframe::egui::text::CCursor::new(2),
+            eframe::egui::text::CCursor::new(7),
+        )));
+    state.store(&ctx, dummy_id);
+    ctx.memory_mut(|m| m.request_focus(dummy_id));
+    ctx.data_mut(|d| d.insert_temp(dummy_id, "admin".to_string()));
+
+    let mut input_sel_copy = RawInput::default();
+    input_sel_copy.events.push(eframe::egui::Event::Copy);
+    let mut out = ctx.run_ui(input_sel_copy, |ui| {
+        app.egui_ctx = Some(ui.ctx().clone());
+        let mut dispatched = Vec::new();
+        app.handle_keybindings(ui.ctx(), &mut |act| dispatched.push(act));
+        for a in dispatched {
+            app.dispatch_action(a);
+        }
+    });
+    out.textures_delta.clear();
+    assert!(
+        out.platform_output
+            .commands
+            .iter()
+            .any(|c| matches!(c, eframe::egui::OutputCommand::CopyText(t) if t == "admin")),
+        "Khi có text bôi đen, Ctrl+C phải ưu tiên sao chép đúng đoạn chữ bôi đen"
+    );
+
+    // Dọn dẹp focus sau test
+    ctx.memory_mut(|m| m.surrender_focus(dummy_id));
+    ctx.data_mut(|d| d.remove_temp::<String>(dummy_id));
+
     // --- Kiểm tra 2: PageUp / PageDown nhảy 20 dòng nhưng vẫn GIỮ NGUYÊN dòng đang chọn ---
     app.active_session_mut().view.inspector.selected_log = Some(events[5].clone()); // Dòng 5
     app.active_session_mut().view.viewport.first_visible_row = Some(5);

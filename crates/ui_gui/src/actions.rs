@@ -180,6 +180,59 @@ pub fn extract_selected_text(
     selected_text
 }
 
+/// Trả về chuỗi văn bản đang được người dùng bôi đen (active text selection) nếu có.
+pub fn active_text_selection(ctx: &eframe::egui::Context) -> Option<String> {
+    let focused_id = ctx.memory(|m| m.focused())?;
+    let state = eframe::egui::text_edit::TextEditState::load(ctx, focused_id)?;
+    let range = state.cursor.char_range()?;
+    let [min_c, max_c] = range.sorted_cursors();
+    if min_c.index.0 < max_c.index.0 {
+        ctx.data(|d| d.get_temp::<String>(focused_id))
+    } else {
+        None
+    }
+}
+
+/// Ghi chuỗi văn bản vào clipboard hệ thống (hỗ trợ cả egui context, native Wayland wl-copy và X11)
+pub fn copy_to_clipboard(ctx: &eframe::egui::Context, text: &str) {
+    ctx.copy_text(text.to_string());
+
+    #[cfg(target_os = "linux")]
+    {
+        let text_owned = text.to_string();
+        std::thread::spawn(move || {
+            if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+                if let Ok(mut child) = std::process::Command::new("wl-copy")
+                    .stdin(std::process::Stdio::piped())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+                {
+                    if let Some(mut stdin) = child.stdin.take() {
+                        use std::io::Write;
+                        let _ = stdin.write_all(text_owned.as_bytes());
+                    }
+                    let _ = child.wait();
+                }
+            } else if std::env::var_os("DISPLAY").is_some() {
+                if let Ok(mut child) = std::process::Command::new("xclip")
+                    .args(["-selection", "clipboard"])
+                    .stdin(std::process::Stdio::piped())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+                {
+                    if let Some(mut stdin) = child.stdin.take() {
+                        use std::io::Write;
+                        let _ = stdin.write_all(text_owned.as_bytes());
+                    }
+                    let _ = child.wait();
+                }
+            }
+        });
+    }
+}
+
 /// Renders standard context menu buttons: Filter, Exclude, and Toggle Keyword Highlight.
 pub fn render_filter_actions_menu(
     ui: &mut eframe::egui::Ui,

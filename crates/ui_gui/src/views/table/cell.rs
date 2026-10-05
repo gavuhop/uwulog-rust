@@ -66,7 +66,10 @@ pub fn render_cell(
 
     let resp = ui.add(edit);
     let is_secondary_down = ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary));
-    let clicked = resp.clicked() && !is_secondary_down;
+    let is_primary_clicked = ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary));
+    let pointer_pos = ui.input(|i| i.pointer.interact_pos().or_else(|| i.pointer.latest_pos()));
+    let pointer_in_cell = resp.hovered() || pointer_pos.is_some_and(|pos| cell_rect.contains(pos));
+    let clicked = (resp.clicked() || (is_primary_clicked && pointer_in_cell)) && !is_secondary_down;
 
     let selected_text =
         crate::actions::extract_selected_text(ui.ctx(), cell_id, &cell_text, clicked);

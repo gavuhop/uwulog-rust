@@ -251,6 +251,16 @@ impl Keystroke {
     // -----------------------------------------------------------------------
     #[cfg(feature = "egui")]
     pub fn matches(&self, input: &egui::InputState) -> bool {
+        // egui-winit phát sinh Event::Copy thay vì Event::Key khi bấm Ctrl+C / Cmd+C
+        if self.key == Key::C
+            && (self.ctrl || self.mac_cmd)
+            && !self.alt
+            && !self.shift
+            && input.events.iter().any(|e| matches!(e, egui::Event::Copy))
+        {
+            return true;
+        }
+
         if let Some(egui_key) = self.key.to_egui() {
             if !input.key_pressed(egui_key) {
                 return false;

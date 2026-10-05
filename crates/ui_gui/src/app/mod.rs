@@ -696,19 +696,40 @@ impl UwuGuiApp {
                 }
             }
             AppAction::CopySelectedLog => {
-                if let Some(text) = self
-                    .active_session()
-                    .view
-                    .inspector
-                    .formatted_payload_for_copy()
-                {
-                    if let Some(ctx) = &self.egui_ctx {
-                        let copy_id = egui::Id::new("copy_raw_flash");
-                        let now = ctx.input(|i| i.time);
-                        ctx.data_mut(|d| d.insert_temp(copy_id, now));
-                        ctx.copy_text(text);
-                        ctx.request_repaint();
-                    }
+                let Some(ctx) = self.egui_ctx.clone() else {
+                    return;
+                };
+
+                // 1. Ưu tiên cao nhất: nếu người dùng đang bôi đen text -> copy đoạn bôi đen
+                if let Some(selected_text) = crate::actions::active_text_selection(&ctx) {
+                    let copy_id = egui::Id::new("copy_raw_flash");
+                    let now = ctx.input(|i| i.time);
+                    ctx.data_mut(|d| d.insert_temp(copy_id, now));
+                    crate::actions::copy_to_clipboard(&ctx, &selected_text);
+                    ctx.request_repaint();
+                    return;
+                }
+
+                // 2. Không bôi đen: copy toàn bộ dòng log đang pick (hoặc dòng visible đầu tiên)
+                let session = self.active_session();
+                let picked_event = session.view.inspector.selected_log.as_ref().or_else(|| {
+                    let row_idx = session.first_visible_row();
+                    session.active_logs().get(row_idx)
+                });
+
+                if let Some(event) = picked_event {
+                    let text =
+                        if session.view.inspector.is_beauty_payload && !event.fields.is_empty() {
+                            event.beauty_display()
+                        } else {
+                            event.raw_display()
+                        };
+
+                    let copy_id = egui::Id::new("copy_raw_flash");
+                    let now = ctx.input(|i| i.time);
+                    ctx.data_mut(|d| d.insert_temp(copy_id, now));
+                    crate::actions::copy_to_clipboard(&ctx, &text);
+                    ctx.request_repaint();
                 }
             }
             _ => {}
