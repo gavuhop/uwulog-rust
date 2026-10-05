@@ -250,6 +250,11 @@ impl KeymapManager {
             KeyContext::Table,
         );
         self.bind_keystroke_internal(
+            Keystroke::new(Key::Home),
+            KeyAction::ScrollToTop,
+            KeyContext::Table,
+        );
+        self.bind_keystroke_internal(
             Keystroke::ctrl(Key::Home),
             KeyAction::ScrollToTop,
             KeyContext::Table,
@@ -257,6 +262,11 @@ impl KeymapManager {
         self.bind_keystroke_internal(
             Keystroke::ctrl(Key::ArrowUp),
             KeyAction::ScrollToTop,
+            KeyContext::Table,
+        );
+        self.bind_keystroke_internal(
+            Keystroke::new(Key::End),
+            KeyAction::ScrollToBottom,
             KeyContext::Table,
         );
         self.bind_keystroke_internal(

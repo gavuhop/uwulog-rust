@@ -1442,7 +1442,42 @@ fn test_excel_like_navigation_and_copy_shortcuts() {
         "Nhảy tới cuối bảng phải tự động bật follow mode (latch)"
     );
 
-    // --- Kiểm tra 4: Ctrl + ArrowUp / Ctrl + Home nhảy về đỉnh bảng ---
+    // Bấm phím End đứng một mình -> nhảy tới dòng cuối cùng và bật Latch
+    app.active_session_mut().view.inspector.selected_log = Some(events[20].clone());
+    app.active_session_mut().view.viewport.is_auto_scroll = false;
+    let mut input_end = RawInput::default();
+    input_end.events.push(eframe::egui::Event::Key {
+        key: Key::End,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    });
+    let mut out = ctx.run_ui(input_end, |ui| {
+        ui.ctx().input_mut(|i| i.modifiers = Modifiers::NONE);
+        let mut dispatched = Vec::new();
+        app.handle_keybindings(ui.ctx(), &mut |act| dispatched.push(act));
+        for a in dispatched {
+            app.dispatch_action(a);
+        }
+    });
+    out.textures_delta.clear();
+    assert_eq!(
+        app.active_session()
+            .view
+            .inspector
+            .selected_log
+            .as_ref()
+            .map(|e| e.id),
+        Some(249),
+        "Phím End phải nhảy tới dòng cuối cùng (dòng 49, id 249)"
+    );
+    assert!(
+        app.active_session().view.viewport.is_auto_scroll,
+        "Phím End phải tự động kích hoạt Latch (Auto-scroll)"
+    );
+
+    // --- Kiểm tra 4: Ctrl + ArrowUp / Ctrl + Home / Home nhảy về đỉnh bảng ---
     let mut input_ctrl_up = RawInput::default();
     input_ctrl_up.events.push(eframe::egui::Event::Key {
         key: Key::ArrowUp,
@@ -1469,6 +1504,36 @@ fn test_excel_like_navigation_and_copy_shortcuts() {
             .map(|e| e.id),
         Some(200),
         "Ctrl+ArrowUp phải nhảy về dòng đầu tiên (dòng 0, id 200)"
+    );
+
+    // Bấm phím Home đứng một mình -> nhảy về dòng đầu tiên
+    app.active_session_mut().view.inspector.selected_log = Some(events[20].clone());
+    let mut input_home = RawInput::default();
+    input_home.events.push(eframe::egui::Event::Key {
+        key: Key::Home,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    });
+    let mut out = ctx.run_ui(input_home, |ui| {
+        ui.ctx().input_mut(|i| i.modifiers = Modifiers::NONE);
+        let mut dispatched = Vec::new();
+        app.handle_keybindings(ui.ctx(), &mut |act| dispatched.push(act));
+        for a in dispatched {
+            app.dispatch_action(a);
+        }
+    });
+    out.textures_delta.clear();
+    assert_eq!(
+        app.active_session()
+            .view
+            .inspector
+            .selected_log
+            .as_ref()
+            .map(|e| e.id),
+        Some(200),
+        "Phím Home phải nhảy về dòng đầu tiên (dòng 0, id 200)"
     );
 
     // --- Kiểm tra 5: ArrowLeft / ArrowRight cuộn ngang bảng ---
