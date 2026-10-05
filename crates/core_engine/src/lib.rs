@@ -284,6 +284,10 @@ impl SystemEngine {
         self.storage.max_capacity()
     }
 
+    pub fn sealed_batches_count(&self) -> usize {
+        self.storage.sealed_batches_count()
+    }
+
     /// Trả về toàn bộ log chưa lọc trong RingBuffer (có giới hạn limit) và index của target_id nếu có.
     /// Nếu target_id được chỉ định, trả về cửa sổ ngữ cảnh đối xứng xung quanh target_id.
     pub fn get_unfiltered_events(
