@@ -21,252 +21,265 @@ pub fn render_detail(
     let theme = ui.app_theme();
     let mut action_to_dispatch: Option<AppAction> = None;
 
-    if let Some(event) = &session.inspector.selected_log {
-        let is_highlighted = session.is_row_highlighted(&event.id);
-        let event_id = event.id;
-        let is_filtering = !session.view.search.query.trim().is_empty()
-            && session.view.active_tab == ActiveTab::Filtered;
+    let Some(event) = session.inspector.selected_log.clone() else {
+        return;
+    };
+    let is_highlighted = session.is_row_highlighted(&event.id);
+    let event_id = event.id;
+    let is_query_active = !session.view.search.query.trim().is_empty();
+    let is_unfiltered_tab = session.view.active_tab == ActiveTab::Unfiltered;
+    let is_filtering = is_query_active && !is_unfiltered_tab;
 
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new("Log Inspector")
-                    .strong()
-                    .size(14.0)
-                    .color(theme.text.accent),
-            );
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new("Log Inspector")
+                .strong()
+                .size(14.0)
+                .color(theme.text.accent),
+        );
 
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                // 1. Close Inspector
-                let close_btn = AppButton::new()
-                    .label("Close")
-                    .tooltip("Close inspector (Esc)");
-                if close_btn.show(ui).clicked() {
-                    action_to_dispatch = Some(AppAction::SelectLog(None));
-                }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            // 1. Close Inspector
+            let close_btn = AppButton::new()
+                .label("Close")
+                .tooltip("Close inspector (Esc)");
+            if close_btn.show(ui).clicked() {
+                action_to_dispatch = Some(AppAction::SelectLog(None));
+            }
 
-                // 2. View Context in Unfiltered Stream (chỉ hiển thị khi đang có filter)
-                if is_filtering {
-                    ui.add_space(4.0);
+            // 2. View Context in Unfiltered Stream / Back to Main (Alt+V)
+            if is_query_active {
+                ui.add_space(4.0);
+                if is_unfiltered_tab {
+                    let back_btn = AppButton::new()
+                        .label("Back to main")
+                        .tooltip("Switch back to main filtered log view (Alt+V)");
+                    if back_btn.show(ui).clicked() {
+                        action_to_dispatch = Some(AppAction::ViewRawContext);
+                    }
+                } else {
                     let locate_btn = AppButton::new()
                         .label("View context")
                         .tooltip("View surrounding logs in full unfiltered stream (Alt+V)");
                     if locate_btn.show(ui).clicked() {
-                        action_to_dispatch = Some(AppAction::OpenUnfilteredStream(Some(event_id)));
+                        action_to_dispatch = Some(AppAction::ViewRawContext);
                     }
                 }
+            }
 
-                ui.add_space(4.0);
+            ui.add_space(4.0);
 
-                // 3. Highlight / Unhighlight row (nút chữ toggle, nền màu vàng giống highlight row)
-                let hl_text = if is_highlighted {
-                    "Unhighlight row"
-                } else {
-                    "Highlight row"
+            // 3. Highlight / Unhighlight row (nút chữ toggle, nền màu vàng giống highlight row)
+            let hl_text = if is_highlighted {
+                "Unhighlight row"
+            } else {
+                "Highlight row"
+            };
+
+            let mut hl_btn = AppButton::new().label(hl_text);
+            if is_highlighted {
+                hl_btn = hl_btn
+                    .fill(theme.log.row_highlight)
+                    .text_color(theme.status.warning);
+            } else {
+                hl_btn = hl_btn.variant(ButtonVariant::Default);
+            }
+            if hl_btn.show(ui).clicked() {
+                action_to_dispatch = Some(AppAction::ToggleRowHighlight(event_id));
+            }
+        });
+    });
+
+    ui.add_space(4.0);
+    ui.separator();
+    ui.add_space(6.0);
+
+    let log_color = theme::log_color_to_egui(event.color);
+
+    let has_any_highlights = session.has_any_highlights();
+
+    egui::ScrollArea::vertical()
+        .id_salt("detail_inspector_scroll_area")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            let ts_key = event.semantic_key(StandardField::Timestamp);
+            let lvl_key = event.semantic_key(StandardField::Level);
+
+            // Metadata Card
+            render_card(ui, "Metadata", |ui| {
+                let mut ctx = ActionContext {
+                    highlighted_terms: &session.inspector.highlighted_terms,
+                    has_any_highlights,
+                    is_filtering,
+                    is_unfiltered_tab,
+                    action: &mut action_to_dispatch,
                 };
 
-                let mut hl_btn = AppButton::new().label(hl_text);
-                if is_highlighted {
-                    hl_btn = hl_btn
-                        .fill(theme.log.row_highlight)
-                        .text_color(theme.status.warning);
-                } else {
-                    hl_btn = hl_btn.variant(ButtonVariant::Default);
-                }
-                if hl_btn.show(ui).clicked() {
-                    action_to_dispatch = Some(AppAction::ToggleRowHighlight(event_id));
+                render_meta_field(
+                    ui,
+                    ts_key,
+                    &event.timestamp,
+                    theme.text.primary,
+                    true,
+                    &mut ctx,
+                );
+                if let Some(lvl_val) = event.get_field_cow(lvl_key) {
+                    ui.add_space(5.0);
+                    render_meta_field(ui, lvl_key, &lvl_val, log_color, false, &mut ctx);
                 }
             });
-        });
 
-        ui.add_space(4.0);
-        ui.separator();
-        ui.add_space(6.0);
+            ui.add_space(8.0);
 
-        let log_color = theme::log_color_to_egui(event.color);
+            let msg_key = event.semantic_key(StandardField::Message);
 
-        let has_any_highlights = session.has_any_highlights();
+            // Message Card
+            render_card(ui, "Message", |ui| {
+                let msg_color = log_color;
 
-        egui::ScrollArea::vertical()
-            .id_salt("detail_inspector_scroll_area")
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                let ts_key = event.semantic_key(StandardField::Timestamp);
-                let lvl_key = event.semantic_key(StandardField::Level);
+                let mut ctx = ActionContext {
+                    highlighted_terms: &session.inspector.highlighted_terms,
+                    has_any_highlights,
+                    is_filtering,
+                    is_unfiltered_tab,
+                    action: &mut action_to_dispatch,
+                };
 
-                // Metadata Card
-                render_card(ui, "Metadata", |ui| {
+                render_text_box(
+                    ui,
+                    Id::new("detail_inspector_msg_box"),
+                    &event.message,
+                    msg_color,
+                    3,
+                    Some(msg_key),
+                    &mut ctx,
+                );
+            });
+
+            ui.add_space(8.0);
+
+            // Parsed JSON / K-V Fields Card (loại trừ các trường mặc định đã có card riêng)
+            let custom_fields: Vec<(&String, &serde_json::Value)> = event
+                .fields
+                .iter()
+                .filter(|(k, _)| {
+                    !matches!(k.as_str(), "timestamp" | "level" | "message" | "id")
+                        && uwu_core_schema::StandardField::from_alias(k).is_none()
+                })
+                .collect();
+
+            let custom_fields = cluster_log_fields(custom_fields);
+
+            if !custom_fields.is_empty() {
+                render_card(ui, "Parsed Fields", |ui| {
                     let mut ctx = ActionContext {
                         highlighted_terms: &session.inspector.highlighted_terms,
                         has_any_highlights,
+                        is_filtering,
+                        is_unfiltered_tab,
                         action: &mut action_to_dispatch,
                     };
 
-                    render_meta_field(
-                        ui,
-                        ts_key,
-                        &event.timestamp,
-                        theme.text.primary,
-                        true,
-                        &mut ctx,
-                    );
-                    if let Some(lvl_val) = event.get_field_cow(lvl_key) {
-                        ui.add_space(5.0);
-                        render_meta_field(ui, lvl_key, &lvl_val, log_color, false, &mut ctx);
+                    for (i, (key, val)) in custom_fields.iter().enumerate() {
+                        if i > 0 {
+                            ui.add_space(6.0);
+                        }
+                        let val_str = match val {
+                            serde_json::Value::String(s) => s.clone(),
+                            _ => val.to_string(),
+                        };
+                        render_kv_field(ui, key, &val_str, &mut ctx);
                     }
                 });
-
                 ui.add_space(8.0);
+            }
 
-                let msg_key = event.semantic_key(StandardField::Message);
-
-                // Message Card
-                render_card(ui, "Message", |ui| {
-                    let msg_color = log_color;
-
-                    let mut ctx = ActionContext {
-                        highlighted_terms: &session.inspector.highlighted_terms,
-                        has_any_highlights,
-                        action: &mut action_to_dispatch,
-                    };
-
-                    render_text_box(
-                        ui,
-                        Id::new("detail_inspector_msg_box"),
-                        &event.message,
-                        msg_color,
-                        3,
-                        Some(msg_key),
-                        &mut ctx,
-                    );
-                });
-
-                ui.add_space(8.0);
-
-                // Parsed JSON / K-V Fields Card (loại trừ các trường mặc định đã có card riêng)
-                let custom_fields: Vec<(&String, &serde_json::Value)> = event
-                    .fields
-                    .iter()
-                    .filter(|(k, _)| {
-                        !matches!(k.as_str(), "timestamp" | "level" | "message" | "id")
-                            && uwu_core_schema::StandardField::from_alias(k).is_none()
-                    })
-                    .collect();
-
-                let custom_fields = cluster_log_fields(custom_fields);
-
-                if !custom_fields.is_empty() {
-                    render_card(ui, "Parsed Fields", |ui| {
-                        let mut ctx = ActionContext {
-                            highlighted_terms: &session.inspector.highlighted_terms,
-                            has_any_highlights,
-                            action: &mut action_to_dispatch,
-                        };
-
-                        for (i, (key, val)) in custom_fields.iter().enumerate() {
-                            if i > 0 {
-                                ui.add_space(6.0);
-                            }
-                            let val_str = match val {
-                                serde_json::Value::String(s) => s.clone(),
-                                _ => val.to_string(),
-                            };
-                            render_kv_field(ui, key, &val_str, &mut ctx);
-                        }
-                    });
-                    ui.add_space(8.0);
+            // Raw Payload Card with Raw/Beauty mode toggle & Copy button
+            render_card(ui, "Raw Payload", |ui| {
+                let is_json = !event.fields.is_empty();
+                if !is_json {
+                    session.inspector.is_beauty_payload = false;
                 }
+                let is_beauty = session.inspector.is_beauty_payload;
 
-                // Raw Payload Card with Raw/Beauty mode toggle & Copy button
-                render_card(ui, "Raw Payload", |ui| {
-                    let view_mode_id = Id::new("detail_payload_view_mode_is_beauty");
-                    let mut is_beauty = ui
-                        .data(|d| d.get_temp::<bool>(view_mode_id))
-                        .unwrap_or(false);
-                    let is_json = !event.fields.is_empty();
-
-                    if !is_json {
-                        is_beauty = false;
+                ui.horizontal(|ui| {
+                    // 1. Nút "Raw"
+                    if TabButton::new("Raw", !is_beauty).show(ui).clicked() {
+                        session.inspector.is_beauty_payload = false;
                     }
 
-                    ui.horizontal(|ui| {
-                        // 1. Nút "Raw"
-                        if TabButton::new("Raw", !is_beauty).show(ui).clicked() {
-                            is_beauty = false;
-                            ui.data_mut(|d| d.insert_temp(view_mode_id, false));
-                        }
-
-                        ui.add_space(4.0);
-
-                        // 2. Nút "Beauty" (kế bên nút Raw)
-                        if TabButton::new("Beauty", is_beauty)
-                            .enabled(is_json)
-                            .show(ui)
-                            .clicked()
-                        {
-                            is_beauty = true;
-                            ui.data_mut(|d| d.insert_temp(view_mode_id, true));
-                        }
-
-                        ui.add_space(8.0);
-
-                        // 3. Nút Copy
-                        let copy_id = Id::new("copy_raw_flash");
-                        let now = ui.input(|i| i.time);
-                        let last_copy = ui.data(|d| d.get_temp::<f64>(copy_id)).unwrap_or(0.0);
-                        let is_flashing = (now - last_copy) < 0.12;
-
-                        if is_flashing {
-                            ui.ctx().request_repaint();
-                        }
-
-                        let copy_label = if is_beauty { "Copy Beauty" } else { "Copy Raw" };
-                        let copy_btn = AppButton::new()
-                            .label(copy_label)
-                            .icon(crate::components::ui::IconName::Copy)
-                            .variant(if is_flashing {
-                                ButtonVariant::Primary
-                            } else {
-                                ButtonVariant::Default
-                            });
-
-                        let copy_text_val = if is_beauty {
-                            event.beauty_display()
-                        } else {
-                            event.raw_display()
-                        };
-
-                        if copy_btn.show(ui).clicked() {
-                            ui.data_mut(|d| d.insert_temp(copy_id, now));
-                            ui.ctx().copy_text(copy_text_val.to_string());
-                            ui.ctx().request_repaint();
-                        }
-                    });
                     ui.add_space(4.0);
 
-                    let mut ctx = ActionContext {
-                        highlighted_terms: &session.inspector.highlighted_terms,
-                        has_any_highlights,
-                        action: &mut action_to_dispatch,
-                    };
+                    // 2. Nút "Beauty" (kế bên nút Raw)
+                    if TabButton::new("Beauty", is_beauty)
+                        .enabled(is_json)
+                        .show(ui)
+                        .clicked()
+                    {
+                        session.inspector.is_beauty_payload = true;
+                    }
 
-                    let display_str = if is_beauty {
+                    ui.add_space(8.0);
+
+                    // 3. Nút Copy
+                    let copy_id = Id::new("copy_raw_flash");
+                    let now = ui.input(|i| i.time);
+                    let last_copy = ui.data(|d| d.get_temp::<f64>(copy_id)).unwrap_or(0.0);
+                    let is_flashing = (now - last_copy) < 0.12;
+
+                    if is_flashing {
+                        ui.ctx().request_repaint();
+                    }
+
+                    let copy_label = if is_beauty { "Copy Beauty" } else { "Copy Raw" };
+                    let copy_btn = AppButton::new()
+                        .label(copy_label)
+                        .icon(crate::components::ui::IconName::Copy)
+                        .variant(if is_flashing {
+                            ButtonVariant::Primary
+                        } else {
+                            ButtonVariant::Default
+                        });
+
+                    let copy_text_val = if is_beauty {
                         event.beauty_display()
                     } else {
                         event.raw_display()
                     };
 
-                    render_text_box(
-                        ui,
-                        Id::new("detail_inspector_raw_box"),
-                        &display_str,
-                        theme.text.primary,
-                        if is_beauty { 10 } else { 4 },
-                        None,
-                        &mut ctx,
-                    );
+                    if copy_btn.show(ui).clicked() {
+                        ui.data_mut(|d| d.insert_temp(copy_id, now));
+                        ui.ctx().copy_text(copy_text_val.to_string());
+                        ui.ctx().request_repaint();
+                    }
                 });
+                ui.add_space(4.0);
+
+                let mut ctx = ActionContext {
+                    highlighted_terms: &session.inspector.highlighted_terms,
+                    has_any_highlights,
+                    is_filtering,
+                    is_unfiltered_tab,
+                    action: &mut action_to_dispatch,
+                };
+
+                let display_str = if is_beauty {
+                    event.beauty_display()
+                } else {
+                    event.raw_display()
+                };
+
+                render_text_box(
+                    ui,
+                    Id::new("detail_inspector_raw_box"),
+                    &display_str,
+                    theme.text.primary,
+                    if is_beauty { 10 } else { 4 },
+                    None,
+                    &mut ctx,
+                );
             });
-    }
+        });
 
     if let Some(action) = action_to_dispatch {
         dispatch(action);

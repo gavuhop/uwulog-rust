@@ -434,33 +434,32 @@ impl GuiSession {
         }
     }
 
-    /// Di chuyển lựa chọn dòng log (khi đã pick dòng) hoặc cuộn bảng (khi chưa chọn dòng nào)
-    pub fn navigate_row(&mut self, is_up: bool) {
+    /// Di chuyển lựa chọn dòng log (khi đã pick dòng) hoặc cuộn bảng với bước nhảy tuỳ ý
+    pub fn navigate_row_by_step(&mut self, step: usize, is_up: bool) {
         let row_count = self.active_logs().len();
         if row_count == 0 {
             return;
         }
 
         if let Some(selected_id) = self.view.inspector.selected_log.as_ref().map(|l| l.id) {
-            // 1. Khi đang pick/chọn một dòng log: phím lên/xuống chuyển dòng nhanh
+            // 1. Khi đang pick/chọn một dòng log: phím lên/xuống/page chuyển dòng tương ứng
             let logs = self.active_logs();
             let curr = logs.iter().position(|e| e.id == selected_id).unwrap_or(0);
             let next = if is_up {
-                curr.saturating_sub(1)
+                curr.saturating_sub(step)
             } else {
-                (curr + 1).min(row_count - 1)
+                (curr + step).min(row_count - 1)
             };
             self.view.inspector.selected_log = Some(logs[next].clone());
             self.scroll_to_row(next, None);
             self.unlatch_active();
         } else {
-            // 2. Khi không focus/chọn dòng nào: phím lên/xuống dùng để scroll bảng
-            const SCROLL_STEP: usize = 4;
+            // 2. Khi không focus/chọn dòng nào: phím lên/xuống/page dùng để scroll bảng
             let curr = self.first_visible_row();
             let next = if is_up {
-                curr.saturating_sub(SCROLL_STEP)
+                curr.saturating_sub(step)
             } else {
-                (curr + SCROLL_STEP).min(row_count - 1)
+                (curr + step).min(row_count - 1)
             };
             self.scroll_to_row(next, Some(egui::Align::Min));
             if !is_up && next >= row_count - 1 {
@@ -468,6 +467,92 @@ impl GuiSession {
             } else {
                 self.unlatch_active();
             }
+        }
+    }
+
+    /// Di chuyển lựa chọn dòng log (khi đã pick dòng) hoặc cuộn bảng (khi chưa chọn dòng nào)
+    pub fn navigate_row(&mut self, is_up: bool) {
+        let step = if self.view.inspector.selected_log.is_some() {
+            1
+        } else {
+            4
+        };
+        self.navigate_row_by_step(step, is_up);
+    }
+
+    /// Nhảy một trang màn hình log (Page Up / Page Down: cuộn bảng 20 dòng nhưng vẫn giữ nguyên dòng log đang chọn nếu có)
+    pub fn navigate_page(&mut self, is_up: bool) {
+        let row_count = self.active_logs().len();
+        if row_count == 0 {
+            return;
+        }
+        const PAGE_STEP: usize = 20;
+        let curr = self.first_visible_row();
+        let next = if is_up {
+            curr.saturating_sub(PAGE_STEP)
+        } else {
+            (curr + PAGE_STEP).min(row_count - 1)
+        };
+        self.scroll_to_row(next, Some(egui::Align::Min));
+        if !is_up && next >= row_count - 1 {
+            self.latch_active();
+        } else {
+            self.unlatch_active();
+        }
+    }
+
+    /// Nhảy tức thì lên dòng log đầu tiên trên cùng (Top / Oldest row)
+    pub fn scroll_to_top(&mut self) {
+        let row_count = self.active_logs().len();
+        if row_count == 0 {
+            return;
+        }
+        if self.view.inspector.selected_log.is_some() {
+            let logs = self.active_logs();
+            self.view.inspector.selected_log = Some(logs[0].clone());
+        }
+        self.scroll_to_row(0, Some(egui::Align::Min));
+        self.unlatch_active();
+    }
+
+    /// Nhảy tức thì xuống dòng log mới nhất ở đáy bảng (Bottom / Latest row) và bật Latch
+    pub fn scroll_to_bottom(&mut self) {
+        let row_count = self.active_logs().len();
+        if row_count == 0 {
+            return;
+        }
+        let target_idx = row_count - 1;
+        if self.view.inspector.selected_log.is_some() {
+            let logs = self.active_logs();
+            self.view.inspector.selected_log = Some(logs[target_idx].clone());
+        }
+        self.scroll_to_row(target_idx, Some(egui::Align::Max));
+        self.latch_active();
+    }
+
+    /// Gửi yêu cầu cuộn ngang bảng một khoảng delta (pixel)
+    pub fn scroll_horizontal(&mut self, delta: f32) {
+        match self.view.active_tab {
+            ActiveTab::Filtered => {
+                let curr = self.view.viewport.request_horizontal_scroll.unwrap_or(0.0);
+                self.view.viewport.request_horizontal_scroll = Some(curr + delta);
+            }
+            ActiveTab::Unfiltered => {
+                let curr = self
+                    .view
+                    .unfiltered
+                    .request_horizontal_scroll
+                    .unwrap_or(0.0);
+                self.view.unfiltered.request_horizontal_scroll = Some(curr + delta);
+            }
+        }
+    }
+
+    /// Tiêu thụ delta cuộn ngang
+    pub fn consume_horizontal_scroll(&mut self, tab: ActiveTab) -> Option<f32> {
+        match tab {
+            ActiveTab::Filtered => self.view.viewport.request_horizontal_scroll.take(),
+            ActiveTab::Unfiltered => self.view.unfiltered.request_horizontal_scroll.take(),
         }
     }
 
@@ -542,14 +627,46 @@ impl GuiSession {
                 self.navigate_row(false);
                 true
             }
+            AppAction::ScrollTableLeft => {
+                self.scroll_horizontal(-120.0);
+                true
+            }
+            AppAction::ScrollTableRight => {
+                self.scroll_horizontal(120.0);
+                true
+            }
+            AppAction::PageUp => {
+                self.navigate_page(true);
+                true
+            }
+            AppAction::PageDown => {
+                self.navigate_page(false);
+                true
+            }
+            AppAction::ScrollToTop => {
+                self.scroll_to_top();
+                true
+            }
+            AppAction::ScrollToBottom => {
+                self.scroll_to_bottom();
+                true
+            }
             AppAction::SwitchTab(tab) => {
-                if *tab == ActiveTab::Unfiltered && !self.view.unfiltered.is_open {
-                    self.open_unfiltered_stream(None);
+                if *tab == ActiveTab::Unfiltered {
+                    if self.view.search.query.trim().is_empty() {
+                        return false;
+                    }
+                    if !self.view.unfiltered.is_open {
+                        self.open_unfiltered_stream(None);
+                    }
                 }
                 self.view.active_tab = *tab;
                 true
             }
             AppAction::ToggleStreamView => {
+                if self.view.search.query.trim().is_empty() {
+                    return false;
+                }
                 let next = match self.view.active_tab {
                     ActiveTab::Filtered => ActiveTab::Unfiltered,
                     ActiveTab::Unfiltered => ActiveTab::Filtered,
@@ -570,6 +687,9 @@ impl GuiSession {
             }
             AppAction::ClearQuery => {
                 self.view.search.clear();
+                if self.view.active_tab == ActiveTab::Unfiltered {
+                    self.close_unfiltered_stream();
+                }
                 true
             }
             AppAction::ToggleRowHighlight(id) => {
@@ -609,10 +729,20 @@ impl GuiSession {
                 true
             }
             AppAction::OpenUnfilteredStream(id) => {
+                if self.view.search.query.trim().is_empty() {
+                    return false;
+                }
                 self.open_unfiltered_stream(*id);
                 true
             }
             AppAction::ViewRawContext => {
+                if self.view.active_tab == ActiveTab::Unfiltered {
+                    self.view.active_tab = ActiveTab::Filtered;
+                    return true;
+                }
+                if self.view.search.query.trim().is_empty() {
+                    return false;
+                }
                 let target_id = self.view.inspector.selected_log.as_ref().map(|l| l.id);
                 self.open_unfiltered_stream(target_id);
                 true

@@ -908,7 +908,7 @@ fn test_default_shortcuts_run_command_filter_columns_and_rerun() {
         crate::state::ActiveTab::Filtered
     );
 
-    // Bấm Ctrl+Tab -> chuyển sang Raw View (Unfiltered)
+    // Khi CHƯA có filter -> Bấm Ctrl+Tab KHÔNG được đổi tab
     let mut input_ctrl_tab = RawInput::default();
     input_ctrl_tab.events.push(eframe::egui::Event::Key {
         key: Key::Tab,
@@ -917,6 +917,27 @@ fn test_default_shortcuts_run_command_filter_columns_and_rerun() {
         repeat: false,
         modifiers: Modifiers::CTRL,
     });
+    let mut out = ctx.run_ui(input_ctrl_tab.clone(), |ui| {
+        ui.ctx().input_mut(|i| {
+            i.modifiers = Modifiers::CTRL;
+        });
+        let mut dispatched = Vec::new();
+        app.handle_keybindings(ui.ctx(), &mut |act| dispatched.push(act));
+        for a in dispatched {
+            app.dispatch_action(a);
+        }
+    });
+    out.textures_delta.clear();
+    assert_eq!(
+        app.active_session().view.active_tab,
+        crate::state::ActiveTab::Filtered,
+        "Khi chưa có filter, Ctrl+Tab không được đổi sang Raw View"
+    );
+
+    // Đặt bộ lọc tìm kiếm
+    app.active_session_mut().view.search.query = "level:error".to_string();
+
+    // Khi ĐÃ có filter -> Bấm Ctrl+Tab chuyển sang Raw View (Unfiltered)
     let mut out = ctx.run_ui(input_ctrl_tab, |ui| {
         ui.ctx().input_mut(|i| {
             i.modifiers = Modifiers::CTRL;
@@ -931,7 +952,7 @@ fn test_default_shortcuts_run_command_filter_columns_and_rerun() {
     assert_eq!(
         app.active_session().view.active_tab,
         crate::state::ActiveTab::Unfiltered,
-        "Ctrl+Tab phải toggle sang Raw View (Unfiltered)"
+        "Ctrl+Tab khi có filter phải toggle sang Raw View (Unfiltered)"
     );
 
     // Bấm Ctrl+Tab lần nữa -> quay về Main View (Filtered)
@@ -1022,6 +1043,9 @@ fn test_default_shortcuts_run_command_filter_columns_and_rerun() {
     .with_id(42);
     app.active_session_mut().view.inspector.selected_log = Some(mock_event);
 
+    // 8.1 Khi chưa có filter: Alt+V không được đổi sang Raw View
+    app.active_session_mut().view.search.clear();
+
     let mut input_alt_v = RawInput::default();
     input_alt_v.events.push(eframe::egui::Event::Key {
         key: Key::V,
@@ -1030,7 +1054,27 @@ fn test_default_shortcuts_run_command_filter_columns_and_rerun() {
         repeat: false,
         modifiers: Modifiers::ALT,
     });
-    let mut out = ctx.run_ui(input_alt_v, |ui| {
+    let mut out = ctx.run_ui(input_alt_v.clone(), |ui| {
+        ui.ctx().input_mut(|i| {
+            i.modifiers = Modifiers::ALT;
+        });
+        let mut dispatched = Vec::new();
+        app.handle_keybindings(ui.ctx(), &mut |act| dispatched.push(act));
+        for a in dispatched {
+            app.dispatch_action(a);
+        }
+    });
+    out.textures_delta.clear();
+    assert_eq!(
+        app.active_session().view.active_tab,
+        crate::state::ActiveTab::Filtered,
+        "Khi chưa có filter, Alt+V không được đổi sang Raw View"
+    );
+
+    // 8.2 Khi đã có filter: Alt+V chuyển sang Raw View và định vị đúng target_id
+    app.active_session_mut().view.search.query = "level:error".to_string();
+
+    let mut out = ctx.run_ui(input_alt_v.clone(), |ui| {
         ui.ctx().input_mut(|i| {
             i.modifiers = Modifiers::ALT;
         });
@@ -1044,12 +1088,30 @@ fn test_default_shortcuts_run_command_filter_columns_and_rerun() {
     assert_eq!(
         app.active_session().view.active_tab,
         crate::state::ActiveTab::Unfiltered,
-        "Alt+V phải mở Raw View (Unfiltered)"
+        "Alt+V khi có filter phải mở Raw View (Unfiltered)"
     );
     assert_eq!(
         app.active_session().view.unfiltered.target_id,
         Some(42),
         "Alt+V phải định vị đúng target_id của dòng log đã chọn trong raw stream"
+    );
+
+    // 8.3 Khi đang ở màn Raw mà bấm Alt+V lần nữa: chuyển ngược về Main View (Filtered)
+    let mut out = ctx.run_ui(input_alt_v, |ui| {
+        ui.ctx().input_mut(|i| {
+            i.modifiers = Modifiers::ALT;
+        });
+        let mut dispatched = Vec::new();
+        app.handle_keybindings(ui.ctx(), &mut |act| dispatched.push(act));
+        for a in dispatched {
+            app.dispatch_action(a);
+        }
+    });
+    out.textures_delta.clear();
+    assert_eq!(
+        app.active_session().view.active_tab,
+        crate::state::ActiveTab::Filtered,
+        "Alt+V khi đang ở màn Raw phải chuyển ngược về Main View (Filtered)"
     );
 }
 
@@ -1198,4 +1260,339 @@ fn test_arrow_keys_row_navigation_and_scroll() {
         );
     });
     out.textures_delta.clear();
+}
+
+#[test]
+fn test_excel_like_navigation_and_copy_shortcuts() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let _guard = rt.enter();
+    let mut app = create_test_app();
+    let ctx = eframe::egui::Context::default();
+
+    // 1. Tạo 50 dòng log mẫu
+    let mut fields = uwu_core_schema::LogFields::default();
+    fields.insert("status".to_string(), serde_json::json!(200));
+    fields.insert("user".to_string(), serde_json::json!("admin"));
+
+    let events: Vec<uwu_core_schema::LogEvent> = (0..50)
+        .map(|i| {
+            uwu_core_schema::LogEvent::new(
+                "2026-10-05T10:00:00Z",
+                uwu_core_schema::LogColor::Default,
+                format!("{{\"id\":{i},\"status\":200,\"user\":\"admin\"}}"),
+                fields.clone(),
+            )
+            .with_id(200 + i)
+        })
+        .collect();
+    app.active_session_mut().view.viewport.cached_logs = events.clone();
+
+    // --- Kiểm tra 1: Sao chép Ctrl+C theo trạng thái Beauty / Raw ---
+    app.active_session_mut().view.inspector.selected_log = Some(events[0].clone());
+
+    // 1.1 Chế độ Raw: Ctrl+C sao chép raw string
+    app.active_session_mut().view.inspector.is_beauty_payload = false;
+    let raw_payload = app
+        .active_session()
+        .view
+        .inspector
+        .formatted_payload_for_copy()
+        .unwrap();
+    assert!(
+        !raw_payload.contains('\n'),
+        "Raw copy không chứa ký tự xuống dòng"
+    );
+
+    let mut input_ctrl_c = RawInput::default();
+    input_ctrl_c.events.push(eframe::egui::Event::Key {
+        key: Key::C,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::CTRL,
+    });
+    let mut out = ctx.run_ui(input_ctrl_c, |ui| {
+        ui.ctx().input_mut(|i| i.modifiers = Modifiers::CTRL);
+        let mut dispatched = Vec::new();
+        app.handle_keybindings(ui.ctx(), &mut |act| dispatched.push(act));
+        for a in dispatched {
+            app.dispatch_action(a);
+        }
+    });
+    out.textures_delta.clear();
+
+    // 1.2 Chế độ Beauty: Ctrl+C sao chép formatted indented JSON
+    app.active_session_mut().view.inspector.is_beauty_payload = true;
+    let beauty_payload = app
+        .active_session()
+        .view
+        .inspector
+        .formatted_payload_for_copy()
+        .unwrap();
+    assert!(
+        beauty_payload.contains('\n') && beauty_payload.contains("  \"status\": 200"),
+        "Beauty copy phải là chuỗi JSON có thụt dòng đẹp"
+    );
+
+    // --- Kiểm tra 2: PageUp / PageDown nhảy 20 dòng nhưng vẫn GIỮ NGUYÊN dòng đang chọn ---
+    app.active_session_mut().view.inspector.selected_log = Some(events[5].clone()); // Dòng 5
+    app.active_session_mut().view.viewport.first_visible_row = Some(5);
+
+    // Bấm PageDown -> cuộn bảng xuống dòng 25 (5 + 20), nhưng dòng pick vẫn là dòng 5 (id 205)
+    let mut input_pagedown = RawInput::default();
+    input_pagedown.events.push(eframe::egui::Event::Key {
+        key: Key::PageDown,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    });
+    let mut out = ctx.run_ui(input_pagedown, |ui| {
+        ui.ctx().input_mut(|i| i.modifiers = Modifiers::NONE);
+        let mut dispatched = Vec::new();
+        app.handle_keybindings(ui.ctx(), &mut |act| dispatched.push(act));
+        for a in dispatched {
+            app.dispatch_action(a);
+        }
+    });
+    out.textures_delta.clear();
+    assert_eq!(
+        app.active_session()
+            .view
+            .inspector
+            .selected_log
+            .as_ref()
+            .map(|e| e.id),
+        Some(205),
+        "PageDown vẫn phải giữ nguyên dòng 5 (id 205) đang chọn"
+    );
+    assert_eq!(
+        app.active_session().view.viewport.request_scroll_to_row,
+        Some((25, Some(eframe::egui::Align::Min))),
+        "PageDown phải yêu cầu cuộn bảng xuống dòng 25"
+    );
+
+    // Cập nhật first_visible_row lên dòng 25
+    app.active_session_mut().view.viewport.first_visible_row = Some(25);
+
+    // Bấm PageUp -> cuộn bảng ngược lại dòng 5 (25 - 20), vẫn giữ nguyên dòng pick 5 (id 205)
+    let mut input_pageup = RawInput::default();
+    input_pageup.events.push(eframe::egui::Event::Key {
+        key: Key::PageUp,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    });
+    let mut out = ctx.run_ui(input_pageup, |ui| {
+        ui.ctx().input_mut(|i| i.modifiers = Modifiers::NONE);
+        let mut dispatched = Vec::new();
+        app.handle_keybindings(ui.ctx(), &mut |act| dispatched.push(act));
+        for a in dispatched {
+            app.dispatch_action(a);
+        }
+    });
+    out.textures_delta.clear();
+    assert_eq!(
+        app.active_session()
+            .view
+            .inspector
+            .selected_log
+            .as_ref()
+            .map(|e| e.id),
+        Some(205),
+        "PageUp vẫn phải giữ nguyên dòng 5 (id 205) đang chọn"
+    );
+    assert_eq!(
+        app.active_session().view.viewport.request_scroll_to_row,
+        Some((5, Some(eframe::egui::Align::Min))),
+        "PageUp phải yêu cầu cuộn bảng ngược lên dòng 5"
+    );
+
+    // --- Kiểm tra 3: Ctrl + ArrowDown / Ctrl + End nhảy về đáy bảng ---
+    let mut input_ctrl_down = RawInput::default();
+    input_ctrl_down.events.push(eframe::egui::Event::Key {
+        key: Key::ArrowDown,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::CTRL,
+    });
+    let mut out = ctx.run_ui(input_ctrl_down, |ui| {
+        ui.ctx().input_mut(|i| i.modifiers = Modifiers::CTRL);
+        let mut dispatched = Vec::new();
+        app.handle_keybindings(ui.ctx(), &mut |act| dispatched.push(act));
+        for a in dispatched {
+            app.dispatch_action(a);
+        }
+    });
+    out.textures_delta.clear();
+    assert_eq!(
+        app.active_session()
+            .view
+            .inspector
+            .selected_log
+            .as_ref()
+            .map(|e| e.id),
+        Some(249),
+        "Ctrl+ArrowDown phải nhảy tới dòng cuối cùng (dòng 49, id 249)"
+    );
+    assert!(
+        app.active_session().view.viewport.is_auto_scroll,
+        "Nhảy tới cuối bảng phải tự động bật follow mode (latch)"
+    );
+
+    // --- Kiểm tra 4: Ctrl + ArrowUp / Ctrl + Home nhảy về đỉnh bảng ---
+    let mut input_ctrl_up = RawInput::default();
+    input_ctrl_up.events.push(eframe::egui::Event::Key {
+        key: Key::ArrowUp,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::CTRL,
+    });
+    let mut out = ctx.run_ui(input_ctrl_up, |ui| {
+        ui.ctx().input_mut(|i| i.modifiers = Modifiers::CTRL);
+        let mut dispatched = Vec::new();
+        app.handle_keybindings(ui.ctx(), &mut |act| dispatched.push(act));
+        for a in dispatched {
+            app.dispatch_action(a);
+        }
+    });
+    out.textures_delta.clear();
+    assert_eq!(
+        app.active_session()
+            .view
+            .inspector
+            .selected_log
+            .as_ref()
+            .map(|e| e.id),
+        Some(200),
+        "Ctrl+ArrowUp phải nhảy về dòng đầu tiên (dòng 0, id 200)"
+    );
+
+    // --- Kiểm tra 5: ArrowLeft / ArrowRight cuộn ngang bảng ---
+    let mut input_arrow_right = RawInput::default();
+    input_arrow_right.events.push(eframe::egui::Event::Key {
+        key: Key::ArrowRight,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    });
+    let mut out = ctx.run_ui(input_arrow_right, |ui| {
+        ui.ctx().input_mut(|i| i.modifiers = Modifiers::NONE);
+        let mut dispatched = Vec::new();
+        app.handle_keybindings(ui.ctx(), &mut |act| dispatched.push(act));
+        for a in dispatched {
+            app.dispatch_action(a);
+        }
+    });
+    out.textures_delta.clear();
+    assert_eq!(
+        app.active_session_mut()
+            .consume_horizontal_scroll(crate::state::ActiveTab::Filtered),
+        Some(120.0),
+        "ArrowRight phải yêu cầu cuộn ngang sang phải 120.0 px"
+    );
+
+    let mut input_arrow_left = RawInput::default();
+    input_arrow_left.events.push(eframe::egui::Event::Key {
+        key: Key::ArrowLeft,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    });
+    let mut out = ctx.run_ui(input_arrow_left, |ui| {
+        ui.ctx().input_mut(|i| i.modifiers = Modifiers::NONE);
+        let mut dispatched = Vec::new();
+        app.handle_keybindings(ui.ctx(), &mut |act| dispatched.push(act));
+        for a in dispatched {
+            app.dispatch_action(a);
+        }
+    });
+    out.textures_delta.clear();
+    assert_eq!(
+        app.active_session_mut()
+            .consume_horizontal_scroll(crate::state::ActiveTab::Filtered),
+        Some(-120.0),
+        "ArrowLeft phải yêu cầu cuộn ngang sang trái -120.0 px"
+    );
+}
+
+#[tokio::test]
+async fn test_tab_switching_prevented_without_filter() {
+    let mut app = create_test_app();
+    assert_eq!(
+        app.active_session().view.active_tab,
+        crate::state::ActiveTab::Filtered
+    );
+
+    // 1. Khi chưa có filter: các action chuyển sang Unfiltered đều bị chặn
+    app.dispatch_action(AppAction::SwitchTab(crate::state::ActiveTab::Unfiltered));
+    assert_eq!(
+        app.active_session().view.active_tab,
+        crate::state::ActiveTab::Filtered
+    );
+
+    app.dispatch_action(AppAction::ToggleStreamView);
+    assert_eq!(
+        app.active_session().view.active_tab,
+        crate::state::ActiveTab::Filtered
+    );
+
+    app.dispatch_action(AppAction::ViewRawContext);
+    assert_eq!(
+        app.active_session().view.active_tab,
+        crate::state::ActiveTab::Filtered
+    );
+
+    app.dispatch_action(AppAction::OpenUnfilteredStream(None));
+    assert_eq!(
+        app.active_session().view.active_tab,
+        crate::state::ActiveTab::Filtered
+    );
+
+    // 2. Khi đã có filter: các action chuyển sang Unfiltered hoạt động bình thường
+    app.active_session_mut().view.search.query = "error".to_string();
+
+    app.dispatch_action(AppAction::SwitchTab(crate::state::ActiveTab::Unfiltered));
+    assert_eq!(
+        app.active_session().view.active_tab,
+        crate::state::ActiveTab::Unfiltered
+    );
+
+    app.dispatch_action(AppAction::SwitchTab(crate::state::ActiveTab::Filtered));
+    assert_eq!(
+        app.active_session().view.active_tab,
+        crate::state::ActiveTab::Filtered
+    );
+
+    app.dispatch_action(AppAction::ToggleStreamView);
+    assert_eq!(
+        app.active_session().view.active_tab,
+        crate::state::ActiveTab::Unfiltered
+    );
+
+    // 3. Khi đang ở Unfiltered mà ClearQuery -> tự động đóng Unfiltered và quay về Filtered
+    app.dispatch_action(AppAction::ClearQuery);
+    assert_eq!(
+        app.active_session().view.active_tab,
+        crate::state::ActiveTab::Filtered
+    );
+    assert!(!app.active_session().view.unfiltered.is_open);
+
+    // 4. Khi đang ở Unfiltered mà bấm ViewRawContext (Alt+V) -> chuyển ngược về Filtered (Main)
+    app.active_session_mut().view.search.query = "error".to_string();
+    app.dispatch_action(AppAction::SwitchTab(crate::state::ActiveTab::Unfiltered));
+    assert_eq!(
+        app.active_session().view.active_tab,
+        crate::state::ActiveTab::Unfiltered
+    );
+    app.dispatch_action(AppAction::ViewRawContext);
+    assert_eq!(
+        app.active_session().view.active_tab,
+        crate::state::ActiveTab::Filtered
+    );
 }

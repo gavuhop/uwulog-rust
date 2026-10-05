@@ -81,6 +81,15 @@ define_actions! {
     Back => ("menu::Back", ["modal::Back", "window::Back", "Back"]),
     TabComplete => ("picker::TabComplete", ["tab::Complete", "TabComplete"]),
 
+    // Table Navigation & Excel Controls
+    ScrollLeft => ("table::ScrollLeft", ["ScrollLeft", "table::Left"]),
+    ScrollRight => ("table::ScrollRight", ["ScrollRight", "table::Right"]),
+    PageUp => ("table::PageUp", ["PageUp"]),
+    PageDown => ("table::PageDown", ["PageDown"]),
+    ScrollToTop => ("table::ScrollToTop", ["ScrollToTop", "table::Top"]),
+    ScrollToBottom => ("table::ScrollToBottom", ["ScrollToBottom", "table::Bottom"]),
+    CopySelection => ("table::CopySelection", ["CopySelection", "Copy", "table::Copy"]),
+
     // Đặc biệt: Hủy gán phím tắt (Unbind)
     Unbind => ("unbind", ["Unbind"]),
 }
@@ -116,6 +125,13 @@ impl KeyAction {
             Self::ConfirmSelection,
             Self::Back,
             Self::TabComplete,
+            Self::ScrollLeft,
+            Self::ScrollRight,
+            Self::PageUp,
+            Self::PageDown,
+            Self::ScrollToTop,
+            Self::ScrollToBottom,
+            Self::CopySelection,
         ]
     }
 
@@ -140,7 +156,8 @@ impl KeyAction {
             | Self::ToggleStreamView
             | Self::SelectMainView
             | Self::SelectRawView
-            | Self::ViewRawContext => "Workspace",
+            | Self::ViewRawContext
+            | Self::CopySelection => "Workspace",
 
             Self::FocusFilter
             | Self::ToggleSearchHistory
@@ -151,7 +168,13 @@ impl KeyAction {
             | Self::SelectPrev
             | Self::ConfirmSelection
             | Self::Back
-            | Self::TabComplete => "Navigation",
+            | Self::TabComplete
+            | Self::ScrollLeft
+            | Self::ScrollRight
+            | Self::PageUp
+            | Self::PageDown
+            | Self::ScrollToTop
+            | Self::ScrollToBottom => "Navigation",
 
             Self::Unbind => "System",
         }
@@ -190,6 +213,13 @@ impl KeyAction {
             Self::ConfirmSelection => "Confirm Selection",
             Self::Back => "Back / Previous Screen",
             Self::TabComplete => "Tab Autocomplete",
+            Self::ScrollLeft => "Scroll Table Left",
+            Self::ScrollRight => "Scroll Table Right",
+            Self::PageUp => "Page Up (Jump Screen Up)",
+            Self::PageDown => "Page Down (Jump Screen Down)",
+            Self::ScrollToTop => "Jump to First Log Row",
+            Self::ScrollToBottom => "Jump to Latest Log Row (Bottom)",
+            Self::CopySelection => "Copy Selected Log Payload",
             Self::Unbind => "Unbind Shortcut",
         }
     }
@@ -229,6 +259,17 @@ impl KeyAction {
             Self::ConfirmSelection => "Confirm the highlighted item or autocomplete token",
             Self::Back => "Navigate back to previous screen or close modal",
             Self::TabComplete => "Accept suggested autocomplete text",
+            Self::ScrollLeft => "Scroll the log table horizontally to the left",
+            Self::ScrollRight => "Scroll the log table horizontally to the right",
+            Self::PageUp => "Jump up by one page of log entries",
+            Self::PageDown => "Jump down by one page of log entries",
+            Self::ScrollToTop => "Jump immediately to the first log row in the view",
+            Self::ScrollToBottom => {
+                "Jump immediately to the latest log row and re-enable follow mode"
+            }
+            Self::CopySelection => {
+                "Copy payload of the selected log entry in Raw or Beauty JSON format"
+            }
             Self::Unbind => "Disable or unbind an existing key combination",
         }
     }

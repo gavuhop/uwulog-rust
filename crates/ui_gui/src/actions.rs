@@ -27,6 +27,13 @@ pub enum AppAction {
     SelectLog(Option<LogEvent>),
     NavigateUp,
     NavigateDown,
+    ScrollTableLeft,
+    ScrollTableRight,
+    PageUp,
+    PageDown,
+    ScrollToTop,
+    ScrollToBottom,
+    CopySelectedLog,
     SwitchTab(ActiveTab),
     ToggleStreamView,
 
@@ -120,6 +127,8 @@ pub enum AppEvent {
 pub struct ActionContext<'a> {
     pub highlighted_terms: &'a HashSet<String>,
     pub has_any_highlights: bool,
+    pub is_filtering: bool,
+    pub is_unfiltered_tab: bool,
     pub action: &'a mut Option<AppAction>,
 }
 

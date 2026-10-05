@@ -106,6 +106,15 @@ impl KeymapConfigFile {
         let mut table_bindings = BTreeMap::new();
         table_bindings.insert(Keystroke::new(Key::ArrowDown), KeyAction::SelectNext);
         table_bindings.insert(Keystroke::new(Key::ArrowUp), KeyAction::SelectPrev);
+        table_bindings.insert(Keystroke::new(Key::ArrowLeft), KeyAction::ScrollLeft);
+        table_bindings.insert(Keystroke::new(Key::ArrowRight), KeyAction::ScrollRight);
+        table_bindings.insert(Keystroke::new(Key::PageUp), KeyAction::PageUp);
+        table_bindings.insert(Keystroke::new(Key::PageDown), KeyAction::PageDown);
+        table_bindings.insert(Keystroke::ctrl(Key::Home), KeyAction::ScrollToTop);
+        table_bindings.insert(Keystroke::ctrl(Key::ArrowUp), KeyAction::ScrollToTop);
+        table_bindings.insert(Keystroke::ctrl(Key::End), KeyAction::ScrollToBottom);
+        table_bindings.insert(Keystroke::ctrl(Key::ArrowDown), KeyAction::ScrollToBottom);
+        table_bindings.insert(Keystroke::ctrl(Key::C), KeyAction::CopySelection);
 
         Self(vec![
             KeymapSection {

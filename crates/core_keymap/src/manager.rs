@@ -229,6 +229,51 @@ impl KeymapManager {
             KeyAction::SelectPrev,
             KeyContext::Table,
         );
+        self.bind_keystroke_internal(
+            Keystroke::new(Key::ArrowLeft),
+            KeyAction::ScrollLeft,
+            KeyContext::Table,
+        );
+        self.bind_keystroke_internal(
+            Keystroke::new(Key::ArrowRight),
+            KeyAction::ScrollRight,
+            KeyContext::Table,
+        );
+        self.bind_keystroke_internal(
+            Keystroke::new(Key::PageUp),
+            KeyAction::PageUp,
+            KeyContext::Table,
+        );
+        self.bind_keystroke_internal(
+            Keystroke::new(Key::PageDown),
+            KeyAction::PageDown,
+            KeyContext::Table,
+        );
+        self.bind_keystroke_internal(
+            Keystroke::ctrl(Key::Home),
+            KeyAction::ScrollToTop,
+            KeyContext::Table,
+        );
+        self.bind_keystroke_internal(
+            Keystroke::ctrl(Key::ArrowUp),
+            KeyAction::ScrollToTop,
+            KeyContext::Table,
+        );
+        self.bind_keystroke_internal(
+            Keystroke::ctrl(Key::End),
+            KeyAction::ScrollToBottom,
+            KeyContext::Table,
+        );
+        self.bind_keystroke_internal(
+            Keystroke::ctrl(Key::ArrowDown),
+            KeyAction::ScrollToBottom,
+            KeyContext::Table,
+        );
+        self.bind_keystroke_internal(
+            Keystroke::ctrl(Key::C),
+            KeyAction::CopySelection,
+            KeyContext::Table,
+        );
 
         // --- 5. Remote Servers Modal Context ---
         self.bind_keystroke_internal(

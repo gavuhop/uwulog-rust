@@ -37,6 +37,13 @@ impl KeyActionExt for KeyAction {
             Self::SelectNext => Some(AppAction::AutocompleteNext),
             Self::SelectPrev => Some(AppAction::AutocompletePrev),
             Self::ConfirmSelection => Some(AppAction::AutocompleteConfirm),
+            Self::ScrollLeft => Some(AppAction::ScrollTableLeft),
+            Self::ScrollRight => Some(AppAction::ScrollTableRight),
+            Self::PageUp => Some(AppAction::PageUp),
+            Self::PageDown => Some(AppAction::PageDown),
+            Self::ScrollToTop => Some(AppAction::ScrollToTop),
+            Self::ScrollToBottom => Some(AppAction::ScrollToBottom),
+            Self::CopySelection => Some(AppAction::CopySelectedLog),
             Self::Back | Self::TabComplete | Self::Unbind => None,
         }
     }

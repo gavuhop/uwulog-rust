@@ -39,8 +39,9 @@ pub fn render_log_table(
     let mut last_row_visible = false;
 
     // Đọc thao tác cuộn chuột trước khi vẽ TableBuilder
+    let is_shift_down = ui.input(|i| i.modifiers.shift);
     let scroll_delta_y = ui.input(|i| i.smooth_scroll_delta.y);
-    if scroll_delta_y > 0.0 {
+    if scroll_delta_y > 0.0 && !is_shift_down {
         dispatch(AppAction::Unlatch);
     }
 
@@ -98,6 +99,63 @@ pub fn render_log_table(
         ActiveTab::Filtered => "main_table_hscroll",
         ActiveTab::Unfiltered => "unfiltered_table_hscroll",
     };
+    let scroll_id = ui.make_persistent_id(hscroll_id);
+    let mut hstate = egui::scroll_area::State::load(ui.ctx(), scroll_id).unwrap_or_default();
+    let mut hstate_changed = false;
+
+    // 1. Phím tắt cuộn ngang (ArrowLeft / ArrowRight) từ session
+    if let Some(delta) = session.consume_horizontal_scroll(tab) {
+        hstate.offset.x = (hstate.offset.x + delta).max(0.0);
+        hstate_changed = true;
+    }
+
+    // 2. Lăn chuột ngang: Shift + Con lăn chuột hoặc Chuột có bánh lăn ngang (Tilt Wheel)
+    let smooth_x = ui.input(|i| i.smooth_scroll_delta.x);
+    let smooth_y = ui.input(|i| i.smooth_scroll_delta.y);
+    let h_wheel = if is_shift_down {
+        if smooth_x != 0.0 {
+            smooth_x
+        } else {
+            smooth_y
+        }
+    } else {
+        smooth_x
+    };
+    if h_wheel != 0.0 {
+        hstate.offset.x = (hstate.offset.x - h_wheel).max(0.0);
+        hstate_changed = true;
+    }
+
+    // 3. Nhấn giữ chuột giữa (Middle Mouse Pan / Drag) theo chuẩn Excel
+    let is_middle_down = ui.input(|i| i.pointer.button_down(egui::PointerButton::Middle));
+    if is_middle_down {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::AllScroll);
+        let pointer_delta = ui.input(|i| i.pointer.delta());
+        if pointer_delta.x != 0.0 {
+            hstate.offset.x = (hstate.offset.x - pointer_delta.x).max(0.0);
+            hstate_changed = true;
+        }
+        if pointer_delta.y != 0.0 {
+            let pan_id = ui.make_persistent_id("table_middle_pan_accum_y");
+            let mut accum = ui.data(|d| d.get_temp::<f32>(pan_id)).unwrap_or(0.0);
+            accum -= pointer_delta.y;
+            let row_h = text_height + 8.0;
+            if accum.abs() >= row_h {
+                let step = (accum / row_h) as i32;
+                accum -= step as f32 * row_h;
+                if step > 0 {
+                    session.navigate_row_by_step(step as usize, false);
+                } else if step < 0 {
+                    session.navigate_row_by_step((-step) as usize, true);
+                }
+            }
+            ui.data_mut(|d| d.insert_temp(pan_id, accum));
+        }
+    }
+
+    if hstate_changed {
+        hstate.store(ui.ctx(), scroll_id);
+    }
 
     egui::ScrollArea::horizontal()
         .id_salt(hscroll_id)
@@ -145,6 +203,8 @@ pub fn render_log_table(
                     let mut render_ctx = ActionContext {
                         highlighted_terms: &session.inspector.highlighted_terms,
                         has_any_highlights,
+                        is_filtering: !session.view.search.query.trim().is_empty(),
+                        is_unfiltered_tab: tab == ActiveTab::Unfiltered,
                         action: &mut action_to_dispatch,
                     };
 
@@ -257,7 +317,7 @@ pub fn render_log_table(
         dispatch(AppAction::LoadOlderLogs(1000));
     }
 
-    if last_row_visible && scroll_delta_y < 0.0 {
+    if last_row_visible && scroll_delta_y < 0.0 && !is_shift_down {
         dispatch(AppAction::Latch);
     }
 }

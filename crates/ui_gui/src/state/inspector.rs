@@ -5,6 +5,7 @@ use uwu_core_schema::LogEvent;
 pub struct InspectorState {
     pub selected_log: Option<LogEvent>,
     pub width_ratio: f32,
+    pub is_beauty_payload: bool,
     pub highlighted_row_ids: HashSet<u64>,
     pub highlighted_terms: HashSet<String>,
 }
@@ -20,8 +21,19 @@ impl InspectorState {
         Self {
             selected_log: None,
             width_ratio: 0.35,
+            is_beauty_payload: false,
             highlighted_row_ids: HashSet::new(),
             highlighted_terms: HashSet::new(),
+        }
+    }
+
+    /// Định dạng payload của dòng log đang chọn phục vụ clipboard copy theo chế độ Beauty hay Raw
+    pub fn formatted_payload_for_copy(&self) -> Option<String> {
+        let event = self.selected_log.as_ref()?;
+        if self.is_beauty_payload && !event.fields.is_empty() {
+            Some(event.beauty_display().into_owned())
+        } else {
+            Some(event.raw_display().into_owned())
         }
     }
 

@@ -174,7 +174,7 @@ pub fn render_header(
             let filtered_tooltip = if is_filtering {
                 "Switch to Filtered Logs view (Alt+1, Ctrl+Tab)"
             } else {
-                "Switch to Main Logs view (Alt+1, Ctrl+Tab)"
+                "Main Logs view"
             };
 
             if crate::components::ui::TabButton::new(filtered_tab_text, is_filtered_tab)
@@ -185,8 +185,8 @@ pub fn render_header(
                 dispatch(AppAction::SwitchTab(ActiveTab::Filtered));
             }
 
-            // Tab 2: Raw Stream (Chỉ xuất hiện khi người dùng đang có bộ lọc hoặc đang mở tab Raw)
-            if is_filtering || is_unfiltered_tab {
+            // Tab 2: Raw Stream (Chỉ xuất hiện khi người dùng đang có bộ lọc)
+            if is_filtering {
                 ui.add_space(2.0);
 
                 if crate::components::ui::TabButton::new("Raw", is_unfiltered_tab)

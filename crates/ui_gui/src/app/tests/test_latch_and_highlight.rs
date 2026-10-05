@@ -128,7 +128,8 @@ async fn test_app_action_latch_and_unfiltered() {
     app.dispatch_action(AppAction::ToggleLatch);
     assert!(app.active_session().viewport.is_auto_scroll);
 
-    // Open & close unfiltered stream
+    // Open & close unfiltered stream (yêu cầu có filter trước khi mở Unfiltered)
+    app.active_session_mut().view.search.query = "level:error".to_string();
     app.dispatch_action(AppAction::OpenUnfilteredStream(Some(42)));
     assert!(app.active_session().unfiltered.is_open);
     assert_eq!(app.active_session().active_tab, ActiveTab::Unfiltered);
@@ -144,6 +145,7 @@ async fn test_app_action_latch_and_unfiltered() {
     assert!(!app.active_session().unfiltered.is_open);
     assert_eq!(app.active_session().active_tab, ActiveTab::Filtered);
 
+    app.active_session_mut().view.search.query = "level:error".to_string();
     app.dispatch_action(AppAction::OpenUnfilteredStream(None));
     assert!(app.active_session().unfiltered.is_open);
     app.dispatch_action(AppAction::CloseUnfilteredStream);

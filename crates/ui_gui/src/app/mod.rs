@@ -695,6 +695,22 @@ impl UwuGuiApp {
                     ctx.request_repaint();
                 }
             }
+            AppAction::CopySelectedLog => {
+                if let Some(text) = self
+                    .active_session()
+                    .view
+                    .inspector
+                    .formatted_payload_for_copy()
+                {
+                    if let Some(ctx) = &self.egui_ctx {
+                        let copy_id = egui::Id::new("copy_raw_flash");
+                        let now = ctx.input(|i| i.time);
+                        ctx.data_mut(|d| d.insert_temp(copy_id, now));
+                        ctx.copy_text(text);
+                        ctx.request_repaint();
+                    }
+                }
+            }
             _ => {}
         }
     }

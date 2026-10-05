@@ -223,6 +223,12 @@ async fn test_app_action_select_log_and_switch_tab() {
     app.dispatch_action(AppAction::SelectLog(None));
     assert!(app.active_session().inspector.selected_log.is_none());
 
+    // Không có filter -> không thể đổi sang tab Unfiltered
+    app.dispatch_action(AppAction::SwitchTab(ActiveTab::Unfiltered));
+    assert_eq!(app.active_session().active_tab, ActiveTab::Filtered);
+
+    // Có filter -> đổi tab bình thường
+    app.active_session_mut().view.search.query = "error".to_string();
     app.dispatch_action(AppAction::SwitchTab(ActiveTab::Unfiltered));
     assert_eq!(app.active_session().active_tab, ActiveTab::Unfiltered);
 

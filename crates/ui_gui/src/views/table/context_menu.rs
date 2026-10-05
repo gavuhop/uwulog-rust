@@ -33,9 +33,16 @@ pub fn render_cell_context_menu(
     ui.separator();
 
     // 3. Nhóm thao tác Dòng & Toàn cục
-    if ui.button("View in unfiltered stream (Alt+V)").clicked() {
-        *render_ctx.action = Some(AppAction::OpenUnfilteredStream(Some(menu_ctx.event_id)));
-        ui.close();
+    if render_ctx.is_filtering {
+        let label = if render_ctx.is_unfiltered_tab {
+            "Switch back to main view (Alt+V)"
+        } else {
+            "View in unfiltered stream (Alt+V)"
+        };
+        if ui.button(label).clicked() {
+            *render_ctx.action = Some(AppAction::ViewRawContext);
+            ui.close();
+        }
     }
 
     let highlight_label = if menu_ctx.is_row_highlighted {
