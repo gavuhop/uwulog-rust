@@ -3,6 +3,14 @@ use crate::overlay::{OverlayLayer, OverlayStack};
 use crate::theme::ActiveTheme;
 use eframe::egui::{self, Color32, CornerRadius, Id, Order, Pos2, Rect, Stroke};
 
+fn restore_preview_theme(ctx: &egui::Context) {
+    if let Some(orig_id) =
+        ctx.data_mut(|d| d.remove_temp::<String>(Id::new("theme_preview_orig_id")))
+    {
+        crate::theme::set_active_theme(&orig_id, ctx);
+    }
+}
+
 pub fn render_main_menu_popup(
     ctx: &egui::Context,
     overlay_stack: &mut OverlayStack,
@@ -10,6 +18,7 @@ pub fn render_main_menu_popup(
     trigger_rect: Rect,
 ) {
     if !overlay_stack.is_open(OverlayLayer::MainMenu) {
+        restore_preview_theme(ctx);
         return;
     }
 
@@ -43,6 +52,7 @@ pub fn render_main_menu_popup(
                     .contains(pos);
 
             if !on_trigger && !on_main_menu && !on_submenu && !fallback_on_menu {
+                restore_preview_theme(ctx);
                 dispatch(AppAction::CloseMainMenu);
                 return;
             }
@@ -115,6 +125,7 @@ pub fn render_main_menu_popup(
                     }
                     if about_resp.hovered() {
                         overlay_stack.close(OverlayLayer::ThemeSubmenu);
+                        restore_preview_theme(ctx);
                     }
 
                     // --- Item 2: Keyboard Shortcuts ---
@@ -125,6 +136,7 @@ pub fn render_main_menu_popup(
                     }
                     if keymap_resp.hovered() {
                         overlay_stack.close(OverlayLayer::ThemeSubmenu);
+                        restore_preview_theme(ctx);
                     }
 
                     // --- Item 3: Theme ---
@@ -161,6 +173,7 @@ pub fn render_main_menu_popup(
                     }
                     if quit_resp.hovered() {
                         overlay_stack.close(OverlayLayer::ThemeSubmenu);
+                        restore_preview_theme(ctx);
                     }
                 });
         });
@@ -192,6 +205,7 @@ pub fn render_main_menu_popup(
 
                 if !in_theme_btn && !in_bridge && !in_submenu {
                     overlay_stack.close(OverlayLayer::ThemeSubmenu);
+                    restore_preview_theme(ctx);
                 }
             }
 
@@ -208,7 +222,18 @@ pub fn render_main_menu_popup(
                             .show(ui, |ui| {
                                 ui.set_width(submenu_width);
 
-                                let active_theme_id = &theme.id;
+                                let orig_theme_id: String = ctx.data_mut(|d| {
+                                    d.get_temp(Id::new("theme_preview_orig_id")).unwrap_or_else(
+                                        || {
+                                            let id = theme.id.clone();
+                                            d.insert_temp(
+                                                Id::new("theme_preview_orig_id"),
+                                                id.clone(),
+                                            );
+                                            id
+                                        },
+                                    )
+                                });
 
                                 let render_sub_item =
                                     |ui: &mut egui::Ui,
@@ -329,10 +354,19 @@ pub fn render_main_menu_popup(
 
                                 // --- Danh sách Themes: Hiển thị liền mạch không cần separator giữa theme gốc và custom ---
                                 for t in &themes {
-                                    let is_active = t.id == *active_theme_id;
+                                    let is_active = t.id == orig_theme_id;
                                     let item_resp = render_sub_item(ui, &t.name, is_active);
 
+                                    if item_resp.hovered() && theme.id != t.id {
+                                        crate::theme::set_active_theme(&t.id, ctx);
+                                    }
+
                                     if item_resp.clicked() {
+                                        ctx.data_mut(|d| {
+                                            d.remove_temp::<String>(Id::new(
+                                                "theme_preview_orig_id",
+                                            ))
+                                        });
                                         crate::theme::set_active_theme(&t.id, ctx);
                                         action_to_dispatch =
                                             Some(AppAction::SwitchTheme(t.id.clone()));
@@ -362,6 +396,11 @@ pub fn render_main_menu_popup(
                                     {
                                         match crate::theme::import_theme_file(&path) {
                                             Ok(imported) => {
+                                                ctx.data_mut(|d| {
+                                                    d.remove_temp::<String>(Id::new(
+                                                        "theme_preview_orig_id",
+                                                    ))
+                                                });
                                                 crate::theme::set_active_theme(&imported.id, ctx);
                                                 action_to_dispatch = Some(AppAction::SwitchTheme(
                                                     imported.id.clone(),
@@ -386,9 +425,214 @@ pub fn render_main_menu_popup(
         }
     } else {
         ctx.data_mut(|d| d.remove::<Rect>(Id::new("theme_submenu_actual_rect")));
+        restore_preview_theme(ctx);
     }
 
     if let Some(action) = action_to_dispatch {
         dispatch(action);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_raw_input() -> egui::RawInput {
+        egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(1024.0, 768.0))),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_theme_hover_real_time_change_and_restore_on_close() {
+        let ctx = egui::Context::default();
+        crate::theme::set_active_theme("nord-dimmed", &ctx);
+        assert_eq!(crate::theme::active().id, "nord-dimmed");
+
+        let mut overlay_stack = OverlayStack::new();
+        overlay_stack.push(OverlayLayer::MainMenu);
+        overlay_stack.push(OverlayLayer::ThemeSubmenu);
+
+        let trigger_rect = Rect::from_min_size(Pos2::new(10.0, 10.0), egui::vec2(30.0, 30.0));
+        let mut dispatched = Vec::new();
+        let mut dispatch = |action: AppAction| {
+            dispatched.push(action);
+        };
+
+        let input1 = test_raw_input();
+        let mut out1 = ctx.run_ui(input1, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                render_main_menu_popup(ui.ctx(), &mut overlay_stack, &mut dispatch, trigger_rect);
+            });
+        });
+        out1.textures_delta.clear();
+
+        // Get the rect of the theme submenu
+        let submenu_rect: Rect = ctx
+            .data(|d| d.get_temp(Id::new("theme_submenu_actual_rect")))
+            .expect("Submenu rect should be stored");
+
+        // Item 1 is "one-dark" (min.y + 4 + 24 + 12 = min.y + 40)
+        let hover_pos = Pos2::new(submenu_rect.center().x, submenu_rect.min.y + 36.0);
+
+        let mut hover_input = test_raw_input();
+        hover_input
+            .events
+            .push(egui::Event::PointerMoved(hover_pos));
+
+        // Frame 2: Hover over "one-dark"
+        let mut out2 = ctx.run_ui(hover_input.clone(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                render_main_menu_popup(ui.ctx(), &mut overlay_stack, &mut dispatch, trigger_rect);
+            });
+        });
+        out2.textures_delta.clear();
+
+        // Frame 2b: Second frame of hover
+        let mut out2b = ctx.run_ui(hover_input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                render_main_menu_popup(ui.ctx(), &mut overlay_stack, &mut dispatch, trigger_rect);
+            });
+        });
+        out2b.textures_delta.clear();
+
+        // Theme should be changed in real time to "one-dark"!
+        assert_eq!(crate::theme::active().id, "one-dark");
+
+        // Frame 3: Close ThemeSubmenu without clicking (cancel)
+        overlay_stack.close(OverlayLayer::ThemeSubmenu);
+        let cancel_input = test_raw_input();
+        let mut out3 = ctx.run_ui(cancel_input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                render_main_menu_popup(ui.ctx(), &mut overlay_stack, &mut dispatch, trigger_rect);
+            });
+        });
+        out3.textures_delta.clear();
+
+        // Theme should be restored back to "nord-dimmed"!
+        assert_eq!(crate::theme::active().id, "nord-dimmed");
+    }
+
+    #[test]
+    fn test_theme_hover_and_click_selects_theme() {
+        let ctx = egui::Context::default();
+        crate::theme::set_active_theme("nord-dimmed", &ctx);
+        assert_eq!(crate::theme::active().id, "nord-dimmed");
+
+        let mut overlay_stack = OverlayStack::new();
+        overlay_stack.push(OverlayLayer::MainMenu);
+        overlay_stack.push(OverlayLayer::ThemeSubmenu);
+
+        let trigger_rect = Rect::from_min_size(Pos2::new(10.0, 10.0), egui::vec2(30.0, 30.0));
+        let mut dispatched = Vec::new();
+        {
+            let mut dispatch = |action: AppAction| {
+                dispatched.push(action);
+            };
+
+            // Frame 1: Initial render
+            let input1 = test_raw_input();
+            let mut out1 = ctx.run_ui(input1, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    render_main_menu_popup(
+                        ui.ctx(),
+                        &mut overlay_stack,
+                        &mut dispatch,
+                        trigger_rect,
+                    );
+                });
+            });
+            out1.textures_delta.clear();
+
+            let submenu_rect: Rect = ctx
+                .data(|d| d.get_temp(Id::new("theme_submenu_actual_rect")))
+                .expect("Submenu rect should be stored");
+
+            let click_pos = Pos2::new(submenu_rect.center().x, submenu_rect.min.y + 36.0);
+
+            // Frame 2a: Move pointer to "one-dark"
+            let mut move_input = test_raw_input();
+            move_input.events.push(egui::Event::PointerMoved(click_pos));
+            let mut out2a = ctx.run_ui(move_input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    render_main_menu_popup(
+                        ui.ctx(),
+                        &mut overlay_stack,
+                        &mut dispatch,
+                        trigger_rect,
+                    );
+                });
+            });
+            out2a.textures_delta.clear();
+
+            // Frame 2b: Mouse down on "one-dark"
+            let mut press_input = test_raw_input();
+            press_input.events.push(egui::Event::PointerButton {
+                pos: click_pos,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::default(),
+            });
+            let mut out2 = ctx.run_ui(press_input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    render_main_menu_popup(
+                        ui.ctx(),
+                        &mut overlay_stack,
+                        &mut dispatch,
+                        trigger_rect,
+                    );
+                });
+            });
+            out2.textures_delta.clear();
+
+            // Frame 3: Mouse up (release click)
+            let mut release_input = test_raw_input();
+            release_input.events.push(egui::Event::PointerButton {
+                pos: click_pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::default(),
+            });
+            let mut out3 = ctx.run_ui(release_input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    render_main_menu_popup(
+                        ui.ctx(),
+                        &mut overlay_stack,
+                        &mut dispatch,
+                        trigger_rect,
+                    );
+                });
+            });
+            out3.textures_delta.clear();
+        }
+
+        // Action SwitchTheme("one-dark") must be dispatched!
+        assert!(matches!(
+            dispatched.first(),
+            Some(AppAction::SwitchTheme(id)) if id == "one-dark"
+        ));
+
+        // Theme should remain "one-dark"
+        assert_eq!(crate::theme::active().id, "one-dark");
+
+        // Menu should be closed
+        assert!(!overlay_stack.is_open(OverlayLayer::MainMenu));
+        assert!(!overlay_stack.is_open(OverlayLayer::ThemeSubmenu));
+
+        // Frame 4: Menu closed frame
+        let final_input = test_raw_input();
+        let mut out4 = ctx.run_ui(final_input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                render_main_menu_popup(ui.ctx(), &mut overlay_stack, &mut |_| {}, trigger_rect);
+            });
+        });
+        out4.textures_delta.clear();
+
+        // Theme still remains "one-dark" (not reverted)
+        assert_eq!(crate::theme::active().id, "one-dark");
+
+        // Cleanup
+        crate::theme::set_active_theme("nord-dimmed", &ctx);
     }
 }

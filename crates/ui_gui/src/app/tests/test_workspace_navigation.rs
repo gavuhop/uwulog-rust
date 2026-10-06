@@ -3,6 +3,7 @@ use crate::actions::AppAction;
 use crate::app::WorkspaceManager;
 use crate::overlay::{OverlayLayer, RemoteModalPlacement};
 use crate::session::GuiSession;
+use crate::views::remote_servers::RemoteServerKind;
 use uwu_core_workspace::{
     extract_project_name, SourceType, Workspace, WorkspaceLocation, WorkspaceStore,
 };

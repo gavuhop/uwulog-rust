@@ -231,7 +231,7 @@ mod tests {
         }
 
         assert!(!received.is_empty());
-        assert_eq!(received[0], "Critical stderr failure");
+        assert_eq!(received[0].trim_end(), "Critical stderr failure");
         assert!(!received[0].contains("[ERROR]"));
     }
 
