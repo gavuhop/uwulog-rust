@@ -82,29 +82,11 @@ uwu-ui-gui = { path = "crates/ui_gui" }
 uwu-icons = { path = "crates/icons", default-features = false }
 uwu-cli = { path = "crates/cli" }
 
-# ==============================================================================
-# Build Profiles Optimization
-# ==============================================================================
+# Tối ưu compile siêu tốc khi dev, dependencies mượt mà
 [profile.dev]
-# Chỉ giữ lại thông tin số dòng khi panic/crash, loại bỏ bản đồ debug phức tạp
-# giúp giảm mạnh dung lượng file .pdb và tăng tốc độ incremental linking trên Windows
 debug = "line-tables-only"
 
-# Tối ưu hóa các dependencies bên ngoài (egui, wgpu, arrow, tokio...):
-# - Biên dịch 1 lần với opt-level = 2 giúp chạy mượt mà trong quá trình dev
-# - Tắt debuginfo thừa của dependencies để giảm hàng trăm MB dung lượng PDB
 [profile.dev.package."*"]
 opt-level = 2
 debug = false
 
-# ==============================================================================
-# Production Release Optimization
-# ==============================================================================
-[profile.release]
-opt-level = 3
-# Tối ưu hóa liên kết xuyên crate (Link-Time Optimization), tăng hiệu năng 5–10%
-lto = "thin"
-# Giảm đơn vị sinh mã xuống 1 để LLVM phân tích và tối ưu hóa toàn cục tối đa
-codegen-units = 1
-# Loại bỏ các symbols debug thừa, giảm mạnh kích thước file thực thi (.exe)
-strip = "symbols"
