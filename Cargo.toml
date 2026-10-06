@@ -90,3 +90,19 @@ debug = "line-tables-only"
 opt-level = 2
 debug = false
 
+# Release Dev: App chạy mượt, compile siêu tốc khi dev (< 1s incremental)
+[profile.release-dev]
+inherits = "release"
+lto = "off"
+codegen-units = 16
+incremental = true
+strip = "none"
+
+# Production Release: Tối ưu hiệu năng kịch khung cho packaging phân phối
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+

@@ -29,7 +29,7 @@
   },
   {
     "label": "Run Release",
-    "command": "cargo run --release --bin uwu-gui"
+    "command": "cargo run --profile release-dev --bin uwu-gui"
   },
   {
     "label": "Run app test (JSON gen_logs)",
