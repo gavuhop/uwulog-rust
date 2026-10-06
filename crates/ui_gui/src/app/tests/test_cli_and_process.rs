@@ -212,3 +212,28 @@ async fn test_build_initial_session_preserves_saved_workspace_id_and_envs() {
         Some("ENV_VAL")
     );
 }
+
+#[tokio::test]
+async fn test_build_initial_session_with_workspace_id() {
+    let mut store = WorkspaceStore::default();
+    let mut saved_ws = Workspace::new(
+        "DirectWorkspace",
+        WorkspaceLocation::local("D:\\target\\project"),
+        SourceType::Process,
+    );
+    let target_uuid = saved_ws.id;
+    saved_ws.command_str = "cargo test".to_string();
+    store.recent_workspaces.push(saved_ws);
+
+    let cli =
+        CliArgs::try_parse_from(["uwu-gui", "--workspace-id", &target_uuid.to_string()]).unwrap();
+    assert!(cli.has_target());
+    assert_eq!(cli.workspace_id, Some(target_uuid));
+
+    let (session, has_custom, saved_id) = UwuGuiApp::build_initial_session(&cli, &store);
+    assert!(!has_custom);
+    assert_eq!(saved_id, Some(target_uuid));
+    assert_eq!(session.session.id, target_uuid);
+    assert_eq!(session.session.name, "DirectWorkspace");
+    assert_eq!(session.session.source_config.command_str, "cargo test");
+}

@@ -293,3 +293,35 @@ async fn test_app_action_dismiss_top_layer() {
     // Pop 6: Nothing left to pop
     assert!(!app.dismiss_top_layer());
 }
+
+#[tokio::test]
+async fn test_open_workspace_and_session_in_new_window() {
+    let mut app = create_test_app();
+    let ws = Workspace::new(
+        "NewWindowProject",
+        WorkspaceLocation::local("D:\\code\\new_proj"),
+        SourceType::Process,
+    );
+    let ws_id = ws.id;
+
+    // Dispatch OpenWorkspaceInNewWindow should store workspace and close project picker
+    app.push_overlay(OverlayLayer::ProjectPicker);
+    assert!(app.is_overlay_open(OverlayLayer::ProjectPicker));
+
+    app.dispatch_action(AppAction::OpenWorkspaceInNewWindow(ws));
+    assert!(!app.is_overlay_open(OverlayLayer::ProjectPicker));
+    assert!(app
+        .workspaces
+        .store
+        .recent_workspaces
+        .iter()
+        .any(|w| w.id == ws_id));
+
+    // Dispatch OpenSessionInNewWindow should close the session from This Window in current window
+    app.push_overlay(OverlayLayer::ProjectPicker);
+    assert_eq!(app.workspaces.sessions.len(), 1);
+    app.dispatch_action(AppAction::OpenSessionInNewWindow(0));
+    assert!(!app.is_overlay_open(OverlayLayer::ProjectPicker));
+    assert_eq!(app.workspaces.sessions.len(), 0);
+    assert!(!app.workspaces.has_active_session());
+}

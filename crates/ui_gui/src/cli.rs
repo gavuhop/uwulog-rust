@@ -71,12 +71,17 @@ pub struct CliArgs {
     /// Command arguments truyền sau `--` (ví dụ: `uwu-gui -- cargo run --bin server`)
     #[arg(last = true)]
     pub trailing_cmd: Vec<String>,
+
+    /// Định danh workspace cụ thể cần mở trực tiếp (khi mở trong cửa sổ mới)
+    #[arg(long = "workspace-id", visible_alias = "ws-id")]
+    pub workspace_id: Option<uuid::Uuid>,
 }
 
 impl CliArgs {
-    /// Kiểm tra xem người dùng có truyền tham số chỉ định mục tiêu (path, cmd, file, dir, remote...) hay không
+    /// Kiểm tra xem người dùng có truyền tham số chỉ định mục tiêu (workspace-id, path, cmd, file, dir, remote...) hay không
     pub fn has_target(&self) -> bool {
-        self.path.is_some()
+        self.workspace_id.is_some()
+            || self.path.is_some()
             || self.cmd.is_some()
             || self.file.is_some()
             || self.working_dir.is_some()

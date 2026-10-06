@@ -100,13 +100,15 @@ pub fn render_welcome_view(
                                                 label: &label,
                                                 is_active: false,
                                                 location_tooltip: tooltip_loc,
-                                                action_icon: Some(IconName::ThisWindow),
+                                                action_icon: None,
+                                                action_tooltip: None,
                                                 close_tooltip: "Remove from recent list",
                                             },
                                         );
 
                                         match action {
-                                            ProjectRowAction::Select => {
+                                            ProjectRowAction::Select
+                                            | ProjectRowAction::OpenInNewWindow => {
                                                 project_to_open = Some(ws.clone())
                                             }
                                             ProjectRowAction::Close => {

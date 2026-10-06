@@ -47,6 +47,7 @@ pub struct ProjectPickerArgs<'a> {
 pub enum ProjectRowAction {
     None,
     Select,
+    OpenInNewWindow,
     Close,
 }
 
@@ -57,7 +58,7 @@ pub struct ProjectRowConfig<'a> {
     pub is_active: bool,
     pub location_tooltip: Option<&'a str>,
     pub action_icon: Option<IconName>,
-    // pub action_tooltip: &'a str,
+    pub action_tooltip: Option<&'a str>,
     pub close_tooltip: &'a str,
 }
 
@@ -150,7 +151,7 @@ pub fn render_project_row(ui: &mut egui::Ui, config: ProjectRowConfig<'_>) -> Pr
                         close_color,
                     );
 
-                    // Nút Action (switch / open project)
+                    // Nút Action (Open in New Window)
                     if let Some(action_icon) = config.action_icon {
                         let (act_rect, act_resp) =
                             ui.allocate_exact_size(egui::vec2(22.0, height), egui::Sense::click());
@@ -159,7 +160,9 @@ pub fn render_project_row(ui: &mut egui::Ui, config: ProjectRowConfig<'_>) -> Pr
                         if act_resp.clicked() {
                             action_clicked = true;
                         }
-                        // act_resp.on_hover_text(config.action_tooltip);
+                        if let Some(tip) = config.action_tooltip {
+                            act_resp.on_hover_text(tip);
+                        }
 
                         let act_color = if action_hovered {
                             theme.text.primary
@@ -190,7 +193,9 @@ pub fn render_project_row(ui: &mut egui::Ui, config: ProjectRowConfig<'_>) -> Pr
 
     if close_clicked {
         ProjectRowAction::Close
-    } else if action_clicked || row_clicked {
+    } else if action_clicked {
+        ProjectRowAction::OpenInNewWindow
+    } else if row_clicked {
         ProjectRowAction::Select
     } else {
         ProjectRowAction::None
@@ -216,10 +221,7 @@ pub fn render_project_picker_popup(
     }
 
     let popup_width = 300.0;
-    let mut session_to_switch = None;
-    let mut session_to_close = None;
-    let mut project_to_open = None;
-    let mut project_to_delete = None;
+    let mut action_to_dispatch: Option<AppAction> = None;
     let mut open_local_folder_clicked = false;
     let mut open_remote_folder_clicked = false;
 
@@ -280,19 +282,23 @@ pub fn render_project_picker_popup(
                                     label: &label,
                                     is_active,
                                     location_tooltip: tooltip_loc,
-                                    action_icon: if is_active {
-                                        None
-                                    } else {
-                                        Some(IconName::ThisWindow)
-                                    },
-                                    // action_tooltip: "Switch to this project",
+                                    action_icon: Some(IconName::ThisWindow),
+                                    action_tooltip: Some("Open in New Window"),
                                     close_tooltip: "Close and stop project from this window",
                                 },
                             );
 
                             match action {
-                                ProjectRowAction::Select => session_to_switch = Some(ix),
-                                ProjectRowAction::Close => session_to_close = Some(ix),
+                                ProjectRowAction::Select => {
+                                    action_to_dispatch = Some(AppAction::SwitchSession(ix));
+                                }
+                                ProjectRowAction::OpenInNewWindow => {
+                                    action_to_dispatch =
+                                        Some(AppAction::OpenSessionInNewWindow(ix));
+                                }
+                                ProjectRowAction::Close => {
+                                    action_to_dispatch = Some(AppAction::CloseSession(ix));
+                                }
                                 ProjectRowAction::None => {}
                             }
                         }
@@ -417,14 +423,24 @@ pub fn render_project_picker_popup(
                                         is_active: false,
                                         location_tooltip: tooltip_loc,
                                         action_icon: Some(IconName::ThisWindow),
-                                        // action_tooltip: "Open in This Window",
+                                        action_tooltip: Some("Open in New Window"),
                                         close_tooltip: "Remove from recent list",
                                     },
                                 );
 
                                 match action {
-                                    ProjectRowAction::Select => project_to_open = Some(ws.clone()),
-                                    ProjectRowAction::Close => project_to_delete = Some(ws.id),
+                                    ProjectRowAction::Select => {
+                                        action_to_dispatch =
+                                            Some(AppAction::OpenWorkspace(ws.clone()));
+                                    }
+                                    ProjectRowAction::OpenInNewWindow => {
+                                        action_to_dispatch =
+                                            Some(AppAction::OpenWorkspaceInNewWindow(ws.clone()));
+                                    }
+                                    ProjectRowAction::Close => {
+                                        action_to_dispatch =
+                                            Some(AppAction::DeleteWorkspace(ws.id));
+                                    }
                                     ProjectRowAction::None => {}
                                 }
                             }
@@ -465,20 +481,8 @@ pub fn render_project_picker_popup(
         dispatch(AppAction::CloseProjectPicker);
     }
 
-    if let Some(ix) = session_to_switch {
-        dispatch(AppAction::SwitchSession(ix));
-    }
-
-    if let Some(ix) = session_to_close {
-        dispatch(AppAction::CloseSession(ix));
-    }
-
-    if let Some(id) = project_to_delete {
-        dispatch(AppAction::DeleteWorkspace(id));
-    }
-
-    if let Some(ws) = project_to_open {
-        dispatch(AppAction::OpenWorkspace(ws));
+    if let Some(act) = action_to_dispatch {
+        dispatch(act);
     }
 
     if open_local_folder_clicked {

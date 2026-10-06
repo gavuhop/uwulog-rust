@@ -12,6 +12,8 @@ pub enum AppAction {
     CloseSession(usize),
     CycleSession(bool),
     OpenWorkspace(Workspace),
+    OpenWorkspaceInNewWindow(Workspace),
+    OpenSessionInNewWindow(usize),
     LoadWorkspace(Workspace),
     DeleteWorkspace(uuid::Uuid),
     StartSource,

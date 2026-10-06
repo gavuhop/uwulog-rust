@@ -264,6 +264,35 @@ impl UwuGuiApp {
         self.workspaces.open_or_switch_workspace(ws, &self.rt);
     }
 
+    /// Mở một Workspace trong một cửa sổ OS độc lập mới (tiến trình mới)
+    pub fn open_workspace_in_new_window(&mut self, ws: &Workspace) {
+        // Đảm bảo thông tin workspace đã được lưu vào persistent store
+        self.workspaces.store.add_or_update(ws.clone());
+        let _ = self.workspaces.store.save();
+
+        let current_exe = match std::env::current_exe() {
+            Ok(exe) => exe,
+            Err(e) => {
+                eprintln!("Failed to get current executable path: {e}");
+                return;
+            }
+        };
+
+        let mut cmd = std::process::Command::new(current_exe);
+        cmd.arg("--workspace-id").arg(ws.id.to_string());
+
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+            cmd.creation_flags(CREATE_NEW_PROCESS_GROUP);
+        }
+
+        if let Err(e) = cmd.spawn() {
+            eprintln!("Failed to spawn new window for workspace {}: {e}", ws.name);
+        }
+    }
+
     /// Đóng một tab session cụ thể
     #[inline]
     pub fn close_session(&mut self, index: usize) {
@@ -450,11 +479,29 @@ impl UwuGuiApp {
         cli: &CliArgs,
         store: &WorkspaceStore,
     ) -> (GuiSession, bool, Option<uuid::Uuid>) {
-        let (location, source_type, cmd, file, has_custom_source) = cli.resolve_target();
+        let saved_ws = if let Some(id) = cli.workspace_id {
+            store.recent_workspaces.iter().find(|ws| ws.id == id)
+        } else {
+            None
+        };
 
-        let saved_ws = store
-            .find_by_location(&location)
-            .or_else(|| store.find_by_workdir(location.working_dir()));
+        let (location, source_type, cmd, file, has_custom_source) = if let Some(ws) = saved_ws {
+            (
+                ws.location.clone(),
+                ws.source_type,
+                ws.command_str.clone(),
+                ws.file_path.clone(),
+                false,
+            )
+        } else {
+            cli.resolve_target()
+        };
+
+        let saved_ws = saved_ws.or_else(|| {
+            store
+                .find_by_location(&location)
+                .or_else(|| store.find_by_workdir(location.working_dir()))
+        });
 
         let saved_id = saved_ws.map(|ws| ws.id);
 
@@ -603,6 +650,10 @@ impl UwuGuiApp {
                     self.open_or_switch_workspace(&ws);
                     self.close_project_picker();
                 }
+                AppAction::OpenWorkspaceInNewWindow(ws) => {
+                    self.open_workspace_in_new_window(&ws);
+                    self.close_project_picker();
+                }
                 AppAction::DeleteWorkspace(id) => self.workspaces.store.remove(id),
                 AppAction::ToggleProjectPicker => {
                     if self.is_overlay_open(OverlayLayer::ProjectPicker) {
@@ -696,6 +747,23 @@ impl UwuGuiApp {
             AppAction::OpenWorkspace(ws) => {
                 self.open_or_switch_workspace(&ws);
                 self.close_project_picker();
+            }
+            AppAction::OpenWorkspaceInNewWindow(ws) => {
+                self.open_workspace_in_new_window(&ws);
+                if let Some(pos) =
+                    self.workspaces.sessions.iter().position(|s| {
+                        s.session.id == ws.id || s.session.location.is_same(&ws.location)
+                    })
+                {
+                    self.close_session(pos);
+                }
+                self.close_project_picker();
+            }
+            AppAction::OpenSessionInNewWindow(idx) => {
+                if let Some(session) = self.workspaces.sessions.get(idx) {
+                    let ws = session.session.to_workspace();
+                    self.dispatch_action(AppAction::OpenWorkspaceInNewWindow(ws));
+                }
             }
             AppAction::LoadWorkspace(ws) => {
                 self.load_workspace(&ws);
