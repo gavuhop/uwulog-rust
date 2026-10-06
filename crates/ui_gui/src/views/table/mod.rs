@@ -33,7 +33,7 @@ pub fn render_log_table(
     };
     let scroll_target = session.consume_scroll_request(tab, row_count);
     let stream = session.stream_summary(tab);
-    let text_height = egui::TextStyle::Monospace.resolve(ui.style()).size;
+    let text_height = crate::theme::TABLE_FONT_SIZE;
 
     let mut newly_selected_event = None;
     let mut min_visible_row: Option<usize> = None;
@@ -94,7 +94,15 @@ pub fn render_log_table(
         f.layout_job(job).size().x
     });
     let ts_needed_width = (ts_text_width + 8.0).max(80.0);
-    let level_needed_width = 60.0;
+    let level_text_width = ui.fonts_mut(|f| {
+        let job = egui::text::LayoutJob::simple_singleline(
+            "EMERGENCY".to_owned(),
+            egui::FontId::monospace(crate::theme::TABLE_FONT_SIZE),
+            egui::Color32::WHITE,
+        );
+        f.layout_job(job).size().x
+    });
+    let level_needed_width = (level_text_width + 8.0).max(65.0);
 
     let hscroll_id = match tab {
         ActiveTab::Filtered => "main_table_hscroll",
@@ -202,7 +210,7 @@ pub fn render_log_table(
                     None
                 };
 
-                body.rows(text_height + 8.0, row_count, |mut row| {
+                body.rows(text_height + 4.0, row_count, |mut row| {
                     let row_index = row.index();
 
                     if min_visible_row.is_none() {

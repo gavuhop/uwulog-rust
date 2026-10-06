@@ -205,7 +205,7 @@ mod tests {
             "cmd",
             vec![
                 "/c".to_string(),
-                "echo Critical stderr failure 1>&2".to_string(),
+                ">&2 echo Critical stderr failure".to_string(),
             ],
         );
 
@@ -231,7 +231,7 @@ mod tests {
         }
 
         assert!(!received.is_empty());
-        assert_eq!(received[0], "Critical stderr failure");
+        assert_eq!(received[0].trim(), "Critical stderr failure");
         assert!(!received[0].contains("[ERROR]"));
     }
 

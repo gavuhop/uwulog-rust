@@ -97,8 +97,16 @@ fn render_windows_caption_button(
 
 /// Render cụm 3 nút Windows caption (dính liền nhau, flush vào góc trên phải)
 pub fn render_windows_window_controls(ui: &mut Ui, is_maximized: bool) {
-    let test_font = FontId::new(10.0, egui::FontFamily::Name(theme::FONT_SEGOE_ICONS.into()));
-    let has_segoe_font = ui.ctx().fonts_mut(|f| f.has_glyph(&test_font, '\u{e8bb}'));
+    let font_family = egui::FontFamily::Name(theme::FONT_SEGOE_ICONS.into());
+    let has_segoe_font = ui.ctx().fonts_mut(|f| {
+        let is_bound = f.definitions().families.contains_key(&font_family);
+        if is_bound {
+            let test_font = FontId::new(10.0, font_family);
+            f.has_glyph(&test_font, '\u{e8bb}')
+        } else {
+            false
+        }
+    });
 
     ui.scope(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);

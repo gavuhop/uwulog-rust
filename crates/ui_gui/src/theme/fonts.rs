@@ -2,7 +2,7 @@ use eframe::egui::{self, FontData, FontDefinitions, FontFamily, FontId, TextStyl
 use std::sync::Arc;
 
 pub const FONT_SEGOE_ICONS: &str = "segoe_icons";
-pub const TABLE_FONT_SIZE: f32 = 13.0;
+pub const TABLE_FONT_SIZE: f32 = 14.0;
 
 /// Cấu hình typography và nạp font Monospace sắc nét trên Windows và Linux
 pub fn setup_fonts(ctx: &egui::Context) {
