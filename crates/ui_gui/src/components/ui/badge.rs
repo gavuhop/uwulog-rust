@@ -117,50 +117,6 @@ impl<'a> CountBadge<'a> {
         }
     }
 }
-
-/// Chấm tròn trạng thái (StatusDot)
-pub struct StatusDot<'a> {
-    color: Color32,
-    size: f32,
-    tooltip: Option<&'a str>,
-}
-
-impl<'a> StatusDot<'a> {
-    pub fn new(color: Color32) -> Self {
-        Self {
-            color,
-            size: 8.0,
-            tooltip: None,
-        }
-    }
-
-    pub fn size(mut self, size: f32) -> Self {
-        self.size = size;
-        self
-    }
-
-    pub fn tooltip(mut self, tooltip: &'a str) -> Self {
-        self.tooltip = Some(tooltip);
-        self
-    }
-
-    pub fn show(self, ui: &mut Ui) -> Response {
-        let (rect, response) = ui.allocate_exact_size(Vec2::splat(self.size), egui::Sense::hover());
-
-        if ui.is_rect_visible(rect) {
-            let center = rect.center();
-            ui.painter()
-                .circle_filled(center, self.size * 0.5, self.color);
-        }
-
-        if let Some(tip) = self.tooltip {
-            response.on_hover_text(tip)
-        } else {
-            response
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

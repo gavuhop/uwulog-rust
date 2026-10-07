@@ -1,5 +1,3 @@
-use eframe::egui::{self, Color32};
-
 /// Định dạng số với dấu phẩy phân cách hàng nghìn (ví dụ: 50,000)
 pub fn format_number(n: usize) -> String {
     let s = n.to_string();
@@ -12,18 +10,6 @@ pub fn format_number(n: usize) -> String {
         result.push(c);
     }
     result
-}
-
-/// Vẽ icon drag handle 6 chấm (2 cột x 3 hàng) sắc nét bằng vector painter, không phụ thuộc font chữ hệ thống
-pub fn draw_drag_handle(painter: &egui::Painter, center: egui::Pos2, color: Color32) {
-    let dx = 2.5;
-    let dy = 3.5;
-    let r = 1.25;
-    for &x in &[center.x - dx, center.x + dx] {
-        for &y in &[center.y - dy, center.y, center.y + dy] {
-            painter.circle_filled(egui::pos2(x, y), r, color);
-        }
-    }
 }
 
 #[cfg(test)]

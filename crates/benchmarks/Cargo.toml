@@ -22,7 +22,6 @@ tempfile = "3.10"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
-tempfile = "3.10"
 
 [[bench]]
 name = "micro_benches"

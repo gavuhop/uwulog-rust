@@ -3,7 +3,6 @@ pub mod header;
 pub mod modals;
 pub mod remote_servers;
 pub mod table;
-pub mod unfiltered;
 pub mod welcome;
 
 pub use detail::render_detail;
@@ -12,7 +11,6 @@ pub use modals::{
     render_columns_modal, render_launch_modal, render_project_picker_popup, ProjectPickerArgs,
 };
 pub use table::render_table;
-pub use unfiltered::render_unfiltered_table;
 pub use welcome::render_welcome_view;
 
 use crate::app::UwuGuiApp;
