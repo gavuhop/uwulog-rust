@@ -60,9 +60,9 @@ TMP_DIR="$(mktemp -d -t uwulog-install-XXXXXX)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 if [ "$PLATFORM" = "linux" ]; then
-    TARBALL_NAME="uwulog-v${VERSION}-linux-${ARCH_LINUX}.tar.gz"
+    TARBALL_NAME="uwulog-v${VERSION}-linux-${ARCH_LINUX}-portable.tar.gz"
     DOWNLOAD_URL="${GITHUB_URL}/releases/download/v${VERSION}/${TARBALL_NAME}"
-    EXTRACTED_DIR="$TMP_DIR/uwulog-v${VERSION}-linux-${ARCH_LINUX}"
+    EXTRACTED_DIR="$TMP_DIR/uwulog-v${VERSION}-linux-${ARCH_LINUX}-portable"
 
     # Determine potential repository root if run locally
     SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd || true)"
@@ -77,6 +77,12 @@ if [ "$PLATFORM" = "linux" ]; then
     if curl -fL "$DOWNLOAD_URL" -o "$TMP_DIR/$TARBALL_NAME" 2>/dev/null; then
         echo "==> Extracting archive..."
         tar -xzf "$TMP_DIR/$TARBALL_NAME" -C "$TMP_DIR"
+    elif curl -fL "${GITHUB_URL}/releases/download/v${VERSION}/uwulog-v${VERSION}-linux-${ARCH_LINUX}.tar.gz" -o "$TMP_DIR/$TARBALL_NAME" 2>/dev/null; then
+        echo "==> Extracting archive..."
+        tar -xzf "$TMP_DIR/$TARBALL_NAME" -C "$TMP_DIR"
+        if [ -d "$TMP_DIR/uwulog-v${VERSION}-linux-${ARCH_LINUX}" ]; then
+            EXTRACTED_DIR="$TMP_DIR/uwulog-v${VERSION}-linux-${ARCH_LINUX}"
+        fi
     else
         echo "==> Online release asset not found ($DOWNLOAD_URL)."
         echo "==> Checking for local build or archive..."
@@ -84,6 +90,12 @@ if [ "$PLATFORM" = "linux" ]; then
         if [ -n "$REPO_DIR" ] && [ -f "$REPO_DIR/dist/$TARBALL_NAME" ]; then
             echo "  -> Found local tarball at $REPO_DIR/dist/$TARBALL_NAME"
             tar -xzf "$REPO_DIR/dist/$TARBALL_NAME" -C "$TMP_DIR"
+        elif [ -n "$REPO_DIR" ] && [ -f "$REPO_DIR/dist/uwulog-v${VERSION}-linux-${ARCH_LINUX}.tar.gz" ]; then
+            echo "  -> Found local tarball at $REPO_DIR/dist/uwulog-v${VERSION}-linux-${ARCH_LINUX}.tar.gz"
+            tar -xzf "$REPO_DIR/dist/uwulog-v${VERSION}-linux-${ARCH_LINUX}.tar.gz" -C "$TMP_DIR"
+            if [ -d "$TMP_DIR/uwulog-v${VERSION}-linux-${ARCH_LINUX}" ]; then
+                EXTRACTED_DIR="$TMP_DIR/uwulog-v${VERSION}-linux-${ARCH_LINUX}"
+            fi
         elif [ -n "$REPO_DIR" ] && { [ -f "$REPO_DIR/target/release/uwu-gui" ] || [ -f "$REPO_DIR/target/debug/uwu-gui" ]; }; then
             BIN_SOURCE="$REPO_DIR/target/release"
             if [ ! -f "$BIN_SOURCE/uwu-gui" ]; then

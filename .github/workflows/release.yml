@@ -46,7 +46,7 @@ jobs:
           name: windows-${{ matrix.arch }}
           path: |
             dist/uwulog-setup-${{ matrix.arch }}.exe
-            dist/uwulog-v*-windows-${{ matrix.arch }}.zip
+            dist/uwulog-v*-windows-${{ matrix.arch }}-portable.zip
 
   # ============================================================================
   # 2. LINUX (x86_64 & aarch64)
@@ -100,7 +100,7 @@ jobs:
         with:
           name: linux-${{ matrix.arch }}
           path: |
-            dist/uwulog-v*-linux-${{ matrix.arch }}.tar.gz
+            dist/uwulog-v*-linux-${{ matrix.arch }}-portable.tar.gz
             dist/uwulog_*_${{ matrix.deb_arch }}.deb
             dist/uwulog-*.${{ matrix.arch }}.rpm
 

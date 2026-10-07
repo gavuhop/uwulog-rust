@@ -106,7 +106,7 @@ if [ ! -f "$BIN_DIR/uwu-gui" ]; then
 fi
 
 # 3. Prepare staging directory
-PKG_NAME="uwulog-v${VERSION}-linux-${ARCH}"
+PKG_NAME="uwulog-v${VERSION}-linux-${ARCH}-portable"
 STAGE_DIR="$ROOT_DIR/target/tarball_staging/$PKG_NAME"
 rm -rf "$STAGE_DIR"
 mkdir -p "$STAGE_DIR/bin"

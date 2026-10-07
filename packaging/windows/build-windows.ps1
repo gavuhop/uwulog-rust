@@ -117,7 +117,7 @@ if ($env:WINDOWS_SIGN_CERT -and (Test-Path $env:WINDOWS_SIGN_CERT)) {
 
 # 6. Build Portable ZIP
 Write-Host "`n[3/4] Creating portable ZIP package for $Architecture..." -ForegroundColor Yellow
-$zipTempDir = Join-Path $DistDir "uwulog-v$version-windows-$Architecture"
+$zipTempDir = Join-Path $DistDir "uwulog-v$version-windows-$Architecture-portable"
 if (Test-Path $zipTempDir) {
     Remove-Item -Recurse -Force $zipTempDir
 }
@@ -129,7 +129,7 @@ Copy-Item -Force (Join-Path $RootDir "packaging\assets\icon.ico") $zipTempDir
 Copy-Item -Force (Join-Path $binDir "uwulog.exe") (Join-Path $zipTempDir "bin\uwulog.exe")
 Copy-Item -Force (Join-Path $ScriptDir "bin\*") (Join-Path $zipTempDir "bin")
 
-$zipOutPath = Join-Path $DistDir "uwulog-v$version-windows-$Architecture.zip"
+$zipOutPath = Join-Path $DistDir "uwulog-v$version-windows-$Architecture-portable.zip"
 if (Test-Path $zipOutPath) {
     Remove-Item -Force $zipOutPath
 }
