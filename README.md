@@ -74,9 +74,9 @@ Combined with the keyword `now` (which refers to the **latest log**), you can qu
 
 ## Features
 
-- **Blazing Fast**: Filtering handled by Rust for near-instant results even with large logs.
-- **Data-Driven `now`**: Time filters automatically refer to the latest log, making them work perfectly on both live and static log files.
-- **Smart Highlighting**: Automatically identifies levels, timestamps, and sources.
-- **Context Awareness**: Click source tags to jump directly to the code.
-- **Intelligent Prompt**: The `>` sign changes color to reflect the process state.
-- **Process Management**: `Ctrl+C` copies selected text or stops the current command if nothing is selected.
+- **Columnar In-Memory Engine**: Powered by Apache Arrow and Rayon multi-threading, delivering up to ~39 million logs/second ingestion and sub-millisecond query evaluation.
+- **GPU-Accelerated Virtual Table**: Responsive 60 FPS viewport rendering capable of navigating millions of log records with a low RAM footprint.
+- **Live Tail and Reverse Pagination**: Real-time auto-scroll for streaming workloads alongside seamless infinite upward history navigation.
+- **Multi-Source Log Streaming**: Stream logs directly from local files, running process commands, WSL Linux environments, and remote servers via `uwu-agent` over SSH.
+- **Context Inspection**: View raw, unfiltered surrounding logs for any selected record without changing active search filters.
+- **Zed-Inspired Keybindings and Themes**: Customizable 4-layer keybinding engine, integrated color themes, draggable column reordering, and crisp vector SVG icons.
