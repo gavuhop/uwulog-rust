@@ -74,9 +74,9 @@ Combined with the keyword `now` (which refers to the **latest log**), you can qu
 
 ## Features
 
-- **Columnar In-Memory Engine**: Powered by Apache Arrow and Rayon multi-threading, delivering up to ~39 million logs/second ingestion and sub-millisecond query evaluation.
-- **GPU-Accelerated Virtual Table**: Responsive 60 FPS viewport rendering capable of navigating millions of log records with a low RAM footprint.
-- **Live Tail and Reverse Pagination**: Real-time auto-scroll for streaming workloads alongside seamless infinite upward history navigation.
-- **Multi-Source Log Streaming**: Stream logs directly from local files, running process commands, WSL Linux environments, and remote servers via `uwu-agent` over SSH.
-- **Context Inspection**: View raw, unfiltered surrounding logs for any selected record without changing active search filters.
-- **Zed-Inspired Keybindings and Themes**: Customizable 4-layer keybinding engine, integrated color themes, draggable column reordering, and crisp vector SVG icons.
+- Real-time log streaming from local files, running commands, WSL, and SSH.
+- Fast search and filtering using fields, regex, time ranges, and boolean logic.
+- Smooth virtual scrolling across millions of log lines with low memory usage.
+- Live tailing with auto-scroll and infinite upward history navigation.
+- Unfiltered context inspection around any selected log line.
+- Customizable color themes, keyboard shortcuts, and table columns.
