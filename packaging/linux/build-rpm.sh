@@ -118,6 +118,20 @@ rm -rf "$STAGE_DIR"
 mkdir -p "$RPM_TOPDIR"/{BUILD,RPMS,SOURCES,SPECS,SRPMS,tmp}
 mkdir -p "$DIST_DIR"
 
+# Configure RPM architecture compatibility for cross-packaging (e.g. building aarch64 on x86_64 host)
+if [ "$ARCH" != "$HOST_ARCH" ]; then
+    echo "-> Configuring rpmrc for cross-architecture RPM build ($HOST_ARCH -> $ARCH)..."
+    RPM_RC_DIR="${HOME:-$STAGE_DIR}"
+    if [ ! -w "$RPM_RC_DIR" ]; then
+        RPM_RC_DIR="$STAGE_DIR"
+        export HOME="$STAGE_DIR"
+    fi
+    RPM_RC="$RPM_RC_DIR/.rpmrc"
+    if [ ! -f "$RPM_RC" ] || ! grep -q "buildarch_compat: $HOST_ARCH:.*$ARCH" "$RPM_RC" 2>/dev/null; then
+        echo "buildarch_compat: $HOST_ARCH: $ARCH noarch" >> "$RPM_RC"
+    fi
+fi
+
 # 4. Generate RPM .spec file
 SPEC_FILE="$RPM_TOPDIR/SPECS/uwulog.spec"
 cat << EOF > "$SPEC_FILE"

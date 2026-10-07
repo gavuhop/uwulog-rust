@@ -21,6 +21,7 @@ jobs:
   build-windows:
     runs-on: windows-latest
     strategy:
+      fail-fast: false
       matrix:
         arch: [x64, arm64]
     steps:
@@ -53,6 +54,7 @@ jobs:
   build-linux:
     runs-on: ubuntu-22.04
     strategy:
+      fail-fast: false
       matrix:
         include:
           - arch: x86_64
@@ -108,6 +110,7 @@ jobs:
   build-macos:
     runs-on: macos-latest
     strategy:
+      fail-fast: false
       matrix:
         include:
           - arch: arm64
