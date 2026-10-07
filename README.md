@@ -1,6 +1,33 @@
-# Uwu Log Viewer
+# Uwu Log Viewer (`uwulog`)
 
 A blazing-fast, cross-platform real-time log viewer and workspace monitor powered by an in-memory Apache Arrow columnar engine.
+
+---
+
+## Installation
+
+### Linux & macOS
+Run the following command in your terminal to automatically install the latest release:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/gavuhop/uwulog-rust/main/packaging/install.sh | sh
+```
+
+### Windows
+Download the installer (`.exe`) from **[GitHub Releases](https://github.com/gavuhop/uwulog-rust/releases/latest)**.
+
+---
+
+## Quick Start
+
+```bash
+uwulog                     # Launch the desktop GUI
+uwulog ./app.log           # Open and live-tail a log file
+uwulog -c "npm run dev"    # Run a command and stream its logs in real time
+uwulog -f /var/log/syslog  # Tail system logs
+```
+
+---
 
 ## Advanced Filter Syntax
 
