@@ -161,6 +161,7 @@ pub struct Workspace {
     pub command_str: String,
     pub file_path: String,
     pub last_query: String,
+    pub filter_history: Vec<String>,
     pub last_opened: DateTime<Utc>,
     #[serde(default)]
     pub env_vars: HashMap<String, String>,
@@ -181,6 +182,7 @@ impl Workspace {
             command_str: String::new(),
             file_path: String::new(),
             last_query: String::new(),
+            filter_history: Vec::new(),
             last_opened: Utc::now(),
             env_vars: HashMap::new(),
         }

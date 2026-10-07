@@ -545,6 +545,18 @@ impl UwuGuiApp {
                 gui_session.view.search.query = ws.last_query.clone();
             }
         }
+        if let Some(ws) = saved_ws {
+            gui_session.view.search.history.entries = ws.filter_history.clone();
+            if gui_session.view.search.history.entries.is_empty()
+                && !gui_session.view.search.query.trim().is_empty()
+            {
+                gui_session
+                    .view
+                    .search
+                    .history
+                    .record(&gui_session.view.search.query);
+            }
+        }
 
         (gui_session, has_custom_source, saved_id)
     }

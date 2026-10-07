@@ -136,6 +136,10 @@ impl WorkspaceManager {
 
         let mut removed = self.sessions.remove(index);
         removed.session.stop_source();
+        let mut ws = removed.session.to_workspace();
+        ws.last_query = removed.view.search.query.clone();
+        ws.filter_history = removed.view.search.history.entries.clone();
+        self.store.add_or_update(ws);
 
         if self.sessions.is_empty() {
             self.active_index = 0;
@@ -187,6 +191,7 @@ impl WorkspaceManager {
 
         let mut ws = gui_session.session.to_workspace();
         ws.last_query = gui_session.view.search.query.clone();
+        ws.filter_history = gui_session.view.search.history.entries.clone();
         self.store.add_or_update(ws);
         self.store.open_workspace_ids = self.sessions.iter().map(|s| s.session.id).collect();
         self.store.active_workspace_id = Some(self.sessions[active_idx].session.id);
@@ -208,6 +213,7 @@ impl WorkspaceManager {
             s.session.sync_location();
             let mut ws = s.session.to_workspace();
             ws.last_query = s.view.search.query.clone();
+            ws.filter_history = s.view.search.history.entries.clone();
             self.store.add_or_update(ws);
         }
         self.store.open_workspace_ids = self.sessions.iter().map(|s| s.session.id).collect();
@@ -225,6 +231,10 @@ impl WorkspaceManager {
         let gui_session = &mut self.sessions[active_idx];
         gui_session.session.apply_workspace(ws);
         gui_session.view.search.query = ws.last_query.clone();
+        gui_session.view.search.history.entries = ws.filter_history.clone();
+        if gui_session.view.search.history.entries.is_empty() && !ws.last_query.trim().is_empty() {
+            gui_session.view.search.history.record(&ws.last_query);
+        }
         gui_session.session.spawn_load_environment(rt);
         self.save_current_workspace();
     }

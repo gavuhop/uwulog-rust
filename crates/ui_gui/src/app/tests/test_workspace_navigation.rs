@@ -3,7 +3,6 @@ use crate::actions::AppAction;
 use crate::app::WorkspaceManager;
 use crate::overlay::{OverlayLayer, RemoteModalPlacement};
 use crate::session::GuiSession;
-use crate::views::remote_servers::RemoteServerKind;
 use uwu_core_workspace::{
     extract_project_name, SourceType, Workspace, WorkspaceLocation, WorkspaceStore,
 };
@@ -409,6 +408,8 @@ async fn test_on_exit_saves_current_workspace() {
 #[tokio::test]
 #[cfg(target_os = "windows")]
 async fn test_project_picker_and_server_list_consistency() {
+    use crate::views::remote_servers::RemoteServerKind;
+
     let mut app = create_test_app();
 
     // 1. Thêm một project trực tiếp vào server connection (wsl_connections)

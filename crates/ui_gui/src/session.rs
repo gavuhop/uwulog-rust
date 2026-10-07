@@ -31,6 +31,10 @@ impl GuiSession {
         let session = WorkspaceSession::from_workspace(ws, capacity, display_limit);
         let mut view = GuiViewState::with_schema(session.engine.get_schema_map());
         view.search.query = ws.last_query.clone();
+        view.search.history.entries = ws.filter_history.clone();
+        if view.search.history.entries.is_empty() && !ws.last_query.trim().is_empty() {
+            view.search.history.record(&ws.last_query);
+        }
         Self { session, view }
     }
 

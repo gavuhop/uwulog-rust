@@ -136,6 +136,7 @@ pub fn render_history_popup(
 
     if clear_all_clicked {
         session.search.history.entries.clear();
+        session.search.history.pending_record = false;
         ctx.request_repaint();
     }
 
