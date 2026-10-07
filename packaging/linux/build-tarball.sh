@@ -89,7 +89,7 @@ fi
 if [ -z "$SKIP_BUILD" ]; then
     echo "-> Building release binaries with cargo (${CARGO_FLAGS[*]:-default host})..."
     cd "$ROOT_DIR"
-    cargo build --release "${CARGO_FLAGS[@]}" --bin uwu-gui --bin uwu-tui --bin uwu-agent --bin uwulog
+    cargo build --release "${CARGO_FLAGS[@]}" --bin uwu-gui --bin uwu-agent --bin uwulog
 else
     echo "-> Skipping cargo build (--skip-build specified)..."
     # Fallback to target/release if target triple dir not present
@@ -114,7 +114,6 @@ mkdir -p "$DIST_DIR"
 
 # 4. Copy binaries
 cp "$BIN_DIR/uwu-gui" "$STAGE_DIR/bin/"
-cp "$BIN_DIR/uwu-tui" "$STAGE_DIR/bin/"
 cp "$BIN_DIR/uwu-agent" "$STAGE_DIR/bin/"
 cp "$BIN_DIR/uwulog" "$STAGE_DIR/bin/"
 chmod 755 "$STAGE_DIR/bin/"*
@@ -142,7 +141,6 @@ echo "Installing Uwu Log to $INSTALL_PREFIX..."
 
 mkdir -p "$INSTALL_PREFIX/bin"
 cp "$SCRIPT_DIR/bin/uwu-gui" "$INSTALL_PREFIX/bin/"
-cp "$SCRIPT_DIR/bin/uwu-tui" "$INSTALL_PREFIX/bin/"
 cp "$SCRIPT_DIR/bin/uwu-agent" "$INSTALL_PREFIX/bin/"
 cp "$SCRIPT_DIR/bin/uwulog" "$INSTALL_PREFIX/bin/"
 chmod 755 "$INSTALL_PREFIX/bin/"*
@@ -203,7 +201,6 @@ INSTALL_PREFIX="${1:-/usr/local}"
 echo "Uninstalling Uwu Log from $INSTALL_PREFIX..."
 
 rm -f "$INSTALL_PREFIX/bin/uwu-gui"
-rm -f "$INSTALL_PREFIX/bin/uwu-tui"
 rm -f "$INSTALL_PREFIX/bin/uwu-agent"
 rm -f "$INSTALL_PREFIX/bin/uwulog"
 rm -f "$INSTALL_PREFIX/share/applications/uwulog.desktop"

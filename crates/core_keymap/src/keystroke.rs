@@ -300,32 +300,6 @@ impl Keystroke {
             command: self.ctrl || self.mac_cmd,
         }
     }
-
-    // -----------------------------------------------------------------------
-    // crossterm integration
-    // -----------------------------------------------------------------------
-    #[cfg(feature = "crossterm")]
-    pub fn matches_crossterm(&self, event: &crossterm::event::KeyEvent) -> bool {
-        if let Some(expected_code) = self.key.to_crossterm() {
-            if event.code != expected_code {
-                return false;
-            }
-            self.matches_crossterm_modifiers(&event.modifiers)
-        } else {
-            false
-        }
-    }
-
-    #[cfg(feature = "crossterm")]
-    pub fn matches_crossterm_modifiers(&self, mods: &crossterm::event::KeyModifiers) -> bool {
-        use crossterm::event::KeyModifiers;
-        let ctrl_match = self.ctrl == mods.contains(KeyModifiers::CONTROL);
-        let alt_match = self.alt == mods.contains(KeyModifiers::ALT);
-        let shift_match = self.shift == mods.contains(KeyModifiers::SHIFT);
-        let super_match = self.mac_cmd == mods.contains(KeyModifiers::SUPER);
-
-        ctrl_match && alt_match && shift_match && super_match
-    }
 }
 
 impl fmt::Display for Keystroke {

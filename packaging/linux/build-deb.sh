@@ -93,7 +93,7 @@ fi
 if [ -z "$SKIP_BUILD" ]; then
     echo "-> Building release binaries with cargo (${CARGO_FLAGS[*]:-default host})..."
     cd "$ROOT_DIR"
-    cargo build --release "${CARGO_FLAGS[@]}" --bin uwu-gui --bin uwu-tui --bin uwu-agent --bin uwulog
+    cargo build --release "${CARGO_FLAGS[@]}" --bin uwu-gui --bin uwu-agent --bin uwulog
 else
     echo "-> Skipping cargo build (--skip-build specified)..."
     # Fallback to target/release if target triple dir not present
@@ -178,7 +178,6 @@ chmod 755 "$STAGE_DIR/DEBIAN/postrm"
 
 # 7. Copy binaries and assets
 cp "$BIN_DIR/uwu-gui" "$STAGE_DIR/usr/bin/"
-cp "$BIN_DIR/uwu-tui" "$STAGE_DIR/usr/bin/"
 cp "$BIN_DIR/uwu-agent" "$STAGE_DIR/usr/bin/"
 cp "$BIN_DIR/uwulog" "$STAGE_DIR/usr/bin/"
 chmod 755 "$STAGE_DIR/usr/bin/"*

@@ -69,7 +69,6 @@ Name: "desktopicon"; Description: "Create a Desktop shortcut"; GroupDescription:
 [Files]
 ; Main binaries
 Source: "{#BinDir}\uwu-gui.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#BinDir}\uwu-tui.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BinDir}\uwu-agent.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; CLI Launchers in bin\ (automatically inherited by WSL via Windows PATH)
 Source: "{#BinDir}\uwulog.exe"; DestDir: "{app}\bin"; Flags: ignoreversion
@@ -98,7 +97,6 @@ Source: "{#SourceDir}\target\aarch64-unknown-linux-musl\release\uwu-agent"; Dest
 
 [Icons]
 Name: "{group}\Uwu Log"; Filename: "{app}\uwu-gui.exe"; IconFilename: "{app}\icon.ico"
-Name: "{group}\Uwu Log (TUI)"; Filename: "{app}\uwu-tui.exe"
 Name: "{group}\Uninstall Uwu Log"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\Uwu Log"; Filename: "{app}\uwu-gui.exe"; IconFilename: "{app}\icon.ico"; Tasks: desktopicon
 

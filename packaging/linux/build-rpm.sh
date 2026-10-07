@@ -96,7 +96,7 @@ fi
 if [ -z "$SKIP_BUILD" ]; then
     echo "-> Building release binaries with cargo (${CARGO_FLAGS[*]:-default host})..."
     cd "$ROOT_DIR"
-    cargo build --release "${CARGO_FLAGS[@]}" --bin uwu-gui --bin uwu-tui --bin uwu-agent --bin uwulog
+    cargo build --release "${CARGO_FLAGS[@]}" --bin uwu-gui --bin uwu-agent --bin uwulog
 else
     echo "-> Skipping cargo build (--skip-build specified)..."
     if [ ! -f "$BIN_DIR/uwu-gui" ] && [ -f "$ROOT_DIR/target/release/uwu-gui" ]; then
@@ -140,7 +140,6 @@ supporting structured search, filters, journald, and file tailing.
 %install
 mkdir -p %{buildroot}%{_bindir}
 cp -a "$BIN_DIR/uwu-gui" %{buildroot}%{_bindir}/
-cp -a "$BIN_DIR/uwu-tui" %{buildroot}%{_bindir}/
 cp -a "$BIN_DIR/uwu-agent" %{buildroot}%{_bindir}/
 cp -a "$BIN_DIR/uwulog" %{buildroot}%{_bindir}/
 chmod 755 %{buildroot}%{_bindir}/*
@@ -196,7 +195,6 @@ fi
 
 %files
 %{_bindir}/uwu-gui
-%{_bindir}/uwu-tui
 %{_bindir}/uwu-agent
 %{_bindir}/uwulog
 %{_datadir}/applications/uwulog.desktop

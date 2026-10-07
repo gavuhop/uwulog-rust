@@ -167,11 +167,15 @@ impl ActiveTheme for egui::Ui {
 }
 
 #[cfg(test)]
+pub static THEME_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_active_theme_and_switching() {
+        let _guard = THEME_TEST_MUTEX.lock().unwrap();
         let current = active();
         assert_eq!(current.id, "nord-dimmed");
 

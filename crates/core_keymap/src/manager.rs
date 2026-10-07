@@ -389,7 +389,7 @@ impl KeymapManager {
         &self.bindings
     }
 
-    /// Thuật toán phân giải (Resolver Engine) cốt lõi dùng chung cho mọi backend (egui, crossterm, testing).
+    /// Thuật toán phân giải (Resolver Engine) cốt lõi dùng chung cho mọi backend (egui, testing).
     /// Duyệt ngược từ ngữ cảnh hiện tại (`active_context`), sau đó lần theo cây phân cấp `context.parent()`
     /// cho đến `Global`.
     pub fn resolve_matching<F>(
@@ -762,28 +762,6 @@ impl KeymapManager {
         active_context: impl std::borrow::Borrow<KeyContext>,
     ) -> Option<KeyAction> {
         self.consume_input_ctx(ui.ctx(), active_context)
-    }
-
-    // -----------------------------------------------------------------------
-    // crossterm methods
-    // -----------------------------------------------------------------------
-    #[cfg(feature = "crossterm")]
-    pub fn resolve_crossterm_binding<'a>(
-        &'a self,
-        event: &crossterm::event::KeyEvent,
-        active_context: impl std::borrow::Borrow<KeyContext>,
-    ) -> Option<(&'a KeyAction, &'a Keystroke)> {
-        self.resolve_matching(active_context, |k| k.matches_crossterm(event))
-    }
-
-    #[cfg(feature = "crossterm")]
-    pub fn process_crossterm_event(
-        &self,
-        event: &crossterm::event::KeyEvent,
-        active_context: impl std::borrow::Borrow<KeyContext>,
-    ) -> Option<KeyAction> {
-        self.resolve_crossterm_binding(event, active_context)
-            .map(|(act, _)| act.clone())
     }
 }
 

@@ -6,7 +6,7 @@
 
 ## 1. 5-Tier DAG Multi-Crate Architecture Diagram
 
-The system is modularized into **15 decoupled crates** under [`crates/`](file:///home/truongviet/projects/uwulog-rust/crates) with explicit classification prefixes:
+The system is modularized into **14 decoupled crates** under [`crates/`](file:///home/truongviet/projects/uwulog-rust/crates) with explicit classification prefixes:
 
 ```mermaid
 graph TD
@@ -19,7 +19,6 @@ graph TD
     subgraph T4 ["Tier 4: Binaries / User Presentation & Tooling (cli_*, ui_*, benchmarks)"]
         CLI["cli (uwulog launcher)"]:::app
         GUI["ui_gui (uwu-gui)"]:::app
-        TUI["ui_tui (uwu-tui)"]:::app
         Agent["cli_agent (uwu-agent)"]:::app
         Bench["benchmarks (uwu-benchmarks)"]:::app
     end
@@ -52,7 +51,6 @@ graph TD
 
     %% Edge connections
     CLI -.->|Dispatch Subprocess| GUI
-    CLI -.->|Dispatch Subprocess| TUI
 
     GUI --> CoreEngine
     GUI --> CoreWorkspace
@@ -62,10 +60,6 @@ graph TD
     GUI --> DriverTransport
     GUI --> CoreSchema
     GUI --> CoreUtil
-
-    TUI --> CoreEngine
-    TUI --> DriverSources
-    TUI --> CoreSchema
 
     Agent --> DriverSources
     Agent --> CoreProtocol
@@ -184,7 +178,7 @@ sequenceDiagram
     participant Normalizer as LogNormalizer
     participant ArrowStore as ArrowStorage (RecordBatches)
     participant Compiler as QueryCompiler (Arrow)
-    participant UIThread as UI Render Thread (egui / ratatui)
+    participant UIThread as UI Render Thread (egui)
 
     Driver->>TokioRx: Sends RawLogEntry via async channel mpsc(10_000)
     Note over TokioRx: Non-blocking drain gathers batch (up to 512 entries)
@@ -222,7 +216,7 @@ sequenceDiagram
 2. **Explicit Taxonomy**:
    - `core_*`: Pure logic, data models, storage engines, and domain management.
    - `driver_*`: OS interactions, process I/O, network tunnels, and transport drivers.
-   - `ui_*`: Presentation layer (Native Desktop GUI & Terminal TUI).
+   - `ui_*`: Presentation layer (Native Desktop GUI).
    - `cli_*`: Command-line launchers and headless collection daemons.
 3. **Columnar In-Memory Efficiency**: Apache Arrow powers the core data pipeline, minimizing heap allocations, maximizing CPU L1/L2 cache locality, and accelerating filtering via SIMD/Rayon.
 4. **Zero-Allocation & SSOT Schema**: `StandardField` acts as the Single Source of Truth for aliases (`timestamp`, `level`, `message`, `id`). `LogFields` uses a flat vector representation to eliminate bucket allocation overhead.
@@ -236,9 +230,9 @@ sequenceDiagram
 - **Status**: ✅ **COMPLETED**
 - **Deliverables**: `StandardField` unifying semantic fields, `LogNormalizer` providing fast JSON/text extraction, and adaptive timestamp inference (`core_util`).
 
-### 💻 Phase 2: Desktop Native GUI & Terminal TUI
+### 💻 Phase 2: Desktop Native GUI
 - **Status**: ✅ **COMPLETED**
-- **Deliverables**: `crates/ui_gui` (`egui`/`eframe`) and `crates/ui_tui` (`ratatui`), featuring smooth virtual scrolling, live tailing, and unfiltered error context views.
+- **Deliverables**: `crates/ui_gui` (`egui`/`eframe`), featuring smooth virtual scrolling, live tailing, and unfiltered error context views.
 
 ### 📡 Phase 3: Remote Log Agent & Distributed Streaming
 - **Status**: ✅ **COMPLETED**

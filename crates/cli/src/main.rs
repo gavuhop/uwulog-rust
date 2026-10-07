@@ -15,7 +15,6 @@ use std::process::{Command, Stdio};
   uwulog -f /var/log/syslog            Tail specific log file
   uwulog -c \"cargo run\"                Stream logs from command in GUI
   uwulog --remote Ubuntu -f app.log    Open log file in WSL distro
-  uwulog --tui                         Open log viewer in Terminal UI (TUI)
   uwulog --wait ./app.log              Wait for GUI window to close before returning"
 )]
 pub struct CliArgs {
@@ -70,10 +69,6 @@ pub struct CliArgs {
     #[arg(short = 'C', long = "capacity", visible_alias = "cap")]
     pub capacity: Option<usize>,
 
-    /// Launch in Terminal UI (TUI) mode instead of GUI
-    #[arg(short = 't', long = "tui")]
-    pub tui: bool,
-
     /// Wait for the viewer process to exit before returning
     #[arg(long = "wait")]
     pub wait: bool,
@@ -83,7 +78,7 @@ pub struct CliArgs {
     pub trailing_cmd: Vec<String>,
 }
 
-/// Find a companion executable (e.g. uwu-gui or uwu-tui)
+/// Find a companion executable (e.g. uwu-gui)
 pub fn find_companion_binary(binary_name: &str) -> PathBuf {
     let ext = if cfg!(windows) { ".exe" } else { "" };
     let target_filename = format!("{}{}", binary_name, ext);
@@ -162,21 +157,6 @@ fn build_forward_args(args: &CliArgs) -> Vec<String> {
     forward
 }
 
-fn launch_tui(args: &CliArgs) -> Result<()> {
-    let tui_bin = find_companion_binary("uwu-tui");
-    let forward_args = build_forward_args(args);
-
-    let status = Command::new(&tui_bin)
-        .args(&forward_args)
-        .status()
-        .with_context(|| format!("Failed to launch TUI executable: {}", tui_bin.display()))?;
-
-    if !status.success() {
-        std::process::exit(status.code().unwrap_or(1));
-    }
-    Ok(())
-}
-
 fn launch_gui(args: &CliArgs) -> Result<()> {
     let gui_bin = find_companion_binary("uwu-gui");
     let forward_args = build_forward_args(args);
@@ -224,12 +204,7 @@ fn launch_gui(args: &CliArgs) -> Result<()> {
 
 fn main() -> Result<()> {
     let args = CliArgs::parse();
-
-    if args.tui {
-        launch_tui(&args)
-    } else {
-        launch_gui(&args)
-    }
+    launch_gui(&args)
 }
 
 #[cfg(test)]
@@ -240,7 +215,6 @@ mod tests {
     fn test_cli_args_parsing_defaults() {
         let args = CliArgs::parse_from(["uwulog"]);
         assert!(args.path.is_none());
-        assert!(!args.tui);
         assert!(!args.wait);
     }
 
@@ -254,13 +228,11 @@ mod tests {
             "error",
             "--remote",
             "Ubuntu",
-            "--tui",
             "--wait",
         ]);
         assert_eq!(args.file.as_deref(), Some("/var/log/nginx.log"));
         assert_eq!(args.query.as_deref(), Some("error"));
         assert_eq!(args.remote.as_deref(), Some("Ubuntu"));
-        assert!(args.tui);
         assert!(args.wait);
     }
 
@@ -275,7 +247,6 @@ mod tests {
             query: Some("level:err".to_string()),
             display_limit: Some(1000),
             capacity: Some(50000),
-            tui: false,
             wait: false,
             trailing_cmd: vec!["--flag".to_string(), "val".to_string()],
         };

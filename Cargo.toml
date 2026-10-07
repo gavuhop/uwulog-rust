@@ -11,7 +11,6 @@ members = [
     "crates/core_engine",
     "crates/cli_agent",
     "crates/core_keymap",
-    "crates/ui_tui",
     "crates/ui_gui",
     "crates/icons",
     "crates/benchmarks",
@@ -56,10 +55,6 @@ windows-sys = { version = "0.59", features = [
 ] }
 windows-registry = "0.5"
 
-# Terminal UI
-ratatui = "0.28"
-crossterm = "0.28"
-
 # Graphical UI (egui)
 eframe = "0.36"
 egui = "0.36"
@@ -77,7 +72,6 @@ uwu-core-workspace = { path = "crates/core_workspace" }
 uwu-core-engine = { path = "crates/core_engine" }
 uwu-core-keymap = { path = "crates/core_keymap" }
 uwu-cli-agent = { path = "crates/cli_agent" }
-uwu-ui-tui = { path = "crates/ui_tui" }
 uwu-ui-gui = { path = "crates/ui_gui" }
 uwu-icons = { path = "crates/icons", default-features = false }
 uwu-cli = { path = "crates/cli" }
@@ -104,5 +98,3 @@ opt-level = 3
 lto = "thin"
 codegen-units = 1
 strip = "symbols"
-
-

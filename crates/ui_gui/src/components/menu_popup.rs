@@ -446,6 +446,7 @@ mod tests {
 
     #[test]
     fn test_theme_hover_real_time_change_and_restore_on_close() {
+        let _guard = crate::theme::THEME_TEST_MUTEX.lock().unwrap();
         let ctx = egui::Context::default();
         crate::theme::set_active_theme("nord-dimmed", &ctx);
         assert_eq!(crate::theme::active().id, "nord-dimmed");
@@ -516,6 +517,7 @@ mod tests {
 
     #[test]
     fn test_theme_hover_and_click_selects_theme() {
+        let _guard = crate::theme::THEME_TEST_MUTEX.lock().unwrap();
         let ctx = egui::Context::default();
         crate::theme::set_active_theme("nord-dimmed", &ctx);
         assert_eq!(crate::theme::active().id, "nord-dimmed");

@@ -82,9 +82,9 @@ jobs:
       - name: Build Release Binaries
         run: |
           if [ "${{ matrix.arch }}" = "aarch64" ]; then
-            cross build --release --target ${{ matrix.target }} --bin uwu-gui --bin uwu-tui --bin uwu-agent --bin uwulog
+            cross build --release --target ${{ matrix.target }} --bin uwu-gui --bin uwu-agent --bin uwulog
           else
-            cargo build --release --target ${{ matrix.target }} --bin uwu-gui --bin uwu-tui --bin uwu-agent --bin uwulog
+            cargo build --release --target ${{ matrix.target }} --bin uwu-gui --bin uwu-agent --bin uwulog
           fi
 
       - name: Package Linux (${{ matrix.arch }})

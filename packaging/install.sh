@@ -92,7 +92,6 @@ if [ "$PLATFORM" = "linux" ]; then
             echo "  -> Found compiled binaries in $BIN_SOURCE, installing directly from local build..."
             mkdir -p "$EXTRACTED_DIR/bin"
             cp -f "$BIN_SOURCE/uwu-gui" "$EXTRACTED_DIR/bin/" 2>/dev/null || true
-            cp -f "$BIN_SOURCE/uwu-tui" "$EXTRACTED_DIR/bin/" 2>/dev/null || true
             cp -f "$BIN_SOURCE/uwu-agent" "$EXTRACTED_DIR/bin/" 2>/dev/null || true
             cp -f "$BIN_SOURCE/uwulog" "$EXTRACTED_DIR/bin/" 2>/dev/null || true
 
@@ -118,7 +117,6 @@ if [ "$PLATFORM" = "linux" ]; then
     cp -f "$EXTRACTED_DIR/bin/"* "$INSTALL_DIR/bin/"
     chmod 755 "$INSTALL_DIR/bin/uwulog" \
               "$INSTALL_DIR/bin/uwu-gui" \
-              "$INSTALL_DIR/bin/uwu-tui" \
               "$INSTALL_DIR/bin/uwu-agent"
 
     # Install desktop entry and icons

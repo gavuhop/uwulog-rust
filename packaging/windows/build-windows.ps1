@@ -62,9 +62,9 @@ if ($TargetTriple) {
 
 # 3. Build Release Binaries
 if (-not $SkipBuild) {
-    Write-Host "`n[1/4] Building release binaries for $Architecture (uwu-gui, uwu-tui, uwu-agent, uwulog)..." -ForegroundColor Yellow
+    Write-Host "`n[1/4] Building release binaries for $Architecture (uwu-gui, uwu-agent, uwulog)..." -ForegroundColor Yellow
     Push-Location $RootDir
-    cargo build --release @cargoTargetArgs --bin uwu-gui --bin uwu-tui --bin uwu-agent --bin uwulog
+    cargo build --release @cargoTargetArgs --bin uwu-gui --bin uwu-agent --bin uwulog
     Pop-Location
 } else {
     Write-Host "`n[1/4] Skipping cargo build (-SkipBuild specified)..." -ForegroundColor Gray
@@ -101,7 +101,6 @@ if ($env:WINDOWS_SIGN_CERT -and (Test-Path $env:WINDOWS_SIGN_CERT)) {
         Write-Host "`n[2/4] Code signing certificate detected. Signing binaries..." -ForegroundColor Yellow
         $binariesToSign = @(
             (Join-Path $binDir "uwu-gui.exe"),
-            (Join-Path $binDir "uwu-tui.exe"),
             (Join-Path $binDir "uwu-agent.exe"),
             (Join-Path $binDir "uwulog.exe")
         )
@@ -125,7 +124,6 @@ if (Test-Path $zipTempDir) {
 New-Item -ItemType Directory -Force -Path (Join-Path $zipTempDir "bin") | Out-Null
 
 Copy-Item -Force (Join-Path $binDir "uwu-gui.exe") $zipTempDir
-Copy-Item -Force (Join-Path $binDir "uwu-tui.exe") $zipTempDir
 Copy-Item -Force (Join-Path $binDir "uwu-agent.exe") $zipTempDir
 Copy-Item -Force (Join-Path $RootDir "packaging\assets\icon.ico") $zipTempDir
 Copy-Item -Force (Join-Path $binDir "uwulog.exe") (Join-Path $zipTempDir "bin\uwulog.exe")

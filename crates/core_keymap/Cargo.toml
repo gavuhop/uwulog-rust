@@ -8,9 +8,7 @@ description = "Zed-style 4-layer hierarchical keybindings manager for uwulog"
 serde.workspace = true
 serde_json.workspace = true
 egui = { workspace = true, optional = true }
-crossterm = { workspace = true, optional = true }
 
 [features]
 default = ["egui"]
 egui = ["dep:egui"]
-crossterm = ["dep:crossterm"]

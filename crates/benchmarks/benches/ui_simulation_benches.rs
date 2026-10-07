@@ -3,7 +3,7 @@ use std::time::Duration;
 use uwu_benchmarks::SyntheticLogGenerator;
 use uwu_core_engine::SystemEngine;
 
-/// Giả lập chu kỳ 1 Frame của Desktop UI (egui/ratatui) ở tần số quét 60 FPS (ngân sách < 16.6ms)
+/// Giả lập chu kỳ 1 Frame của Desktop UI (egui) ở tần số quét 60 FPS (ngân sách < 16.6ms)
 fn bench_ui_frame_cycle(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let _guard = rt.enter();

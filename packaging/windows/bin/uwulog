@@ -9,7 +9,7 @@ UWU_PATH="$(dirname "$(realpath "$0")")"
 
 if [ -n "$WSL_DISTRO_NAME" ]; then
     case "$1" in
-        -h|--help|-V|--version|-t|--tui|--wait)
+        -h|--help|-V|--version|--wait)
             "$UWU_PATH/uwulog.exe" --remote "$WSL_DISTRO_NAME" --dir "$PWD" "$@"
             exit $?
             ;;

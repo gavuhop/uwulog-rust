@@ -86,14 +86,14 @@ if [ -z "$SKIP_BUILD" ]; then
     cd "$ROOT_DIR"
     if [ "$ARCH" = "universal" ]; then
         echo "-> Building dual architectures for universal binary..."
-        cargo build --release --target aarch64-apple-darwin --bin uwu-gui --bin uwu-tui --bin uwu-agent --bin uwulog
-        cargo build --release --target x86_64-apple-darwin --bin uwu-gui --bin uwu-tui --bin uwu-agent --bin uwulog
+        cargo build --release --target aarch64-apple-darwin --bin uwu-gui --bin uwu-agent --bin uwulog
+        cargo build --release --target x86_64-apple-darwin --bin uwu-gui --bin uwu-agent --bin uwulog
     elif [ -n "$TARGET" ]; then
         echo "-> Building release binaries for target $TARGET..."
-        cargo build --release --target "$TARGET" --bin uwu-gui --bin uwu-tui --bin uwu-agent --bin uwulog
+        cargo build --release --target "$TARGET" --bin uwu-gui --bin uwu-agent --bin uwulog
     else
         echo "-> Building release binaries natively..."
-        cargo build --release --bin uwu-gui --bin uwu-tui --bin uwu-agent --bin uwulog
+        cargo build --release --bin uwu-gui --bin uwu-agent --bin uwulog
     fi
 else
     echo "-> Skipping cargo build (--skip-build specified)..."
@@ -123,13 +123,11 @@ if [ "$ARCH" = "universal" ] && command -v lipo >/dev/null 2>&1; then
     X86_DIR="$ROOT_DIR/target/x86_64-apple-darwin/release"
 
     lipo -create "$ARM_DIR/uwu-gui" "$X86_DIR/uwu-gui" -output "$APP_BUNDLE/Contents/MacOS/uwu-gui"
-    lipo -create "$ARM_DIR/uwu-tui" "$X86_DIR/uwu-tui" -output "$APP_BUNDLE/Contents/Resources/bin/uwu-tui"
     lipo -create "$ARM_DIR/uwu-agent" "$X86_DIR/uwu-agent" -output "$APP_BUNDLE/Contents/Resources/bin/uwu-agent"
     lipo -create "$ARM_DIR/uwulog" "$X86_DIR/uwulog" -output "$APP_BUNDLE/Contents/Resources/bin/uwulog"
 else
     echo "-> Copying binaries from: $BIN_DIR"
     cp "$BIN_DIR/uwu-gui" "$APP_BUNDLE/Contents/MacOS/"
-    cp "$BIN_DIR/uwu-tui" "$APP_BUNDLE/Contents/Resources/bin/"
     cp "$BIN_DIR/uwu-agent" "$APP_BUNDLE/Contents/Resources/bin/"
     cp "$BIN_DIR/uwulog" "$APP_BUNDLE/Contents/Resources/bin/"
 fi

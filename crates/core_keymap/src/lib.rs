@@ -1,7 +1,7 @@
 //! Zed-Style 4-Layer Hierarchical Keybindings Manager for `uwulog`.
 //!
 //! Cung cấp engine quản lý phím tắt 4 tầng phân cấp độc lập:
-//! - Tầng 1: Keystroke & Chord Parser (Độc lập UI framework, hỗ trợ adapter cho `egui` & `crossterm`)
+//! - Tầng 1: Keystroke & Chord Parser (Độc lập UI framework, hỗ trợ adapter cho `egui`)
 //! - Tầng 2: Context-Aware Resolution & Hierarchical Fall-through
 //! - Tầng 3: Semantic Action Registry (Command Pattern)
 //! - Tầng 4: User Configuration & Persistence (`keymap.json`)
