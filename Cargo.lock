@@ -4708,7 +4708,6 @@ dependencies = [
  "sysinfo",
  "tempfile",
  "tokio",
- "uuid",
  "uwu-core-engine",
  "uwu-core-filter",
  "uwu-core-schema",
@@ -4730,7 +4729,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "log",
  "serde_json",
  "tokio",
  "uwu-core-protocol",
@@ -4745,9 +4743,7 @@ dependencies = [
  "ahash",
  "anyhow",
  "arrow",
- "chrono",
  "loom",
- "memchr",
  "parking_lot",
  "rayon",
  "serde_json",
@@ -4763,12 +4759,9 @@ dependencies = [
 name = "uwu-core-filter"
 version = "0.1.0"
 dependencies = [
- "chrono",
- "rayon",
  "regex",
  "serde",
  "serde_json",
- "uuid",
  "uwu-core-schema",
  "uwu-core-util",
 ]
@@ -4797,7 +4790,6 @@ dependencies = [
 name = "uwu-core-schema"
 version = "0.1.0"
 dependencies = [
- "chrono",
  "serde",
  "serde_json",
  "uwu-core-util",
@@ -4836,12 +4828,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "chrono",
  "log",
  "notify",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
  "tokio",
  "uuid",
  "uwu-core-protocol",
@@ -4860,7 +4850,6 @@ dependencies = [
  "log",
  "serde",
  "tokio",
- "uwu-core-protocol",
  "uwu-core-util",
  "windows-registry",
 ]
@@ -4891,12 +4880,10 @@ dependencies = [
  "serde_json",
  "tokio",
  "uuid",
- "uwu-core-engine",
  "uwu-core-keymap",
  "uwu-core-schema",
  "uwu-core-util",
  "uwu-core-workspace",
- "uwu-driver-sources",
  "uwu-driver-transport",
  "uwu-icons",
  "windows-sys 0.59.0",

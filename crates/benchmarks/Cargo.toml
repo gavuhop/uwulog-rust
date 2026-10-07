@@ -15,7 +15,6 @@ rayon = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
-uuid = { workspace = true }
 clap = { workspace = true }
 sysinfo = "0.30"
 tempfile = "3.10"

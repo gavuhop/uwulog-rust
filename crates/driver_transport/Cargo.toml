@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-uwu-core-protocol.workspace = true
 tokio.workspace = true
 async-trait.workspace = true
 anyhow.workspace = true

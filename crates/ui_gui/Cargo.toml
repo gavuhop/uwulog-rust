@@ -8,9 +8,7 @@ name = "uwu-gui"
 path = "src/main.rs"
 
 [dependencies]
-uwu-core-engine.workspace = true
 uwu-core-workspace.workspace = true
-uwu-driver-sources.workspace = true
 uwu-driver-transport.workspace = true
 uwu-core-schema.workspace = true
 uwu-core-util.workspace = true

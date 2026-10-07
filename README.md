@@ -1,6 +1,6 @@
 # Uwu Log Viewer
 
-A powerful and fast log viewer for VS Code, powered by a Rust-based filtering engine.
+A blazing-fast, cross-platform real-time log viewer and workspace monitor powered by an in-memory Apache Arrow columnar engine.
 
 ## Advanced Filter Syntax
 
