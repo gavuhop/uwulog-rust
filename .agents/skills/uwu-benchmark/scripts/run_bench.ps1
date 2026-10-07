@@ -70,12 +70,12 @@ switch ($Mode) {
 
         $baseSubject = (git log -1 --format=%s $targetBaseline 2>$null)
         $baseLabel = "Commit $baseHash ($baseSubject)"
-        $currentLabel = if ($isDirty) { "Code Hien Tai (Working Tree)" } else { "Commit $(git rev-parse --short HEAD)" }
+        $currentLabel = if ($isDirty) { "Current Code (Working Tree)" } else { "Commit $(git rev-parse --short HEAD)" }
 
-        Write-Host "So sanh hieu nang giua:" -ForegroundColor Cyan
+        Write-Host "Performance comparison between:" -ForegroundColor Cyan
         Write-Host "   * Baseline: $baseLabel" -ForegroundColor DarkCyan
         Write-Host "   * Current:  $currentLabel" -ForegroundColor DarkCyan
-        Write-Host "   * Quy mo:   $logCount logs, $queryCount queries/scenario" -ForegroundColor DarkCyan
+        Write-Host "   * Dataset:  $logCount logs, $queryCount queries/scenario" -ForegroundColor DarkCyan
 
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
@@ -84,9 +84,9 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
         $baselineReportPath = Join-Path $rootPath "target/baseline_report.md"
         $baselineJsonPath = Join-Path $rootPath "target/baseline_snapshot.json"
 
-        # LUON LUON chay lai commit truoc trong git worktree tam thoi
-        # de lay so lieu thuc te cung thoi diem (tranh sai lech do bien thien nhiet do CPU)
-        Write-Host "Dang bien dich va do kiem commit baseline $baseHash trong git worktree de lay so lieu thoi gian thuc..." -ForegroundColor Yellow
+        # Re-run baseline commit in temporary git worktree
+        # to ensure fair real-time benchmarking parity (eliminates CPU thermal drift)
+        Write-Host "Compiling and benchmarking baseline commit $baseHash in temporary git worktree..." -ForegroundColor Yellow
         $tempWorktree = Join-Path $rootPath "target/bench_worktree_$baseHash"
         if (Test-Path $tempWorktree) {
             git worktree remove --force $tempWorktree 2>$null
@@ -102,8 +102,8 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
             }
         }
 
-        # Chay profiler cho code hien tai va so sanh voi baseline
-        Write-Host "Dang chay benchmark code hien tai va xuat bao cao..." -ForegroundColor Green
+        # Run profiler on current code and compare with baseline
+        Write-Host "Benchmarking current working tree and generating reports..." -ForegroundColor Green
         $cargoArgs = @(
             "run", "--release", "--bin", "bench_profile", "--",
             "--logs", "$logCount",
@@ -148,8 +148,8 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host "============================================================" -ForegroundColor Green
     Write-Host " Benchmark finished successfully!" -ForegroundColor Green
     if ($Mode -eq "compare") {
-        Write-Host " 📄 Báo cáo hiệu năng hiện tại: $OutputMd" -ForegroundColor Cyan
-        Write-Host " ⚖️ Báo cáo so sánh đối chiếu:  $CompareMd" -ForegroundColor Cyan
+        Write-Host " 📄 Current Benchmark Report: $OutputMd" -ForegroundColor Cyan
+        Write-Host " ⚖️ Comparison Report:         $CompareMd" -ForegroundColor Cyan
     }
     Write-Host "============================================================" -ForegroundColor Green
 } else {

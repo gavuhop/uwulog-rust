@@ -1,12 +1,12 @@
-# Tài Liệu Kiến Trúc & Lộ Trình Phát Triển `uwu-log` (`archi.md`)
+# Architecture & Development Roadmap: `uwu-log` (`archi.md`)
 
-`uwu-log` là một công cụ xem và phân tích log thời gian thực (Real-time Log Viewer & Processor) siêu nhanh, hỗ trợ đa nền tảng (Windows, Linux, WSL, macOS) được thiết kế theo **kiến trúc đồ thị có hướng không chu trình 5 tầng phân cấp (5-Tier DAG Multi-Crate Architecture)** lấy cảm hứng từ Zed Editor (`sum_tree`, `text`, `gpui`), đảm bảo luồng phụ thuộc đơn chiều (Top-down One-Way Dependency), thời gian biên dịch cực nhanh và tính cô lập hoàn toàn giữa các thành phần.
+`uwu-log` is an ultra-fast, cross-platform real-time log viewer and processor (supporting Windows, Linux, WSL, and macOS) engineered with a **5-Tier Directed Acyclic Graph (DAG) Multi-Crate Architecture** inspired by Zed Editor (`sum_tree`, `gpui`, and Zed Keymap engine) and powered by an **in-memory Apache Arrow columnar engine**. This architecture guarantees a strict top-down, one-way dependency flow, optimal parallel compilation times, and microsecond-level query latencies.
 
 ---
 
-## 1. Sơ Đồ Kiến Trúc Đồ Thị Phân Cấp 5 Tầng (5-Tier DAG Multi-Crate Architecture)
+## 1. 5-Tier DAG Multi-Crate Architecture Diagram
 
-Toàn bộ hệ thống `uwu-log` được chia tách phẳng trong thư mục `crates/` thành 11 crates độc lập với tiền tố phân loại kỹ thuật rõ ràng:
+The system is modularized into **15 decoupled crates** under [`crates/`](file:///home/truongviet/projects/uwulog-rust/crates) with explicit classification prefixes:
 
 ```mermaid
 graph TD
@@ -15,36 +15,49 @@ graph TD
     classDef driver fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px;
     classDef foundation fill:#f5f5f5,stroke:#616161,stroke-width:2px;
 
-    %% Tầng 4: User Presentation / Binaries
-    subgraph T4 ["Tầng 4: Binaries / User Presentation (ui_*, cli_*)"]
+    %% Tier 4: User Presentation / Binaries
+    subgraph T4 ["Tier 4: Binaries / User Presentation & Tooling (cli_*, ui_*, benchmarks)"]
+        CLI["cli (uwulog launcher)"]:::app
         GUI["ui_gui (uwu-gui)"]:::app
         TUI["ui_tui (uwu-tui)"]:::app
         Agent["cli_agent (uwu-agent)"]:::app
+        Bench["benchmarks (uwu-benchmarks)"]:::app
     end
 
-    %% Tầng 2: Core Domain Engine & Headless Services
-    subgraph T2 ["Tầng 2: Core Domain Engine & Workspace (core_*)"]
-        CoreEngine["core_engine (uwu-core-engine)"]:::domain
+    %% Tier 3: Workspace & Keymap Management
+    subgraph T3 ["Tier 3: Workspace & Keybinding Domain (core_workspace, core_keymap)"]
         CoreWorkspace["core_workspace (uwu-core-workspace)"]:::domain
+        CoreKeymap["core_keymap (uwu-core-keymap)"]:::domain
     end
 
-    %% Tầng 1: Drivers & Platform Transport
-    subgraph T1 ["Tầng 1: Drivers & Platform Transport (driver_*)"]
+    %% Tier 2: Core Data Engine (Apache Arrow Columnar Storage)
+    subgraph T2 ["Tier 2: Core Data Engine (core_engine)"]
+        CoreEngine["core_engine (uwu-core-engine / ArrowStorage)"]:::domain
+    end
+
+    %% Tier 1: Drivers & Platform Transport
+    subgraph T1 ["Tier 1: Drivers & Platform Transport (driver_*)"]
         DriverTransport["driver_transport (uwu-driver-transport)"]:::driver
         DriverSources["driver_sources (uwu-driver-sources)"]:::driver
     end
 
-    %% Tầng 0: Foundational Data Structures & Pure Utilities
-    subgraph T0 ["Tầng 0: Pure Data Structures & Foundations (core_*)"]
+    %% Tier 0: Foundational Data Structures, Schema & UI Primitives
+    subgraph T0 ["Tier 0: Foundations, Schema, Protocols & UI Assets"]
         CoreFilter["core_filter (uwu-core-filter)"]:::foundation
         CoreProtocol["core_protocol (uwu-core-protocol)"]:::foundation
         CoreSchema["core_schema (uwu-core-schema)"]:::foundation
         CoreUtil["core_util (uwu-core-util)"]:::foundation
+        Icons["icons (uwu-icons)"]:::foundation
     end
 
     %% Edge connections
+    CLI -.->|Dispatch Subprocess| GUI
+    CLI -.->|Dispatch Subprocess| TUI
+
     GUI --> CoreEngine
     GUI --> CoreWorkspace
+    GUI --> CoreKeymap
+    GUI --> Icons
     GUI --> DriverSources
     GUI --> DriverTransport
     GUI --> CoreSchema
@@ -58,12 +71,18 @@ graph TD
     Agent --> CoreProtocol
     Agent --> CoreSchema
 
+    Bench --> CoreEngine
+    Bench --> DriverSources
+    Bench --> CoreFilter
+    Bench --> CoreSchema
+    Bench --> CoreUtil
+
+    CoreWorkspace --> CoreSchema
+
     CoreEngine --> DriverSources
     CoreEngine --> CoreFilter
     CoreEngine --> CoreSchema
     CoreEngine --> CoreUtil
-
-    CoreWorkspace --> CoreSchema
 
     DriverSources --> DriverTransport
     DriverSources --> CoreProtocol
@@ -81,27 +100,10 @@ graph TD
 
 ---
 
-## 2. Bảng Phân Tầng & Danh Mục Crates
+## 2. In-Memory Columnar Pipeline & Transport Architecture
 
-| Tầng | Crate | Package Name | Thư Mục | Vai Trò Kỹ Thuật | Phụ Thuộc (Dependencies) |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **Tier 4** | `ui_gui` | `uwu-ui-gui` | [`crates/ui_gui`](file:///D:/Learn/Go/uwulog-rust/crates/ui_gui) | Binary `uwu-gui`: Giao diện Desktop GUI (`egui`/`eframe`), Virtual Scrolling, Live Tail, Context Inspector, Autocomplete | `core_engine`, `core_workspace`, `driver_sources`, `driver_transport`, `core_schema`, `core_util` |
-| **Tier 4** | `ui_tui` | `uwu-ui-tui` | [`crates/ui_tui`](file:///D:/Learn/Go/uwulog-rust/crates/ui_tui) | Binary `uwu-tui`: Giao diện Terminal UI (`ratatui`), Live Tail, Keybindings, Fast Navigation | `core_engine`, `driver_sources`, `core_schema` |
-| **Tier 4** | `cli_agent` | `uwu-cli-agent` | [`crates/cli_agent`](file:///D:/Learn/Go/uwulog-rust/crates/cli_agent) | Binary `uwu-agent`: Headless daemon thu thập log trên remote server/WSL/container qua giao thức stdio framing | `driver_sources`, `core_protocol`, `core_schema` |
-| **Tier 2** | `core_engine` | `uwu-core-engine` | [`crates/core_engine`](file:///D:/Learn/Go/uwulog-rust/crates/core_engine) | `SystemEngine`: Quản lý Tokio Ingestion Pipeline, RingBuffer `VecDeque`, Rayon Parallel Index-only Filter, Incremental Filter | `driver_sources`, `core_filter`, `core_schema`, `core_util` |
-| **Tier 2** | `core_workspace` | `uwu-core-workspace` | [`crates/core_workspace`](file:///D:/Learn/Go/uwulog-rust/crates/core_workspace) | Quản lý dự án, cấu hình session, lưu trữ `workspaces.json` đa môi trường (Local / WSL) | `core_schema` |
-| **Tier 1** | `driver_sources` | `uwu-driver-sources` | [`crates/driver_sources`](file:///D:/Learn/Go/uwulog-rust/crates/driver_sources) | Các driver nguồn log ứng dụng: `FileSource`, `ProcessSource`, `WslSource` (Command/File), `RemoteSource`, `LogNormalizer` | `driver_transport`, `core_protocol`, `core_schema`, `core_util` |
-| **Tier 1** | `driver_transport` | `uwu-driver-transport` | [`crates/driver_transport`](file:///D:/Learn/Go/uwulog-rust/crates/driver_transport) | Giao thức truyền tải proxy từ xa (`RemoteTransport` trait, `WslTransport`, `SshTransport`, `ProcessTransport`) | `core_protocol` |
-| **Tier 0** | `core_filter` | `uwu-core-filter` | [`crates/core_filter`](file:///D:/Learn/Go/uwulog-rust/crates/core_filter) | Bộ phân tích cú pháp AST (`tokenize`, `Parser`, `Expr`), Zero-alloc Dynamic Event Evaluator (`eval_event`) | `core_schema`, `core_util` |
-| **Tier 0** | `core_protocol` | `uwu-core-protocol` | [`crates/core_protocol`](file:///D:/Learn/Go/uwulog-rust/crates/core_protocol) | Giao thức framed envelope nhị phân 2 chiều (`ClientEnvelope`, `ServerEnvelope`, `FramedReader`, `FramedWriter`) | `core_schema` |
-| **Tier 0** | `core_schema` | `uwu-core-schema` | [`crates/core_schema`](file:///D:/Learn/Go/uwulog-rust/crates/core_schema) | Định nghĩa các cấu trúc dữ liệu cốt lõi & SSOT Schema: `LogEvent`, `LogColor`, `RawPayload`, `RawLogEntry`, `StandardField` | `core_util` |
-| **Tier 0** | `core_util` | `uwu-core-util` | [`crates/core_util`](file:///D:/Learn/Go/uwulog-rust/crates/core_util) | Tiện ích zero-alloc: `strip_ansi`, `contains_ignore_case`, `parse_iso_to_secs`, `parse_numeric_value` | Không phụ thuộc crate nội bộ |
-
----
-
-## 3. Kiến Trúc Luồng Dữ Liệu & Giao Thức Truyền Tải (Data Pipeline & Transport Architecture)
-
-Dữ liệu log từ **WSL, Windows, Linux, và Remote Server** được truyền lên UI theo mô hình kết hợp **OS Anonymous Pipes (Piped Stdio) + In-Memory Async Channels + Shared Memory RingBuffer**:
+Log records originating from **WSL, Windows, Linux, and Remote Servers** are ingested, processed, and rendered following this stream model:
+**OS Pipes / I/O ➔ Tokio Channel ➔ Normalizer ➔ Apache Arrow Columnar Chunks ➔ Vectorized Query Compiler ➔ UI Render**:
 
 ```
 ┌───────────────────────────────────────────────────────────┐
@@ -122,118 +124,140 @@ Dữ liệu log từ **WSL, Windows, Linux, và Remote Server** được truyề
 └───────────────────────────────────────────────────────────┘
                                │
                                ▼
-               [ Tokio Async In-Memory Channel (mpsc) ]
+               [ Tokio Async Channel mpsc(10_000) ]
                                │
                                ▼
-                   [ SystemEngine RingBuffer ]
+             [ Batch Normalizer & Adaptive Timestamp ]
+          (Extracts JSON/Text outside lock, adaptive format)
                                │
                                ▼
-                      [ Direct Memory Read ]
+        [ ArrowStorage: ActiveRecordBatchBuilder (core_engine) ]
+          (Packs columns: __id, __color, __timestamp, __message, dynamic)
                                │
                                ▼
-                       [ UI Render Loop ]
+             [ Sealed Apache Arrow RecordBatch Chunks ]
+        (Columnar Memory, FIFO RingBuffer Eviction per capacity)
+                               │
+                               ▼
+          [ QueryCompiler + Rayon Vectorized Execution ]
+     (Compiles Expr AST directly into boolean filter masks on Arrow arrays)
+                               │
+                               ▼
+                   [ UI Thread Render Loop ]
+       (Live Tail / Reverse Pagination / Unfiltered Context / Frozen View)
 ```
 
-### 3.1. Tầng Thu Thập Ngoại Vi (OS I/O Transport Layer)
-1. **Tiến trình con trên Windows / Linux Host ([`ProcessSource`](file:///D:/Learn/Go/uwulog-rust/crates/driver_sources/src/process.rs))**:
-   - Khởi chạy bằng `tokio::process::Command` với `.stdout(Stdio::piped())` và `.stderr(Stdio::piped())`.
-   - **Đường truyền**: **OS Anonymous Pipes (Piped Stdio)**. Dữ liệu từ stdout/stderr của tiến trình con được đẩy liên tục qua pipe handle, `tokio::io::BufReader` trên luồng background đọc từng dòng text không chặn.
-   - Trên Windows: Tích hợp Windows Job Object để tự động dọn dẹp và hủy toàn bộ cây tiến trình con (Process Tree) khi ứng dụng dừng.
-2. **WSL Subprocess Bridge ([`WslSource`](file:///D:/Learn/Go/uwulog-rust/crates/driver_sources/src/wsl.rs) & [`WslTransport`](file:///D:/Learn/Go/uwulog-rust/crates/driver_transport/src/wsl.rs))**:
-   - Khởi chạy `wsl.exe -d <distro> --cd <dir> -- <cmd>` với `.stdout(Stdio::piped())`.
-   - **Đường truyền**: **Windows ➔ WSL Subprocess Inter-Process Pipe**. Hệ điều hành Windows tự động bridge luồng stdout/stderr từ Linux kernel trong WSL qua Windows pipes, `WslSource` đọc trực tiếp các dòng text mà không cần thông qua socket hay network stack.
-   - Khi chạy ở chế độ phân tán: Binary [`uwu-agent`](file:///D:/Learn/Go/uwulog-rust/crates/cli_agent/src/main.rs) được nạp vào WSL, giao tiếp hai chiều dạng **Framed Binary Envelopes qua Stdin/Stdout Pipe** của `wsl.exe`.
-3. **Remote Server qua SSH / Container ([`RemoteSource`](file:///D:/Learn/Go/uwulog-rust/crates/driver_sources/src/remote.rs) + [`SshTransport`](file:///D:/Learn/Go/uwulog-rust/crates/driver_transport/src/ssh.rs))**:
-   - **Đường truyền**: **SSH Secure Tunnel (Stdio Pipe)** truyền các gói tin nhị phân có cấu trúc (`ClientEnvelope`, `ServerEnvelope` thuộc [`core_protocol`](file:///D:/Learn/Go/uwulog-rust/crates/core_protocol)).
-4. **Tệp tin cục bộ ([`FileSource`](file:///D:/Learn/Go/uwulog-rust/crates/driver_sources/src/file_tailer.rs))**:
-   - **Đường truyền**: **Async Non-blocking File I/O + File Seek Polling** theo chu kỳ nano-giây, hỗ trợ tự động phát hiện file rotation và file truncation.
+### 2.1. Ingestion & OS Transport Layer
+1. **Host Subprocess ([`ProcessSource`](file:///home/truongviet/projects/uwulog-rust/crates/driver_sources/src/process.rs))**:
+   - Spawned using `tokio::process::Command` with `Stdio::piped()`. Stream lines are consumed asynchronously via `tokio::io::BufReader`.
+   - On Windows: Associated with a **Windows Job Object** to guarantee atomic cleanup of the entire child process tree upon termination.
+2. **WSL Subprocess Bridge ([`WslSource`](file:///home/truongviet/projects/uwulog-rust/crates/driver_sources/src/wsl.rs) & [`WslTransport`](file:///home/truongviet/projects/uwulog-rust/crates/driver_transport/src/wsl.rs))**:
+   - Executes `wsl.exe -d <distro> --cd <dir> -- <cmd>` through anonymous pipes with zero networking overhead.
+   - Distributed streaming mode: Automatically transfers [`uwu-agent`](file:///home/truongviet/projects/uwulog-rust/crates/cli_agent/src/main.rs) into WSL, communicating via bidirectional **Framed Binary Envelopes**.
+3. **Remote Server over SSH ([`RemoteSource`](file:///home/truongviet/projects/uwulog-rust/crates/driver_sources/src/remote.rs) + [`SshTransport`](file:///home/truongviet/projects/uwulog-rust/crates/driver_transport/src/ssh.rs))**:
+   - Establishes an encrypted SSH tunnel transmitting structured binary packets defined by [`core_protocol`](file:///home/truongviet/projects/uwulog-rust/crates/core_protocol).
+4. **Local File Tailer ([`FileSource`](file:///home/truongviet/projects/uwulog-rust/crates/driver_sources/src/file_tailer.rs))**:
+   - Non-blocking asynchronous file tailing with real-time detection of file truncation and file rotation.
 
-### 3.2. Tầng Chuyển Tiếp Nội Bộ Vào UI (In-Memory Pipeline)
-1. **Driver ➔ Engine Channel (`mpsc`)**:
-   - Mọi driver đều thực thi trait `LogSource`, đẩy `RawLogEntry` vào kênh bất đồng bộ `tokio::sync::mpsc::channel(10_000)`.
-2. **Batch Normalizer**:
-   - [`SystemEngine`](file:///D:/Learn/Go/uwulog-rust/crates/core_engine/src/lib.rs) gom batch (tối đa 512 log) từ channel, đưa qua [`LogNormalizer`](file:///D:/Learn/Go/uwulog-rust/crates/driver_sources/src/normalizer.rs) phân tích JSON/Text và trích xuất trường ngữ nghĩa ngoài lock.
-3. **RAM RingBuffer Storage (`VecDeque`)**:
-   - Toàn bộ batch `LogEvent` được nạp vào `Arc<RwLock<VecDeque<LogEvent>>>` trong RAM (với cơ chế xoay vòng FIFO eviction khi vượt quá dung lượng tối đa).
-4. **Engine ➔ UI Render Thread ([`ui_gui`](file:///D:/Learn/Go/uwulog-rust/crates/ui_gui) / [`ui_tui`](file:///D:/Learn/Go/uwulog-rust/crates/ui_tui))**:
-   - **Direct Memory Access (Không qua network/IPC)**: Luồng giao diện (chạy ở tốc độ 60 FPS hoặc tick 150ms) đọc trực tiếp từ bộ nhớ RAM thông qua Read Lock trên `SystemEngine`:
-     - **Live Tail Mode**: Lấy log mới nhất qua `filter_incremental`.
-     - **Search Query Mode**: Kích hoạt **Rayon ThreadPool** lọc song song đa lõi (`par_iter`) và render thẳng lên GPU (thông qua `egui`) hoặc terminal cells (thông qua `ratatui`).
-
----
-
-## 4. Triết Lý Thiết Kế Cốt Lõi (Core Principles)
-
-1. **Đơn Chiều Tuyệt Đối (Strict 1-Way DAG)**: Mối quan hệ phụ thuộc chỉ chảy từ tầng trên xuống tầng dưới (Tier 4 ➔ Tier 2 ➔ Tier 1 ➔ Tier 0). Không bao giờ có phụ thuộc vòng (Circular Dependency) hoặc phụ thuộc ngược.
-2. **Tiền Tố Đàng Hoàng & Tự Giải Thích (Explicit Prefix Taxonomy)**:
-   - `core_*`: Thuật toán thuần túy, mô hình dữ liệu, bộ máy xử lý (Pure logic, data structures, engines).
-   - `driver_*`: Giao tiếp phần cứng, hệ điều hành, I/O, mạng, IPC (OS, I/O, network, transport drivers).
-   - `ui_*`: Giao diện người dùng đồ họa hoặc terminal (Presentation layer).
-   - `cli_*`: Công cụ dòng lệnh hoặc daemon headless (Command-line binaries).
-3. **Tập Trung Nguồn Log Ứng Dụng (Developer-First Application Logs)**: Thiết kế chuyên sâu phục vụ các tác vụ gỡ lỗi và phát triển phần mềm (File tailing, Command stdout/stderr execution, WSL subprocess, Stdin pipes, Remote Agents).
-4. **Hiệu Suất Zero-Allocation & SSOT Schema**: Xử lý chuỗi (ANSI, substring, casing) và đánh giá biểu thức lọc hạn chế tối đa heap allocations. Cơ chế `StandardField` làm Single Source of Truth cho các bí danh trường ngữ nghĩa (`ts`, `lvl`, `msg`...).
-5. **Độc Lập Biên Dịch Song Song**: Các crate ở Tier 0 và Tier 1 có thể được compiler Rust biên dịch hoàn toàn song song (Parallel Compilation), rút ngắn tối đa thời gian build.
+### 2.2. Apache Arrow Storage & Vectorized Query Engine ([`core_engine`](file:///home/truongviet/projects/uwulog-rust/crates/core_engine))
+Instead of holding fragmented heap objects in linked structures (`VecDeque<LogEvent>`), `core_engine` stores data in **Apache Arrow Columnar Chunks**:
+1. **`ActiveRecordBatchBuilder`**:
+   - Accumulates incoming records into strongly typed Arrow array builders (`UInt64Array`, `UInt8Array`, `StringArray`, `Float64Array`).
+   - Employs a **Dual-Trigger** flush strategy: automatically seals a chunk when capacity threshold is met OR when the ingest channel `raw_rx` becomes empty, guaranteeing sub-millisecond real-time UI delivery.
+2. **Zero-Lookup `BatchColumns` Cache**:
+   - Pre-extracts raw array references for standard columns (`__id`, `__color`, `__timestamp`, `__message`) and dynamic field offsets once per `RecordBatch`, eliminating repetitive schema hashmap lookups during scan loops.
+3. **`QueryCompiler`**:
+   - Compiles AST query expressions ([`Expr`](file:///home/truongviet/projects/uwulog-rust/crates/core_filter/src/parser.rs)) into vectorized predicate evaluations directly over Arrow column arrays, generating `BooleanArray` masks evaluated in parallel across CPU cores using Rayon.
+4. **Reverse Pagination & Context Inspection**:
+   - [`search_before`](file:///home/truongviet/projects/uwulog-rust/crates/core_engine/src/lib.rs#L263): Efficiently queries older records immediately preceding `before_id` to power infinite upward scroll.
+   - [`get_unfiltered_events`](file:///home/truongviet/projects/uwulog-rust/crates/core_engine/src/lib.rs#L293): Retrieves a raw context window around any selected error record without requiring filter re-evaluation.
 
 ---
 
-## 5. Mô Hình Concurrency & Multi-Threading (Thread Model)
-
-Mô hình xử lý bất đồng bộ phối hợp giữa **Tokio Async Runtime** (cho I/O thu thập log đa luồng) và **Rayon Parallel ThreadPool** (cho động cơ lọc log song song):
+## 3. Concurrency Model & UI Interaction (Sequence Flow)
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Driver as App Log Driver (File / Process / WSL / Remote)
-    participant TokioRx as Batch Ingestion Task (Tokio)
-    participant Normalizer as Log Normalizer (driver_sources)
-    participant RingBuf as Storage RingBuffer (core_engine)
-    participant RayonEngine as Filter Engine (core_filter)
-    participant UIThread as UI Render Loop (ui_gui / ui_tui)
+    actor Driver as Log Driver (File / Process / WSL / Remote)
+    participant TokioRx as Tokio Ingestion Pipeline
+    participant Normalizer as LogNormalizer
+    participant ArrowStore as ArrowStorage (RecordBatches)
+    participant Compiler as QueryCompiler (Arrow)
+    participant UIThread as UI Render Thread (egui / ratatui)
 
-    Driver->>TokioRx: Gửi RawLogEntry qua async channel (mpsc)
-    Note over TokioRx: Non-blocking drain gom batch (tối đa 512 log)
-    TokioRx->>Normalizer: Chuẩn hóa log & trích xuất timestamp ngoài lock
-    Normalizer-->>TokioRx: Trả về batch Vec<LogEvent>
-    TokioRx->>RingBuf: Acquire write lock 1 lần cho cả batch (extend + drain overflow)
-    TokioRx->>RingBuf: total_processed.fetch_add(batch_len, Release) trong lock
+    Driver->>TokioRx: Sends RawLogEntry via async channel mpsc(10_000)
+    Note over TokioRx: Non-blocking drain gathers batch (up to 512 entries)
+    TokioRx->>Normalizer: Normalizes log, extracts fields & detects timestamp outside lock
+    Normalizer-->>TokioRx: Returns batch of LogEvent
+    TokioRx->>ArrowStore: Ingests into ActiveRecordBatchBuilder (seals RecordBatches)
+    Note over TokioRx,ArrowStore: Dual-Trigger: Flushes immediately when channel is empty for real-time delivery
 
-    loop UI Frame Loop (Mỗi frame render / tick 150-200ms)
-        UIThread->>RingBuf: Đọc total_processed (Acquire)
-        alt Query thay đổi (Người dùng gõ tìm kiếm mới)
-            UIThread->>RayonEngine: Chạy search_with_count(query, limit)
-            RayonEngine->>RayonEngine: Rayon par_iter thu thập Vec<usize> (Index-only)
-            RayonEngine-->>UIThread: Chỉ clone đúng số lượng limit log mới nhất
-            UIThread->>UIThread: Cập nhật cached_logs và hiển thị
-        else is_auto_scroll == true và có log mới (Live Tail)
-            UIThread->>RingBuf: Gọi filter_incremental(query, last_processed)
-            RingBuf-->>UIThread: Trả về chỉ các log mới khớp bộ lọc
-            UIThread->>UIThread: Append vào cached_logs và cuộn xuống đáy
-        else is_auto_scroll == false (Frozen View / Pause)
-            UIThread->>UIThread: Đóng băng cached_logs 100% (Không chạy filter)
+    loop UI Render Frame (60 FPS or 150ms tick)
+        UIThread->>ArrowStore: Reads total_processed (AtomicU64)
+        alt Query Changed (User submits search query)
+            UIThread->>Compiler: Compiles query Expr into Arrow filter
+            Compiler->>ArrowStore: Scans RecordBatches in parallel (Rayon par_iter)
+            ArrowStore-->>UIThread: Returns latest matching logs capped by limit
+            UIThread->>UIThread: Updates cached_logs & renders log table
+        else is_auto_scroll == true (Live Tail Mode)
+            UIThread->>ArrowStore: Calls filter_incremental(query, last_processed)
+            ArrowStore-->>UIThread: Returns only new delta matching records
+            UIThread->>UIThread: Appends to cached_logs & auto-scrolls to bottom
+        else User Scrolls to Top (Reverse Pagination)
+            UIThread->>ArrowStore: Calls search_before(query, oldest_id, page_size)
+            ArrowStore-->>UIThread: Returns previous page of logs prior to oldest_id
+            UIThread->>UIThread: Prepends to cached_logs & preserves scroll anchor
+        else is_auto_scroll == false (Frozen View)
+            UIThread->>UIThread: Keeps cached_logs static (0% CPU overhead)
         end
-        UIThread->>UIThread: Render GUI (egui) / TUI (ratatui)
     end
 ```
 
 ---
 
-## 6. Lộ Trình Phát Triển Chi Tiết (Roadmap)
+## 4. Core Architectural Principles
 
-### 🧩 Giai Đoạn 1: Single Source of Truth Schema & High-Performance Normalizer
-- **Trạng thái**: ✅ **ĐÃ HOÀN THÀNH (Implemented)**
-- **Hiện thực**: `StandardField` làm chuẩn mực định danh (SSOT) cho các bí danh (`timestamp`, `level`, `message`, `id`), `LogNormalizer` tự động nhận diện định dạng log (JSON cấu trúc, Key-Value pairs, Text thuần) và trích xuất trường ngữ nghĩa siêu tốc mà không làm mất cấu trúc dữ liệu nguyên bản.
+1. **Strict 1-Way DAG**: Dependencies flow strictly top-down (Tier 4 ➔ Tier 3 ➔ Tier 2 ➔ Tier 1 ➔ Tier 0). Circular or reverse dependencies are strictly forbidden.
+2. **Explicit Taxonomy**:
+   - `core_*`: Pure logic, data models, storage engines, and domain management.
+   - `driver_*`: OS interactions, process I/O, network tunnels, and transport drivers.
+   - `ui_*`: Presentation layer (Native Desktop GUI & Terminal TUI).
+   - `cli_*`: Command-line launchers and headless collection daemons.
+3. **Columnar In-Memory Efficiency**: Apache Arrow powers the core data pipeline, minimizing heap allocations, maximizing CPU L1/L2 cache locality, and accelerating filtering via SIMD/Rayon.
+4. **Zero-Allocation & SSOT Schema**: `StandardField` acts as the Single Source of Truth for aliases (`timestamp`, `level`, `message`, `id`). `LogFields` uses a flat vector representation to eliminate bucket allocation overhead.
+5. **Zed-Style Modern UX**: 4-layer hierarchical keybindings manager (`core_keymap`), themeable UI registry (`ui_gui/theme`), and standardized vector SVG icons (`icons`).
 
-### 💻 Giai Đoạn 2: Desktop Native GUI & TUI
-- **Trạng thái**: ✅ **ĐÃ HOÀN THÀNH (Implemented)**
-- **Hiện thực**: `crates/ui_gui` xây dựng trên nền `eframe` / `egui`, `crates/ui_tui` trên nền `ratatui`, tích hợp trực tiếp `SystemEngine` với Live Incremental Filtering, Unfiltered View ngữ cảnh lỗi, đồng bộ Workspace tự động theo thư mục làm việc, và tùy biến hiển thị cột động.
+---
 
-### 📡 Giai Đoạn 3: Remote Log Agent & Distributed Streaming
-- **Trạng thái**: ✅ **ĐÃ HOÀN THÀNH (Implemented)**
-- **Hiện thực**: `crates/cli_agent` (`uwu-agent`), `crates/core_protocol` (Framed RPC), `crates/driver_transport` (`WslTransport`, `SshTransport`, `ProcessTransport`), `crates/driver_sources/src/remote.rs` (`RemoteSource`).
+## 5. Development Roadmap
 
-### 💾 Giai Đoạn 4: Lưu Trữ Đĩa Cứng High-Performance (Columnar Persistence & Indexing)
-- **Mục tiêu**: Ghi log xuống đĩa dạng nén cột (Parquet / DuckDB / mmap) và đánh chỉ mục bằng Roaring Bitmaps để truy vấn hàng chục triệu log mà không làm tràn RAM.
-- **Tích hợp**: Đặt phía sau `core_engine` Ingestion Pipeline làm tầng lưu trữ thứ cấp (Cold Storage).
+### 🧩 Phase 1: Single Source of Truth Schema & High-Performance Normalizer
+- **Status**: ✅ **COMPLETED**
+- **Deliverables**: `StandardField` unifying semantic fields, `LogNormalizer` providing fast JSON/text extraction, and adaptive timestamp inference (`core_util`).
 
-### 📊 Giai Đoạn 5: Analytics, Log Rate Histogram & Alerting System
-- **Mục tiêu**: Vẽ biểu đồ tần suất log (Log Rate Histogram) và tự động phát cảnh báo qua Telegram, Slack, Webhook khi phát hiện đột biến lỗi (`ERROR`/`CRITICAL` spike).
+### 💻 Phase 2: Desktop Native GUI & Terminal TUI
+- **Status**: ✅ **COMPLETED**
+- **Deliverables**: `crates/ui_gui` (`egui`/`eframe`) and `crates/ui_tui` (`ratatui`), featuring smooth virtual scrolling, live tailing, and unfiltered error context views.
+
+### 📡 Phase 3: Remote Log Agent & Distributed Streaming
+- **Status**: ✅ **COMPLETED**
+- **Deliverables**: Standalone `uwu-agent` binary, `core_protocol` Framed Envelopes, and unified transport adapters (`WslTransport`, `SshTransport`, `ProcessTransport`).
+
+### 🚀 Phase 4: Apache Arrow Columnar Engine & Reverse Pagination
+- **Status**: ✅ **COMPLETED**
+- **Deliverables**: Replaced `VecDeque` with `ArrowStorage`, implemented `ActiveRecordBatchBuilder`, `QueryCompiler`, and bidirectional reverse pagination (`search_before`).
+
+### ⌨️ Phase 5: Zed-Style Keybindings, Vector Icons & Universal CLI Launcher
+- **Status**: ✅ **COMPLETED**
+- **Deliverables**:
+  - `crates/core_keymap`: 4-layer hierarchical keybindings engine customizable via `keymap.json`.
+  - `crates/icons`: Vector SVG icon paint components.
+  - `crates/cli`: Universal `uwulog` launcher executable with intelligent companion subprocess forwarding.
+
+### 💾 Phase 6: Columnar Disk Persistence
+- **Goal**: Persist logs to disk using compressed Parquet or columnar formats indexed with Roaring Bitmaps, enabling fast queries across multi-gigabyte log archives without RAM exhaustion.
+- **Integration**: Secondary cold storage tier operating behind `ArrowStorage`.
+
+### 📊 Phase 7: Real-Time Analytics, Log Rate Histogram & Alerting System
+- **Goal**: Real-time log frequency visualization (Log Rate Histogram) and automated notifications via Webhook/Slack/Telegram upon anomaly detection or error spikes (`ERROR`/`CRITICAL`).

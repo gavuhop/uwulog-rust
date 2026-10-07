@@ -97,22 +97,22 @@ case "$MODE" in
         BASE_SUBJECT=$(git log -1 --format=%s "$TARGET_BASELINE" 2>/dev/null || true)
         BASE_LABEL="Commit $BASE_HASH ($BASE_SUBJECT)"
         if [[ "$IS_DIRTY" == true ]]; then
-            CURRENT_LABEL="Code Hien Tai (Working Tree)"
+            CURRENT_LABEL="Current Code (Working Tree)"
         else
             CURRENT_LABEL="Commit $(git rev-parse --short HEAD)"
         fi
 
-        echo "So sanh hieu nang giua:"
+        echo "Performance comparison between:"
         echo "   * Baseline: $BASE_LABEL"
         echo "   * Current:  $CURRENT_LABEL"
-        echo "   * Quy mo:   $LOG_COUNT logs, $QUERY_COUNT queries/scenario"
+        echo "   * Dataset:  $LOG_COUNT logs, $QUERY_COUNT queries/scenario"
 
         ROOT_PATH="$(pwd)"
         BASELINE_REPORT_PATH="$ROOT_PATH/target/baseline_report.md"
         BASELINE_JSON_PATH="$ROOT_PATH/target/baseline_snapshot.json"
         TEMP_WORKTREE="$ROOT_PATH/target/bench_worktree_$BASE_HASH"
 
-        echo "Dang bien dich va do kiem commit baseline $BASE_HASH trong git worktree de lay so lieu thoi gian thuc..."
+        echo "Compiling and benchmarking baseline commit $BASE_HASH in temporary git worktree..."
         if [[ -d "$TEMP_WORKTREE" ]]; then
             git worktree remove --force "$TEMP_WORKTREE" 2>/dev/null || rm -rf "$TEMP_WORKTREE"
         fi
@@ -136,7 +136,7 @@ case "$MODE" in
         cleanup_worktree
         trap - EXIT
 
-        echo "Dang chay benchmark code hien tai va xuat bao cao..."
+        echo "Benchmarking current working tree and generating reports..."
         cargo run --release --bin bench_profile -- \
             --logs "$LOG_COUNT" \
             --queries "$QUERY_COUNT" \
@@ -183,7 +183,7 @@ esac
 echo "============================================================"
 echo " Benchmark finished successfully!"
 if [[ "$MODE" == "compare" ]]; then
-    echo " 📄 Báo cáo hiệu năng hiện tại: $OUTPUT_MD"
-    echo " ⚖️ Báo cáo so sánh đối chiếu:  $COMPARE_MD"
+    echo " 📄 Current Benchmark Report: $OUTPUT_MD"
+    echo " ⚖️ Comparison Report:         $COMPARE_MD"
 fi
 echo "============================================================"

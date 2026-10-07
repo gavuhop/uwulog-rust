@@ -1,123 +1,132 @@
 ---
 name: uwu-benchmark
 description: >-
-  Chạy benchmark hiệu năng, đo kiểm CPU/RAM profiler, và báo cáo tổng hợp kết quả benchmark cho dự án uwulog-rust.
-  Kích hoạt skill này khi người dùng yêu cầu chạy benchmark, kiểm tra tốc độ xử lý log, đo độ trễ truy vấn (latency), kiểm thử đa luồng Rayon, hoặc tạo báo cáo hiệu năng.
+  Execute performance benchmarks, CPU/RAM profiling, and generate aggregated benchmark reports for the uwulog-rust project.
+  Activate this skill when requested to run benchmarks, measure log throughput, profile query latency percentiles, test Rayon multi-threading scalability, or generate performance reports.
 ---
 
 # 🚀 uwulog-rust Benchmark & Performance Profiler Skill
 
-Skill này hướng dẫn quy trình tiêu chuẩn để thực thi các bộ đo kiểm hiệu năng (Benchmarks), trích xuất các chỉ số thời gian thực (CPU, RAM, Throughput, Latency phân vị), và tổng hợp báo cáo kết quả chi tiết cho dự án `uwulog-rust`.
+This skill provides standard operating procedures for executing benchmark suites, measuring real-time performance metrics (CPU, RAM RSS, Throughput, Latency percentiles), and compiling comprehensive comparison reports for the `uwulog-rust` project.
 
 ---
 
-## 1. Các Công Cụ Benchmark Trong Dự Án
+## 1. Available Benchmark Suites
 
-Dự án `uwulog-rust` sở hữu hai hệ thống đo kiểm bổ trợ cho nhau:
+The `uwulog-rust` project provides two complementary benchmarking systems:
 
-1. **Live End-to-End Profiler CLI ([`bench_profile`](file:///D:/Learn/Go/uwulog-rust/crates/benchmarks/src/bin/bench_profile.rs))**:
-   * Chạy nhanh, trực quan, đo toàn diện 6 khía cạnh:
-     1. Ingestion throughput vào RAM RingBuffer & RAM RSS footprint trên mỗi log.
-     2. Ma trận phân vị độ trễ (Cold Run, Warm p50, Warm p95, Max, QPS) qua [7 kịch bản truy vấn](./references/query_scenarios.md).
-     3. Hệ số tăng tốc đa nhân Rayon (Speedup $S_N$ & Efficiency $E_N$ từ 1 đến 12 cores).
-     4. Khả năng chịu tải đồng thời (tranh chấp Lock khi luồng nền nạp 10k - 50k logs/giây).
-     5. Ngân sách khung hình Desktop UI (kiểm tra chuẩn 60 FPS / < 16.6ms).
-     6. Tốc độ đọc File end-to-end từ ổ cứng (`MB/s` và `logs/s`).
-   * Tự động xuất 2 file báo cáo Markdown chuẩn:
-     * [`BENCHMARK_REPORT.md`](file:///D:/Learn/Go/uwulog-rust/BENCHMARK_REPORT.md): Kết quả benchmark toàn diện của **code hiện tại**.
-     * [`benchmark_compare_report.md`](file:///D:/Learn/Go/uwulog-rust/benchmark_compare_report.md): Báo cáo **so sánh đối chiếu** chi tiết giữa commit trước và code hiện tại.
+1. **Live End-to-End Profiler CLI ([`bench_profile`](file:///home/truongviet/projects/uwulog-rust/crates/benchmarks/src/bin/bench_profile.rs))**:
+   * Fast, interactive, and measures 6 key dimensions:
+     1. Ingestion throughput into the in-memory engine and RAM RSS footprint per log entry.
+     2. Latency percentile matrix (Cold Run, Warm p50, Warm p95, Max, QPS) across [7 Standard Query Scenarios](./references/query_scenarios.md).
+     3. Rayon multi-core scaling factor (Speedup $S_N$ & Efficiency $E_N$ from 1 to 12 cores).
+     4. Concurrent stress tolerance (Lock contention while background thread ingests 10k - 50k logs/sec).
+     5. Desktop UI frame budget validation (60 FPS / < 16.6ms target).
+     6. End-to-end file ingestion speed from disk (`MB/s` and `logs/s`).
+   * Automatically exports two standardized Markdown reports:
+     * [`BENCHMARK_REPORT.md`](file:///home/truongviet/projects/uwulog-rust/BENCHMARK_REPORT.md): Comprehensive benchmark results for the **current working tree**.
+     * [`benchmark_compare_report.md`](file:///home/truongviet/projects/uwulog-rust/benchmark_compare_report.md): In-depth **comparison report** between baseline commit and current code.
 
-2. **Criterion Micro & Integration Benches ([`crates/benchmarks/benches/`](file:///D:/Learn/Go/uwulog-rust/crates/benchmarks/benches))**:
-   * Đo kiểm thống kê micro-benchmarks với độ chính xác nano-giây:
-     * `micro_benches`: Tokenizer, AST Parser, Evaluator, Normalizer JSON & Plain Text.
-     * `engine_search_benches`: Tìm kiếm trên quy mô 10k, 500k, 5M logs.
-     * `cpu_scaling_benches`: Đánh giá scaling 1..12 luồng Rayon.
-     * `concurrent_stress_benches`: Stream background write + query read.
-     * `file_ingestion_benches`: Đọc file 10k, 50k dòng.
-     * `ui_simulation_benches`: Tick render 100, 500, 2000, 10000 logs/frame.
+2. **Criterion Micro & Integration Benches ([`crates/benchmarks/benches/`](file:///home/truongviet/projects/uwulog-rust/crates/benchmarks/benches))**:
+   * Statistical micro-benchmarks with nanosecond precision:
+     * `micro_benches`: Tokenizer, AST Parser, Evaluator, Normalizer (JSON & Plain Text).
+     * `engine_search_benches`: Search queries across 10k, 500k, and 5M logs.
+     * `cpu_scaling_benches`: Evaluates 1..12 Rayon thread scaling.
+     * `concurrent_stress_benches`: Concurrent stream background writes + query reads.
+     * `file_ingestion_benches`: Reading 10k and 50k log lines from disk.
+     * `ui_simulation_benches`: Render tick simulation for 100, 500, 2000, and 10000 logs/frame.
 
 ---
 
-## 2. Các Lệnh Thực Thi Tiêu Chuẩn
+## 2. Standard Execution Commands
 
-### A. Chế Độ So Sánh Hiệu Năng Với Commit Trước (Khuyên Dùng / Mặc Định)
-Tự động dựng Git worktree tạm để đo tươi mới commit baseline (`HEAD~1` nếu clean, hoặc `HEAD` nếu dirty) tại cùng thời điểm, sau đó đo code hiện tại và đối chiếu:
-```powershell
+### A. Baseline Comparison Mode (Recommended / Default)
+Automatically provisions a temporary Git worktree to compile and benchmark the baseline commit (`HEAD~1` if clean, or `HEAD` if dirty) in real time under identical thermal/load conditions, then benchmarks current code and generates a side-by-side comparison:
+```bash
+# On Linux / macOS:
+bash .agents/skills/uwu-benchmark/scripts/run_bench.sh -m compare
+
+# On Windows PowerShell:
 powershell -ExecutionPolicy Bypass -File .agents/skills/uwu-benchmark/scripts/run_bench.ps1 -Mode compare
 ```
-*Tùy chọn so sánh với một commit cụ thể:*
-```powershell
-powershell -ExecutionPolicy Bypass -File .agents/skills/uwu-benchmark/scripts/run_bench.ps1 -Mode compare -BaselineCommit "HEAD~2" -Logs 500000 -Queries 50
-```
-
-*Hoặc chạy trực tiếp binary `bench_profile` với cờ `--compare` và `--compare-md`:*
+*Optional: Compare against an explicit baseline commit:*
 ```bash
-cargo run --release --bin bench_profile -- --logs 500000 --queries 50 --output-md BENCHMARK_REPORT.md --compare-md benchmark_compare_report.md --compare target/baseline_snapshot.json --baseline-label "Commit cũ" --current-label "Code mới"
+bash .agents/skills/uwu-benchmark/scripts/run_bench.sh -m compare -b "HEAD~2" -l 500000 -q 50
 ```
 
-### B. Chế Độ Profiler Nhanh (Quick Profile)
-Dùng để kiểm tra nhanh hiệu năng sau các đợt refactor nhỏ:
-```powershell
-powershell -ExecutionPolicy Bypass -File .agents/skills/uwu-benchmark/scripts/run_bench.ps1 -Mode quick
-# hoặc:
+*Or invoke `bench_profile` directly with comparison flags:*
+```bash
+cargo run --release --bin bench_profile -- --logs 500000 --queries 50 --output-md BENCHMARK_REPORT.md --compare-md benchmark_compare_report.md --compare target/baseline_snapshot.json --baseline-label "Baseline Commit" --current-label "Current Code"
+```
+
+### B. Quick Profile Mode
+Ideal for quick sanity checks after small refactors:
+```bash
+# Linux / macOS:
+bash .agents/skills/uwu-benchmark/scripts/run_bench.sh -m quick
+
+# Or direct cargo command:
 cargo run --release --bin bench_profile -- --logs 100000 --queries 50
 ```
 
-### C. Chế Độ Profiler Đơn Lẻ & Xuất Báo Cáo Không So Sánh (Standalone Full)
-```powershell
-powershell -ExecutionPolicy Bypass -File .agents/skills/uwu-benchmark/scripts/run_bench.ps1 -Mode full
-# hoặc:
+### C. Standalone Full Profile Mode (Single Run without Comparison)
+```bash
+# Linux / macOS:
+bash .agents/skills/uwu-benchmark/scripts/run_bench.sh -m full
+
+# Or direct cargo command:
 cargo run --release --bin bench_profile -- --logs 500000 --queries 100 --output-md BENCHMARK_REPORT.md
 ```
 
-### D. Chạy Criterion Micro-Benchmarks
+### D. Run Criterion Micro-Benchmarks
 ```bash
-# Chạy riêng bộ micro benchmarks
+# Run micro benchmarks only:
 cargo bench -p uwu-benchmarks --bench micro_benches
 
-# Chạy toàn bộ Criterion suite
+# Run entire Criterion suite:
 cargo bench -p uwu-benchmarks
 ```
 
 ---
 
-## 3. Quy Trình Phân Tích & Báo Cáo So Sánh Kết Quả
+## 3. Analysis & Reporting Workflow
 
-Khi người dùng yêu cầu chạy benchmark, **luôn ưu tiên chế độ so sánh** (Compare Mode) để chỉ rõ tác động của các thay đổi code đối với hiệu năng:
+When a benchmark is requested, **always prioritize Comparison Mode** to clearly demonstrate the performance impact of recent code modifications:
 
-### Bước 1: Thực Thi Đo Kiểm So Sánh
-Chạy helper script `run_bench.ps1`:
-```powershell
-powershell -ExecutionPolicy Bypass -File .agents/skills/uwu-benchmark/scripts/run_bench.ps1 -Mode compare -Logs 500000 -Queries 50
+### Step 1: Run Comparison Benchmark
+Execute the runner script:
+```bash
+bash .agents/skills/uwu-benchmark/scripts/run_bench.sh -m compare -l 500000 -q 50
 ```
-Script sẽ tự động:
-1. Dựng git worktree tạm thời cho commit baseline và biên dịch/đo kiểm trực tiếp tại thời điểm chạy (bảo đảm môi trường nhiệt độ CPU và tải hệ thống là công bằng, không dùng kết quả lưu cũ).
-2. Chạy benchmark trên code hiện tại.
-3. Tính toán chênh lệch tỷ lệ phần trăm (Delta $\Delta$\%), gán nhãn trạng thái (🚀 Nhanh hơn, 📉 Tiết kiệm RAM, ⚠️ Chậm hơn, ➖ Tương đương).
-4. Xuất kết quả của code hiện tại vào [`BENCHMARK_REPORT.md`](file:///D:/Learn/Go/uwulog-rust/BENCHMARK_REPORT.md).
-5. Xuất báo cáo so sánh đối chiếu chi tiết vào [`benchmark_compare_report.md`](file:///D:/Learn/Go/uwulog-rust/benchmark_compare_report.md).
+The script will automatically:
+1. Create an isolated Git worktree for the baseline commit and measure it live (ensuring fair CPU thermal and background load parity).
+2. Run benchmarks on the current working tree.
+3. Compute percentage deltas ($\Delta\%$) and status indicators (🚀 Faster, 📉 Lower RAM, ⚠️ Slower, ➖ Parity).
+4. Export current results to [`BENCHMARK_REPORT.md`](file:///home/truongviet/projects/uwulog-rust/BENCHMARK_REPORT.md).
+5. Export detailed comparison breakdown to [`benchmark_compare_report.md`](file:///home/truongviet/projects/uwulog-rust/benchmark_compare_report.md).
 
-### Bước 2: Phân Tích Các Chỉ Số Chênh Lệch (Delta Analysis)
-Đánh giá mức độ cải thiện/suy giảm dựa trên các tiêu chí:
-* **Ingestion Throughput (Logs/s)**: $\Delta > +3\%$ là cải thiện rõ rệt (🚀).
-* **RAM Footprint / log (bytes)**: Mọi sự sụt giảm $\Delta < 0\%$ đều là tối ưu bộ nhớ tích cực (📉).
-* **Độ trễ p50 từng kịch bản truy vấn**:
-  * Giảm $\Delta < -3\%$: 🚀 Nhanh hơn.
-  * Tăng $\Delta > +5\%$: ⚠️ Cảnh báo suy giảm hiệu năng, cần phân tích nguyên nhân (ví dụ: cấp phát heap thêm, regex clone, khóa lock).
-* **Đa luồng Rayon & Lock Contention**: Đảm bảo hệ số tăng tốc $\ge 4.0x$ và lock overhead $\le 15\%$.
+### Step 2: Delta Analysis
+Evaluate improvements or regressions against standard thresholds:
+* **Ingestion Throughput (Logs/s)**: $\Delta > +3\%$ represents a notable speedup (🚀).
+* **RAM Footprint / log (bytes)**: Any reduction $\Delta < 0\%$ indicates positive memory optimization (📉).
+* **p50 Latency per Query Scenario**:
+  * Reduction $\Delta < -3\%$: 🚀 Faster query response.
+  * Increase $\Delta > +5\%$: ⚠️ Performance regression alert; investigate root causes (e.g. extra heap allocations, unneeded clones, lock contention).
+* **Rayon Multi-Threading & Lock Contention**: Ensure speedup $\ge 4.0\times$ and lock contention overhead $\le 15\%$.
 
-### Bước 3: Định Dạng Báo Cáo Tổng Hợp Gửi Người Dùng
-Báo cáo gửi người dùng cần cấu trúc như sau:
-1. **Thông tin so sánh**: Commit Baseline vs Code hiện tại, cấu hình phần cứng và quy mô log.
-2. **Bảng tổng hợp Core Metrics**: Ingestion rate, RAM/log, RAM RSS tổng kèm cột Delta $\Delta$\% và đánh giá.
-3. **Bảng so sánh p50 từng kịch bản query**: Đối chiếu p50 cũ vs mới, chênh lệch \% và throughput hiện tại.
-4. **Phân tích nguyên nhân & Nhận xét**: Lý giải tại sao chỉ số tăng/giảm (ví dụ: đổi từ `Uuid` 128-bit sang `u64` giúp giảm 8.7 B/log và tăng Ingestion 7.9%).
+### Step 3: Summary Report Structure
+When responding to the user, structure the findings as follows:
+1. **Context & Environment**: Baseline commit vs. Current code, hardware specifications, and log dataset scale.
+2. **Core Metrics Table**: Ingestion rate, RAM/log, total RAM RSS with Delta $\Delta\%$ and status tags.
+3. **Query Scenario p50 Comparison**: Baseline p50 vs. Current p50, percentage delta, and query throughput.
+4. **Root Cause Analysis & Key Insights**: Technical explanation of why metrics changed (e.g. replacing `Uuid` with `u64` reduced RAM by 8.7 B/log and boosted ingestion by 7.9%).
 
 ---
 
-## 4. Tài Liệu Tham Khảo
+## 4. References
 
-* File báo cáo hiệu năng hiện tại: [`BENCHMARK_REPORT.md`](file:///D:/Learn/Go/uwulog-rust/BENCHMARK_REPORT.md)
-* File báo cáo so sánh đối chiếu: [`benchmark_compare_report.md`](file:///D:/Learn/Go/uwulog-rust/benchmark_compare_report.md)
-* File cấu hình tác vụ Zed Editor: [`.zed/tasks.json`](file:///D:/Learn/Go/uwulog-rust/.zed/tasks.json)
-* Script tự động hóa runner: [run_bench.ps1](./scripts/run_bench.ps1)
+* Current performance report: [`BENCHMARK_REPORT.md`](file:///home/truongviet/projects/uwulog-rust/BENCHMARK_REPORT.md)
+* Comparison report: [`benchmark_compare_report.md`](file:///home/truongviet/projects/uwulog-rust/benchmark_compare_report.md)
+* Query scenarios definition: [references/query_scenarios.md](./references/query_scenarios.md)
+* Shell runner: [scripts/run_bench.sh](./scripts/run_bench.sh)
+* PowerShell runner: [scripts/run_bench.ps1](./scripts/run_bench.ps1)

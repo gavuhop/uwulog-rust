@@ -10,7 +10,7 @@ repos:
 
   - repo: local
     hooks:
-      # --- PRE-COMMIT (Nhẹ & Nhanh: format và kiểm tra cơ bản, không compile) ---
+      # --- PRE-COMMIT ---
       - id: cargo-fmt
         name: cargo fmt
         description: Auto-format Rust code
@@ -20,7 +20,7 @@ repos:
         pass_filenames: false
         stages: [pre-commit]
 
-      # --- PRE-PUSH (Đầy đủ: kiểm tra lints và tests trước khi push) ---
+      # --- PRE-PUSH ---
       - id: cargo-clippy
         name: cargo clippy
         description: Check Cargo lints and warnings

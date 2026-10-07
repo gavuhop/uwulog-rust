@@ -13,4 +13,6 @@
 *.log
 uwulog/
 __pycache__/
+benchmark_compare_report.md
+BENCHMARK_REPORT.md
 *.pyc

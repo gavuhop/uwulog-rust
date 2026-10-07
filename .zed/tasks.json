@@ -32,18 +32,6 @@
     "command": "cargo run --profile release-dev --bin uwu-gui"
   },
   {
-    "label": "Run app test (JSON gen_logs)",
-    "command": "cargo run --bin uwu-gui -- -r \"go run gen_logs.go -rate 50\""
-  },
-  {
-    "label": "Run app test plain (ANSI gen_plain_logs)",
-    "command": "cargo run --bin uwu-gui -- -r \"go run gen_plain_logs.go -rate 10 -stdout\""
-  },
-  {
-    "label": "Run app test JSON (Zap gen_plain_logs)",
-    "command": "cargo run --bin uwu-gui -- -r \"go run gen_plain_logs.go -rate 10 -json\""
-  },
-  {
     "label": "Benchmark: Compare with Previous Commit (Realtime Baseline & Compare Report)",
     "command": "powershell -ExecutionPolicy Bypass -File .agents/skills/uwu-benchmark/scripts/run_bench.ps1 -Mode compare"
   },
