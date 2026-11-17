@@ -4,22 +4,26 @@ use eframe::egui;
 use std::collections::BTreeSet;
 #[cfg(target_os = "windows")]
 use uwu_core_workspace::WslConnection;
-use uwu_core_workspace::{RemoteProject, SshConnection, Workspace, WorkspaceStore};
-use uwu_driver_transport::{load_system_and_user_ssh_hosts, SshTransport, WslTransport};
+use uwu_core_workspace::{
+    RemoteConnectionOptions, RemoteProject, SshConnection, Workspace, WorkspaceLocation,
+    WorkspaceStore,
+};
+use uwu_driver_transport::{
+    load_system_and_user_ssh_hosts, DockerTransport, SshTransport, WslTransport,
+};
 
 use super::helpers::{
     anchor_cursor_to_end, create_server_workspace, get_cached_or_read_directories,
     render_empty_state, render_section_title, step_selected_index, ListItemRow,
 };
 use super::types::{
-    FolderPickerState, RemoteNavAction, RemoteServerKind, RemoteSubView, ServerOptionsState,
-    SshPickerState,
+    DevContainerPickerState, FolderPickerState, RemoteNavAction, RemoteServerKind, RemoteSubView,
+    ServerOptionsState, SshPickerState,
 };
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ServerListAction {
     ConnectSsh,
-    #[allow(dead_code)]
     ConnectDevContainer,
     AddWslDistro,
     OpenWorkspace(Box<Workspace>),
@@ -57,16 +61,15 @@ pub fn collect_server_list_items(filter: &str, store: &WorkspaceStore) -> Vec<Se
         });
     }
 
-    // Tạm thời comment lại phần Connect Dev Container vì chưa thực hiện
-    // if filter.is_empty() || "connect dev container".contains(&filter) {
-    //     items.push(ServerListItem {
-    //         icon: IconName::Plus,
-    //         label: "Connect Dev Container".to_string(),
-    //         tooltip: Some("Dev Container connection coming soon".to_string()),
-    //         section_title: None,
-    //         action: ServerListAction::ConnectDevContainer,
-    //     });
-    // }
+    if filter.is_empty() || "connect dev container".contains(&filter) {
+        items.push(ServerListItem {
+            icon: IconName::Plus,
+            label: "Connect Dev Container".to_string(),
+            tooltip: Some("Connect to this project's Dev Container".to_string()),
+            section_title: None,
+            action: ServerListAction::ConnectDevContainer,
+        });
+    }
 
     #[cfg(target_os = "windows")]
     if filter.is_empty() || "add wsl distro".contains(&filter) {
@@ -79,7 +82,7 @@ pub fn collect_server_list_items(filter: &str, store: &WorkspaceStore) -> Vec<Se
         });
     }
 
-    // 2. Gom tất cả các server connection vào biến `connections` và lặp qua một luồng duy nhất
+    // 2. Chỉ gom các kết nối Remote Server (WSL trên Windows và SSH); Dev Container không liệt kê ở đây
     let connections: Vec<Connection> = {
         let mut list = Vec::new();
         #[cfg(target_os = "windows")]
@@ -95,7 +98,7 @@ pub fn collect_server_list_items(filter: &str, store: &WorkspaceStore) -> Vec<Se
     items
 }
 
-/// Đại diện bọc cho một kết nối Server (WSL hoặc SSH)
+/// Đại diện bọc cho một kết nối Remote Server (WSL hoặc SSH)
 enum Connection<'a> {
     #[cfg(target_os = "windows")]
     Wsl(&'a WslConnection),
@@ -220,6 +223,7 @@ pub fn render_remote_list_subview(
     selected_index: &mut usize,
     keymap: &KeymapManager,
     store: &WorkspaceStore,
+    active_location: Option<&WorkspaceLocation>,
 ) -> (RemoteNavAction, Option<Workspace>) {
     let mut nav_action = RemoteNavAction::None;
     let mut selected_workspace = None;
@@ -324,7 +328,23 @@ pub fn render_remote_list_subview(
                     RemoteNavAction::navigate(RemoteSubView::SshPicker(SshPickerState::new(hosts)));
             }
             ServerListAction::ConnectDevContainer => {
-                // Placeholder Dev Container
+                let next_state = match active_location {
+                    Some(WorkspaceLocation::Local { working_dir })
+                        if !working_dir.trim().is_empty() =>
+                    {
+                        DevContainerPickerState::connecting(working_dir.trim())
+                    }
+                    Some(WorkspaceLocation::Remote(RemoteConnectionOptions::Docker(_))) => {
+                        DevContainerPickerState::error(
+                            "Current workspace is already connected to a Dev Container.",
+                        )
+                    }
+                    _ => DevContainerPickerState::error(
+                        "No local project folder is open. Open a local project with `.devcontainer/devcontainer.json` first.",
+                    ),
+                };
+                nav_action =
+                    RemoteNavAction::navigate(RemoteSubView::DevContainerPicker(next_state));
             }
             ServerListAction::AddWslDistro => {
                 nav_action = RemoteNavAction::navigate(RemoteSubView::WslPicker);
@@ -345,7 +365,12 @@ pub fn render_remote_list_subview(
                         conn.port,
                         conn.args.as_deref(),
                     ),
-                    RemoteServerKind::DevContainer(_) => "~/".to_string(),
+                    RemoteServerKind::DevContainer(conn) => {
+                        DockerTransport::resolve_default_workdir(
+                            &conn.container_name,
+                            conn.remote_user.as_deref(),
+                        )
+                    }
                 };
                 let entries = get_cached_or_read_directories(&server, &home);
                 nav_action = RemoteNavAction::navigate(RemoteSubView::FolderPicker(

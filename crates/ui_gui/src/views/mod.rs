@@ -38,27 +38,87 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     let is_keymap_open = app.is_overlay_open(crate::overlay::OverlayLayer::KeymapModal);
     let is_remote_open = app.is_overlay_open(crate::overlay::OverlayLayer::RemoteServersModal);
     let is_project_picker_open = app.is_overlay_open(crate::overlay::OverlayLayer::ProjectPicker);
+    let is_source_switcher_open = app.is_overlay_open(crate::overlay::OverlayLayer::SourceSwitcher);
 
     let active_index = app.workspaces.active_index;
+    let active_loc = app
+        .workspaces
+        .sessions
+        .get(active_index)
+        .map(|s| &s.session.location);
+
     let session_summaries: Vec<modals::ProjectPickerSessionInfo> = if is_project_picker_open {
-        app.workspaces
-            .sessions
-            .iter()
-            .map(|s| {
-                let icon = s.session.icon();
-                modals::ProjectPickerSessionInfo {
-                    id: s.session.id,
-                    name: s.session.name.clone(),
-                    server_name: s.session.server_name().map(|n| n.to_string()),
-                    icon,
-                    target_summary: s.session.target_summary(),
-                    normalized_dir: s.session.location.normalized_dir(),
-                }
-            })
-            .collect()
+        let mut list = Vec::new();
+        for (ix, s) in app.workspaces.sessions.iter().enumerate() {
+            let is_transient_sibling = s.session.is_following_container_logs()
+                && app
+                    .workspaces
+                    .sessions
+                    .iter()
+                    .enumerate()
+                    .any(|(other_ix, other)| {
+                        other_ix != ix
+                            && !other.session.is_following_container_logs()
+                            && is_same_docker_project(&s.session.location, &other.session.location)
+                    });
+            if is_transient_sibling {
+                continue;
+            }
+
+            let is_active = ix == active_index
+                || active_loc.is_some_and(|al| is_same_docker_project(&s.session.location, al));
+
+            let icon = s.session.icon();
+            list.push(modals::ProjectPickerSessionInfo {
+                session_index: ix,
+                id: s.session.id,
+                name: s.session.name.clone(),
+                server_name: s.session.short_server_name().map(|n| n.to_string()),
+                icon,
+                target_summary: s.session.target_summary(),
+                normalized_dir: s.session.location.normalized_dir(),
+                is_active,
+            });
+        }
+        list
     } else {
         Vec::new()
     };
+
+    let container_sessions: Vec<header::devcontainer::ActiveContainerSessionInfo> =
+        if is_source_switcher_open {
+            if let Some(active_l) = active_loc {
+                app.workspaces
+                    .sessions
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(ix, s)| {
+                        let uwu_core_workspace::WorkspaceLocation::Remote(
+                            uwu_core_workspace::RemoteConnectionOptions::Docker(ref d),
+                        ) = s.session.location
+                        else {
+                            return None;
+                        };
+                        if !is_same_docker_project(&s.session.location, active_l) {
+                            return None;
+                        }
+                        let container_name = d.container_name.clone();
+                        let short_label = d.short_service_name().to_string();
+                        Some(header::devcontainer::ActiveContainerSessionInfo {
+                            session_index: ix,
+                            container_name,
+                            short_label,
+                            source_summary: s.session.source_badge_label(),
+                            is_active: ix == active_index,
+                        })
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
 
     let project_shortcut = app
         .keymap
@@ -71,6 +131,7 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
         overlay_stack: &mut app.overlays.stack,
         store: &app.workspaces.store,
         sessions: &session_summaries,
+        container_sessions: &container_sessions,
         active_index,
         project_search_query: &mut app.overlays.project_search_query,
         project_shortcut,
@@ -107,6 +168,7 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
             app.overlays.remote_placement,
             &app.keymap,
             &mut app.workspaces.store,
+            None,
             &mut dispatch,
         );
         header::render_window_resize_borders(ctx);
@@ -242,15 +304,19 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
         &mut dispatch,
     );
 
-    // Modal Dialog: Remote Projects (WSL)
+    // Modal Dialog: Remote Projects
     remote_servers::render_remote_servers_modal(
         ctx,
         is_remote_open,
         app.overlays.remote_placement,
         &app.keymap,
         &mut app.workspaces.store,
+        Some(&active_session.session.location),
         &mut dispatch,
     );
+
+    // Popup gợi ý độc lập: Open in Dev Container (chỉ hiện khi dự án local có .devcontainer + container đang chạy)
+    header::devcontainer::render_devcontainer_suggest_popup(ctx, active_session, &mut dispatch);
 
     // Window Resize Border Handles (Hỗ trợ kéo dãn / thu nhỏ 4 góc và 4 cạnh cửa sổ)
     header::render_window_resize_borders(ctx);
@@ -259,4 +325,38 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     for action in pending_actions {
         app.dispatch_action(action);
     }
+}
+
+fn is_same_docker_project(
+    a: &uwu_core_workspace::WorkspaceLocation,
+    b: &uwu_core_workspace::WorkspaceLocation,
+) -> bool {
+    let (
+        uwu_core_workspace::WorkspaceLocation::Remote(
+            uwu_core_workspace::RemoteConnectionOptions::Docker(da),
+        ),
+        uwu_core_workspace::WorkspaceLocation::Remote(
+            uwu_core_workspace::RemoteConnectionOptions::Docker(db),
+        ),
+    ) = (a, b)
+    else {
+        return false;
+    };
+
+    let compose_a = da.compose_project.as_deref().filter(|s| !s.is_empty());
+    let compose_b = db.compose_project.as_deref().filter(|s| !s.is_empty());
+    if let (Some(p1), Some(p2)) = (compose_a, compose_b) {
+        return p1 == p2;
+    }
+    if compose_a.is_some() || compose_b.is_some() {
+        return false;
+    }
+
+    let same_folder = da
+        .local_folder
+        .as_deref()
+        .zip(db.local_folder.as_deref())
+        .is_some_and(|(f1, f2)| !f1.is_empty() && f1.eq_ignore_ascii_case(f2));
+
+    same_folder || da.container_name.eq_ignore_ascii_case(&db.container_name)
 }

@@ -1,4 +1,5 @@
 pub mod counter;
+pub mod devcontainer;
 pub mod search_bar;
 pub mod toolbar;
 pub mod window_controls;
@@ -8,8 +9,8 @@ pub use search_bar::render_search_bar;
 pub use toolbar::render_toolbar;
 pub use window_controls::{
     handle_titlebar_drag_interaction, render_left_window_controls, render_right_window_controls,
-    render_titlebar_drag_spacer, render_window_controls, render_window_resize_borders,
-    WindowControlsPlatform, TITLEBAR_HEIGHT,
+    render_titlebar_drag_spacer, render_window_resize_borders, WindowControlsPlatform,
+    TITLEBAR_HEIGHT,
 };
 
 use crate::actions::AppAction;
@@ -26,6 +27,7 @@ pub struct HeaderContext<'a> {
     pub overlay_stack: &'a mut OverlayStack,
     pub store: &'a WorkspaceStore,
     pub sessions: &'a [ProjectPickerSessionInfo],
+    pub container_sessions: &'a [devcontainer::ActiveContainerSessionInfo],
     pub active_index: usize,
     pub project_search_query: &'a mut String,
     pub project_shortcut: &'a str,
@@ -40,6 +42,7 @@ pub fn render_header(
     let theme = ui.app_theme();
     let mut proj_btn_rect = None;
     let mut menu_btn_rect = None;
+    let mut source_btn_rect = None;
 
     // Bất kỳ chỗ trống nào trên thanh Header mà con trỏ chuột trỏ vào đều có thể kéo di chuyển cửa sổ và nhấp đúp để phóng to / thu nhỏ
     let header_rect = ui.max_rect();
@@ -78,40 +81,47 @@ pub fn render_header(
                 dispatch(AppAction::ToggleMainMenu);
             }
 
-            // Nhận diện môi trường remote để hiển thị nút Server Name chuẩn Zed (uncolored text + green active indicator dot)
+            // Nhận diện môi trường remote (WSL / SSH) hiển thị trước tên Project;
+            // Riêng Docker / Dev Container hiển thị sau tên Project để gọn và rõ ngữ cảnh hơn.
             if let Some(remote) = session.session.location.as_remote() {
-                ui.add_space(2.0);
-                let remote_tip = format!(
-                    "Connected to {}: {}\nSwitch or manage remote servers",
-                    remote.connection_type().to_uppercase(),
-                    remote.display_name()
-                );
-                let is_remote_open = cx.overlay_stack.is_open(OverlayLayer::RemoteServersModal);
-                let remote_variant = if is_remote_open {
-                    crate::components::ui::ButtonVariant::Selected
-                } else {
-                    crate::components::ui::ButtonVariant::Ghost
-                };
-                let remote_icon = remote.icon();
-                let remote_resp = crate::components::ui::AppButton::new()
-                    .label(remote.display_name())
-                    .icon(remote_icon)
-                    .status_dot(theme.status.success)
-                    .variant(remote_variant)
-                    .text_color(if is_remote_open {
-                        theme.text.accent
+                if !matches!(
+                    remote,
+                    uwu_core_workspace::RemoteConnectionOptions::Docker(_)
+                ) {
+                    ui.add_space(2.0);
+                    let remote_tip = format!(
+                        "Connected to {}: {}\nSwitch or manage remote servers",
+                        remote.connection_type().to_uppercase(),
+                        remote.display_name()
+                    );
+                    let is_remote_open = cx.overlay_stack.is_open(OverlayLayer::RemoteServersModal);
+                    let remote_variant = if is_remote_open {
+                        crate::components::ui::ButtonVariant::Selected
                     } else {
-                        theme.text.primary
-                    })
-                    .tooltip(&remote_tip)
-                    .show(ui);
+                        crate::components::ui::ButtonVariant::Ghost
+                    };
+                    let remote_icon = remote.icon();
+                    let remote_label = remote.short_label();
+                    let remote_resp = crate::components::ui::AppButton::new()
+                        .label(remote_label)
+                        .icon(remote_icon)
+                        .status_dot(theme.status.success)
+                        .variant(remote_variant)
+                        .text_color(if is_remote_open {
+                            theme.text.accent
+                        } else {
+                            theme.text.primary
+                        })
+                        .tooltip(&remote_tip)
+                        .show(ui);
 
-                ui.ctx().data_mut(|d| {
-                    d.insert_temp(egui::Id::new("server_button_rect"), remote_resp.rect);
-                });
+                    ui.ctx().data_mut(|d| {
+                        d.insert_temp(egui::Id::new("server_button_rect"), remote_resp.rect);
+                    });
 
-                if remote_resp.clicked() {
-                    dispatch(AppAction::ToggleRemoteServersModal);
+                    if remote_resp.clicked() {
+                        dispatch(AppAction::ToggleRemoteServersModal);
+                    }
                 }
             }
 
@@ -158,6 +168,14 @@ pub fn render_header(
                     dispatch(AppAction::ToggleProjectPicker);
                 }
             }
+
+            // Chỉ báo nguồn log + Quick Switcher (cho Dev Container / Docker)
+            source_btn_rect = devcontainer::render_docker_source_switcher_pill(
+                ui,
+                session,
+                cx.overlay_stack,
+                dispatch,
+            );
 
             // Environment Status Indicator
             toolbar::render_environment_status(ui, session, dispatch);
@@ -237,6 +255,18 @@ pub fn render_header(
             trigger_rect: rect,
         };
         crate::views::modals::render_project_picker_popup(ui.ctx(), args, dispatch);
+    }
+
+    // Render Docker / Dev Container Quick Source Switcher Popover
+    if let Some(rect) = source_btn_rect {
+        devcontainer::render_source_switcher_popup(
+            ui.ctx(),
+            session,
+            cx.container_sessions,
+            cx.overlay_stack,
+            dispatch,
+            rect,
+        );
     }
 }
 

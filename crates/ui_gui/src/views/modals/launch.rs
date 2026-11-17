@@ -120,8 +120,19 @@ pub fn render_launch_modal(
                     // Segmented Control (Tabs) for Source Selection
                     let total_width = ui.available_width();
                     let seg_height = 28.0;
-                    let seg_width1 = (total_width * 0.5).floor();
-                    let seg_width2 = total_width - seg_width1;
+                    let segments = [
+                        (
+                            SourceType::Process,
+                            "Process Exec (-c)",
+                            crate::components::ui::IconName::Terminal,
+                        ),
+                        (
+                            SourceType::File,
+                            "File Tail (-f)",
+                            crate::components::ui::IconName::File,
+                        ),
+                    ];
+                    let seg_w = (total_width / segments.len() as f32).floor();
 
                     egui::Frame::default()
                         .fill(theme.surfaces.crust)
@@ -130,173 +141,117 @@ pub fn render_launch_modal(
                         .show(ui, |ui| {
                             ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
                             ui.horizontal(|ui| {
-                                // Segment 1: Process Exec (-c)
-                                let is_proc = draft.source_type == SourceType::Process;
-                                let (rect1, resp1) = ui.allocate_exact_size(
-                                    egui::vec2(seg_width1, seg_height),
-                                    egui::Sense::click(),
-                                );
-                                if resp1.clicked() {
-                                    draft.source_type = SourceType::Process;
+                                for (idx, (seg_type, seg_label, seg_icon)) in
+                                    segments.iter().enumerate()
+                                {
+                                    let w = if idx + 1 == segments.len() {
+                                        total_width - seg_w * idx as f32
+                                    } else {
+                                        seg_w
+                                    };
+                                    let is_active = draft.source_type == *seg_type;
+                                    let (rect, resp) = ui.allocate_exact_size(
+                                        egui::vec2(w, seg_height),
+                                        egui::Sense::click(),
+                                    );
+                                    if resp.clicked() {
+                                        draft.source_type = *seg_type;
+                                    }
+                                    if resp.hovered() {
+                                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                    }
+
+                                    let bg = if is_active {
+                                        theme.surfaces.surface1
+                                    } else if resp.hovered() {
+                                        theme.surfaces.surface0
+                                    } else {
+                                        Color32::TRANSPARENT
+                                    };
+                                    let text_color = if is_active {
+                                        theme.text.primary
+                                    } else {
+                                        theme.text.muted
+                                    };
+
+                                    ui.painter().rect_filled(rect, CornerRadius::same(4), bg);
+                                    let galley = ui.painter().layout_no_wrap(
+                                        (*seg_label).to_string(),
+                                        egui::FontId::proportional(12.0),
+                                        text_color,
+                                    );
+                                    let total_w = 14.0 + 6.0 + galley.size().x;
+                                    let icon_r = egui::Rect::from_center_size(
+                                        egui::pos2(
+                                            rect.center().x - total_w * 0.5 + 7.0,
+                                            rect.center().y,
+                                        ),
+                                        egui::vec2(14.0, 14.0),
+                                    );
+                                    let text_pos = egui::pos2(
+                                        rect.center().x - total_w * 0.5 + 20.0,
+                                        rect.center().y - galley.size().y * 0.5,
+                                    );
+                                    seg_icon.paint(ui.painter(), icon_r, text_color);
+                                    ui.painter().galley(text_pos, galley, text_color);
                                 }
-                                if resp1.hovered() {
-                                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                                }
-
-                                let bg1 = if is_proc {
-                                    theme.surfaces.surface1
-                                } else if resp1.hovered() {
-                                    theme.surfaces.surface0
-                                } else {
-                                    Color32::TRANSPARENT
-                                };
-                                let text_color1 = if is_proc {
-                                    theme.text.primary
-                                } else {
-                                    theme.text.muted
-                                };
-
-                                let radius1 = CornerRadius {
-                                    nw: 4,
-                                    sw: 4,
-                                    ne: 4,
-                                    se: 4,
-                                };
-                                ui.painter().rect_filled(rect1, radius1, bg1);
-                                let galley1 = ui.painter().layout_no_wrap(
-                                    "Process Exec (-c)".to_string(),
-                                    egui::FontId::proportional(12.0),
-                                    text_color1,
-                                );
-                                let total_w1 = 14.0 + 6.0 + galley1.size().x;
-                                let icon_r1 = egui::Rect::from_center_size(
-                                    egui::pos2(
-                                        rect1.center().x - total_w1 * 0.5 + 7.0,
-                                        rect1.center().y,
-                                    ),
-                                    egui::vec2(14.0, 14.0),
-                                );
-                                let text_pos1 = egui::pos2(
-                                    rect1.center().x - total_w1 * 0.5 + 20.0,
-                                    rect1.center().y - galley1.size().y * 0.5,
-                                );
-                                crate::components::ui::IconName::Terminal.paint(
-                                    ui.painter(),
-                                    icon_r1,
-                                    text_color1,
-                                );
-                                ui.painter().galley(text_pos1, galley1, text_color1);
-
-                                // Segment 2: File Tail (-f)
-                                let is_file = draft.source_type == SourceType::File;
-                                let (rect2, resp2) = ui.allocate_exact_size(
-                                    egui::vec2(seg_width2, seg_height),
-                                    egui::Sense::click(),
-                                );
-                                if resp2.clicked() {
-                                    draft.source_type = SourceType::File;
-                                }
-                                if resp2.hovered() {
-                                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                                }
-
-                                let bg2 = if is_file {
-                                    theme.surfaces.surface1
-                                } else if resp2.hovered() {
-                                    theme.surfaces.surface0
-                                } else {
-                                    Color32::TRANSPARENT
-                                };
-                                let text_color2 = if is_file {
-                                    theme.text.primary
-                                } else {
-                                    theme.text.muted
-                                };
-
-                                let radius2 = CornerRadius {
-                                    nw: 4,
-                                    sw: 4,
-                                    ne: 4,
-                                    se: 4,
-                                };
-                                ui.painter().rect_filled(rect2, radius2, bg2);
-                                let galley2 = ui.painter().layout_no_wrap(
-                                    "File Tail (-f)".to_string(),
-                                    egui::FontId::proportional(12.0),
-                                    text_color2,
-                                );
-                                let total_w2 = 14.0 + 6.0 + galley2.size().x;
-                                let icon_r2 = egui::Rect::from_center_size(
-                                    egui::pos2(
-                                        rect2.center().x - total_w2 * 0.5 + 7.0,
-                                        rect2.center().y,
-                                    ),
-                                    egui::vec2(14.0, 14.0),
-                                );
-                                let text_pos2 = egui::pos2(
-                                    rect2.center().x - total_w2 * 0.5 + 20.0,
-                                    rect2.center().y - galley2.size().y * 0.5,
-                                );
-                                crate::components::ui::IconName::File.paint(
-                                    ui.painter(),
-                                    icon_r2,
-                                    text_color2,
-                                );
-                                ui.painter().galley(text_pos2, galley2, text_color2);
                             });
                         });
 
                     ui.add_space(10.0);
 
-                    if draft.source_type == SourceType::Process {
-                        ui.label(
-                            egui::RichText::new("Command string:")
-                                .color(theme.text.primary)
-                                .size(12.0),
-                        );
-                        ui.add_space(4.0);
-                        let cmd_id = egui::Id::new("launch_modal_cmd_input");
-                        TextInput::new(&mut draft.command_str)
-                            .id(cmd_id)
-                            .auto_focus(true)
-                            .hint_text("e.g. go run main.go")
-                            .show(ui);
-                    } else {
-                        ui.label(
-                            egui::RichText::new("Log file path:")
-                                .color(theme.text.primary)
-                                .size(12.0),
-                        );
-                        ui.add_space(4.0);
-                        ui.horizontal(|ui| {
-                            let browse_width = 84.0;
-                            let spacing = ui.spacing().item_spacing.x;
-                            let text_width =
-                                (ui.available_width() - browse_width - spacing).max(100.0);
-
-                            let path_id = egui::Id::new("launch_modal_path_input");
-                            TextInput::new(&mut draft.file_path)
-                                .id(path_id)
+                    match draft.source_type {
+                        SourceType::Process => {
+                            ui.label(
+                                egui::RichText::new("Command string:")
+                                    .color(theme.text.primary)
+                                    .size(12.0),
+                            );
+                            ui.add_space(4.0);
+                            let cmd_id = egui::Id::new("launch_modal_cmd_input");
+                            TextInput::new(&mut draft.command_str)
+                                .id(cmd_id)
                                 .auto_focus(true)
-                                .hint_text("e.g. /var/log/app.log")
-                                .width(text_width)
+                                .hint_text("e.g. go run main.go")
                                 .show(ui);
+                        }
+                        SourceType::File => {
+                            ui.label(
+                                egui::RichText::new("Log file path:")
+                                    .color(theme.text.primary)
+                                    .size(12.0),
+                            );
+                            ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                let browse_width = 84.0;
+                                let spacing = ui.spacing().item_spacing.x;
+                                let text_width =
+                                    (ui.available_width() - browse_width - spacing).max(100.0);
 
-                            let browse_clicked = AppButton::new()
-                                .label("Browse...")
-                                .min_size(egui::vec2(
-                                    browse_width,
-                                    crate::components::ui::button::BUTTON_HEIGHT_NORMAL,
-                                ))
-                                .show(ui)
-                                .clicked();
+                                let path_id = egui::Id::new("launch_modal_path_input");
+                                TextInput::new(&mut draft.file_path)
+                                    .id(path_id)
+                                    .auto_focus(true)
+                                    .hint_text("e.g. /var/log/app.log")
+                                    .width(text_width)
+                                    .show(ui);
 
-                            if browse_clicked {
-                                if let Some(path) = rfd::FileDialog::new().pick_file() {
-                                    draft.file_path = path.display().to_string();
+                                let browse_clicked = AppButton::new()
+                                    .label("Browse...")
+                                    .min_size(egui::vec2(
+                                        browse_width,
+                                        crate::components::ui::button::BUTTON_HEIGHT_NORMAL,
+                                    ))
+                                    .show(ui)
+                                    .clicked();
+
+                                if browse_clicked {
+                                    if let Some(path) = rfd::FileDialog::new().pick_file() {
+                                        draft.file_path = path.display().to_string();
+                                    }
                                 }
-                            }
-                        });
+                            });
+                        }
                     }
                 });
             },

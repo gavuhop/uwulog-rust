@@ -1,0 +1,731 @@
+use crate::actions::AppAction;
+use crate::components::ui::{AppButton, ButtonVariant, IconButton, IconName};
+use crate::overlay::{OverlayLayer, OverlayStack};
+use crate::session::GuiSession;
+use crate::theme::ActiveTheme;
+use crate::views::modals::{render_project_row, ProjectRowAction, ProjectRowConfig};
+use eframe::egui::{self, Align2, CornerRadius, Order, Rect, Stroke};
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
+use std::sync::mpsc::Receiver;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+use uwu_core_workspace::{
+    DockerConnectionOptions, RemoteConnectionOptions, SourceType, Workspace, WorkspaceLocation,
+};
+use uwu_driver_transport::{
+    find_devcontainer_config, DockerContainerInfo, DockerTransport, OpenedDevContainer,
+};
+
+#[derive(Debug, Clone)]
+pub struct ActiveContainerSessionInfo {
+    pub session_index: usize,
+    pub container_name: String,
+    pub short_label: String,
+    pub source_summary: String,
+    pub is_active: bool,
+}
+
+type AsyncRx<T> = Arc<Mutex<Option<Receiver<T>>>>;
+
+fn try_recv_async<T>(rx_arc: &AsyncRx<T>) -> Option<T> {
+    rx_arc
+        .lock()
+        .ok()
+        .and_then(|guard| guard.as_ref().and_then(|rx| rx.try_recv().ok()))
+}
+
+#[derive(Clone)]
+struct LocalProbeEntry {
+    checked_at: Instant,
+    in_flight: bool,
+    result: Option<OpenedDevContainer>,
+    rx: Option<AsyncRx<Option<OpenedDevContainer>>>,
+}
+
+#[derive(Clone, Default)]
+struct LocalDevContainerProbeCache {
+    entries: HashMap<String, LocalProbeEntry>,
+    dismissed_paths: HashSet<String>,
+}
+
+/// Popup gợi ý độc lập (góc dưới phải theo chuẩn Zed `dev_container_suggest`)
+/// chỉ xuất hiện khi dự án local đang mở có file `.devcontainer` VÀ Dev Container của nó đang chạy.
+pub fn render_devcontainer_suggest_popup(
+    ctx: &egui::Context,
+    session: &GuiSession,
+    dispatch: &mut impl FnMut(AppAction),
+) {
+    let WorkspaceLocation::Local { ref working_dir } = session.session.location else {
+        return;
+    };
+    let dir_trimmed = working_dir.trim();
+    if dir_trimmed.is_empty() {
+        return;
+    }
+
+    // Kiểm tra nhanh syscall stat: chỉ probe Docker khi thư mục thực sự có `.devcontainer`
+    let local_path = Path::new(dir_trimmed);
+    if find_devcontainer_config(local_path).is_none() {
+        return;
+    }
+
+    let cache_id = egui::Id::new("local_devcontainer_probe_cache");
+    let mut cache: LocalDevContainerProbeCache =
+        ctx.data(|d| d.get_temp(cache_id)).unwrap_or_default();
+
+    let key = dir_trimmed.to_string();
+    if cache.dismissed_paths.contains(&key) {
+        return;
+    }
+
+    let now = Instant::now();
+    let needs_probe = match cache.entries.get(&key) {
+        None => true,
+        Some(entry) => {
+            !entry.in_flight && now.duration_since(entry.checked_at) > Duration::from_secs(4)
+        }
+    };
+
+    if let Some(entry) = cache.entries.get_mut(&key) {
+        if let Some(res) = entry.rx.as_ref().and_then(try_recv_async) {
+            entry.result = res;
+            entry.in_flight = false;
+            entry.checked_at = now;
+            entry.rx = None;
+        }
+    }
+
+    if needs_probe {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let prev_result = cache.entries.get(&key).and_then(|e| e.result.clone());
+        cache.entries.insert(
+            key.clone(),
+            LocalProbeEntry {
+                checked_at: now,
+                in_flight: true,
+                result: prev_result,
+                rx: Some(Arc::new(Mutex::new(Some(rx)))),
+            },
+        );
+
+        let path_owned = local_path.to_path_buf();
+        let ctx_clone = ctx.clone();
+        std::thread::spawn(move || {
+            let res = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .ok()
+                .and_then(|rt| {
+                    rt.block_on(
+                        DockerTransport::detect_running_devcontainer_for_local_folder(&path_owned),
+                    )
+                });
+            let _ = tx.send(res);
+            ctx_clone.request_repaint();
+        });
+    }
+
+    let detected = cache.entries.get(&key).and_then(|e| e.result.clone());
+    let Some(opened) = detected else {
+        ctx.data_mut(|d| d.insert_temp(cache_id, cache));
+        return;
+    };
+
+    let theme = ctx.app_theme();
+    let mut open_clicked = false;
+    let mut dismiss_clicked = false;
+
+    egui::Area::new(egui::Id::new("devcontainer_suggest_toast"))
+        .order(Order::Foreground)
+        .anchor(Align2::RIGHT_BOTTOM, egui::vec2(-16.0, -16.0))
+        .show(ctx, |ui| {
+            let frame = egui::Frame::default()
+                .fill(theme.surfaces.mantle)
+                .stroke(Stroke::new(1.0, theme.borders.border))
+                .corner_radius(CornerRadius::same(8))
+                .inner_margin(egui::Margin::symmetric(12, 10))
+                .shadow(egui::epaint::Shadow {
+                    offset: [0, 6],
+                    blur: 20,
+                    spread: 0,
+                    color: egui::Color32::from_black_alpha(55),
+                });
+
+            frame.show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    let (icon_r, _) =
+                        ui.allocate_exact_size(egui::vec2(15.0, 15.0), egui::Sense::hover());
+                    IconName::Box.paint(ui.painter(), icon_r, theme.status.success);
+                    ui.add_space(6.0);
+
+                    ui.vertical(|ui| {
+                        ui.label(
+                            egui::RichText::new("Container running")
+                                .size(12.0)
+                                .strong()
+                                .color(theme.text.primary),
+                        );
+                        ui.label(
+                            egui::RichText::new(opened.info.short_label())
+                                .size(11.0)
+                                .color(theme.text.muted),
+                        );
+                    });
+
+                    ui.add_space(10.0);
+
+                    if AppButton::new()
+                        .label("Open in Dev Container")
+                        .small()
+                        .variant(ButtonVariant::Success)
+                        .show(ui)
+                        .clicked()
+                    {
+                        open_clicked = true;
+                    }
+
+                    if IconButton::new(IconName::Close)
+                        .size(22.0)
+                        .tooltip("Dismiss")
+                        .show(ui)
+                        .clicked()
+                    {
+                        dismiss_clicked = true;
+                    }
+                });
+            });
+        });
+
+    if dismiss_clicked {
+        cache.dismissed_paths.insert(key);
+    }
+    ctx.data_mut(|d| d.insert_temp(cache_id, cache));
+
+    if open_clicked {
+        let mut opts = DockerConnectionOptions::new(&opened.info.name, &opened.workspace_folder)
+            .with_container_id(&opened.info.id)
+            .with_devcontainer(true);
+        if let Some(ref user) = opened.remote_user {
+            opts = opts.with_remote_user(user);
+        }
+        if let Some(ref folder) = opened.info.local_folder {
+            opts = opts.with_local_folder(folder);
+        }
+        if let Some(ref project) = opened.info.compose_project {
+            opts = opts.with_compose_project(project);
+        }
+        if let Some(ref service) = opened.info.compose_service {
+            opts = opts.with_compose_service(service);
+        }
+
+        let ws_name = uwu_core_workspace::extract_project_name(&opened.workspace_folder);
+        let ws = Workspace::new(
+            ws_name,
+            WorkspaceLocation::remote(opts),
+            SourceType::Process,
+        );
+        dispatch(AppAction::OpenWorkspace(ws));
+    }
+}
+
+/// Hiển thị nút container (đặt sau tên dự án trên Header) cho biết đang xem container nào
+/// và mở Quick Source Switcher khi click (không hiển thị thanh "Ready (Idle)" dư thừa).
+pub fn render_docker_source_switcher_pill(
+    ui: &mut egui::Ui,
+    session: &GuiSession,
+    overlay_stack: &OverlayStack,
+    dispatch: &mut impl FnMut(AppAction),
+) -> Option<Rect> {
+    let WorkspaceLocation::Remote(RemoteConnectionOptions::Docker(ref docker_opts)) =
+        session.session.location
+    else {
+        return None;
+    };
+    let label = session.session.active_docker_short_label()?;
+
+    let theme = ui.app_theme();
+    ui.add_space(2.0);
+
+    let is_open = overlay_stack.is_open(OverlayLayer::SourceSwitcher);
+    let source_summary = session.session.source_badge_label();
+    let tooltip = format!(
+        "Container: {}\nSource: {}\nClick to switch log source or container",
+        docker_opts.container_name, source_summary
+    );
+
+    let resp = AppButton::new()
+        .icon(IconName::Box)
+        .label(&label)
+        .status_dot(theme.status.success)
+        .variant(if is_open {
+            ButtonVariant::Selected
+        } else {
+            ButtonVariant::Ghost
+        })
+        .text_color(if is_open {
+            theme.text.accent
+        } else {
+            theme.text.primary
+        })
+        .tooltip(&tooltip)
+        .show(ui);
+
+    ui.ctx().data_mut(|d| {
+        d.insert_temp(egui::Id::new("server_button_rect"), resp.rect);
+    });
+
+    if resp.clicked() {
+        dispatch(AppAction::ToggleSourceSwitcher);
+    }
+
+    Some(resp.rect)
+}
+
+#[derive(Clone, Default)]
+struct SwitcherContainersState {
+    in_flight: bool,
+    loaded: Option<Vec<DockerContainerInfo>>,
+    error: Option<String>,
+    rx: Option<AsyncRx<Result<Vec<DockerContainerInfo>, String>>>,
+}
+
+/// Lọc các container đang chạy thuộc cùng nhóm dự án/compose với session Docker hiện tại (chống trùng lặp và không lẫn dự án khác)
+fn filter_project_candidate_containers<'a>(
+    docker_opts: &DockerConnectionOptions,
+    active_containers: &[ActiveContainerSessionInfo],
+    containers: &'a [DockerContainerInfo],
+) -> Vec<&'a DockerContainerInfo> {
+    let mut seen_names: HashSet<String> = active_containers
+        .iter()
+        .map(|ac| ac.container_name.to_ascii_lowercase())
+        .collect();
+
+    let project_compose = docker_opts
+        .compose_project
+        .as_deref()
+        .filter(|s| !s.is_empty());
+    let project_folder = docker_opts
+        .local_folder
+        .as_deref()
+        .filter(|s| !s.is_empty());
+
+    let mut result = Vec::new();
+    for c in containers {
+        let lower_name = c.name.to_ascii_lowercase();
+        if !seen_names.insert(lower_name) {
+            continue;
+        }
+
+        let candidate_compose = c.compose_project.as_deref().filter(|s| !s.is_empty());
+        let matches_project = if let Some(proj) = project_compose {
+            candidate_compose == Some(proj)
+        } else if let Some(folder) = project_folder {
+            candidate_compose.is_none()
+                && c.local_folder
+                    .as_deref()
+                    .is_some_and(|cf| cf.eq_ignore_ascii_case(folder))
+        } else {
+            false
+        };
+
+        if matches_project {
+            result.push(c);
+        }
+    }
+    result
+}
+
+/// Render popup chuyển đổi container theo cơ chế `This Window`:
+/// mỗi container mở là một session riêng biệt chạy song song, switch qua lại không mất log.
+pub fn render_source_switcher_popup(
+    ctx: &egui::Context,
+    session: &GuiSession,
+    active_containers: &[ActiveContainerSessionInfo],
+    overlay_stack: &OverlayStack,
+    dispatch: &mut impl FnMut(AppAction),
+    trigger_rect: Rect,
+) {
+    let state_id = egui::Id::new("docker_source_switcher_state");
+    if !overlay_stack.is_open(OverlayLayer::SourceSwitcher) {
+        ctx.data_mut(|d| d.remove_temp::<SwitcherContainersState>(state_id));
+        return;
+    }
+
+    let WorkspaceLocation::Remote(RemoteConnectionOptions::Docker(ref docker_opts)) =
+        session.session.location
+    else {
+        return;
+    };
+
+    let mut scan_state: SwitcherContainersState =
+        ctx.data(|d| d.get_temp(state_id)).unwrap_or_default();
+
+    if let Some(res) = scan_state.rx.as_ref().and_then(try_recv_async) {
+        scan_state.in_flight = false;
+        scan_state.rx = None;
+        match res {
+            Ok(list) => {
+                scan_state.loaded = Some(list);
+                scan_state.error = None;
+            }
+            Err(err) => {
+                scan_state.error = Some(err);
+            }
+        }
+    }
+
+    if scan_state.loaded.is_none() && scan_state.error.is_none() && !scan_state.in_flight {
+        let (tx, rx) = std::sync::mpsc::channel();
+        scan_state.in_flight = true;
+        scan_state.rx = Some(Arc::new(Mutex::new(Some(rx))));
+        let ctx_clone = ctx.clone();
+        std::thread::spawn(move || {
+            let res =
+                DockerTransport::list_running_containers_sync().map_err(|e| format!("{:#}", e));
+            let _ = tx.send(res);
+            ctx_clone.request_repaint();
+        });
+    }
+
+    ctx.data_mut(|d| d.insert_temp(state_id, scan_state.clone()));
+
+    let theme = ctx.app_theme();
+    let popup_id = egui::Id::new("docker_source_switcher_popup");
+    let modal_rect_id = popup_id.with("_rect");
+    let last_rect: Option<Rect> = ctx.data(|d| d.get_temp(modal_rect_id));
+
+    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        dispatch(AppAction::CloseSourceSwitcher);
+        return;
+    }
+
+    if ctx.input(|i| i.pointer.any_pressed() || i.pointer.any_click()) {
+        if let Some(pos) = ctx.input(|i| i.pointer.interact_pos()) {
+            if !trigger_rect.contains(pos) && last_rect.is_some_and(|r| !r.contains(pos)) {
+                dispatch(AppAction::CloseSourceSwitcher);
+                return;
+            }
+        }
+    }
+
+    let area_pos = egui::pos2(trigger_rect.min.x, trigger_rect.max.y + 4.0);
+    let popup_width = 300.0;
+    let available_below = (ctx.viewport_rect().max.y - area_pos.y - 12.0).max(120.0);
+    let popup_max_height = 420.0_f32.min(available_below);
+
+    let area_resp = egui::Area::new(popup_id)
+        .order(Order::Foreground)
+        .fixed_pos(area_pos)
+        .movable(false)
+        .show(ctx, |ui| {
+            let frame = egui::Frame::default()
+                .fill(theme.surfaces.mantle)
+                .stroke(Stroke::new(1.0, theme.borders.border))
+                .corner_radius(CornerRadius::same(6))
+                .inner_margin(egui::Margin::same(8))
+                .shadow(egui::epaint::Shadow {
+                    offset: [0, 4],
+                    blur: 16,
+                    spread: 0,
+                    color: egui::Color32::from_black_alpha(50),
+                });
+            let total_margin = frame.total_margin();
+            let inner_width = (popup_width - total_margin.sum().x).max(0.0);
+            let inner_max_height = (popup_max_height - total_margin.sum().y).max(80.0);
+
+            frame.show(ui, |ui| {
+                ui.set_width(inner_width);
+                ui.set_max_height(inner_max_height);
+
+                if scan_state.in_flight && active_containers.is_empty() {
+                    ui.label(
+                        egui::RichText::new("Scanning containers...")
+                            .size(11.5)
+                            .color(theme.text.muted),
+                    );
+                    ctx.request_repaint_after(Duration::from_millis(50));
+                    return;
+                }
+
+                if scan_state.in_flight {
+                    ctx.request_repaint_after(Duration::from_millis(50));
+                }
+
+                let candidate_containers = scan_state
+                    .loaded
+                    .as_deref()
+                    .map(|containers| {
+                        filter_project_candidate_containers(
+                            docker_opts,
+                            active_containers,
+                            containers,
+                        )
+                    })
+                    .unwrap_or_default();
+
+                let mut seen_active = HashSet::new();
+                egui::ScrollArea::vertical()
+                    .id_salt("source_switcher_containers_scroll")
+                    .auto_shrink([false, true])
+                    .max_height(inner_max_height)
+                    .show(ui, |ui| {
+                        for c in active_containers {
+                            if !seen_active.insert(c.container_name.to_ascii_lowercase()) {
+                                continue;
+                            }
+                            let tip = format!("{}\n{}", c.container_name, c.source_summary);
+                            let action = render_project_row(
+                                ui,
+                                ProjectRowConfig {
+                                    icon: IconName::Box,
+                                    label: &c.short_label,
+                                    is_active: c.is_active,
+                                    location_tooltip: Some(&tip),
+                                    action_icon: None,
+                                    action_tooltip: None,
+                                    close_tooltip: "Close and stop this container log session",
+                                },
+                            );
+                            match action {
+                                ProjectRowAction::Select => {
+                                    dispatch(AppAction::SwitchSession(c.session_index));
+                                    dispatch(AppAction::CloseSourceSwitcher);
+                                }
+                                ProjectRowAction::Close => {
+                                    dispatch(AppAction::CloseSession(c.session_index));
+                                }
+                                ProjectRowAction::OpenInNewWindow | ProjectRowAction::None => {}
+                            }
+                        }
+
+                        for c in candidate_containers {
+                            let tip =
+                                format!("{}\nImage: {}\nStatus: {}", c.name, c.image, c.status);
+                            let action = render_project_row(
+                                ui,
+                                ProjectRowConfig {
+                                    icon: IconName::Box,
+                                    label: c.short_label(),
+                                    is_active: false,
+                                    location_tooltip: Some(&tip),
+                                    action_icon: None,
+                                    action_tooltip: None,
+                                    close_tooltip: "",
+                                },
+                            );
+                            if action == ProjectRowAction::Select {
+                                let mut opts =
+                                    DockerConnectionOptions::new(&c.name, &docker_opts.working_dir)
+                                        .with_container_id(&c.id)
+                                        .with_devcontainer(c.is_devcontainer)
+                                        .with_follow_container_logs(true);
+                                if let Some(ref folder) = c.local_folder {
+                                    opts = opts.with_local_folder(folder);
+                                } else if let Some(ref folder) = docker_opts.local_folder {
+                                    opts = opts.with_local_folder(folder);
+                                }
+                                if let Some(ref proj) = c.compose_project {
+                                    opts = opts.with_compose_project(proj);
+                                } else if let Some(ref proj) = docker_opts.compose_project {
+                                    opts = opts.with_compose_project(proj);
+                                }
+                                if let Some(ref svc) = c.compose_service {
+                                    opts = opts.with_compose_service(svc);
+                                }
+
+                                let ws = Workspace::new(
+                                    &session.session.name,
+                                    WorkspaceLocation::remote(opts),
+                                    SourceType::Process,
+                                );
+                                dispatch(AppAction::OpenContainerLogSession(ws));
+                            }
+                        }
+                    });
+            });
+        });
+
+    ctx.data_mut(|d| d.insert_temp(modal_rect_id, area_resp.response.rect));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run_switcher_measure(item_count: usize) -> Rect {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let _guard = rt.enter();
+        let ctx = egui::Context::default();
+        let ws = Workspace::new(
+            "demo",
+            WorkspaceLocation::remote(DockerConnectionOptions::new(
+                "demo-app-1",
+                "/workspaces/demo",
+            )),
+            SourceType::Process,
+        );
+        let session = GuiSession::from_workspace(&ws, 1000, 1000);
+
+        let active_containers: Vec<ActiveContainerSessionInfo> = (0..item_count)
+            .map(|i| ActiveContainerSessionInfo {
+                session_index: i,
+                container_name: format!("demo-svc-{i}-1"),
+                short_label: format!("svc-{i}"),
+                source_summary: "Container Logs".to_string(),
+                is_active: i == 0,
+            })
+            .collect();
+
+        let mut stack = OverlayStack::new();
+        stack.push(OverlayLayer::SourceSwitcher);
+        let trigger_rect = Rect::from_min_size(egui::pos2(120.0, 10.0), egui::vec2(80.0, 24.0));
+
+        // Pre-seed loaded state so test doesn't depend on host Docker daemon
+        let state_id = egui::Id::new("docker_source_switcher_state");
+        ctx.data_mut(|d| {
+            d.insert_temp(
+                state_id,
+                SwitcherContainersState {
+                    in_flight: false,
+                    loaded: Some(Vec::new()),
+                    error: None,
+                    rx: None,
+                },
+            );
+        });
+
+        let raw_input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1280.0, 800.0),
+            )),
+            ..Default::default()
+        };
+
+        for _ in 0..2 {
+            let mut output = ctx.run_ui(raw_input.clone(), |ui| {
+                let ctx = ui.ctx();
+                let mut dispatch = |_| {};
+                render_source_switcher_popup(
+                    ctx,
+                    &session,
+                    &active_containers,
+                    &stack,
+                    &mut dispatch,
+                    trigger_rect,
+                );
+            });
+            output.textures_delta.clear();
+        }
+
+        let modal_rect_id = egui::Id::new("docker_source_switcher_popup").with("_rect");
+        ctx.data(|d| d.get_temp(modal_rect_id))
+            .unwrap_or(Rect::NOTHING)
+    }
+
+    #[test]
+    fn source_switcher_popup_auto_grows_up_to_modal_picker_max_height() {
+        let two_items = run_switcher_measure(2);
+        let six_items = run_switcher_measure(6);
+        let thirty_items = run_switcher_measure(30);
+
+        assert!(
+            (two_items.width() - 300.0).abs() <= 2.0,
+            "expected popup width ~300, got {}",
+            two_items.width()
+        );
+        assert!(
+            six_items.height() > two_items.height() + 90.0,
+            "expected 6 items ({}) to be taller than 2 items ({})",
+            six_items.height(),
+            two_items.height()
+        );
+        assert!(
+            thirty_items.height() <= 422.0 && thirty_items.height() >= 400.0,
+            "expected 30 items to clamp near 420.0 max height, got {}",
+            thirty_items.height()
+        );
+    }
+
+    fn make_container(
+        name: &str,
+        compose_project: Option<&str>,
+        compose_service: Option<&str>,
+        local_folder: Option<&str>,
+    ) -> DockerContainerInfo {
+        DockerContainerInfo {
+            id: format!("id-{name}"),
+            name: name.to_string(),
+            image: "img".to_string(),
+            status: "Up".to_string(),
+            local_folder: local_folder.map(|s| s.to_string()),
+            config_file: None,
+            compose_project: compose_project.map(|s| s.to_string()),
+            compose_service: compose_service.map(|s| s.to_string()),
+            is_devcontainer: local_folder.is_some(),
+        }
+    }
+
+    #[test]
+    fn filter_project_candidates_excludes_other_compose_groups_and_duplicates() {
+        let docker_opts =
+            DockerConnectionOptions::new("psittacus-erithacus_devcontainer-app-1", "/workspaces/p")
+                .with_compose_project("psittacus-erithacus_devcontainer")
+                .with_local_folder("/home/u/psittacus-erithacus");
+
+        let active = vec![
+            ActiveContainerSessionInfo {
+                session_index: 0,
+                container_name: "psittacus-erithacus_devcontainer-app-1".to_string(),
+                short_label: "app".to_string(),
+                source_summary: "Ready".to_string(),
+                is_active: false,
+            },
+            ActiveContainerSessionInfo {
+                session_index: 1,
+                container_name: "psittacus-erithacus_devcontainer-db-1".to_string(),
+                short_label: "db".to_string(),
+                source_summary: "Container Logs".to_string(),
+                is_active: true,
+            },
+        ];
+
+        let running = vec![
+            make_container(
+                "devcontainer-frontend-1",
+                Some("devcontainer"),
+                Some("frontend"),
+                None,
+            ),
+            make_container(
+                "psittacus-erithacus_devcontainer-app-1",
+                Some("psittacus-erithacus_devcontainer"),
+                Some("app"),
+                Some("/home/u/psittacus-erithacus"),
+            ),
+            make_container(
+                "psittacus-erithacus_devcontainer-db-1",
+                Some("psittacus-erithacus_devcontainer"),
+                Some("db"),
+                None,
+            ),
+            make_container(
+                "psittacus-erithacus_devcontainer-minio-1",
+                Some("psittacus-erithacus_devcontainer"),
+                Some("minio"),
+                None,
+            ),
+            make_container(
+                "psittacus-erithacus-front-end_devcontainer-frontend-1",
+                Some("psittacus-erithacus-front-end_devcontainer"),
+                Some("frontend"),
+                Some("/home/u/psittacus-erithacus-front-end"),
+            ),
+        ];
+
+        let candidates = filter_project_candidate_containers(&docker_opts, &active, &running);
+        let names: Vec<&str> = candidates.iter().map(|c| c.short_label()).collect();
+        assert_eq!(names, vec!["minio"]);
+    }
+}

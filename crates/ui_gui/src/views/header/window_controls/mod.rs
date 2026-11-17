@@ -139,11 +139,6 @@ pub fn render_right_window_controls(ui: &mut Ui) -> bool {
     }
 }
 
-/// Tương thích ngược: Mặc định gọi render_right_window_controls
-pub fn render_window_controls(ui: &mut Ui) {
-    render_right_window_controls(ui);
-}
-
 /// Xử lý tương tác kéo di chuyển cửa sổ và nhấp đúp để phóng to / thu nhỏ.
 pub fn handle_titlebar_drag_interaction(
     ctx: &eframe::egui::Context,

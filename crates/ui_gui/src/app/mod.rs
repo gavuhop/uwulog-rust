@@ -75,7 +75,8 @@ impl UwuGuiApp {
             | Some(OverlayLayer::ColumnsModal)
             | Some(OverlayLayer::ProjectPicker)
             | Some(OverlayLayer::MainMenu)
-            | Some(OverlayLayer::ThemeSubmenu) => crate::keymap::KeyContext::Modal,
+            | Some(OverlayLayer::ThemeSubmenu)
+            | Some(OverlayLayer::SourceSwitcher) => crate::keymap::KeyContext::Modal,
             None => {
                 if let Some(active) = self.active_session_opt() {
                     if active.view.search.autocomplete.is_open {
@@ -760,6 +761,12 @@ impl UwuGuiApp {
                 self.open_or_switch_workspace(&ws);
                 self.close_project_picker();
             }
+            AppAction::OpenContainerLogSession(ws) => {
+                if self.workspaces.open_container_log_session(&ws, &self.rt) {
+                    self.start_configured_source();
+                }
+                self.close_overlay(OverlayLayer::SourceSwitcher);
+            }
             AppAction::OpenWorkspaceInNewWindow(ws) => {
                 self.open_workspace_in_new_window(&ws);
                 if let Some(pos) =
@@ -801,18 +808,18 @@ impl UwuGuiApp {
             }
             AppAction::ApplyLaunchModal => {
                 if let Some(draft) = self.overlays.launch_modal_draft.take() {
-                    self.active_session_mut().session.source_config = draft;
+                    let active = &mut self.active_session_mut().session;
+                    if let uwu_core_workspace::WorkspaceLocation::Remote(
+                        uwu_core_workspace::RemoteConnectionOptions::Docker(ref mut d),
+                    ) = active.location
+                    {
+                        d.follow_container_logs = false;
+                    }
+                    active.source_config = draft;
                     self.save_current_workspace();
                     self.restart_current_source();
                 }
                 self.close_overlay(OverlayLayer::LaunchModal);
-            }
-            AppAction::ApplyAndRestartSource(new_config) => {
-                self.active_session_mut().session.source_config = new_config;
-                self.save_current_workspace();
-                self.restart_current_source();
-                self.close_overlay(OverlayLayer::LaunchModal);
-                self.overlays.launch_modal_draft = None;
             }
             AppAction::OpenColumnsModal => {
                 self.active_session_mut().view.columns.open_modal();
@@ -848,9 +855,23 @@ impl UwuGuiApp {
                     self.close_overlay(OverlayLayer::RemoteServersModal);
                 } else {
                     self.close_project_picker();
+                    self.close_overlay(OverlayLayer::SourceSwitcher);
                     self.overlays.remote_placement = RemoteModalPlacement::TopLeft;
                     self.push_overlay(OverlayLayer::RemoteServersModal);
                 }
+            }
+            AppAction::ToggleSourceSwitcher => {
+                if self.is_overlay_open(OverlayLayer::SourceSwitcher) {
+                    self.close_overlay(OverlayLayer::SourceSwitcher);
+                } else {
+                    self.close_project_picker();
+                    self.close_overlay(OverlayLayer::RemoteServersModal);
+                    self.close_main_menu();
+                    self.push_overlay(OverlayLayer::SourceSwitcher);
+                }
+            }
+            AppAction::CloseSourceSwitcher => {
+                self.close_overlay(OverlayLayer::SourceSwitcher);
             }
             AppAction::ToggleMainMenu => {
                 if self.is_overlay_open(OverlayLayer::MainMenu) {

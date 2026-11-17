@@ -98,17 +98,7 @@ impl WorkspaceManager {
         }
     }
 
-    /// Mở hoặc kích hoạt một Workspace từ danh sách lưu trữ
-    pub fn open_or_switch_workspace(&mut self, ws: &Workspace, rt: &Handle) {
-        if let Some(pos) = self
-            .sessions
-            .iter()
-            .position(|s| s.session.id == ws.id || s.session.location.is_same(&ws.location))
-        {
-            self.switch_session(pos);
-            return;
-        }
-
+    fn push_new_session(&mut self, ws: &Workspace, rt: &Handle) {
         let (cap, limit) = if let Some(active) = self.active_session_opt() {
             (
                 active.session.source_config.capacity,
@@ -121,11 +111,59 @@ impl WorkspaceManager {
         gui_session.session.spawn_load_environment(rt);
         self.sessions.push(gui_session);
         self.active_index = self.sessions.len() - 1;
+        self.active_session_mut().view.search.mark_needs_search();
+    }
+
+    /// Mở hoặc kích hoạt một Workspace từ danh sách lưu trữ
+    pub fn open_or_switch_workspace(&mut self, ws: &Workspace, rt: &Handle) {
+        if let Some(pos) = self
+            .sessions
+            .iter()
+            .position(|s| s.session.id == ws.id || s.session.location.is_same(&ws.location))
+        {
+            self.switch_session(pos);
+            return;
+        }
+
+        self.push_new_session(ws, rt);
         self.store.active_workspace_id = Some(ws.id);
+        if let uwu_core_workspace::WorkspaceLocation::Remote(
+            uwu_core_workspace::RemoteConnectionOptions::Docker(ref d),
+        ) = ws.location
+        {
+            self.store
+                .upsert_docker_connection(uwu_core_workspace::DockerConnection::from(d));
+            if !d.working_dir.trim().is_empty() {
+                self.store
+                    .add_remote_project_to_docker_server(&d.container_name, &d.working_dir);
+            }
+        }
         self.store.add_or_update(ws.clone());
         self.store.open_workspace_ids = self.sessions.iter().map(|s| s.session.id).collect();
         let _ = self.store.save();
-        self.active_session_mut().view.search.mark_needs_search();
+    }
+
+    /// Mở hoặc chuyển sang session xem log của một container anh em (`docker logs -f`)
+    /// theo cơ chế giống `This Window`: giữ nguyên buffer & stream của các container đang mở khác.
+    /// Trả về `true` nếu vừa tạo session mới (cần auto-start stream).
+    pub fn open_container_log_session(&mut self, ws: &Workspace, rt: &Handle) -> bool {
+        let target_container = ws.location.display_name();
+
+        if let Some(pos) = self.sessions.iter().position(|s| {
+            let same_docker_target = match &s.session.location {
+                uwu_core_workspace::WorkspaceLocation::Remote(
+                    uwu_core_workspace::RemoteConnectionOptions::Docker(d),
+                ) => d.container_name.eq_ignore_ascii_case(target_container),
+                _ => false,
+            };
+            same_docker_target || s.session.location.is_same(&ws.location)
+        }) {
+            self.switch_session(pos);
+            return false;
+        }
+
+        self.push_new_session(ws, rt);
+        true
     }
 
     /// Đóng một tab session cụ thể
@@ -136,10 +174,19 @@ impl WorkspaceManager {
 
         let mut removed = self.sessions.remove(index);
         removed.session.stop_source();
-        let mut ws = removed.session.to_workspace();
-        ws.last_query = removed.view.search.query.clone();
-        ws.filter_history = removed.view.search.history.entries.clone();
-        self.store.add_or_update(ws);
+        let is_transient_container_tab = removed.session.is_following_container_logs()
+            && !self
+                .store
+                .recent_workspaces
+                .iter()
+                .any(|w| w.id == removed.session.id);
+
+        if !is_transient_container_tab {
+            let mut ws = removed.session.to_workspace();
+            ws.last_query = removed.view.search.query.clone();
+            ws.filter_history = removed.view.search.history.entries.clone();
+            self.store.add_or_update(ws);
+        }
 
         if self.sessions.is_empty() {
             self.active_index = 0;
@@ -154,7 +201,19 @@ impl WorkspaceManager {
         }
 
         self.store.active_workspace_id = Some(self.sessions[self.active_index].session.id);
-        self.store.open_workspace_ids = self.sessions.iter().map(|s| s.session.id).collect();
+        self.store.open_workspace_ids = self
+            .sessions
+            .iter()
+            .filter(|s| {
+                !s.session.is_following_container_logs()
+                    || self
+                        .store
+                        .recent_workspaces
+                        .iter()
+                        .any(|w| w.id == s.session.id)
+            })
+            .map(|s| s.session.id)
+            .collect();
         let _ = self.store.save();
         self.active_session_mut().view.search.mark_needs_search();
     }

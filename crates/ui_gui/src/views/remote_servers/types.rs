@@ -1,6 +1,6 @@
 use crate::components::ui::IconName;
 use std::time::Instant;
-use uwu_core_workspace::{SshConnection, SshConnectionOptions};
+use uwu_core_workspace::{DockerConnection, SshConnection, SshConnectionOptions};
 
 /// Trạng thái của hộp thoại chọn thư mục WSL/Remote
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,12 +81,47 @@ impl SshPickerState {
     }
 }
 
+/// Các giai đoạn kết nối Dev Container của dự án hiện tại
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DevContainerPickerStage {
+    Connecting { local_folder: String },
+    Error(String),
+}
+
+impl Default for DevContainerPickerStage {
+    fn default() -> Self {
+        Self::Error("No local project folder is open.".to_string())
+    }
+}
+
+/// Trạng thái màn hình kết nối Dev Container của dự án
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct DevContainerPickerState {
+    pub stage: DevContainerPickerStage,
+}
+
+impl DevContainerPickerState {
+    pub fn connecting(local_folder: impl Into<String>) -> Self {
+        Self {
+            stage: DevContainerPickerStage::Connecting {
+                local_folder: local_folder.into(),
+            },
+        }
+    }
+
+    pub fn error(message: impl Into<String>) -> Self {
+        Self {
+            stage: DevContainerPickerStage::Error(message.into()),
+        }
+    }
+}
+
 /// Loại remote server được hỗ trợ trong uwulog (chuẩn Zed: WSL, SSH, DevContainer)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RemoteServerKind {
     Wsl(String),
     Ssh(SshConnection),
-    DevContainer(String),
+    DevContainer(DockerConnection),
 }
 
 impl RemoteServerKind {
@@ -94,7 +129,7 @@ impl RemoteServerKind {
         match self {
             RemoteServerKind::Wsl(name) => name,
             RemoteServerKind::Ssh(conn) => conn.display_name(),
-            RemoteServerKind::DevContainer(name) => name,
+            RemoteServerKind::DevContainer(conn) => conn.display_name(),
         }
     }
 
@@ -117,11 +152,25 @@ impl RemoteServerKind {
     pub fn ssh_simple(host: impl Into<String>) -> Self {
         Self::Ssh(SshConnection::new(host))
     }
+
+    pub fn from_docker_connection(conn: &DockerConnection) -> Self {
+        Self::DevContainer(conn.clone())
+    }
+
+    pub fn dev_container(container_name: impl Into<String>) -> Self {
+        Self::DevContainer(DockerConnection::new(container_name))
+    }
 }
 
 impl From<SshConnection> for RemoteServerKind {
     fn from(conn: SshConnection) -> Self {
         Self::Ssh(conn)
+    }
+}
+
+impl From<DockerConnection> for RemoteServerKind {
+    fn from(conn: DockerConnection) -> Self {
+        Self::DevContainer(conn)
     }
 }
 
@@ -205,22 +254,32 @@ impl ServerOptionItem {
                     },
                 ]
             }
-            RemoteServerKind::DevContainer(_) => vec![
-                Self {
-                    action: ServerOptionAction::RemoveServer,
-                    icon: IconName::Trash,
-                    label: "Remove Dev Container".to_string(),
-                    end_slot: None,
-                    is_destructive: true,
-                },
-                Self {
-                    action: ServerOptionAction::GoBack,
-                    icon: IconName::ArrowLeft,
-                    label: "Go Back".to_string(),
-                    end_slot: None,
-                    is_destructive: false,
-                },
-            ],
+            RemoteServerKind::DevContainer(conn) => {
+                let target = conn.container_name.clone();
+                vec![
+                    Self {
+                        action: ServerOptionAction::CopyAddress(target.clone()),
+                        icon: IconName::Copy,
+                        label: "Copy Container Name".to_string(),
+                        end_slot: Some(target),
+                        is_destructive: false,
+                    },
+                    Self {
+                        action: ServerOptionAction::RemoveServer,
+                        icon: IconName::Trash,
+                        label: "Remove Dev Container".to_string(),
+                        end_slot: None,
+                        is_destructive: true,
+                    },
+                    Self {
+                        action: ServerOptionAction::GoBack,
+                        icon: IconName::ArrowLeft,
+                        label: "Go Back".to_string(),
+                        end_slot: None,
+                        is_destructive: false,
+                    },
+                ]
+            }
         }
     }
 }
@@ -238,6 +297,7 @@ pub enum RemoteSubView {
     List,
     WslPicker,
     SshPicker(SshPickerState),
+    DevContainerPicker(DevContainerPickerState),
     FolderPicker(FolderPickerState),
     ServerOptions(ServerOptionsState),
 }

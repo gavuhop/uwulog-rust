@@ -8,12 +8,14 @@ use uwu_core_workspace::{SourceType, Workspace, WorkspaceLocation, WorkspaceStor
 
 #[derive(Debug, Clone)]
 pub struct ProjectPickerSessionInfo {
+    pub session_index: usize,
     pub id: uuid::Uuid,
     pub name: String,
     pub server_name: Option<String>,
     pub icon: IconName,
     pub target_summary: String,
     pub normalized_dir: String,
+    pub is_active: bool,
 }
 
 impl ProjectPickerSessionInfo {
@@ -124,7 +126,7 @@ pub fn render_project_row(ui: &mut egui::Ui, config: ProjectRowConfig<'_>) -> Pr
                 );
             }
 
-            if is_hovered {
+            if is_hovered && !config.close_tooltip.is_empty() {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing = egui::vec2(2.0, 0.0);
 
@@ -211,7 +213,7 @@ pub fn render_project_picker_popup(
         is_open,
         store,
         sessions,
-        active_index,
+        active_index: _,
         project_search_query,
         trigger_rect,
     } = args;
@@ -259,8 +261,8 @@ pub fn render_project_picker_popup(
                     .id_salt("this_window_scroll")
                     .max_height(140.0)
                     .show(ui, |ui| {
-                        for (ix, session) in sessions.iter().enumerate() {
-                            let is_active = ix == active_index;
+                        for session in sessions.iter() {
+                            let is_active = session.is_active;
                             let label = session.display_label();
 
                             if !search_filter.is_empty()
@@ -290,14 +292,17 @@ pub fn render_project_picker_popup(
 
                             match action {
                                 ProjectRowAction::Select => {
-                                    action_to_dispatch = Some(AppAction::SwitchSession(ix));
+                                    action_to_dispatch =
+                                        Some(AppAction::SwitchSession(session.session_index));
                                 }
                                 ProjectRowAction::OpenInNewWindow => {
-                                    action_to_dispatch =
-                                        Some(AppAction::OpenSessionInNewWindow(ix));
+                                    action_to_dispatch = Some(AppAction::OpenSessionInNewWindow(
+                                        session.session_index,
+                                    ));
                                 }
                                 ProjectRowAction::Close => {
-                                    action_to_dispatch = Some(AppAction::CloseSession(ix));
+                                    action_to_dispatch =
+                                        Some(AppAction::CloseSession(session.session_index));
                                 }
                                 ProjectRowAction::None => {}
                             }
@@ -361,6 +366,27 @@ pub fn render_project_picker_popup(
                         }
                     }
                 }
+                for conn in &store.docker_connections {
+                    for proj in &conn.projects {
+                        let clean = uwu_core_workspace::normalize_workdir(&proj.path);
+                        let exists = all_recent.iter().any(|ws| {
+                            if let Some(remote) = ws.location.as_remote() {
+                                remote
+                                    .display_name()
+                                    .eq_ignore_ascii_case(&conn.container_name)
+                                    && ws.location.normalized_dir() == clean
+                            } else {
+                                false
+                            }
+                        });
+                        if !exists {
+                            all_recent.push(create_server_workspace(
+                                &RemoteServerKind::from_docker_connection(conn),
+                                &proj.path,
+                            ));
+                        }
+                    }
+                }
 
                 let filtered_recent: Vec<_> = all_recent
                     .into_iter()
@@ -414,7 +440,7 @@ pub fn render_project_picker_popup(
 
                                 let ws_icon = ws.icon();
                                 let label =
-                                    format_project_display_label(&ws.name, ws.server_name());
+                                    format_project_display_label(&ws.name, ws.short_server_name());
                                 let action = render_project_row(
                                     ui,
                                     ProjectRowConfig {

@@ -17,6 +17,8 @@ pub enum OverlayLayer {
     KeymapModal,
     /// Modal chọn Remote Server / WSL Distro theo phong cách Zed
     RemoteServersModal,
+    /// Popup chuyển đổi nhanh nguồn log (Run Command / File / Các container khác)
+    SourceSwitcher,
 }
 
 /// Vị trí hiển thị của Remote Servers Modal

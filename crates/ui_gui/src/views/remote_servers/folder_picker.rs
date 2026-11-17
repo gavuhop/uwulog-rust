@@ -213,11 +213,14 @@ pub fn render_folder_picker_subview(
     // Thực thi mở thư mục được chọn
     if let Some(target_dir) = action_open_dir {
         match &folder_state.server {
-            RemoteServerKind::Wsl(distro) | RemoteServerKind::DevContainer(distro) => {
+            RemoteServerKind::Wsl(distro) => {
                 store.add_remote_project_to_server(distro, &target_dir);
             }
             RemoteServerKind::Ssh(conn) => {
                 store.add_remote_project_to_ssh_server(&conn.host, &target_dir);
+            }
+            RemoteServerKind::DevContainer(conn) => {
+                store.add_remote_project_to_docker_server(&conn.container_name, &target_dir);
             }
         }
         let ws = create_server_workspace(&folder_state.server, &target_dir);

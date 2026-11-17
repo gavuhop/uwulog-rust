@@ -1,3 +1,4 @@
+pub mod devcontainer_picker;
 pub mod folder_picker;
 pub mod helpers;
 pub mod server_list;
@@ -6,6 +7,7 @@ pub mod ssh_picker;
 pub mod types;
 pub mod wsl_picker;
 
+pub use devcontainer_picker::render_devcontainer_picker_subview;
 pub use folder_picker::render_folder_picker_subview;
 pub use helpers::*;
 pub use server_list::{
@@ -20,7 +22,7 @@ use crate::actions::AppAction;
 use crate::keymap::KeymapManager;
 use crate::overlay::RemoteModalPlacement;
 use eframe::egui;
-use uwu_core_workspace::{Workspace, WorkspaceStore};
+use uwu_core_workspace::{Workspace, WorkspaceLocation, WorkspaceStore};
 
 /// Render modal chọn Remote Projects theo thiết kế chuẩn của Zed
 pub fn render_remote_servers_modal(
@@ -29,6 +31,7 @@ pub fn render_remote_servers_modal(
     placement: RemoteModalPlacement,
     keymap: &KeymapManager,
     store: &mut WorkspaceStore,
+    active_location: Option<&WorkspaceLocation>,
     dispatch: &mut impl FnMut(AppAction),
 ) {
     if !is_open {
@@ -54,6 +57,7 @@ pub fn render_remote_servers_modal(
                     &mut state.selected_index,
                     keymap,
                     store,
+                    active_location,
                 );
                 nav_action = action;
                 selected_workspace = ws;
@@ -63,6 +67,11 @@ pub fn render_remote_servers_modal(
             }
             RemoteSubView::SshPicker(ssh_state) => {
                 nav_action = render_ssh_picker_subview(ui, ssh_state, keymap, store);
+            }
+            RemoteSubView::DevContainerPicker(dc_state) => {
+                let (action, ws) = render_devcontainer_picker_subview(ui, dc_state, keymap, store);
+                nav_action = action;
+                selected_workspace = ws;
             }
             RemoteSubView::FolderPicker(folder_state) => {
                 let (action, ws) = render_folder_picker_subview(ui, folder_state, keymap, store);
@@ -309,7 +318,7 @@ mod tests {
         );
         assert_eq!(ssh_nick.display_name(), "Production Node");
 
-        let dev_container = RemoteServerKind::DevContainer("rust-env".to_string());
+        let dev_container = RemoteServerKind::dev_container("rust-env");
         assert_eq!(dev_container.display_name(), "rust-env");
         assert_eq!(dev_container.icon(), IconName::Box);
     }
@@ -346,14 +355,20 @@ mod tests {
         assert!(ssh_opts[2].is_destructive);
         assert_eq!(ssh_opts[3].action, ServerOptionAction::GoBack);
 
-        // 3. DevContainer: Remove Dev Container + Go Back
-        let dc = RemoteServerKind::DevContainer("dc1".to_string());
+        // 3. DevContainer: Copy Container Name + Remove Dev Container + Go Back
+        let dc = RemoteServerKind::dev_container("dc1");
         let dc_opts = ServerOptionItem::list_for_server(&dc);
-        assert_eq!(dc_opts.len(), 2);
-        assert_eq!(dc_opts[0].action, ServerOptionAction::RemoveServer);
-        assert_eq!(dc_opts[0].label, "Remove Dev Container");
-        assert!(dc_opts[0].is_destructive);
-        assert_eq!(dc_opts[1].action, ServerOptionAction::GoBack);
+        assert_eq!(dc_opts.len(), 3);
+        assert_eq!(
+            dc_opts[0].action,
+            ServerOptionAction::CopyAddress("dc1".to_string())
+        );
+        assert_eq!(dc_opts[0].label, "Copy Container Name");
+        assert_eq!(dc_opts[0].end_slot, Some("dc1".to_string()));
+        assert_eq!(dc_opts[1].action, ServerOptionAction::RemoveServer);
+        assert_eq!(dc_opts[1].label, "Remove Dev Container");
+        assert!(dc_opts[1].is_destructive);
+        assert_eq!(dc_opts[2].action, ServerOptionAction::GoBack);
     }
 
     #[test]
@@ -438,34 +453,34 @@ mod tests {
 
         #[cfg(target_os = "windows")]
         {
-            assert_eq!(items_empty.len(), 2);
+            assert_eq!(items_empty.len(), 3);
             assert_eq!(items_empty[0].action, ServerListAction::ConnectSsh);
-            // assert_eq!(items_empty[1].action, ServerListAction::ConnectDevContainer);
-            assert_eq!(items_empty[1].action, ServerListAction::AddWslDistro);
+            assert_eq!(items_empty[1].action, ServerListAction::ConnectDevContainer);
+            assert_eq!(items_empty[2].action, ServerListAction::AddWslDistro);
 
             // 2. Thêm WSL distro vào store -> có thêm 2 items: Open Folder và View Server Options
             store.ensure_wsl_connection("Ubuntu");
             let items_with_server = collect_server_list_items("", &store);
-            assert_eq!(items_with_server.len(), 4);
+            assert_eq!(items_with_server.len(), 5);
             assert_eq!(
-                items_with_server[2].action,
+                items_with_server[3].action,
                 ServerListAction::OpenFolder(RemoteServerKind::Wsl("Ubuntu".to_string()))
             );
             assert_eq!(
-                items_with_server[2].section_title,
+                items_with_server[3].section_title,
                 Some("WSL: Ubuntu".to_string())
             );
             assert_eq!(
-                items_with_server[3].action,
+                items_with_server[4].action,
                 ServerListAction::ViewServerOptions(RemoteServerKind::Wsl("Ubuntu".to_string()))
             );
 
             // 3. Thêm project trực tiếp vào server Ubuntu -> xuất hiện mục project duyệt O(1)
             store.add_remote_project_to_server("Ubuntu", "/home/user/backend");
             let items_with_project = collect_server_list_items("", &store);
-            assert_eq!(items_with_project.len(), 5);
+            assert_eq!(items_with_project.len(), 6);
             assert_eq!(
-                items_with_project[2].action,
+                items_with_project[3].action,
                 ServerListAction::OpenServerPath {
                     server: RemoteServerKind::Wsl("Ubuntu".to_string()),
                     path: "/home/user/backend".to_string(),
@@ -483,16 +498,24 @@ mod tests {
 
         #[cfg(not(target_os = "windows"))]
         {
-            // Trên Linux/macOS: không có WSL, chỉ có action SSH (Dev Container tạm thời comment lại)
-            assert_eq!(items_empty.len(), 1);
+            // Trên Linux/macOS: có action SSH và Connect Dev Container
+            assert_eq!(items_empty.len(), 2);
             assert_eq!(items_empty[0].action, ServerListAction::ConnectSsh);
-            // assert_eq!(items_empty[1].action, ServerListAction::ConnectDevContainer);
+            assert_eq!(items_empty[1].action, ServerListAction::ConnectDevContainer);
 
             // WSL connections không hiển thị trên non-Windows
             store.ensure_wsl_connection("Ubuntu");
             let items_with_server = collect_server_list_items("", &store);
-            assert_eq!(items_with_server.len(), 1);
+            assert_eq!(items_with_server.len(), 2);
         }
+
+        // Dev Container đã lưu KHÔNG hiển thị trong danh sách Remote Server này
+        store.upsert_docker_connection(
+            uwu_core_workspace::DockerConnection::new("rust-dev").with_devcontainer(true),
+        );
+        store.add_remote_project_to_docker_server("rust-dev", "/workspaces/app");
+        let dc_items = collect_server_list_items("rust-dev", &store);
+        assert!(dc_items.is_empty());
     }
 
     #[test]
@@ -892,5 +915,128 @@ mod tests {
             }
             _ => panic!("Expected Connected event"),
         }
+    }
+
+    #[test]
+    fn test_devcontainer_picker_flow_and_workspace() {
+        let mut store = WorkspaceStore::default();
+        let mut state = RemoteModalState::default();
+
+        state.navigate(RemoteSubView::DevContainerPicker(
+            DevContainerPickerState::connecting("/home/user/projects/my-app"),
+        ));
+        assert!(matches!(
+            state.subview,
+            RemoteSubView::DevContainerPicker(DevContainerPickerState {
+                stage: DevContainerPickerStage::Connecting { .. },
+            })
+        ));
+
+        let dc = uwu_core_workspace::DockerConnection::new("rust-dev")
+            .with_container_id("f9e8d7c6b5a4")
+            .with_local_folder("/home/user/projects/my-app")
+            .with_devcontainer(true);
+        store.upsert_docker_connection(dc.clone());
+
+        let server_kind = RemoteServerKind::from_docker_connection(&dc);
+        let ws = create_server_workspace(&server_kind, "/workspaces/my-app");
+        assert_eq!(ws.name, "my-app");
+        assert_eq!(ws.location.icon(), IconName::Box);
+        assert_eq!(ws.location.working_dir(), "/workspaces/my-app");
+        assert_eq!(ws.location.display_name(), "rust-dev");
+
+        store.add_remote_project_to_docker_server("rust-dev", "/workspaces/my-app");
+        assert_eq!(
+            store
+                .find_docker_connection("rust-dev")
+                .unwrap()
+                .projects
+                .len(),
+            1
+        );
+
+        store.remove_docker_connection("rust-dev");
+        assert!(store.docker_connections.is_empty());
+    }
+
+    #[test]
+    fn test_connect_devcontainer_errors_when_no_local_project_or_no_config() {
+        let ctx = egui::Context::default();
+        let mut store = WorkspaceStore::default();
+        let keymap = KeymapManager::new();
+        let state_id = egui::Id::new("remote_servers_modal_state");
+
+        // 1. No active local project -> selecting index 1 ("Connect Dev Container") goes to Error
+        let mut state = RemoteModalState {
+            selected_index: 1,
+            ..Default::default()
+        };
+        ctx.data_mut(|d| d.insert_temp(state_id, state));
+
+        let mut enter_input = egui::RawInput::default();
+        enter_input.events.push(egui::Event::Key {
+            key: egui::Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::default(),
+        });
+        let mut out = ctx.run_ui(enter_input, |ui| {
+            render_remote_servers_modal(
+                ui.ctx(),
+                true,
+                RemoteModalPlacement::TopCenter,
+                &keymap,
+                &mut store,
+                None,
+                &mut |_| {},
+            );
+        });
+        out.textures_delta.clear();
+
+        let state_after: RemoteModalState = ctx.data(|d| d.get_temp(state_id)).unwrap();
+        assert!(matches!(
+            state_after.subview,
+            RemoteSubView::DevContainerPicker(DevContainerPickerState {
+                stage: DevContainerPickerStage::Error(_),
+            })
+        ));
+
+        // 2. Local folder without .devcontainer -> transitions to Connecting and probes
+        let loc = WorkspaceLocation::local("/tmp/non_existent_project_without_dc");
+        state = RemoteModalState {
+            selected_index: 1,
+            ..Default::default()
+        };
+        ctx.data_mut(|d| d.insert_temp(state_id, state));
+
+        let mut enter_input2 = egui::RawInput::default();
+        enter_input2.events.push(egui::Event::Key {
+            key: egui::Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::default(),
+        });
+        let mut out2 = ctx.run_ui(enter_input2, |ui| {
+            render_remote_servers_modal(
+                ui.ctx(),
+                true,
+                RemoteModalPlacement::TopCenter,
+                &keymap,
+                &mut store,
+                Some(&loc),
+                &mut |_| {},
+            );
+        });
+        out2.textures_delta.clear();
+
+        let state_local: RemoteModalState = ctx.data(|d| d.get_temp(state_id)).unwrap();
+        assert!(matches!(
+            state_local.subview,
+            RemoteSubView::DevContainerPicker(DevContainerPickerState {
+                stage: DevContainerPickerStage::Connecting { .. },
+            })
+        ));
     }
 }

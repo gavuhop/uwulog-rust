@@ -9,7 +9,7 @@ use uwu_core_workspace::{
     clean_path, extract_project_name, RemoteConnectionOptions, SourceType, Workspace,
     WorkspaceLocation,
 };
-use uwu_driver_transport::{SshTransport, WslTransport};
+use uwu_driver_transport::{DockerTransport, SshTransport, WslTransport};
 
 /// Nối đường dẫn Unix (ví dụ: "/home/user" + "project" -> "/home/user/project")
 pub fn join_unix_path(base: &str, child: &str) -> String {
@@ -54,7 +54,7 @@ pub fn create_server_workspace(server: &RemoteServerKind, target_dir: &str) -> W
     let location = match server {
         RemoteServerKind::Wsl(distro) => RemoteConnectionOptions::parse(distro, clean_dir),
         RemoteServerKind::Ssh(conn) => conn.to_options(clean_dir).into(),
-        RemoteServerKind::DevContainer(name) => RemoteConnectionOptions::parse(name, clean_dir),
+        RemoteServerKind::DevContainer(conn) => conn.to_options(clean_dir).into(),
     };
 
     Workspace::new(
@@ -90,7 +90,12 @@ pub fn get_cached_or_read_directories(server: &RemoteServerKind, dir: &str) -> V
             conn.args.as_deref(),
         )
         .unwrap_or_default(),
-        RemoteServerKind::DevContainer(_) => Vec::new(),
+        RemoteServerKind::DevContainer(conn) => DockerTransport::list_remote_directories(
+            &conn.container_name,
+            dir,
+            conn.remote_user.as_deref(),
+        )
+        .unwrap_or_default(),
     };
 
     if let Ok(mut cache) = DIR_CACHE.lock() {
@@ -218,23 +223,56 @@ impl<'a> ListItemRow<'a> {
 
                 ui.add_space(6.0);
 
-                ui.add(
-                    egui::Label::new(egui::RichText::new(self.label).size(12.0).color(item_color))
-                        .selectable(false)
-                        .truncate(),
-                );
-
                 if let Some(end_text) = self.end_slot {
+                    let avail = ui.available_width();
+                    let end_galley = ui.painter().layout_no_wrap(
+                        end_text.to_string(),
+                        egui::FontId::proportional(11.0),
+                        theme.text.muted,
+                    );
+                    let max_end_w = (avail * 0.45).max(40.0);
+                    let end_w = end_galley.size().x.min(max_end_w);
+                    let left_w = (avail - end_w - 10.0).max(40.0);
+
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(left_w, content_rect.height()),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(self.label).size(12.0).color(item_color),
+                                )
+                                .selectable(false)
+                                .truncate(),
+                            );
+                        },
+                    );
+
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.add(
-                            egui::Label::new(
-                                egui::RichText::new(end_text)
-                                    .size(11.0)
-                                    .color(theme.text.muted),
-                            )
-                            .selectable(false),
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(end_w, content_rect.height()),
+                            egui::Layout::right_to_left(egui::Align::Center),
+                            |ui| {
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(end_text)
+                                            .size(11.0)
+                                            .color(theme.text.muted),
+                                    )
+                                    .selectable(false)
+                                    .truncate(),
+                                );
+                            },
                         );
                     });
+                } else {
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(self.label).size(12.0).color(item_color),
+                        )
+                        .selectable(false)
+                        .truncate(),
+                    );
                 }
             },
         );

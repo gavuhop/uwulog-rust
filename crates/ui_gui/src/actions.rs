@@ -3,7 +3,7 @@
 use crate::state::{ActiveTab, SearchState};
 use std::collections::HashSet;
 use uwu_core_schema::LogEvent;
-use uwu_core_workspace::{SourceConfig, Workspace};
+use uwu_core_workspace::Workspace;
 
 /// Unified Action enum for high-level application & session state mutations
 #[derive(Debug, Clone)]
@@ -12,6 +12,7 @@ pub enum AppAction {
     CloseSession(usize),
     CycleSession(bool),
     OpenWorkspace(Workspace),
+    OpenContainerLogSession(Workspace),
     OpenWorkspaceInNewWindow(Workspace),
     OpenSessionInNewWindow(usize),
     LoadWorkspace(Workspace),
@@ -22,7 +23,6 @@ pub enum AppAction {
     OpenLaunchModal,
     CloseLaunchModal,
     ApplyLaunchModal,
-    ApplyAndRestartSource(SourceConfig),
     OpenColumnsModal,
     CloseColumnsModal,
     ApplyColumnsModal,
@@ -68,10 +68,14 @@ pub enum AppAction {
     ToggleProjectPicker,
     CloseProjectPicker,
 
-    // Remote Servers (WSL)
+    // Remote Servers (WSL / SSH / Dev Container)
     OpenRemoteServersModal,
     CloseRemoteServersModal,
     ToggleRemoteServersModal,
+
+    // Log Source / Container Switcher
+    ToggleSourceSwitcher,
+    CloseSourceSwitcher,
 
     // Main Menu & About
     ToggleMainMenu,

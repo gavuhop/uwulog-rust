@@ -214,6 +214,7 @@ async fn test_remote_servers_modal_escape_back_navigation() {
             RemoteModalPlacement::TopCenter,
             &keymap,
             &mut store,
+            None,
             &mut |action| {
                 if matches!(action, AppAction::CloseRemoteServersModal) {
                     closed_dispatched = true;
@@ -255,6 +256,7 @@ async fn test_remote_servers_modal_escape_back_navigation() {
             RemoteModalPlacement::TopCenter,
             &keymap,
             &mut store,
+            None,
             &mut |action| {
                 if matches!(action, AppAction::CloseRemoteServersModal) {
                     closed_dispatched = true;
@@ -295,6 +297,7 @@ async fn test_remote_servers_modal_escape_back_navigation() {
             RemoteModalPlacement::TopCenter,
             &keymap,
             &mut store,
+            None,
             &mut |action| {
                 if matches!(action, AppAction::CloseRemoteServersModal) {
                     closed_dispatched = true;
@@ -327,6 +330,7 @@ async fn test_remote_servers_modal_escape_back_navigation() {
             RemoteModalPlacement::TopCenter,
             &keymap,
             &mut store,
+            None,
             &mut |action| {
                 if matches!(action, AppAction::CloseRemoteServersModal) {
                     closed_dispatched = true;

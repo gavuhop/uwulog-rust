@@ -90,7 +90,7 @@ pub fn render_welcome_view(
                                         let ws_icon = ws.icon();
                                         let label = format_project_display_label(
                                             &ws.name,
-                                            ws.server_name(),
+                                            ws.short_server_name(),
                                         );
 
                                         let action = render_project_row(

@@ -118,9 +118,9 @@ pub fn render_server_options_subview(
                             format!("Remove SSH server `{}`?", name),
                         )
                     }
-                    RemoteServerKind::DevContainer(name) => (
+                    RemoteServerKind::DevContainer(conn) => (
                         "Remove Dev Container",
-                        format!("Remove Dev Container `{}`?", name),
+                        format!("Remove Dev Container `{}`?", conn.display_name()),
                     ),
                 };
 
@@ -139,7 +139,9 @@ pub fn render_server_options_subview(
                         RemoteServerKind::Ssh(conn) => {
                             store.remove_ssh_connection(&conn.host);
                         }
-                        RemoteServerKind::DevContainer(_) => {}
+                        RemoteServerKind::DevContainer(conn) => {
+                            store.remove_docker_connection(&conn.container_name);
+                        }
                     }
                     nav_action = RemoteNavAction::Back;
                 }
