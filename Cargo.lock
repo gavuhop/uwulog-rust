@@ -4849,6 +4849,7 @@ dependencies = [
  "async-trait",
  "log",
  "serde",
+ "serde_json",
  "tokio",
  "uwu-core-util",
  "windows-registry",

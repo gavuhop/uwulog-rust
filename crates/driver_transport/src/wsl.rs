@@ -180,74 +180,6 @@ impl WslTransport {
         parse_wsl_arch(&text)
     }
 
-    /// Phát hiện remote shell của người dùng trong WSL (bash, zsh, sh...)
-    pub async fn detect_shell(&self) -> String {
-        let out = new_wsl_cmd()
-            .arg("-d")
-            .arg(&self.distro)
-            .arg("--cd")
-            .arg("~")
-            .arg("--")
-            .arg("sh")
-            .arg("-c")
-            .arg("echo $SHELL")
-            .output()
-            .await;
-
-        if let Ok(o) = out {
-            if o.status.success() {
-                let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
-                if !s.is_empty() {
-                    return s;
-                }
-            }
-        }
-        "sh".to_string()
-    }
-
-    /// Kiểm tra tính năng WSL Interop có được bật hay không
-    pub async fn detect_has_wsl_interop(&self) -> bool {
-        let check = new_wsl_cmd()
-            .arg("-d")
-            .arg(&self.distro)
-            .arg("--cd")
-            .arg("~")
-            .arg("--")
-            .arg("cat")
-            .arg("/proc/sys/fs/binfmt_misc/WSLInterop")
-            .output()
-            .await;
-
-        if let Ok(out) = check {
-            if out.status.success() {
-                let s = String::from_utf8_lossy(&out.stdout);
-                if s.contains("enabled") {
-                    return true;
-                }
-            }
-        }
-
-        let check_late = new_wsl_cmd()
-            .arg("-d")
-            .arg(&self.distro)
-            .arg("--cd")
-            .arg("~")
-            .arg("--")
-            .arg("cat")
-            .arg("/proc/sys/fs/binfmt_misc/WSLInterop-late")
-            .output()
-            .await;
-
-        if let Ok(out) = check_late {
-            if out.status.success() {
-                let s = String::from_utf8_lossy(&out.stdout);
-                return s.contains("enabled");
-            }
-        }
-
-        false
-    }
-
     /// Xác định thư mục HOME mặc định của user trong WSL distro (ví dụ: `/home/truongviet/`).
     /// Nếu không xác định được, trả về `/home/`.
     pub fn resolve_home_dir(distro: &str) -> String {
@@ -363,18 +295,7 @@ impl WslTransport {
         }
 
         let text = String::from_utf8_lossy(&output.stdout);
-        let mut dirs = Vec::new();
-        for line in text.lines() {
-            let trimmed = line.trim();
-            if trimmed.ends_with('/') {
-                let folder_name = trimmed.trim_end_matches('/');
-                if folder_name != "." && folder_name != ".." && !folder_name.is_empty() {
-                    dirs.push(folder_name.to_string());
-                }
-            }
-        }
-        dirs.sort_by_key(|a| a.to_lowercase());
-        Ok(dirs)
+        Ok(super::parse_ls_directories(&text))
     }
 
     /// Tìm đường dẫn binary local của uwu-agent trên host Windows phù hợp với kiến trúc của Distro.

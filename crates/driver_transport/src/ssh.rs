@@ -291,18 +291,7 @@ impl SshTransport {
         }
 
         let text = String::from_utf8_lossy(&output.stdout);
-        let mut dirs = Vec::new();
-        for line in text.lines() {
-            let trimmed = line.trim();
-            if trimmed.ends_with('/') {
-                let folder_name = trimmed.trim_end_matches('/');
-                if folder_name != "." && folder_name != ".." && !folder_name.is_empty() {
-                    dirs.push(folder_name.to_string());
-                }
-            }
-        }
-        dirs.sort_by_key(|a| a.to_lowercase());
-        Ok(dirs)
+        Ok(super::parse_ls_directories(&text))
     }
 
     /// Xác định thư mục HOME của người dùng trên remote SSH (`echo $HOME`)
