@@ -1,5 +1,5 @@
 use crate::environment::EnvLoadStatus;
-use crate::remote::{RemoteConnectionOptions, SshConnectionOptions};
+use crate::remote::RemoteConnectionOptions;
 use crate::{Workspace, WorkspaceLocation};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -122,6 +122,11 @@ impl WorkspaceSession {
         self.location.server_name()
     }
 
+    /// Nhãn ngắn gọn của máy chủ remote cho Header / Project Picker
+    pub fn short_server_name(&self) -> Option<&str> {
+        self.location.short_server_name()
+    }
+
     pub fn from_workspace(ws: &Workspace, capacity: usize, display_limit: usize) -> Self {
         let source_config = SourceConfig {
             capacity,
@@ -162,14 +167,8 @@ impl WorkspaceSession {
         ws.id = self.id;
         ws.env_vars = self.env_vars.clone();
 
-        match self.source_config.source_type {
-            SourceType::Process => {
-                ws.command_str = self.source_config.command_str.clone();
-            }
-            SourceType::File => {
-                ws.file_path = self.source_config.file_path.clone();
-            }
-        }
+        ws.command_str = self.source_config.command_str.clone();
+        ws.file_path = self.source_config.file_path.clone();
 
         ws
     }
@@ -216,6 +215,39 @@ impl WorkspaceSession {
 
         let config = &self.source_config;
 
+        if let WorkspaceLocation::Remote(RemoteConnectionOptions::Docker(ref d)) = self.location {
+            if d.follow_container_logs && !d.container_name.trim().is_empty() {
+                let target = d.container_name.trim().to_string();
+                let tx = source_tx.clone();
+                let tx_err = source_tx.clone();
+                let label = target.clone();
+                rt.spawn(async move {
+                    let proc_src = ProcessSource::new(
+                        "docker",
+                        vec![
+                            "logs".to_string(),
+                            "-f".to_string(),
+                            "--tail".to_string(),
+                            "500".to_string(),
+                            target,
+                        ],
+                    );
+                    if let Err(e) = proc_src.start_stream(tx).await {
+                        let _ = tx_err
+                            .send(RawLogEntry {
+                                payload: RawPayload::Text(format!(
+                                    "[DOCKER LOGS ERROR] Failed to stream `{}`: {:#}",
+                                    label, e
+                                )),
+                            })
+                            .await;
+                    }
+                });
+                self.is_source_running = true;
+                return;
+            }
+        }
+
         match config.source_type {
             SourceType::Process => {
                 if !config.command_str.trim().is_empty() {
@@ -239,12 +271,30 @@ impl WorkspaceSession {
                             self.is_source_running = true;
                         }
                         WorkspaceLocation::Remote(RemoteConnectionOptions::Ssh(ssh_opts)) => {
-                            Self::spawn_ssh_stream(
+                            let mut transport = ssh_opts.to_transport();
+                            if !config.working_dir.trim().is_empty() {
+                                transport = transport.with_working_dir(&config.working_dir);
+                            }
+                            Self::spawn_remote_stream(
                                 rt,
-                                ssh_opts,
+                                Box::new(transport),
                                 RemoteLogSourceSpec::Command(config.command_str.clone()),
-                                &config.working_dir,
                                 source_tx.clone(),
+                                "SSH",
+                            );
+                            self.is_source_running = true;
+                        }
+                        WorkspaceLocation::Remote(RemoteConnectionOptions::Docker(docker_opts)) => {
+                            let mut transport = docker_opts.to_transport();
+                            if !config.working_dir.trim().is_empty() {
+                                transport = transport.with_working_dir(&config.working_dir);
+                            }
+                            Self::spawn_remote_stream(
+                                rt,
+                                Box::new(transport),
+                                RemoteLogSourceSpec::Command(config.command_str.clone()),
+                                source_tx.clone(),
+                                "DOCKER",
                             );
                             self.is_source_running = true;
                         }
@@ -326,12 +376,30 @@ impl WorkspaceSession {
                             self.is_source_running = true;
                         }
                         WorkspaceLocation::Remote(RemoteConnectionOptions::Ssh(ssh_opts)) => {
-                            Self::spawn_ssh_stream(
+                            let mut transport = ssh_opts.to_transport();
+                            if !config.working_dir.trim().is_empty() {
+                                transport = transport.with_working_dir(&config.working_dir);
+                            }
+                            Self::spawn_remote_stream(
                                 rt,
-                                ssh_opts,
+                                Box::new(transport),
                                 RemoteLogSourceSpec::File(config.file_path.clone()),
-                                &config.working_dir,
                                 source_tx.clone(),
+                                "SSH",
+                            );
+                            self.is_source_running = true;
+                        }
+                        WorkspaceLocation::Remote(RemoteConnectionOptions::Docker(docker_opts)) => {
+                            let mut transport = docker_opts.to_transport();
+                            if !config.working_dir.trim().is_empty() {
+                                transport = transport.with_working_dir(&config.working_dir);
+                            }
+                            Self::spawn_remote_stream(
+                                rt,
+                                Box::new(transport),
+                                RemoteLogSourceSpec::File(config.file_path.clone()),
+                                source_tx.clone(),
+                                "DOCKER",
                             );
                             self.is_source_running = true;
                         }
@@ -348,24 +416,46 @@ impl WorkspaceSession {
             }
         }
 
-        // Hướng dẫn người dùng khi vừa mở Workspace SSH mà chưa cấu hình File/Command
-        if let WorkspaceLocation::Remote(RemoteConnectionOptions::Ssh(ref ssh_opts)) = self.location
-        {
-            if config.command_str.trim().is_empty() && config.file_path.trim().is_empty() {
+        // Hướng dẫn người dùng khi vừa mở Workspace SSH hoặc Dev Container mà chưa cấu hình File/Command
+        let is_unconfigured = match config.source_type {
+            SourceType::Process => config.command_str.trim().is_empty(),
+            SourceType::File => config.file_path.trim().is_empty(),
+        };
+        if is_unconfigured {
+            let ready_msg = match &self.location {
+                WorkspaceLocation::Remote(RemoteConnectionOptions::Ssh(ref ssh_opts)) => {
+                    let target = ssh_opts.target_string();
+                    let workdir = if !ssh_opts.working_dir.is_empty() {
+                        format!(" (directory: {})", ssh_opts.working_dir)
+                    } else {
+                        String::new()
+                    };
+                    Some(format!(
+                        "[SSH READY] Connected to {}{}. Open Settings (⚙) on the toolbar to choose a log file or command to stream.",
+                        target, workdir
+                    ))
+                }
+                WorkspaceLocation::Remote(RemoteConnectionOptions::Docker(ref docker_opts)) => {
+                    let target = docker_opts.display_name();
+                    let workdir = if !docker_opts.working_dir.is_empty() {
+                        format!(" (directory: {})", docker_opts.working_dir)
+                    } else {
+                        String::new()
+                    };
+                    Some(format!(
+                        "[DEV CONTAINER READY] Connected to {}{}. Open Settings (⚙) on the toolbar to choose a log file or command to stream.",
+                        target, workdir
+                    ))
+                }
+                _ => None,
+            };
+
+            if let Some(msg) = ready_msg {
                 let tx_info = source_tx.clone();
-                let target = ssh_opts.target_string();
-                let workdir = if !ssh_opts.working_dir.is_empty() {
-                    format!(" (directory: {})", ssh_opts.working_dir)
-                } else {
-                    String::new()
-                };
                 rt.spawn(async move {
                     let _ = tx_info
                         .send(RawLogEntry {
-                            payload: RawPayload::Text(format!(
-                                "[SSH READY] Connected to {}{}. Open Settings (⚙) on the toolbar to choose a log file or command to stream.",
-                                target, workdir
-                            )),
+                            payload: RawPayload::Text(msg),
                         })
                         .await;
                 });
@@ -373,28 +463,24 @@ impl WorkspaceSession {
         }
     }
 
-    fn spawn_ssh_stream(
+    fn spawn_remote_stream(
         rt: &Handle,
-        ssh_opts: &SshConnectionOptions,
+        transport: Box<dyn uwu_driver_transport::RemoteTransport>,
         spec: RemoteLogSourceSpec,
-        working_dir: &str,
         source_tx: tokio::sync::mpsc::Sender<RawLogEntry>,
+        label: &'static str,
     ) {
-        let mut transport = ssh_opts.to_transport();
-        if !working_dir.trim().is_empty() {
-            transport = transport.with_working_dir(working_dir);
-        }
-        let source = RemoteSource::new(Box::new(transport), spec, None);
+        let source = RemoteSource::new(transport, spec, None);
         let tx = source_tx.clone();
         let tx_err = source_tx;
         rt.spawn(async move {
             if let Err(e) = source.start_stream(tx).await {
-                log::error!("SSH stream error: {:#}", e);
+                log::error!("{} stream error: {:#}", label, e);
                 let _ = tx_err
                     .send(RawLogEntry {
                         payload: RawPayload::Text(format!(
-                            "[SSH ERROR] Failed to start log stream: {:#}",
-                            e
+                            "[{} ERROR] Failed to start log stream: {:#}",
+                            label, e
                         )),
                     })
                     .await;
@@ -501,6 +587,51 @@ impl WorkspaceSession {
                 SourceType::Process => uwu_icons::IconName::Screen,
             },
         }
+    }
+
+    /// Trả về `true` nếu session Docker này đang stream `docker logs -f` của container
+    pub fn is_following_container_logs(&self) -> bool {
+        matches!(
+            self.location,
+            WorkspaceLocation::Remote(RemoteConnectionOptions::Docker(ref d)) if d.follow_container_logs
+        )
+    }
+
+    /// Nhãn ngắn mô tả nguồn log hiện tại của session (hiển thị trên Header để biết đang log gì)
+    pub fn source_badge_label(&self) -> String {
+        if let WorkspaceLocation::Remote(RemoteConnectionOptions::Docker(ref d)) = self.location {
+            if d.follow_container_logs {
+                return format!("container: {}", d.short_service_name());
+            }
+        }
+        match self.source_config.source_type {
+            SourceType::Process => {
+                let cmd = self.source_config.command_str.trim();
+                if cmd.is_empty() {
+                    "Ready (Idle)".to_string()
+                } else {
+                    format!("cmd: {}", cmd)
+                }
+            }
+            SourceType::File => {
+                let file = self.source_config.file_path.trim();
+                if file.is_empty() {
+                    "File: unset".to_string()
+                } else {
+                    let short = file.rsplit(['/', '\\']).next().unwrap_or(file);
+                    format!("file: {}", short)
+                }
+            }
+        }
+    }
+
+    /// Tên container ngắn gọn đang hiển thị sau tên dự án trên Header (vd: `app`, `db`, `minio`)
+    pub fn active_docker_short_label(&self) -> Option<String> {
+        let WorkspaceLocation::Remote(RemoteConnectionOptions::Docker(ref d)) = self.location
+        else {
+            return None;
+        };
+        Some(d.short_service_name().to_string())
     }
 
     /// Thư mục làm việc hiệu lực của session

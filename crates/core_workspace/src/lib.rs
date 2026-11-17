@@ -6,8 +6,8 @@ pub mod session;
 pub use environment::{load_workspace_environment, parse_dot_env, EnvLoadStatus};
 pub use manager::MultiWorkspaceManager;
 pub use remote::{
-    RemoteConnectionOptions, RemoteProject, ServerConnection, SshConnection, SshConnectionOptions,
-    WslConnection, WslConnectionOptions,
+    DockerConnection, DockerConnectionOptions, RemoteConnectionOptions, RemoteProject,
+    ServerConnection, SshConnection, SshConnectionOptions, WslConnection, WslConnectionOptions,
 };
 pub use session::{SourceConfig, SourceType, WorkspaceSession};
 pub use uwu_icons::IconName;
@@ -75,6 +75,14 @@ impl WorkspaceLocation {
     /// Tên của máy chủ remote nếu có (ví dụ: "Ubuntu", "Debian")
     pub fn server_name(&self) -> Option<&str> {
         self.as_remote().map(|r| r.display_name())
+    }
+
+    /// Nhãn ngắn gọn của máy chủ remote hiển thị kèm tên project (ẩn với Docker vì đã có icon Box)
+    pub fn short_server_name(&self) -> Option<&str> {
+        match self.as_remote()? {
+            RemoteConnectionOptions::Docker(_) => None,
+            remote => Some(remote.short_label()),
+        }
     }
 
     /// Cập nhật thư mục làm việc (áp dụng cho cả Local lẫn Remote)
@@ -204,6 +212,11 @@ impl Workspace {
         self.location.server_name()
     }
 
+    /// Nhãn ngắn của server remote cho UI (vd: `app` thay vì tên container đầy đủ)
+    pub fn short_server_name(&self) -> Option<&str> {
+        self.location.short_server_name()
+    }
+
     /// Đường dẫn tóm tắt mục tiêu (dùng cho tooltip hoặc subtitle)
     pub fn target_summary(&self) -> String {
         if !self.location.working_dir().is_empty() {
@@ -235,6 +248,13 @@ impl Workspace {
                 #[cfg(target_os = "windows")]
                 RemoteConnectionOptions::Wsl(wsl) => !wsl.distro.trim().is_empty(),
                 RemoteConnectionOptions::Ssh(ssh) => !ssh.host.trim().is_empty(),
+                RemoteConnectionOptions::Docker(docker) => {
+                    !docker.container_name.trim().is_empty()
+                        || docker
+                            .container_id
+                            .as_deref()
+                            .is_some_and(|id| !id.trim().is_empty())
+                }
             },
         }
     }
@@ -250,6 +270,8 @@ pub struct WorkspaceStore {
     pub wsl_connections: Vec<WslConnection>,
     #[serde(default)]
     pub ssh_connections: Vec<SshConnection>,
+    #[serde(default)]
+    pub docker_connections: Vec<DockerConnection>,
     #[serde(default)]
     pub open_workspace_ids: Vec<Uuid>,
     #[serde(skip)]
@@ -525,6 +547,159 @@ impl WorkspaceStore {
         }
     }
 
+    /// Tìm kết nối Docker / Dev Container theo tên container hoặc ID
+    pub fn find_docker_connection(&self, container: &str) -> Option<&DockerConnection> {
+        let trimmed = container.trim();
+        self.docker_connections.iter().find(|c| {
+            c.container_name.eq_ignore_ascii_case(trimmed)
+                || c.container_id
+                    .as_deref()
+                    .map(|id| id.eq_ignore_ascii_case(trimmed))
+                    .unwrap_or(false)
+        })
+    }
+
+    /// Tìm kết nối Docker / Dev Container dạng mutable theo tên container hoặc ID
+    pub fn find_docker_connection_mut(&mut self, container: &str) -> Option<&mut DockerConnection> {
+        let trimmed = container.trim();
+        self.docker_connections.iter_mut().find(|c| {
+            c.container_name.eq_ignore_ascii_case(trimmed)
+                || c.container_id
+                    .as_deref()
+                    .map(|id| id.eq_ignore_ascii_case(trimmed))
+                    .unwrap_or(false)
+        })
+    }
+
+    /// Đảm bảo một kết nối Docker / Dev Container tồn tại trong danh sách (tạo mới nếu chưa có)
+    pub fn ensure_docker_connection(
+        &mut self,
+        container: impl Into<String>,
+    ) -> &mut DockerConnection {
+        let name = container.into();
+        let trimmed = name.trim().to_string();
+        if let Some(pos) = self.docker_connections.iter().position(|c| {
+            c.container_name.eq_ignore_ascii_case(&trimmed)
+                || c.container_id
+                    .as_deref()
+                    .map(|id| id.eq_ignore_ascii_case(&trimmed))
+                    .unwrap_or(false)
+        }) {
+            &mut self.docker_connections[pos]
+        } else {
+            self.docker_connections
+                .push(DockerConnection::new(&trimmed));
+            let _ = self.save();
+            let idx = self.docker_connections.len() - 1;
+            &mut self.docker_connections[idx]
+        }
+    }
+
+    /// Thêm mới hoặc cập nhật metadata cho một kết nối Docker / Dev Container
+    pub fn upsert_docker_connection(&mut self, conn: DockerConnection) -> &mut DockerConnection {
+        let pos = self.docker_connections.iter().position(|c| {
+            c.container_name.eq_ignore_ascii_case(&conn.container_name)
+                || conn
+                    .container_id
+                    .as_deref()
+                    .zip(c.container_id.as_deref())
+                    .map(|(a, b)| a.eq_ignore_ascii_case(b))
+                    .unwrap_or(false)
+        });
+
+        let idx = if let Some(pos) = pos {
+            let existing = &mut self.docker_connections[pos];
+            existing.container_name = conn.container_name;
+            if conn.container_id.is_some() {
+                existing.container_id = conn.container_id;
+            }
+            if conn.image.is_some() {
+                existing.image = conn.image;
+            }
+            if conn.remote_user.is_some() {
+                existing.remote_user = conn.remote_user;
+            }
+            if conn.local_folder.is_some() {
+                existing.local_folder = conn.local_folder;
+            }
+            if conn.compose_project.is_some() {
+                existing.compose_project = conn.compose_project;
+            }
+            if conn.compose_service.is_some() {
+                existing.compose_service = conn.compose_service;
+            }
+            existing.is_devcontainer = existing.is_devcontainer || conn.is_devcontainer;
+            for proj in conn.projects {
+                existing.projects.insert(proj);
+            }
+            pos
+        } else {
+            self.docker_connections.push(conn);
+            self.docker_connections.len() - 1
+        };
+
+        let _ = self.save();
+        &mut self.docker_connections[idx]
+    }
+
+    /// Xóa một kết nối Docker / Dev Container khỏi danh sách và xóa các workspace thuộc container đó
+    pub fn remove_docker_connection(&mut self, container: &str) {
+        let trimmed = container.trim();
+        self.docker_connections.retain(|c| {
+            !c.container_name.eq_ignore_ascii_case(trimmed)
+                && !c
+                    .container_id
+                    .as_deref()
+                    .map(|id| id.eq_ignore_ascii_case(trimmed))
+                    .unwrap_or(false)
+        });
+        self.recent_workspaces.retain(|ws| {
+            if let Some(WorkspaceLocation::Remote(RemoteConnectionOptions::Docker(ref d))) =
+                Some(&ws.location)
+            {
+                !d.container_name.eq_ignore_ascii_case(trimmed)
+                    && !d
+                        .container_id
+                        .as_deref()
+                        .map(|id| id.eq_ignore_ascii_case(trimmed))
+                        .unwrap_or(false)
+            } else {
+                true
+            }
+        });
+        let _ = self.save();
+    }
+
+    /// Thêm project trực tiếp vào Docker container tương ứng
+    pub fn add_remote_project_to_docker_server(
+        &mut self,
+        container: &str,
+        path: impl Into<String>,
+    ) {
+        let server = self.ensure_docker_connection(container);
+        if server.add_project(path) {
+            let _ = self.save();
+        }
+    }
+
+    /// Xóa project trực tiếp khỏi Docker container tương ứng
+    pub fn remove_remote_project_from_docker_server(&mut self, container: &str, path: &str) {
+        if let Some(server) = self.find_docker_connection_mut(container) {
+            if server.remove_project(path) {
+                let clean = normalize_workdir(path);
+                self.recent_workspaces.retain(|w| {
+                    if let Some(remote) = w.location.as_remote() {
+                        !(remote.display_name().eq_ignore_ascii_case(container)
+                            && w.location.normalized_dir() == clean)
+                    } else {
+                        true
+                    }
+                });
+                let _ = self.save();
+            }
+        }
+    }
+
     /// Thêm project trực tiếp vào server connection tương ứng (WSL, SSH, Container...)
     pub fn add_remote_project_to_server(&mut self, server_name: &str, path: impl Into<String>) {
         let server = self.ensure_wsl_connection(server_name);
@@ -542,6 +717,11 @@ impl WorkspaceStore {
             }
         }
         if let Some(server) = self.find_ssh_connection_mut(server_name) {
+            if server.remove_project(path) {
+                modified = true;
+            }
+        }
+        if let Some(server) = self.find_docker_connection_mut(server_name) {
             if server.remove_project(path) {
                 modified = true;
             }
@@ -673,6 +853,58 @@ impl WorkspaceStore {
                     let ws = Workspace::new(
                         extract_project_name(&proj.path),
                         WorkspaceLocation::remote(opts),
+                        SourceType::Process,
+                    );
+                    self.recent_workspaces.push(ws);
+                }
+            }
+        }
+
+        for conn in &self.docker_connections {
+            for ws in &mut self.recent_workspaces {
+                if let WorkspaceLocation::Remote(RemoteConnectionOptions::Docker(ref mut opts)) =
+                    ws.location
+                {
+                    if opts
+                        .container_name
+                        .eq_ignore_ascii_case(&conn.container_name)
+                    {
+                        if let Some(ref id) = conn.container_id {
+                            opts.container_id = Some(id.clone());
+                        }
+                        if let Some(ref user) = conn.remote_user {
+                            opts.remote_user = Some(user.clone());
+                        }
+                        if let Some(ref folder) = conn.local_folder {
+                            opts.local_folder = Some(folder.clone());
+                        }
+                        if let Some(ref proj) = conn.compose_project {
+                            opts.compose_project = Some(proj.clone());
+                        }
+                        if let Some(ref svc) = conn.compose_service {
+                            opts.compose_service = Some(svc.clone());
+                        }
+                        opts.is_devcontainer = opts.is_devcontainer || conn.is_devcontainer;
+                    }
+                }
+            }
+
+            for proj in &conn.projects {
+                let clean = normalize_workdir(&proj.path);
+                let exists = self.recent_workspaces.iter().any(|ws| {
+                    if let Some(remote) = ws.location.as_remote() {
+                        remote
+                            .display_name()
+                            .eq_ignore_ascii_case(&conn.container_name)
+                            && ws.location.normalized_dir() == clean
+                    } else {
+                        false
+                    }
+                });
+                if !exists {
+                    let ws = Workspace::new(
+                        extract_project_name(&proj.path),
+                        WorkspaceLocation::remote(conn.to_options(&proj.path)),
                         SourceType::Process,
                     );
                     self.recent_workspaces.push(ws);
@@ -1055,5 +1287,110 @@ mod tests {
         store.remove_ssh_connection("prod-server");
         assert_eq!(store.ssh_connections.len(), 1);
         assert_eq!(store.ssh_connections[0].host, "staging-server");
+    }
+
+    #[test]
+    fn test_workspace_store_docker_connections_crud() {
+        let mut store = WorkspaceStore::default();
+        let dc = DockerConnection::new("rust-dev")
+            .with_container_id("abc123def456")
+            .with_image("mcr.microsoft.com/devcontainers/rust:1")
+            .with_local_folder("/home/user/app")
+            .with_devcontainer(true);
+        store.upsert_docker_connection(dc);
+        store.ensure_docker_connection("redis-cache");
+
+        assert_eq!(store.docker_connections.len(), 2);
+        assert!(
+            store
+                .find_docker_connection("rust-dev")
+                .unwrap()
+                .is_devcontainer
+        );
+        assert!(
+            store
+                .find_docker_connection("abc123def456")
+                .unwrap()
+                .container_name
+                == "rust-dev"
+        );
+
+        store.add_remote_project_to_docker_server("rust-dev", "/workspaces/app");
+        store.add_remote_project_to_docker_server("rust-dev", "/workspaces/app");
+        assert_eq!(
+            store
+                .find_docker_connection("rust-dev")
+                .unwrap()
+                .projects
+                .len(),
+            1
+        );
+
+        store.sync_remote_projects();
+        assert_eq!(store.recent_workspaces.len(), 1);
+        assert_eq!(store.recent_workspaces[0].location.icon(), IconName::Box);
+        assert!(store.recent_workspaces[0].is_valid_to_open());
+
+        store.remove_remote_project_from_docker_server("rust-dev", "/workspaces/app");
+        assert_eq!(store.recent_workspaces.len(), 0);
+
+        store.remove_docker_connection("rust-dev");
+        assert_eq!(store.docker_connections.len(), 1);
+        assert_eq!(store.docker_connections[0].container_name, "redis-cache");
+    }
+
+    #[test]
+    fn test_docker_connection_options_parse_and_serde() {
+        let opts = RemoteConnectionOptions::parse("devcontainer:my-dev", "/workspaces/app");
+        assert_eq!(opts.connection_type(), "docker");
+        assert_eq!(opts.display_name(), "my-dev");
+        assert_eq!(opts.working_dir(), "/workspaces/app");
+        assert_eq!(opts.icon(), IconName::Box);
+
+        let opts2 = RemoteConnectionOptions::parse("docker:redis", "/data");
+        assert_eq!(opts2.connection_type(), "docker");
+        assert_eq!(opts2.display_name(), "redis");
+
+        let json = serde_json::to_string(&opts).unwrap();
+        let back: RemoteConnectionOptions = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, opts);
+    }
+
+    #[tokio::test]
+    async fn test_session_source_badge_and_container_logs_roundtrip() {
+        let mut ws = Workspace::new(
+            "psittacus",
+            WorkspaceLocation::remote(
+                DockerConnectionOptions::new("psittacus_app_1", "/workspaces/psittacus")
+                    .with_compose_project("psittacus_devcontainer")
+                    .with_compose_service("app")
+                    .with_devcontainer(true),
+            ),
+            SourceType::Process,
+        );
+        let mut session = WorkspaceSession::from_workspace(&ws, 1000, 100);
+        assert_eq!(session.source_badge_label(), "Ready (Idle)");
+
+        session.source_config.command_str = "go run .".to_string();
+        assert_eq!(session.source_badge_label(), "cmd: go run .");
+
+        if let WorkspaceLocation::Remote(RemoteConnectionOptions::Docker(ref mut d)) =
+            session.location
+        {
+            d.follow_container_logs = true;
+        }
+        assert!(session.is_following_container_logs());
+        assert_eq!(session.source_badge_label(), "container: app");
+        assert_eq!(session.active_docker_short_label().as_deref(), Some("app"));
+        assert_eq!(session.short_server_name(), None);
+
+        ws = session.to_workspace();
+        assert_eq!(ws.source_type, SourceType::Process);
+        assert_eq!(ws.command_str, "go run .");
+
+        let restored = WorkspaceSession::from_workspace(&ws, 1000, 100);
+        assert_eq!(restored.source_config.command_str, "go run .");
+        assert!(restored.is_following_container_logs());
+        assert_eq!(restored.source_config.source_type, SourceType::Process);
     }
 }

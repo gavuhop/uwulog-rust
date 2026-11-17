@@ -1,17 +1,17 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-/// Cấu hình kết nối Remote (WSL, SSH, tương lai: Dev Container / Docker...)
+/// Cấu hình kết nối Remote (WSL, SSH, Dev Container / Docker)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RemoteConnectionOptions {
     Wsl(WslConnectionOptions),
     Ssh(SshConnectionOptions),
-    // Docker(DockerConnectionOptions), // Mở rộng sau
+    Docker(DockerConnectionOptions),
 }
 
 impl RemoteConnectionOptions {
-    /// Khởi tạo cấu hình Remote từ chuỗi target (ví dụ: "wsl:Ubuntu", "Ubuntu", "ssh:user@host:22") cùng thư mục làm việc
+    /// Khởi tạo cấu hình Remote từ chuỗi target (ví dụ: "wsl:Ubuntu", "ssh:user@host:22", "docker:my-container") cùng thư mục làm việc
     pub fn parse(target: &str, working_dir: impl Into<String>) -> Self {
         let working_dir = working_dir.into();
         if let Some(stripped) = target.strip_prefix("ssh:") {
@@ -20,15 +20,33 @@ impl RemoteConnectionOptions {
             }
             return Self::Ssh(SshConnectionOptions::new(stripped, working_dir));
         }
+        if let Some(stripped) = target.strip_prefix("devcontainer:") {
+            return Self::Docker(
+                DockerConnectionOptions::new(stripped, working_dir).with_devcontainer(true),
+            );
+        }
+        if let Some(stripped) = target.strip_prefix("docker:") {
+            return Self::Docker(DockerConnectionOptions::new(stripped, working_dir));
+        }
         let distro = target.strip_prefix("wsl:").unwrap_or(target);
         Self::Wsl(WslConnectionOptions::new(distro, working_dir))
     }
 
-    /// Tên hiển thị định danh cho remote (ví dụ tên Distro đối với WSL, hoặc Host đối với SSH)
+    /// Tên hiển thị định danh cho remote (Distro với WSL, Host với SSH, Container với Docker)
     pub fn display_name(&self) -> &str {
         match self {
             RemoteConnectionOptions::Wsl(opts) => &opts.distro,
             RemoteConnectionOptions::Ssh(opts) => opts.display_name(),
+            RemoteConnectionOptions::Docker(opts) => opts.display_name(),
+        }
+    }
+
+    /// Nhãn ngắn gọn hiển thị trên Header/Picker (không lặp chữ "devcontainer" dài dòng)
+    pub fn short_label(&self) -> &str {
+        match self {
+            RemoteConnectionOptions::Wsl(opts) => &opts.distro,
+            RemoteConnectionOptions::Ssh(opts) => opts.display_name(),
+            RemoteConnectionOptions::Docker(opts) => opts.short_service_name(),
         }
     }
 
@@ -37,6 +55,7 @@ impl RemoteConnectionOptions {
         match self {
             RemoteConnectionOptions::Wsl(_) => "wsl",
             RemoteConnectionOptions::Ssh(_) => "ssh",
+            RemoteConnectionOptions::Docker(_) => "docker",
         }
     }
 
@@ -45,6 +64,7 @@ impl RemoteConnectionOptions {
         match self {
             RemoteConnectionOptions::Wsl(opts) => &opts.working_dir,
             RemoteConnectionOptions::Ssh(opts) => &opts.working_dir,
+            RemoteConnectionOptions::Docker(opts) => &opts.working_dir,
         }
     }
 
@@ -53,6 +73,7 @@ impl RemoteConnectionOptions {
         match self {
             RemoteConnectionOptions::Wsl(_) => uwu_icons::IconName::Linux,
             RemoteConnectionOptions::Ssh(_) => uwu_icons::IconName::Server,
+            RemoteConnectionOptions::Docker(_) => uwu_icons::IconName::Box,
         }
     }
 
@@ -62,6 +83,7 @@ impl RemoteConnectionOptions {
         match self {
             RemoteConnectionOptions::Wsl(opts) => opts.working_dir = dir,
             RemoteConnectionOptions::Ssh(opts) => opts.working_dir = dir,
+            RemoteConnectionOptions::Docker(opts) => opts.working_dir = dir,
         }
     }
 
@@ -93,6 +115,12 @@ impl RemoteConnectionOptions {
                     && s1.port == s2.port
                     && crate::normalize_workdir(&s1.working_dir)
                         == crate::normalize_workdir(&s2.working_dir)
+            }
+            (RemoteConnectionOptions::Docker(d1), RemoteConnectionOptions::Docker(d2)) => {
+                d1.container_name.eq_ignore_ascii_case(&d2.container_name)
+                    && d1.remote_user == d2.remote_user
+                    && crate::normalize_workdir(&d1.working_dir)
+                        == crate::normalize_workdir(&d2.working_dir)
             }
             _ => false,
         }
@@ -568,12 +596,284 @@ fn split_shell_args(input: &str) -> Vec<String> {
     args
 }
 
+/// Cấu hình kết nối Docker / Dev Container chứa danh sách project (tham chiếu chuẩn `DockerConnectionOptions` của Zed)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DockerConnection {
+    pub container_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_user: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_folder: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compose_project: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compose_service: Option<String>,
+    #[serde(default)]
+    pub is_devcontainer: bool,
+    #[serde(default)]
+    pub projects: BTreeSet<RemoteProject>,
+}
+
+impl DockerConnection {
+    pub fn new(container_name: impl Into<String>) -> Self {
+        Self {
+            container_name: container_name.into(),
+            container_id: None,
+            image: None,
+            remote_user: None,
+            local_folder: None,
+            compose_project: None,
+            compose_service: None,
+            is_devcontainer: false,
+            projects: BTreeSet::new(),
+        }
+    }
+
+    pub fn with_container_id(mut self, id: impl Into<String>) -> Self {
+        let id = id.into();
+        if !id.trim().is_empty() {
+            self.container_id = Some(id);
+        }
+        self
+    }
+
+    pub fn with_image(mut self, image: impl Into<String>) -> Self {
+        let image = image.into();
+        if !image.trim().is_empty() {
+            self.image = Some(image);
+        }
+        self
+    }
+
+    pub fn with_remote_user(mut self, user: impl Into<String>) -> Self {
+        let user = user.into();
+        if !user.trim().is_empty() {
+            self.remote_user = Some(user);
+        }
+        self
+    }
+
+    pub fn with_local_folder(mut self, folder: impl Into<String>) -> Self {
+        let folder = folder.into();
+        if !folder.trim().is_empty() {
+            self.local_folder = Some(folder);
+        }
+        self
+    }
+
+    pub fn with_compose_project(mut self, project: impl Into<String>) -> Self {
+        let project = project.into();
+        if !project.trim().is_empty() {
+            self.compose_project = Some(project);
+        }
+        self
+    }
+
+    pub fn with_compose_service(mut self, service: impl Into<String>) -> Self {
+        let service = service.into();
+        if !service.trim().is_empty() {
+            self.compose_service = Some(service);
+        }
+        self
+    }
+
+    pub fn with_devcontainer(mut self, is_devcontainer: bool) -> Self {
+        self.is_devcontainer = is_devcontainer;
+        self
+    }
+
+    pub fn display_name(&self) -> &str {
+        &self.container_name
+    }
+
+    pub fn short_service_name(&self) -> &str {
+        if let Some(svc) = self.compose_service.as_deref().filter(|s| !s.is_empty()) {
+            return svc;
+        }
+        compact_container_name(&self.container_name)
+    }
+
+    /// Thêm project vào container, trả về true nếu project mới được thêm vào tập hợp
+    pub fn add_project(&mut self, path: impl Into<String>) -> bool {
+        self.projects.insert(RemoteProject::new(path))
+    }
+
+    /// Xóa project khỏi container, trả về true nếu project tồn tại và bị xóa
+    pub fn remove_project(&mut self, path: &str) -> bool {
+        self.projects.remove(&RemoteProject::new(path))
+    }
+
+    /// Chuyển đổi thành DockerConnectionOptions kèm thư mục làm việc
+    pub fn to_options(&self, working_dir: impl Into<String>) -> DockerConnectionOptions {
+        DockerConnectionOptions {
+            container_name: self.container_name.clone(),
+            container_id: self.container_id.clone(),
+            remote_user: self.remote_user.clone(),
+            working_dir: working_dir.into(),
+            local_folder: self.local_folder.clone(),
+            compose_project: self.compose_project.clone(),
+            compose_service: self.compose_service.clone(),
+            is_devcontainer: self.is_devcontainer,
+            follow_container_logs: false,
+        }
+    }
+}
+
+impl From<&DockerConnectionOptions> for DockerConnection {
+    fn from(opts: &DockerConnectionOptions) -> Self {
+        Self {
+            container_name: opts.container_name.clone(),
+            container_id: opts.container_id.clone(),
+            image: None,
+            remote_user: opts.remote_user.clone(),
+            local_folder: opts.local_folder.clone(),
+            compose_project: opts.compose_project.clone(),
+            compose_service: opts.compose_service.clone(),
+            is_devcontainer: opts.is_devcontainer,
+            projects: BTreeSet::new(),
+        }
+    }
+}
+
+impl From<DockerConnectionOptions> for DockerConnection {
+    fn from(opts: DockerConnectionOptions) -> Self {
+        Self::from(&opts)
+    }
+}
+
+/// Tùy chọn kết nối Docker / Dev Container kèm thư mục làm việc (tham chiếu `DockerConnectionOptions` của Zed)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DockerConnectionOptions {
+    pub container_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_user: Option<String>,
+    pub working_dir: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_folder: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compose_project: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compose_service: Option<String>,
+    #[serde(default)]
+    pub is_devcontainer: bool,
+    #[serde(default)]
+    pub follow_container_logs: bool,
+}
+
+impl DockerConnectionOptions {
+    pub fn new(container_name: impl Into<String>, working_dir: impl Into<String>) -> Self {
+        Self {
+            container_name: container_name.into(),
+            container_id: None,
+            remote_user: None,
+            working_dir: working_dir.into(),
+            local_folder: None,
+            compose_project: None,
+            compose_service: None,
+            is_devcontainer: false,
+            follow_container_logs: false,
+        }
+    }
+
+    pub fn with_container_id(mut self, id: impl Into<String>) -> Self {
+        self.container_id = Some(id.into());
+        self
+    }
+
+    pub fn with_remote_user(mut self, user: impl Into<String>) -> Self {
+        self.remote_user = Some(user.into());
+        self
+    }
+
+    pub fn with_local_folder(mut self, folder: impl Into<String>) -> Self {
+        self.local_folder = Some(folder.into());
+        self
+    }
+
+    pub fn with_compose_project(mut self, project: impl Into<String>) -> Self {
+        self.compose_project = Some(project.into());
+        self
+    }
+
+    pub fn with_compose_service(mut self, service: impl Into<String>) -> Self {
+        self.compose_service = Some(service.into());
+        self
+    }
+
+    pub fn with_devcontainer(mut self, is_devcontainer: bool) -> Self {
+        self.is_devcontainer = is_devcontainer;
+        self
+    }
+
+    pub fn with_follow_container_logs(mut self, follow: bool) -> Self {
+        self.follow_container_logs = follow;
+        self
+    }
+
+    pub fn display_name(&self) -> &str {
+        &self.container_name
+    }
+
+    pub fn short_service_name(&self) -> &str {
+        if let Some(svc) = self.compose_service.as_deref().filter(|s| !s.is_empty()) {
+            return svc;
+        }
+        compact_container_name(&self.container_name)
+    }
+
+    /// Khởi tạo DockerTransport đã cấu hình đầy đủ từ options này
+    pub fn to_transport(&self) -> uwu_driver_transport::DockerTransport {
+        let target = if !self.container_name.trim().is_empty() {
+            self.container_name.as_str()
+        } else {
+            self.container_id.as_deref().unwrap_or("")
+        };
+        let mut transport = uwu_driver_transport::DockerTransport::new(target);
+        if let Some(ref user) = self.remote_user {
+            transport = transport.with_user(user);
+        }
+        if !self.working_dir.trim().is_empty() {
+            transport = transport.with_working_dir(&self.working_dir);
+        }
+        transport
+    }
+}
+
+impl std::fmt::Display for DockerConnectionOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if !self.working_dir.is_empty() {
+            write!(f, "{} ({})", self.working_dir, self.container_name)
+        } else {
+            write!(f, "Docker ({})", self.container_name)
+        }
+    }
+}
+
+impl From<DockerConnectionOptions> for RemoteConnectionOptions {
+    fn from(opts: DockerConnectionOptions) -> Self {
+        Self::Docker(opts)
+    }
+}
+
+fn compact_container_name(name: &str) -> &str {
+    name.strip_prefix("devcontainer-")
+        .or_else(|| name.strip_prefix("devcontainer_"))
+        .unwrap_or(name)
+}
+
 /// Enum đa hình đại diện cho một kết nối Server (tương đương `Connection` trong Zed)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerConnection {
     Wsl(WslConnection),
     Ssh(SshConnection),
+    Docker(DockerConnection),
 }
 
 impl From<WslConnection> for ServerConnection {
@@ -585,6 +885,12 @@ impl From<WslConnection> for ServerConnection {
 impl From<SshConnection> for ServerConnection {
     fn from(conn: SshConnection) -> Self {
         Self::Ssh(conn)
+    }
+}
+
+impl From<DockerConnection> for ServerConnection {
+    fn from(conn: DockerConnection) -> Self {
+        Self::Docker(conn)
     }
 }
 
