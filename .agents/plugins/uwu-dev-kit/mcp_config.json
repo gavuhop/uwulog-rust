@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "uwu-dev-mcp": {
+      "command": "python3",
+      "args": [
+        "-c",
+        "import os, runpy; from pathlib import Path; pr = os.environ.get('PLUGIN_ROOT'); p = (Path(pr) / 'uwu_mcp_server.py') if pr else (Path('uwu_mcp_server.py') if Path('uwu_mcp_server.py').is_file() else Path('.agents/plugins/uwu-dev-kit/uwu_mcp_server.py')); runpy.run_path(str(p), run_name='__main__')"
+      ]
+    }
+  }
+}

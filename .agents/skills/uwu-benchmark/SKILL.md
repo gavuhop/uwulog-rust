@@ -15,7 +15,7 @@ This skill provides standard operating procedures for executing benchmark suites
 
 The `uwulog-rust` project provides two complementary benchmarking systems:
 
-1. **Live End-to-End Profiler CLI ([`bench_profile`](file:///home/truongviet/projects/uwulog-rust/crates/benchmarks/src/bin/bench_profile.rs))**:
+1. **Live End-to-End Profiler CLI ([`bench_profile`](../../../crates/benchmarks/src/bin/bench_profile.rs))**:
    * Fast, interactive, and measures 6 key dimensions:
      1. Ingestion throughput into the in-memory engine and RAM RSS footprint per log entry.
      2. Latency percentile matrix (Cold Run, Warm p50, Warm p95, Max, QPS) across [7 Standard Query Scenarios](./references/query_scenarios.md).
@@ -24,10 +24,10 @@ The `uwulog-rust` project provides two complementary benchmarking systems:
      5. Desktop UI frame budget validation (60 FPS / < 16.6ms target).
      6. End-to-end file ingestion speed from disk (`MB/s` and `logs/s`).
    * Automatically exports two standardized Markdown reports:
-     * [`BENCHMARK_REPORT.md`](file:///home/truongviet/projects/uwulog-rust/BENCHMARK_REPORT.md): Comprehensive benchmark results for the **current working tree**.
-     * [`benchmark_compare_report.md`](file:///home/truongviet/projects/uwulog-rust/benchmark_compare_report.md): In-depth **comparison report** between baseline commit and current code.
+     * [`BENCHMARK_REPORT.md`](../../../BENCHMARK_REPORT.md): Comprehensive benchmark results for the **current working tree**.
+     * [`benchmark_compare_report.md`](../../../benchmark_compare_report.md): In-depth **comparison report** between baseline commit and current code.
 
-2. **Criterion Micro & Integration Benches ([`crates/benchmarks/benches/`](file:///home/truongviet/projects/uwulog-rust/crates/benchmarks/benches))**:
+2. **Criterion Micro & Integration Benches ([`crates/benchmarks/benches/`](../../../crates/benchmarks/benches))**:
    * Statistical micro-benchmarks with nanosecond precision:
      * `micro_benches`: Tokenizer, AST Parser, Evaluator, Normalizer (JSON & Plain Text).
      * `engine_search_benches`: Search queries across 10k, 500k, and 5M logs.
@@ -102,8 +102,8 @@ The script will automatically:
 1. Create an isolated Git worktree for the baseline commit and measure it live (ensuring fair CPU thermal and background load parity).
 2. Run benchmarks on the current working tree.
 3. Compute percentage deltas ($\Delta\%$) and status indicators (🚀 Faster, 📉 Lower RAM, ⚠️ Slower, ➖ Parity).
-4. Export current results to [`BENCHMARK_REPORT.md`](file:///home/truongviet/projects/uwulog-rust/BENCHMARK_REPORT.md).
-5. Export detailed comparison breakdown to [`benchmark_compare_report.md`](file:///home/truongviet/projects/uwulog-rust/benchmark_compare_report.md).
+4. Export current results to [`BENCHMARK_REPORT.md`](../../../BENCHMARK_REPORT.md).
+5. Export detailed comparison breakdown to [`benchmark_compare_report.md`](../../../benchmark_compare_report.md).
 
 ### Step 2: Delta Analysis
 Evaluate improvements or regressions against standard thresholds:
@@ -125,8 +125,10 @@ When responding to the user, structure the findings as follows:
 
 ## 4. References
 
-* Current performance report: [`BENCHMARK_REPORT.md`](file:///home/truongviet/projects/uwulog-rust/BENCHMARK_REPORT.md)
-* Comparison report: [`benchmark_compare_report.md`](file:///home/truongviet/projects/uwulog-rust/benchmark_compare_report.md)
+* Current performance report: [`BENCHMARK_REPORT.md`](../../../BENCHMARK_REPORT.md)
+* Comparison report: [`benchmark_compare_report.md`](../../../benchmark_compare_report.md)
 * Query scenarios definition: [references/query_scenarios.md](./references/query_scenarios.md)
 * Shell runner: [scripts/run_bench.sh](./scripts/run_bench.sh)
 * PowerShell runner: [scripts/run_bench.ps1](./scripts/run_bench.ps1)
+* Harness hotspot locator: `./.agents/scripts/harness.sh ast-hotspots uwu-core-engine` & `./.agents/scripts/harness.sh bench-quick`
+* Architecture & test gate after optimizations: `./.agents/scripts/harness.sh check-arch && ./.agents/scripts/harness.sh test-tier 2`
