@@ -30,6 +30,7 @@ Dependencies flow strictly top-down (`Tier 4 -> Tier 3 -> Tier 2 -> Tier 1 -> Ti
 6. **UI Tokens & Keymap**: UI events emit `AppAction` (`app/mod.rs`); colors/spacing come from `theme::tokens` (not raw `Color32::from_rgb` in `views/`/`components/`). Icons are SVGs in `assets/icons/` (`crates/icons`); shortcuts use `KeyAction` + `KeyContext` (`crates/core_keymap`).
 7. **Expr Parity**: Any `Expr` variant in `core_filter/src/parser.rs` MUST be implemented identically in both `core_filter/src/evaluator.rs` and `core_engine/src/arrow_storage/compiler.rs`.
 8. **Git**: Conventional Commits (`<type>(<scope>): <subject>`).
+9. **Pre-Release Clean Code (No Unnecessary Fallbacks)**: The project is pre-release. Never add speculative backward-compatibility shims, legacy data migrations, or silent fallbacks for missing/old metadata unless explicitly requested.
 
 ## 4. Core System Flows
 
