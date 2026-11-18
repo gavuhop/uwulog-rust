@@ -67,6 +67,7 @@ impl GuiViewState {
         self.viewport.last_processed_count = 0;
         self.inspector.selected_log = None;
         self.unfiltered.stream.reset();
+        self.unfiltered.target_id = None;
         self.search.autocomplete.is_open = false;
         self.search.autocomplete.suggestions.clear();
         self.buffer_overflow_dismissed = false;

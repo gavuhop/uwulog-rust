@@ -521,3 +521,60 @@ async fn test_pause_restart_populates_viewport_without_scrolling() {
         "[INFO] after restart 0"
     );
 }
+
+#[tokio::test]
+async fn test_pause_raw_after_restart_shows_new_logs() {
+    use uwu_core_schema::{RawLogEntry, RawPayload};
+
+    let mut app = create_test_app();
+    let tx = app.active_session().session.engine.get_channel();
+
+    // 1. Giả lập đang ở tab Raw trạng thái Pause với target_id từ phiên trước ("View in Raw Log" hoặc chọn dòng)
+    app.active_session_mut().open_unfiltered_stream(Some(99));
+    assert!(!app.active_session().view.unfiltered.is_auto_scroll);
+    assert_eq!(app.active_session().view.unfiltered.target_id, Some(99));
+
+    // 2. Restart stream đúng theo flow của restart_current_source()
+    app.active_session().session.engine.clear();
+    app.active_session_mut().view.reset_stream_data();
+    app.active_session_mut().view.search.mark_needs_search();
+
+    assert!(app.active_session().view.unfiltered.target_id.is_none());
+    assert!(!app.active_session().view.unfiltered.is_auto_scroll);
+
+    // 3. Log mới chảy vào trước lúc spawn_search/apply_search_results hoàn tất -> tab Raw vẫn phải nhận đủ log
+    for i in 0..3 {
+        tx.send(RawLogEntry {
+            payload: RawPayload::Text(format!("[INFO] raw after restart {i}")),
+        })
+        .await
+        .unwrap();
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+
+    app.active_session_mut().trigger_full_search();
+    assert_eq!(app.active_session().view.unfiltered.cached_logs.len(), 3);
+    assert_eq!(
+        app.active_session().view.unfiltered.cached_logs[0].message,
+        "[INFO] raw after restart 0"
+    );
+    assert!(!app.active_session().view.unfiltered.is_auto_scroll);
+
+    // 4. Các log tiếp theo cũng tiếp tục hiển thị trên Raw khi chưa chạm RAW_STREAM_LIMIT
+    for i in 3..5 {
+        tx.send(RawLogEntry {
+            payload: RawPayload::Text(format!("[INFO] raw after restart {i}")),
+        })
+        .await
+        .unwrap();
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+
+    {
+        let s = app.active_session_mut();
+        s.view.search.last_search_time =
+            std::time::Instant::now() - std::time::Duration::from_secs(1);
+        s.tick(std::time::Instant::now());
+    }
+    assert_eq!(app.active_session().view.unfiltered.cached_logs.len(), 5);
+}

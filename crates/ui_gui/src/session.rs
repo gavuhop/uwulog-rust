@@ -130,8 +130,14 @@ impl GuiSession {
             self.view.viewport.pending_scroll = None;
         }
         self.view.search.last_query = self.view.search.query.clone();
-        self.view.viewport.last_processed_count = self.session.engine.total_processed();
+        let prev_processed = self.view.viewport.last_processed_count;
+        let new_processed = self.session.engine.total_processed();
+        self.view.viewport.last_processed_count = new_processed;
         self.view.search.last_search_time = Instant::now();
+        if self.should_stream_unfiltered() && new_processed > prev_processed {
+            let (_count, new_logs) = self.session.engine.filter_incremental("", prev_processed);
+            self.apply_incremental_unfiltered(new_logs);
+        }
     }
 
     /// Cập nhật tổng số kết quả chính xác từ Pha 2 (đếm Cold Segments ở nền)
@@ -407,9 +413,6 @@ impl GuiSession {
     pub fn set_selected_log(&mut self, log: Option<LogEvent>) {
         let active = self.view.active_tab;
         self.view.stream_mut(active).selected_log = log.clone();
-        if active == ActiveTab::Unfiltered {
-            self.view.unfiltered.target_id = log.as_ref().map(|l| l.id);
-        }
         self.view.inspector.selected_log = log;
     }
 
