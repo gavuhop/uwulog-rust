@@ -1,3 +1,4 @@
+mod collision_toast;
 pub mod detail;
 pub mod header;
 pub mod modals;
@@ -367,7 +368,16 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     );
 
     // Popup gợi ý độc lập: Open in Dev Container (chỉ hiện khi dự án local có .devcontainer + container đang chạy)
-    header::devcontainer::render_devcontainer_suggest_popup(ctx, active_session, &mut dispatch);
+    let dc_toast_visible =
+        header::devcontainer::render_devcontainer_suggest_popup(ctx, active_session, &mut dispatch);
+
+    // Popup cảnh báo va chạm key JSON ở góc phải dưới (tự xếp chồng phía trên Dev Container toast nếu cùng hiển thị)
+    collision_toast::render_field_collision_toast(
+        ctx,
+        active_session,
+        dc_toast_visible,
+        &mut dispatch,
+    );
 
     // Window Resize Border Handles (Hỗ trợ kéo dãn / thu nhỏ 4 góc và 4 cạnh cửa sổ)
     header::render_window_resize_borders(ctx);

@@ -159,16 +159,46 @@ pub fn render_detail(
             ui.add_space(8.0);
 
             // Parsed JSON / K-V Fields Card (loại trừ các trường mặc định đã có card riêng)
-            let custom_fields: Vec<(&String, &serde_json::Value)> = event
+            let custom_fields = extract_parsed_fields(&event);
+            let colliding_keys: Vec<&str> = event
                 .fields
-                .iter()
-                .filter(|(k, _)| {
-                    !matches!(k.as_str(), "timestamp" | "level" | "message" | "id")
-                        && uwu_core_schema::StandardField::from_alias(k).is_none()
-                })
+                .keys()
+                .filter(|k| session.view.warnings.has_collision_key(k))
+                .map(|k| k.as_str())
                 .collect();
 
-            let custom_fields = cluster_log_fields(custom_fields);
+            if !colliding_keys.is_empty() {
+                let theme = ui.app_theme();
+                let banner_msg = format!(
+                    "Key path collision on {}: JSON contained both a literal key and a nested path; showing latest value.",
+                    colliding_keys.join(", ")
+                );
+                egui::Frame::default()
+                    .fill(theme.status.warning_bg)
+                    .stroke(egui::Stroke::new(1.0, theme.status.warning))
+                    .corner_radius(egui::CornerRadius::same(6))
+                    .inner_margin(egui::Margin::symmetric(10, 8))
+                    .show(ui, |ui| {
+                        ui.horizontal_wrapped(|ui| {
+                            let (icon_r, _) = ui.allocate_exact_size(
+                                egui::vec2(13.0, 13.0),
+                                egui::Sense::hover(),
+                            );
+                            crate::components::ui::IconName::AlertTriangle.paint(
+                                ui.painter(),
+                                icon_r,
+                                theme.status.warning,
+                            );
+                            ui.add_space(4.0);
+                            ui.label(
+                                egui::RichText::new(banner_msg)
+                                    .size(11.5)
+                                    .color(theme.status.warning),
+                            );
+                        });
+                    });
+                ui.add_space(8.0);
+            }
 
             if !custom_fields.is_empty() {
                 render_card(ui, "Parsed Fields", |ui| {
@@ -320,6 +350,25 @@ pub fn cluster_log_fields<'a, V>(fields: Vec<(&'a String, V)>) -> Vec<(&'a Strin
     result
 }
 
+/// Lọc và gom cụm các trường phụ hiển thị trong card "Parsed Fields",
+/// chỉ loại trừ chính xác các key đã được render ở card Metadata và Message.
+fn extract_parsed_fields(event: &uwu_core_schema::LogEvent) -> Vec<(&String, &serde_json::Value)> {
+    let ts_key = event.semantic_key(StandardField::Timestamp);
+    let lvl_key = event.semantic_key(StandardField::Level);
+    let msg_key = event.semantic_key(StandardField::Message);
+    let has_lvl = event.get_field_cow(lvl_key).is_some();
+
+    let custom_fields: Vec<(&String, &serde_json::Value)> = event
+        .fields
+        .iter()
+        .filter(|(k, _)| {
+            let s = k.as_str();
+            s != ts_key && s != msg_key && !(has_lvl && s == lvl_key)
+        })
+        .collect();
+    cluster_log_fields(custom_fields)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -365,28 +414,43 @@ mod tests {
 
         let event = LogEvent::new("2026-09-11", LogColor::Green, "msg", fields);
 
-        let ts_key = event.semantic_key(StandardField::Timestamp);
-        let msg_key = event.semantic_key(StandardField::Message);
-
-        let custom_fields: Vec<(&String, &serde_json::Value)> = event
-            .fields
-            .iter()
-            .filter(|(k, _)| {
-                let s = k.as_str();
-                s != "id" && s != ts_key && s != msg_key
-            })
-            .collect();
-
-        let custom_fields = cluster_log_fields(custom_fields);
+        let custom_fields = extract_parsed_fields(&event);
         let keys: Vec<&str> = custom_fields.iter().map(|(k, _)| k.as_str()).collect();
-        assert!(keys.contains(&"level"));
+        assert!(keys.contains(&"id"));
         assert!(keys.contains(&"user"));
         assert!(!keys.contains(&"timestamp"));
         assert!(!keys.contains(&"message"));
-        assert!(!keys.contains(&"id"));
+        assert!(!keys.contains(&"level"));
 
-        let lvl_field = custom_fields.iter().find(|(k, _)| *k == "level").unwrap();
-        assert_eq!(lvl_field.1, &serde_json::json!(30));
-        assert_eq!(uwu_core_schema::value_to_cow(lvl_field.1), "30");
+        let id_field = custom_fields.iter().find(|(k, _)| *k == "id").unwrap();
+        assert_eq!(id_field.1, &serde_json::json!(1));
+        assert_eq!(uwu_core_schema::value_to_cow(id_field.1), "1");
+        assert_eq!(event.get_field_cow("level").as_deref(), Some("30"));
+    }
+
+    #[test]
+    fn test_parsed_fields_keeps_secondary_aliases() {
+        use uwu_core_schema::{LogColor, LogEvent};
+
+        let mut fields = HashMap::new();
+        fields.insert("timestamp".to_string(), serde_json::json!("2026-11-18"));
+        fields.insert("level".to_string(), serde_json::json!("INFO"));
+        fields.insert("lvl".to_string(), serde_json::json!(30));
+        fields.insert("message".to_string(), serde_json::json!("hello"));
+        fields.insert("msg".to_string(), serde_json::json!("alt msg"));
+        fields.insert("id".to_string(), serde_json::json!(7));
+
+        let event = LogEvent::new("2026-11-18", LogColor::Green, "hello", fields);
+        let custom_fields = extract_parsed_fields(&event);
+        let keys: Vec<&str> = custom_fields.iter().map(|(k, _)| k.as_str()).collect();
+
+        // Only the 1st selected semantic key for each card is excluded; secondary aliases stay visible
+        let lvl_rendered = event.semantic_key(StandardField::Level);
+        let msg_rendered = event.semantic_key(StandardField::Message);
+        assert!(!keys.contains(&"timestamp"));
+        assert!(!keys.contains(&lvl_rendered));
+        assert!(!keys.contains(&msg_rendered));
+        assert!(keys.contains(&"id"));
+        assert_eq!(keys.len(), 3); // "id" + whichever of ("level"/"lvl") and ("message"/"msg") wasn't primary
     }
 }

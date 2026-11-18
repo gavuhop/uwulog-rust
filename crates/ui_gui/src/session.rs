@@ -55,6 +55,12 @@ impl GuiSession {
     /// Xử lý cập nhật định kỳ cho từng session (incremental search, debounced history, latch scroll sync, unfiltered sync)
     pub fn tick(&mut self, now: Instant) {
         self.session.tick();
+        let collisions_ver = self.session.engine.get_collisions_version();
+        if collisions_ver != self.view.warnings.last_version {
+            let collisions = self.session.engine.get_field_collisions();
+            self.view.warnings.sync(collisions_ver, collisions);
+        }
+
         let total_processed = self.session.engine.total_processed();
 
         let query_changed = self.view.search.query != self.view.search.last_query;
@@ -779,6 +785,10 @@ impl GuiSession {
             }
             AppAction::ClearAllHighlights => {
                 self.clear_all_highlights();
+                true
+            }
+            AppAction::DismissFieldWarnings => {
+                self.view.warnings.dismiss_current();
                 true
             }
             AppAction::ToggleLatch => {
