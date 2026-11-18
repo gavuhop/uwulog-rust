@@ -15,7 +15,7 @@ pub fn render_log_counter(ui: &mut egui::Ui, session: &GuiSession) {
         ActiveTab::Unfiltered => {
             let total_now = session.session.engine.total_processed() as usize;
 
-            if session.view.unfiltered.is_live {
+            if session.view.unfiltered.is_auto_scroll {
                 let text = theme::format_number(total_now);
                 let tooltip = format!(
                     "Raw Stream (Live)\n• Total Ingested / Seen: {}\n• In-Memory Buffer: {} / {}\n• Buffer Limit: 500",
@@ -102,7 +102,7 @@ pub fn render_log_counter(ui: &mut egui::Ui, session: &GuiSession) {
                 } else {
                     format_paused_stream_counter(
                         "Main Stream",
-                        session.view.viewport.pause_snapshot.global_seen as usize,
+                        session.view.viewport.pause_snapshot.processed_at_pause as usize,
                         total_now,
                         theme.text.muted,
                     )

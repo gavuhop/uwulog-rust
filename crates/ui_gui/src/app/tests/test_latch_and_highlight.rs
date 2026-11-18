@@ -64,13 +64,13 @@ async fn test_unlatch_unfiltered_idempotency() {
     let mut app = create_test_app();
     let session = app.active_session_mut();
     session.open_unfiltered_stream(None);
-    assert!(session.unfiltered.is_live);
+    assert!(session.unfiltered.is_auto_scroll);
 
     session.unlatch_unfiltered();
-    assert!(!session.unfiltered.is_live);
+    assert!(!session.unfiltered.is_auto_scroll);
 
     session.unlatch_unfiltered();
-    assert!(!session.unfiltered.is_live);
+    assert!(!session.unfiltered.is_auto_scroll);
 }
 
 #[tokio::test]
@@ -135,9 +135,9 @@ async fn test_app_action_latch_and_unfiltered() {
     assert_eq!(app.active_session().active_tab, ActiveTab::Unfiltered);
 
     // Unfiltered live toggle
-    assert!(!app.active_session().unfiltered.is_live);
+    assert!(!app.active_session().unfiltered.is_auto_scroll);
     app.dispatch_action(AppAction::ToggleUnfilteredLive);
-    assert!(app.active_session().unfiltered.is_live);
+    assert!(app.active_session().unfiltered.is_auto_scroll);
 
     app.dispatch_action(AppAction::RefreshUnfilteredSnapshot);
 

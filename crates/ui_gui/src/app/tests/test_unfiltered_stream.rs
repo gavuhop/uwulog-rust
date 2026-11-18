@@ -13,7 +13,7 @@ async fn test_unfiltered_stream_open_close_and_focus() {
     assert_eq!(session.active_tab, ActiveTab::Unfiltered);
     assert!(session.unfiltered.is_open);
     assert_eq!(session.unfiltered.target_id, Some(12345));
-    assert!(!session.unfiltered.is_live);
+    assert!(!session.unfiltered.is_auto_scroll);
 
     session.close_unfiltered_stream();
     assert_eq!(session.active_tab, ActiveTab::Filtered);
@@ -40,8 +40,8 @@ async fn test_unfiltered_live_tick_sync_both_branches() {
 
     // 2. Open unfiltered stream in LIVE mode
     app.active_session_mut().open_unfiltered_stream(None);
-    assert!(app.active_session().unfiltered.is_live);
-    assert_eq!(app.active_session().unfiltered.cached_unfiltered.len(), 5);
+    assert!(app.active_session().unfiltered.is_auto_scroll);
+    assert_eq!(app.active_session().unfiltered.cached_logs.len(), 5);
 
     // 3. Ingest 5 more logs
     for i in 5..10 {
@@ -58,7 +58,7 @@ async fn test_unfiltered_live_tick_sync_both_branches() {
 
     // Both filtered and unfiltered live buffers must have received all 10 logs
     assert_eq!(app.active_session().viewport.cached_logs.len(), 10);
-    assert_eq!(app.active_session().unfiltered.cached_unfiltered.len(), 10);
+    assert_eq!(app.active_session().unfiltered.cached_logs.len(), 10);
 }
 
 #[tokio::test]
@@ -75,8 +75,8 @@ async fn test_unfiltered_frozen_snapshot_no_drift() {
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     app.active_session_mut().open_unfiltered_stream(Some(2));
-    assert!(!app.active_session().unfiltered.is_live);
-    let initial_count = app.active_session().unfiltered.cached_unfiltered.len();
+    assert!(!app.active_session().unfiltered.is_auto_scroll);
+    let initial_count = app.active_session().unfiltered.cached_logs.len();
 
     let new_entry = RawLogEntry {
         payload: RawPayload::Text("{\"level\":\"INFO\",\"message\":\"msg 99\"}".to_string()),
@@ -86,7 +86,7 @@ async fn test_unfiltered_frozen_snapshot_no_drift() {
 
     app.tick();
     assert_eq!(
-        app.active_session().unfiltered.cached_unfiltered.len(),
+        app.active_session().unfiltered.cached_logs.len(),
         initial_count
     );
 }
@@ -97,7 +97,7 @@ async fn test_close_unfiltered_stream_frees_ram() {
     let session = app.active_session_mut();
     session.open_unfiltered_stream(None);
     session.close_unfiltered_stream();
-    assert!(session.unfiltered.cached_unfiltered.is_empty());
+    assert!(session.unfiltered.cached_logs.is_empty());
 }
 
 #[tokio::test]
@@ -265,7 +265,7 @@ async fn test_view_in_raw_log_references_exact_spilled_disk_row() {
 
     let session = app.active_session();
     assert_eq!(session.view.active_tab, ActiveTab::Unfiltered);
-    assert!(!session.view.unfiltered.is_live);
+    assert!(!session.view.unfiltered.is_auto_scroll);
     assert_eq!(session.view.unfiltered.target_id, Some(target_event.id));
 
     let target_idx = session
@@ -273,17 +273,17 @@ async fn test_view_in_raw_log_references_exact_spilled_disk_row() {
         .unfiltered
         .target_index
         .expect("target_index must resolve for spilled row");
-    let raw_row = &session.view.unfiltered.cached_unfiltered[target_idx];
+    let raw_row = &session.view.unfiltered.cached_logs[target_idx];
     assert_eq!(raw_row.id, target_event.id);
     assert_eq!(raw_row.message, "log_seq_05");
 
     // Kiểm tra ngữ cảnh Raw xung quanh dòng trên đĩa phải đúng thứ tự gốc (04 -> 05 -> 06)
     assert_eq!(
-        session.view.unfiltered.cached_unfiltered[target_idx - 1].message,
+        session.view.unfiltered.cached_logs[target_idx - 1].message,
         "log_seq_04"
     );
     assert_eq!(
-        session.view.unfiltered.cached_unfiltered[target_idx + 1].message,
+        session.view.unfiltered.cached_logs[target_idx + 1].message,
         "log_seq_06"
     );
     assert_eq!(

@@ -27,10 +27,7 @@ pub fn render_log_table(
     tab: ActiveTab,
     dispatch: &mut impl FnMut(AppAction),
 ) {
-    let row_count = match tab {
-        ActiveTab::Filtered => session.viewport.cached_logs.len(),
-        ActiveTab::Unfiltered => session.unfiltered.cached_unfiltered.len(),
-    };
+    let row_count = session.stream(tab).cached_logs.len();
     let scroll_target = session.consume_scroll_request(tab, row_count);
     let stream = session.stream_summary(tab);
     let text_height = crate::theme::TABLE_FONT_SIZE;
@@ -43,12 +40,9 @@ pub fn render_log_table(
     // Chỉ xử lý wheel/drag unlatch khi con trỏ thực sự đang nằm trên bảng (không bị popup/modal che)
     let pointer_over_table = ui.rect_contains_pointer(table_rect);
 
-    // Đọc thao tác cuộn chuột trước khi vẽ TableBuilder
+    // Đọc trạng thái cuộn chuột (sẽ dùng sau khi có kích thước content thực tế từ TableBuilder)
     let is_shift_down = ui.input(|i| i.modifiers.shift);
     let scroll_delta_y = ui.input(|i| i.smooth_scroll_delta.y);
-    if pointer_over_table && scroll_delta_y > 0.0 && !is_shift_down {
-        dispatch(AppAction::Unlatch);
-    }
 
     let pointer_pos: Option<Pos2> = ui.input(|i| i.pointer.latest_pos());
 
@@ -75,19 +69,12 @@ pub fn render_log_table(
     let has_any_highlights = session.has_any_highlights();
 
     let default_ts = "2026-08-21 23:29:07";
-    let sample_ts = match tab {
-        ActiveTab::Filtered => session
-            .viewport
-            .cached_logs
-            .first()
-            .map(|e| e.timestamp.as_str()),
-        ActiveTab::Unfiltered => session
-            .unfiltered
-            .cached_unfiltered
-            .first()
-            .map(|e| e.timestamp.as_str()),
-    }
-    .unwrap_or(default_ts);
+    let sample_ts = session
+        .stream(tab)
+        .cached_logs
+        .first()
+        .map(|e| e.timestamp.as_str())
+        .unwrap_or(default_ts);
 
     let ts_text_width = ui.fonts_mut(|f| {
         let job = egui::text::LayoutJob::simple_singleline(
@@ -223,19 +210,9 @@ pub fn render_log_table(
                         last_row_visible = true;
                     }
 
-                    let maybe_event = match tab {
-                        ActiveTab::Filtered => session.viewport.cached_logs.get(row_index),
-                        ActiveTab::Unfiltered => {
-                            session.unfiltered.cached_unfiltered.get(row_index)
-                        }
-                    };
-
-                    if let Some(event) = maybe_event {
+                    if let Some(event) = session.stream(tab).cached_logs.get(row_index) {
                         let is_target = target_id.is_some_and(|id| id == event.id);
-                        let tab_selected = match tab {
-                            ActiveTab::Filtered => session.viewport.selected_log.as_ref(),
-                            ActiveTab::Unfiltered => session.unfiltered.selected_log.as_ref(),
-                        };
+                        let tab_selected = session.stream(tab).selected_log.as_ref();
                         let is_selected =
                             is_target || tab_selected.is_some_and(|s| s.id == event.id);
 
@@ -262,19 +239,26 @@ pub fn render_log_table(
                 });
             });
 
-        body_output.state.offset.y
+        (
+            body_output.state.offset.y,
+            body_output.content_size.y,
+            body_output.inner_rect.height(),
+        )
     });
 
-    ui.data_mut(|d| d.insert_temp(vscroll_id, hscroll_out.inner));
+    let (v_offset, content_h, viewport_h) = hscroll_out.inner;
+    ui.data_mut(|d| d.insert_temp(vscroll_id, v_offset));
 
-    match tab {
-        ActiveTab::Filtered => {
-            session.viewport.first_visible_row = min_visible_row;
-        }
-        ActiveTab::Unfiltered => {
-            session.unfiltered.first_visible_row = min_visible_row;
-        }
+    // Chỉ chuyển sang Pause (Unlatch) khi cuộn chuột lên nếu bảng thực sự có nội dung tràn màn hình để cuộn;
+    // khi mới có vài dòng nằm gọn trong khung nhìn, lăn chuột lên không được ngắt Live.
+    let has_vertical_overflow = content_h > viewport_h + 1.0 || v_offset > 0.5;
+    if pointer_over_table && scroll_delta_y > 0.0 && !is_shift_down && has_vertical_overflow {
+        dispatch(AppAction::Unlatch);
     }
+
+    let stream_mut = session.stream_mut(tab);
+    stream_mut.first_visible_row = min_visible_row;
+    stream_mut.has_vertical_overflow = has_vertical_overflow;
 
     if let Some(action) = action_to_dispatch {
         dispatch(action);
@@ -492,6 +476,63 @@ mod tests {
         assert!(
             actions.iter().any(|a| matches!(a, AppAction::Unlatch)),
             "expected scrolling up over uncovered table to dispatch Unlatch, got: {actions:?}"
+        );
+    }
+
+    #[test]
+    fn wheel_scroll_up_does_not_unlatch_when_logs_fit_without_overflow() {
+        let mut session = make_session_with_logs(5);
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 600.0));
+        let hover_pos = egui::pos2(200.0, 200.0);
+        let mut actions = Vec::new();
+
+        for _ in 0..2 {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    events: vec![egui::Event::PointerMoved(hover_pos)],
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::CentralPanel::default().show(ui, |ui| {
+                        render_log_table(ui, &mut session, ActiveTab::Filtered, &mut |a| {
+                            actions.push(a);
+                        });
+                    });
+                },
+            );
+            out.textures_delta.clear();
+        }
+
+        actions.clear();
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(screen),
+                events: vec![
+                    egui::Event::PointerMoved(hover_pos),
+                    egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Point,
+                        delta: egui::vec2(0.0, 40.0),
+                        modifiers: egui::Modifiers::NONE,
+                        phase: egui::TouchPhase::Move,
+                    },
+                ],
+                ..Default::default()
+            },
+            |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    render_log_table(ui, &mut session, ActiveTab::Filtered, &mut |a| {
+                        actions.push(a);
+                    });
+                });
+            },
+        );
+        out.textures_delta.clear();
+
+        assert!(
+            !actions.iter().any(|a| matches!(a, AppAction::Unlatch)),
+            "expected scrolling up with only 5 rows (no overflow) not to dispatch Unlatch, got: {actions:?}"
         );
     }
 }

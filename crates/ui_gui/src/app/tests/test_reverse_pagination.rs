@@ -161,15 +161,15 @@ async fn test_reverse_pagination_unfiltered_stream() {
     app.active_session_mut()
         .open_unfiltered_stream(Some(target_id));
 
-    // Thu nhỏ cached_unfiltered xuống 5 logs để test load_more
-    app.active_session_mut().view.unfiltered.cached_unfiltered = all_logs[10..15].to_vec();
-    assert_eq!(app.active_session().unfiltered.cached_unfiltered.len(), 5);
+    // Thu nhỏ cached_logs xuống 5 logs để test load_more
+    app.active_session_mut().view.unfiltered.cached_logs = all_logs[10..15].to_vec();
+    assert_eq!(app.active_session().unfiltered.cached_logs.len(), 5);
 
     // Tải thêm 5 logs cũ hơn
     app.active_session_mut().load_more_older_unfiltered(5);
-    assert_eq!(app.active_session().unfiltered.cached_unfiltered.len(), 10);
+    assert_eq!(app.active_session().unfiltered.cached_logs.len(), 10);
     assert_eq!(
-        app.active_session().unfiltered.cached_unfiltered[0].message,
+        app.active_session().unfiltered.cached_logs[0].message,
         "[INFO] Raw line 05"
     );
     assert_eq!(

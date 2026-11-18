@@ -408,14 +408,14 @@ impl UwuGuiApp {
         active.view.viewport.last_processed_count = total_processed;
         active.view.search.last_search_time = std::time::Instant::now();
 
-        let is_auto_scroll = active.view.viewport.is_auto_scroll;
-        let is_unfiltered_live = active.view.unfiltered.is_open && active.view.unfiltered.is_live;
+        let stream_filtered = active.should_stream_filtered();
+        let stream_unfiltered = active.should_stream_unfiltered();
         let engine = Arc::clone(&active.session.engine);
         let tx = self.event_tx.clone();
         let egui_ctx = self.egui_ctx.clone();
 
         self.rt.spawn_blocking(move || {
-            if is_auto_scroll {
+            if stream_filtered {
                 let (matched, logs) = engine.filter_incremental(&query, prev_processed);
                 if matched > 0 {
                     let _ = tx.send(AppEvent::IncrementalLogsReady {
@@ -426,7 +426,7 @@ impl UwuGuiApp {
                     });
                 }
             }
-            if is_unfiltered_live {
+            if stream_unfiltered {
                 let (count, logs) = engine.filter_incremental("", prev_processed);
                 if count > 0 {
                     let _ = tx.send(AppEvent::IncrementalUnfilteredReady { session_id, logs });
@@ -442,40 +442,28 @@ impl UwuGuiApp {
     pub fn spawn_reverse_pagination(&mut self, is_unfiltered: bool, page_size: usize) {
         let active = self.workspaces.active_session_mut();
         let session_id = active.session.id;
-
-        let (query, oldest_id) = if is_unfiltered {
-            if active.view.unfiltered.reached_oldest || active.view.unfiltered.is_loading_older {
-                return;
-            }
-            active.view.unfiltered.is_loading_older = true;
-            active.unlatch_unfiltered();
-            (
-                String::new(),
-                active
-                    .view
-                    .unfiltered
-                    .cached_unfiltered
-                    .first()
-                    .map(|e| e.id),
-            )
+        let tab = if is_unfiltered {
+            crate::state::ActiveTab::Unfiltered
         } else {
-            if active.view.viewport.reached_oldest || active.view.viewport.is_loading_older {
-                return;
-            }
-            active.view.viewport.is_loading_older = true;
-            active.unlatch();
-            (
-                active.view.search.query.clone(),
-                active.view.viewport.cached_logs.first().map(|e| e.id),
-            )
+            crate::state::ActiveTab::Filtered
         };
 
-        let Some(before_id) = oldest_id else {
-            if is_unfiltered {
-                active.view.unfiltered.is_loading_older = false;
-            } else {
-                active.view.viewport.is_loading_older = false;
-            }
+        if active.view.stream(tab).reached_oldest || active.view.stream(tab).is_loading_older {
+            return;
+        }
+        active.view.stream_mut(tab).is_loading_older = true;
+        if is_unfiltered {
+            active.unlatch_unfiltered();
+        } else {
+            active.unlatch();
+        }
+        let query = if is_unfiltered {
+            String::new()
+        } else {
+            active.view.search.query.clone()
+        };
+        let Some(before_id) = active.view.stream(tab).cached_logs.first().map(|e| e.id) else {
+            active.view.stream_mut(tab).is_loading_older = false;
             return;
         };
 

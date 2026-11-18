@@ -81,8 +81,8 @@ pub fn render_toolbar(
             },
         ),
         ActiveTab::Unfiltered => (
-            session.view.unfiltered.is_live,
-            if session.view.unfiltered.is_live {
+            session.view.unfiltered.is_auto_scroll,
+            if session.view.unfiltered.is_auto_scroll {
                 "Raw Stream: LIVE (Following real-time stream)\n• Click to pause / freeze snapshot"
             } else {
                 "Raw Stream: PAUSED (Snapshot frozen)\n• Click to follow live real-time stream"

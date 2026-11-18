@@ -298,7 +298,7 @@ async fn test_reducer_incremental_events() {
 
     // Mở unfiltered view và test IncrementalUnfilteredReady
     app.active_session_mut().view.unfiltered.is_open = true;
-    app.active_session_mut().view.unfiltered.is_live = true;
+    app.active_session_mut().view.unfiltered.is_auto_scroll = true;
 
     let raw_log = LogEvent::new(
         "2026-08-20T10:10:05Z",
@@ -312,12 +312,9 @@ async fn test_reducer_incremental_events() {
         logs: vec![raw_log],
     });
 
+    assert_eq!(app.active_session().view.unfiltered.cached_logs.len(), 1);
     assert_eq!(
-        app.active_session().view.unfiltered.cached_unfiltered.len(),
-        1
-    );
-    assert_eq!(
-        app.active_session().view.unfiltered.cached_unfiltered[0].message,
+        app.active_session().view.unfiltered.cached_logs[0].message,
         "raw log unfiltered"
     );
 }
@@ -446,4 +443,89 @@ async fn test_udf_unlatch_and_latch_actions() {
     app.dispatch_action(AppAction::Latch);
     assert!(app.active_session().view.viewport.is_auto_scroll);
     assert!(app.active_session().view.search.needs_search);
+}
+
+#[tokio::test]
+async fn test_pause_restart_populates_viewport_until_overflow() {
+    use uwu_core_schema::{RawLogEntry, RawPayload};
+
+    let mut app = create_test_app();
+    let tx = app.active_session().session.engine.get_channel();
+
+    // 1. Giả lập bảng đã tràn viewport rồi chuyển sang Pause (Unlatch)
+    app.active_session_mut().view.viewport.has_vertical_overflow = true;
+    app.dispatch_action(AppAction::Unlatch);
+    assert!(!app.active_session().view.viewport.is_auto_scroll);
+
+    // 2. Restart stream khi đang Pause: reset_stream_data() xóa cache & overflow nhưng giữ nguyên Pause
+    app.active_session().session.engine.clear();
+    app.active_session_mut().view.reset_stream_data();
+    assert!(!app.active_session().view.viewport.is_auto_scroll);
+    assert!(!app.active_session().view.viewport.has_vertical_overflow);
+    assert!(app.active_session().view.viewport.cached_logs.is_empty());
+
+    // Cũng kiểm tra tab Raw (live stream, target_id = None) ở trạng thái Pause sau Restart
+    app.active_session_mut().view.unfiltered.is_open = true;
+    app.active_session_mut().view.unfiltered.is_auto_scroll = false;
+    app.active_session_mut().view.unfiltered.target_id = None;
+
+    // 3. Log mới chảy vào khi bảng đang trống/ít dòng -> phải hiển thị lên màn hình, KHÔNG auto-scroll
+    for i in 0..3 {
+        tx.send(RawLogEntry {
+            payload: RawPayload::Text(format!("[INFO] after restart {i}")),
+        })
+        .await
+        .unwrap();
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+
+    {
+        let s = app.active_session_mut();
+        s.view.search.last_search_time =
+            std::time::Instant::now() - std::time::Duration::from_secs(1);
+        s.view.search.needs_search = false;
+        s.view.search.last_query = s.view.search.query.clone();
+        s.tick(std::time::Instant::now());
+    }
+
+    let s = app.active_session();
+    assert_eq!(s.view.viewport.cached_logs.len(), 3);
+    assert_eq!(s.view.viewport.total_matched, 3);
+    assert!(!s.view.viewport.is_auto_scroll);
+    assert_eq!(s.view.viewport.pause_snapshot.paused_new_matched_count, 0);
+    assert_eq!(s.view.unfiltered.cached_logs.len(), 3);
+    assert_eq!(s.view.unfiltered.snapshot_processed_count, 3);
+    assert!(app
+        .active_session_mut()
+        .consume_scroll_request(crate::state::ActiveTab::Filtered, 3)
+        .is_none());
+
+    // 4. Khi bảng đã tràn chiều dọc (has_vertical_overflow = true), Pause bắt đầu đóng băng khung nhìn và đếm badge
+    app.active_session_mut().view.viewport.has_vertical_overflow = true;
+    app.active_session_mut()
+        .view
+        .unfiltered
+        .has_vertical_overflow = true;
+
+    for i in 3..5 {
+        tx.send(RawLogEntry {
+            payload: RawPayload::Text(format!("[INFO] after overflow {i}")),
+        })
+        .await
+        .unwrap();
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+
+    {
+        let s = app.active_session_mut();
+        s.view.search.last_search_time =
+            std::time::Instant::now() - std::time::Duration::from_secs(1);
+        s.tick(std::time::Instant::now());
+    }
+
+    let s = app.active_session();
+    assert_eq!(s.view.viewport.cached_logs.len(), 3);
+    assert_eq!(s.view.viewport.pause_snapshot.paused_new_matched_count, 2);
+    assert_eq!(s.view.unfiltered.cached_logs.len(), 3);
+    assert_eq!(s.view.unfiltered.snapshot_processed_count, 3);
 }
