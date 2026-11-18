@@ -258,7 +258,6 @@ pub fn render_log_table(
 
     let stream_mut = session.stream_mut(tab);
     stream_mut.first_visible_row = min_visible_row;
-    stream_mut.has_vertical_overflow = has_vertical_overflow;
 
     if let Some(action) = action_to_dispatch {
         dispatch(action);

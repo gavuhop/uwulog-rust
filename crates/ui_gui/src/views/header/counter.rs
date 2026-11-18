@@ -3,112 +3,63 @@ use crate::state::ActiveTab;
 use crate::theme::{self, ActiveTheme};
 use eframe::egui;
 
-/// Hiển thị bộ đếm số lượng log theo từng trạng thái chuẩn hóa:
-/// - main (chưa lọc): Live -> số log hiện tại     | Pause -> số log mới đến / số log tại pause
-/// - main (đã lọc):   Live -> số log khớp         | Pause -> số log khớp mới đến / số log khớp tại pause
-/// - Raw:             Live -> số log hiện tại     | Pause -> số log mới đến / số log tại pause
+/// Hiển thị bộ đếm số lượng log nhất quán cho cả trạng thái Live và Paused:
+/// - Chưa lọc / Raw: tổng số log đã ingest (`total_processed`)
+/// - Đang lọc: tổng số log khớp (`total_matched`, hoặc `hiển_thị/tổng` nếu vượt giới hạn)
 pub fn render_log_counter(ui: &mut egui::Ui, session: &GuiSession) {
     let theme = ui.app_theme();
-    let is_filtering = !session.view.search.query.trim().is_empty();
+    let query = session.view.search.query.trim();
+    let is_filtering = session.view.active_tab == ActiveTab::Filtered && !query.is_empty();
+    let status = if session.view.stream(session.view.active_tab).is_auto_scroll {
+        "Live"
+    } else {
+        "Paused"
+    };
 
-    let (count_text, count_color, count_tooltip) = match session.view.active_tab {
-        ActiveTab::Unfiltered => {
-            let total_now = session.session.engine.total_processed() as usize;
-
-            if session.view.unfiltered.is_auto_scroll {
-                let text = theme::format_number(total_now);
-                let tooltip = format!(
-                    "Raw Stream (Live)\n• Total Ingested / Seen: {}\n• In-Memory Buffer: {} / {}\n• Buffer Limit: 500",
-                    theme::format_number(total_now),
-                    theme::format_number(session.session.engine.total_logs()),
-                    theme::format_number(session.session.engine.max_capacity()),
-                );
-                (text, theme.text.muted, tooltip)
-            } else {
-                format_paused_stream_counter(
-                    "Raw Stream",
-                    session.view.unfiltered.snapshot_processed_count as usize,
-                    total_now,
-                    theme.text.muted,
-                )
-            }
-        }
-        ActiveTab::Filtered => {
-            if is_filtering {
-                let total_matched = session.view.viewport.total_matched;
-                let total_label = if session.view.viewport.is_count_exact {
-                    theme::format_number(total_matched)
-                } else {
-                    format!("{}+", theme::format_number(total_matched))
-                };
-
-                if session.view.viewport.is_auto_scroll {
-                    let cached_len = session.view.viewport.cached_logs.len();
-                    let text =
-                        if total_matched > cached_len || !session.view.viewport.is_count_exact {
-                            format!("{}/{}", theme::format_number(cached_len), total_label)
-                        } else {
-                            total_label.clone()
-                        };
-                    let tooltip = format!(
-                        "Filter Query: \"{}\" (Live)\n• Total Matched: {}\n• Displayed: {} (Limit: {})",
-                        session.view.search.query.trim(),
-                        total_label,
-                        theme::format_number(cached_len),
-                        theme::format_number(session.session.display_limit),
-                    );
-                    (text, theme.text.accent, tooltip)
-                } else {
-                    let seen_matched_at_pause = session.view.viewport.pause_snapshot.filtered_seen;
-                    let new_matched = session
-                        .view
-                        .viewport
-                        .pause_snapshot
-                        .paused_new_matched_count;
-                    let seen_label = if session.view.viewport.is_count_exact {
-                        theme::format_number(seen_matched_at_pause)
-                    } else {
-                        format!("{}+", theme::format_number(seen_matched_at_pause))
-                    };
-                    let text = format!("{}/{}", theme::format_number(new_matched), seen_label);
-                    let tooltip = format!(
-                        "Filter Query: \"{}\" (Paused)\n• New Matched Logs Since Pause: {}\n• Matched at Pause: {}\n• Displayed: {}",
-                        session.view.search.query.trim(),
-                        theme::format_number(new_matched),
-                        seen_label,
-                        theme::format_number(session.view.viewport.cached_logs.len()),
-                    );
-                    (text, theme.text.accent, tooltip)
-                }
-            } else {
-                let total_now = session.session.engine.total_processed() as usize;
-                let spilled = session.session.engine.total_spilled() as usize;
-                let spill_line = if spilled > 0 {
-                    format!("\n• Disk Spill: {} logs", theme::format_number(spilled))
-                } else {
-                    String::new()
-                };
-
-                if session.view.viewport.is_auto_scroll {
-                    let text = theme::format_number(total_now);
-                    let tooltip = format!(
-                        "Main Stream (Live)\n• Total Ingested: {}\n• In-Memory Buffer: {} / {}{spill_line}\n• Displayed: {}",
-                        theme::format_number(total_now),
-                        theme::format_number(session.session.engine.total_logs()),
-                        theme::format_number(session.session.engine.max_capacity()),
-                        theme::format_number(session.view.viewport.cached_logs.len()),
-                    );
-                    (text, theme.text.muted, tooltip)
-                } else {
-                    format_paused_stream_counter(
-                        "Main Stream",
-                        session.view.viewport.pause_snapshot.processed_at_pause as usize,
-                        total_now,
-                        theme.text.muted,
-                    )
-                }
-            }
-        }
+    let (count_text, count_color, count_tooltip) = if is_filtering {
+        let total_matched = session.view.viewport.total_matched;
+        let cached_len = session.view.viewport.cached_logs.len();
+        let total_label = if session.view.viewport.is_count_exact {
+            theme::format_number(total_matched)
+        } else {
+            format!("{}+", theme::format_number(total_matched))
+        };
+        let text = if total_matched > cached_len || !session.view.viewport.is_count_exact {
+            format!("{}/{}", theme::format_number(cached_len), total_label)
+        } else {
+            total_label.clone()
+        };
+        let tooltip = format!(
+            "Filter Query: \"{query}\" ({status})\n• Total Matched: {total_label}\n• Displayed: {} (Limit: {})",
+            theme::format_number(cached_len),
+            theme::format_number(session.session.display_limit),
+        );
+        (text, theme.text.accent, tooltip)
+    } else {
+        let total_now = session.session.engine.total_processed() as usize;
+        let spilled = session.session.engine.total_spilled() as usize;
+        let spill_line = if spilled > 0 {
+            format!("\n• Disk Spill: {} logs", theme::format_number(spilled))
+        } else {
+            String::new()
+        };
+        let stream_name = match session.view.active_tab {
+            ActiveTab::Filtered => "Main Stream",
+            ActiveTab::Unfiltered => "Raw Stream",
+        };
+        let displayed = session
+            .view
+            .stream(session.view.active_tab)
+            .cached_logs
+            .len();
+        let tooltip = format!(
+            "{stream_name} ({status})\n• Total Ingested: {}\n• In-Memory Buffer: {} / {}{spill_line}\n• Displayed: {}",
+            theme::format_number(total_now),
+            theme::format_number(session.session.engine.total_logs()),
+            theme::format_number(session.session.engine.max_capacity()),
+            theme::format_number(displayed),
+        );
+        (theme::format_number(total_now), theme.text.muted, tooltip)
     };
 
     crate::components::ui::CountBadge::new(&count_text)
@@ -116,30 +67,4 @@ pub fn render_log_counter(ui: &mut egui::Ui, session: &GuiSession) {
         .text_color(count_color)
         .tooltip(&count_tooltip)
         .show(ui);
-}
-
-#[inline]
-fn format_fraction(numerator: usize, denominator: usize) -> String {
-    format!(
-        "{}/{}",
-        theme::format_number(numerator),
-        theme::format_number(denominator)
-    )
-}
-
-fn format_paused_stream_counter(
-    stream_name: &str,
-    seen_at_pause: usize,
-    total_now: usize,
-    muted_color: egui::Color32,
-) -> (String, egui::Color32, String) {
-    let new_incoming = total_now.saturating_sub(seen_at_pause);
-    let text = format_fraction(new_incoming, seen_at_pause);
-    let tooltip = format!(
-        "{stream_name} (Paused)\n• New Logs Since Pause: {}\n• Total Logs at Pause: {}\n• Total Ingested: {}",
-        theme::format_number(new_incoming),
-        theme::format_number(seen_at_pause),
-        theme::format_number(total_now),
-    );
-    (text, muted_color, tooltip)
 }

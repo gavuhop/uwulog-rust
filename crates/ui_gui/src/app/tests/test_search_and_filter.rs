@@ -446,22 +446,21 @@ async fn test_udf_unlatch_and_latch_actions() {
 }
 
 #[tokio::test]
-async fn test_pause_restart_populates_viewport_until_overflow() {
+async fn test_pause_restart_populates_viewport_without_scrolling() {
     use uwu_core_schema::{RawLogEntry, RawPayload};
 
     let mut app = create_test_app();
+    app.active_session_mut().session.display_limit = 4;
     let tx = app.active_session().session.engine.get_channel();
 
-    // 1. Giả lập bảng đã tràn viewport rồi chuyển sang Pause (Unlatch)
-    app.active_session_mut().view.viewport.has_vertical_overflow = true;
+    // 1. Chuyển sang Pause (Unlatch)
     app.dispatch_action(AppAction::Unlatch);
     assert!(!app.active_session().view.viewport.is_auto_scroll);
 
-    // 2. Restart stream khi đang Pause: reset_stream_data() xóa cache & overflow nhưng giữ nguyên Pause
+    // 2. Restart stream khi đang Pause: giữ nguyên trạng thái Pause
     app.active_session().session.engine.clear();
     app.active_session_mut().view.reset_stream_data();
     assert!(!app.active_session().view.viewport.is_auto_scroll);
-    assert!(!app.active_session().view.viewport.has_vertical_overflow);
     assert!(app.active_session().view.viewport.cached_logs.is_empty());
 
     // Cũng kiểm tra tab Raw (live stream, target_id = None) ở trạng thái Pause sau Restart
@@ -469,7 +468,7 @@ async fn test_pause_restart_populates_viewport_until_overflow() {
     app.active_session_mut().view.unfiltered.is_auto_scroll = false;
     app.active_session_mut().view.unfiltered.target_id = None;
 
-    // 3. Log mới chảy vào khi bảng đang trống/ít dòng -> phải hiển thị lên màn hình, KHÔNG auto-scroll
+    // 3. Log mới chảy vào khi chưa chạm display_limit -> hiển thị lên màn hình, KHÔNG auto-scroll
     for i in 0..3 {
         tx.send(RawLogEntry {
             payload: RawPayload::Text(format!("[INFO] after restart {i}")),
@@ -492,24 +491,16 @@ async fn test_pause_restart_populates_viewport_until_overflow() {
     assert_eq!(s.view.viewport.cached_logs.len(), 3);
     assert_eq!(s.view.viewport.total_matched, 3);
     assert!(!s.view.viewport.is_auto_scroll);
-    assert_eq!(s.view.viewport.pause_snapshot.paused_new_matched_count, 0);
     assert_eq!(s.view.unfiltered.cached_logs.len(), 3);
-    assert_eq!(s.view.unfiltered.snapshot_processed_count, 3);
     assert!(app
         .active_session_mut()
         .consume_scroll_request(crate::state::ActiveTab::Filtered, 3)
         .is_none());
 
-    // 4. Khi bảng đã tràn chiều dọc (has_vertical_overflow = true), Pause bắt đầu đóng băng khung nhìn và đếm badge
-    app.active_session_mut().view.viewport.has_vertical_overflow = true;
-    app.active_session_mut()
-        .view
-        .unfiltered
-        .has_vertical_overflow = true;
-
-    for i in 3..5 {
+    // 4. Khi chạm trần display_limit (4) lúc đang Pause, dừng append thêm để không xê dịch dòng đầu
+    for i in 3..6 {
         tx.send(RawLogEntry {
-            payload: RawPayload::Text(format!("[INFO] after overflow {i}")),
+            payload: RawPayload::Text(format!("[INFO] cap limit {i}")),
         })
         .await
         .unwrap();
@@ -524,8 +515,9 @@ async fn test_pause_restart_populates_viewport_until_overflow() {
     }
 
     let s = app.active_session();
-    assert_eq!(s.view.viewport.cached_logs.len(), 3);
-    assert_eq!(s.view.viewport.pause_snapshot.paused_new_matched_count, 2);
-    assert_eq!(s.view.unfiltered.cached_logs.len(), 3);
-    assert_eq!(s.view.unfiltered.snapshot_processed_count, 3);
+    assert_eq!(s.view.viewport.cached_logs.len(), 4);
+    assert_eq!(
+        s.view.viewport.cached_logs[0].message,
+        "[INFO] after restart 0"
+    );
 }

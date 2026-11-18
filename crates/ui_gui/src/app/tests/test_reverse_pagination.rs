@@ -50,8 +50,8 @@ async fn test_reverse_pagination_loads_older_logs() {
     );
     // Vị trí scroll duy trì phải bằng số log vừa nạp thêm (10)
     assert_eq!(
-        app.active_session().viewport.request_maintain_scroll_offset,
-        Some(10)
+        app.active_session().viewport.pending_scroll,
+        Some(crate::state::ScrollCommand::MaintainOffset(10))
     );
     assert!(!app.active_session().viewport.reached_oldest);
 
@@ -67,8 +67,8 @@ async fn test_reverse_pagination_loads_older_logs() {
         "[INFO] Message index 04"
     );
     assert_eq!(
-        app.active_session().viewport.request_maintain_scroll_offset,
-        Some(5)
+        app.active_session().viewport.pending_scroll,
+        Some(crate::state::ScrollCommand::MaintainOffset(5))
     );
     // Vì nạp được 5 < 10 (hết sạch log trong engine), reached_oldest phải bật thành true
     assert!(app.active_session().viewport.reached_oldest);
@@ -136,8 +136,8 @@ async fn test_reverse_pagination_with_filter() {
         "[ERROR] Index 18"
     );
     assert_eq!(
-        app.active_session().viewport.request_maintain_scroll_offset,
-        Some(5)
+        app.active_session().viewport.pending_scroll,
+        Some(crate::state::ScrollCommand::MaintainOffset(5))
     );
 }
 
@@ -173,9 +173,7 @@ async fn test_reverse_pagination_unfiltered_stream() {
         "[INFO] Raw line 05"
     );
     assert_eq!(
-        app.active_session()
-            .unfiltered
-            .request_maintain_scroll_offset,
-        Some(5)
+        app.active_session().unfiltered.pending_scroll,
+        Some(crate::state::ScrollCommand::MaintainOffset(5))
     );
 }

@@ -1224,8 +1224,11 @@ fn test_arrow_keys_row_navigation_and_scroll() {
         "Khi không có dòng nào được chọn, ArrowDown không được tự ý chọn dòng"
     );
     assert_eq!(
-        app.active_session().view.viewport.request_scroll_to_row,
-        Some((4, Some(eframe::egui::Align::Min))),
+        app.active_session().view.viewport.pending_scroll,
+        Some(crate::state::ScrollCommand::Row(
+            4,
+            Some(eframe::egui::Align::Min)
+        )),
         "ArrowDown phải cuộn bảng xuống (1 + 4 = 4 khi max là 4)"
     );
 
@@ -1421,8 +1424,11 @@ fn test_excel_like_navigation_and_copy_shortcuts() {
         "PageDown vẫn phải giữ nguyên dòng 5 (id 205) đang chọn"
     );
     assert_eq!(
-        app.active_session().view.viewport.request_scroll_to_row,
-        Some((25, Some(eframe::egui::Align::Min))),
+        app.active_session().view.viewport.pending_scroll,
+        Some(crate::state::ScrollCommand::Row(
+            25,
+            Some(eframe::egui::Align::Min)
+        )),
         "PageDown phải yêu cầu cuộn bảng xuống dòng 25"
     );
 
@@ -1458,8 +1464,11 @@ fn test_excel_like_navigation_and_copy_shortcuts() {
         "PageUp vẫn phải giữ nguyên dòng 5 (id 205) đang chọn"
     );
     assert_eq!(
-        app.active_session().view.viewport.request_scroll_to_row,
-        Some((5, Some(eframe::egui::Align::Min))),
+        app.active_session().view.viewport.pending_scroll,
+        Some(crate::state::ScrollCommand::Row(
+            5,
+            Some(eframe::egui::Align::Min)
+        )),
         "PageUp phải yêu cầu cuộn bảng ngược lên dòng 5"
     );
 

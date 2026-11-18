@@ -452,11 +452,7 @@ impl UwuGuiApp {
             return;
         }
         active.view.stream_mut(tab).is_loading_older = true;
-        if is_unfiltered {
-            active.unlatch_unfiltered();
-        } else {
-            active.unlatch();
-        }
+        active.view.stream_mut(tab).unlatch();
         let query = if is_unfiltered {
             String::new()
         } else {

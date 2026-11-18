@@ -268,11 +268,10 @@ async fn test_view_in_raw_log_references_exact_spilled_disk_row() {
     assert!(!session.view.unfiltered.is_auto_scroll);
     assert_eq!(session.view.unfiltered.target_id, Some(target_event.id));
 
-    let target_idx = session
-        .view
-        .unfiltered
-        .target_index
-        .expect("target_index must resolve for spilled row");
+    let target_idx = match session.view.unfiltered.pending_scroll {
+        Some(crate::state::ScrollCommand::Row(idx, _)) => idx,
+        other => panic!("expected ScrollCommand::Row for spilled row, got {other:?}"),
+    };
     let raw_row = &session.view.unfiltered.cached_logs[target_idx];
     assert_eq!(raw_row.id, target_event.id);
     assert_eq!(raw_row.message, "log_seq_05");

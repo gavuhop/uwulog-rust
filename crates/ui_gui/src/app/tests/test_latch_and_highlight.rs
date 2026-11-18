@@ -15,7 +15,10 @@ async fn test_latch_toggle() {
 
     session.latch();
     assert!(session.viewport.is_auto_scroll);
-    assert!(session.viewport.request_scroll_to_bottom);
+    assert_eq!(
+        session.viewport.pending_scroll,
+        Some(crate::state::ScrollCommand::Bottom)
+    );
 
     session.toggle_latch();
     assert!(!session.viewport.is_auto_scroll);
@@ -66,10 +69,10 @@ async fn test_unlatch_unfiltered_idempotency() {
     session.open_unfiltered_stream(None);
     assert!(session.unfiltered.is_auto_scroll);
 
-    session.unlatch_unfiltered();
+    session.unfiltered.unlatch();
     assert!(!session.unfiltered.is_auto_scroll);
 
-    session.unlatch_unfiltered();
+    session.unfiltered.unlatch();
     assert!(!session.unfiltered.is_auto_scroll);
 }
 
@@ -89,13 +92,11 @@ async fn test_repeated_unlatch_idempotency_preserves_pause_state() {
 
     app.active_session_mut().unlatch();
     assert!(!app.active_session().viewport.is_auto_scroll);
-    let paused_count = app.active_session().viewport.pause_snapshot.filtered_seen;
+    let cached_len = app.active_session().viewport.cached_logs.len();
 
     app.active_session_mut().unlatch();
-    assert_eq!(
-        app.active_session().viewport.pause_snapshot.filtered_seen,
-        paused_count
-    );
+    assert!(!app.active_session().viewport.is_auto_scroll);
+    assert_eq!(app.active_session().viewport.cached_logs.len(), cached_len);
 }
 
 #[tokio::test]
@@ -134,9 +135,9 @@ async fn test_app_action_latch_and_unfiltered() {
     assert!(app.active_session().unfiltered.is_open);
     assert_eq!(app.active_session().active_tab, ActiveTab::Unfiltered);
 
-    // Unfiltered live toggle
+    // Unfiltered live toggle (dùng chung ToggleLatch)
     assert!(!app.active_session().unfiltered.is_auto_scroll);
-    app.dispatch_action(AppAction::ToggleUnfilteredLive);
+    app.dispatch_action(AppAction::ToggleLatch);
     assert!(app.active_session().unfiltered.is_auto_scroll);
 
     app.dispatch_action(AppAction::RefreshUnfilteredSnapshot);

@@ -56,7 +56,6 @@ pub enum AppAction {
     ToggleLatch,
     Unlatch,
     Latch,
-    ToggleUnfilteredLive,
     RefreshUnfilteredSnapshot,
     OpenUnfilteredStream(Option<u64>),
     ViewRawContext,

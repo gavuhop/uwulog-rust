@@ -14,7 +14,7 @@ pub use history::SearchHistoryState;
 pub use inspector::InspectorState;
 pub use search::SearchState;
 pub use viewport::{
-    ActiveTab, LogStreamView, PauseSnapshot, UnfilteredViewState, ViewportState, RAW_STREAM_LIMIT,
+    ActiveTab, LogStreamView, ScrollCommand, UnfilteredViewState, ViewportState, RAW_STREAM_LIMIT,
 };
 
 /// Lưu trữ trạng thái hiển thị giao diện của từng workspace session.
@@ -65,10 +65,8 @@ impl GuiViewState {
         self.viewport.total_matched = 0;
         self.viewport.is_count_exact = true;
         self.viewport.last_processed_count = 0;
-        self.viewport.pause_snapshot = Default::default();
         self.inspector.selected_log = None;
         self.unfiltered.stream.reset();
-        self.unfiltered.snapshot_processed_count = 0;
         self.search.autocomplete.is_open = false;
         self.search.autocomplete.suggestions.clear();
         self.buffer_overflow_dismissed = false;

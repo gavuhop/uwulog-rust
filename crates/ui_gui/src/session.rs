@@ -1,5 +1,5 @@
 use crate::actions::AppAction;
-use crate::state::{ActiveTab, GuiViewState, RAW_STREAM_LIMIT};
+use crate::state::{ActiveTab, GuiViewState, ScrollCommand, RAW_STREAM_LIMIT};
 use eframe::egui;
 use std::time::{Duration, Instant};
 use uwu_core_schema::LogEvent;
@@ -83,17 +83,6 @@ impl GuiSession {
             self.apply_incremental_logs(new_matched_count, new_matching_logs, total_processed);
         }
 
-        if !self.view.viewport.is_auto_scroll
-            && self.view.viewport.has_vertical_overflow
-            && new_logs_arrived
-        {
-            let (new_matched, _) = self.session.engine.filter_incremental(
-                &self.view.search.query,
-                self.view.viewport.pause_snapshot.processed_at_pause,
-            );
-            self.view.viewport.pause_snapshot.paused_new_matched_count = new_matched;
-        }
-
         if self.should_stream_unfiltered() && new_logs_arrived {
             let (_new_count, new_logs) = self.session.engine.filter_incremental("", prev_processed);
             self.apply_incremental_unfiltered(new_logs);
@@ -134,13 +123,15 @@ impl GuiSession {
         self.sync_discovered_fields(&logs);
         self.view.viewport.cached_logs = logs;
         self.view.viewport.reached_oldest = false;
-        self.view.viewport.request_maintain_scroll_offset = None;
+        if matches!(
+            self.view.viewport.pending_scroll,
+            Some(ScrollCommand::MaintainOffset(_))
+        ) {
+            self.view.viewport.pending_scroll = None;
+        }
         self.view.search.last_query = self.view.search.query.clone();
         self.view.viewport.last_processed_count = self.session.engine.total_processed();
         self.view.search.last_search_time = Instant::now();
-        self.view
-            .viewport
-            .record_pause(self.view.viewport.last_processed_count);
     }
 
     /// Cập nhật tổng số kết quả chính xác từ Pha 2 (đếm Cold Segments ở nền)
@@ -150,24 +141,22 @@ impl GuiSession {
         }
         self.view.viewport.total_matched = total_matched;
         self.view.viewport.is_count_exact = true;
-        if !self.view.viewport.is_auto_scroll {
-            self.view.viewport.pause_snapshot.filtered_seen = total_matched;
-        }
     }
 
-    /// Cho phép append thêm log vào bảng Filtered nếu đang Live hoặc bảng chưa tràn chiều dọc viewport.
+    /// Cho phép append log mới vào bảng Filtered khi đang Live hoặc chưa chạm trần `display_limit`
     #[inline]
     pub fn should_stream_filtered(&self) -> bool {
-        self.view.viewport.should_accept_incremental()
+        self.view.viewport.is_auto_scroll
+            || self.view.viewport.cached_logs.len() < self.session.display_limit
     }
 
-    /// Cho phép append thêm log vào tab Unfiltered nếu đang mở live-raw (không phải frozen context `target_id`) và đang Live hoặc chưa tràn viewport.
+    /// Cho phép append log mới vào tab Unfiltered khi đang mở live-raw (không phải snapshot `target_id`) và đang Live hoặc chưa chạm trần `RAW_STREAM_LIMIT`
     #[inline]
     pub fn should_stream_unfiltered(&self) -> bool {
         self.view.unfiltered.is_open
             && (self.view.unfiltered.is_auto_scroll
                 || (self.view.unfiltered.target_id.is_none()
-                    && !self.view.unfiltered.has_vertical_overflow))
+                    && self.view.unfiltered.cached_logs.len() < RAW_STREAM_LIMIT))
     }
 
     /// Cập nhật log tăng dần từ background worker cho Filtered stream
@@ -177,8 +166,7 @@ impl GuiSession {
         logs: Vec<LogEvent>,
         total_processed: u64,
     ) {
-        let can_append = self.should_stream_filtered();
-        if matched > 0 && can_append {
+        if matched > 0 && self.should_stream_filtered() {
             self.sync_discovered_fields(&logs);
             let is_auto_scroll = self.view.viewport.is_auto_scroll;
             let added = self
@@ -188,25 +176,16 @@ impl GuiSession {
                 .append_logs(logs, self.session.display_limit);
             self.view.viewport.total_matched += if is_auto_scroll { matched } else { added };
         }
-        if can_append {
-            self.view.viewport.record_pause(total_processed);
-        }
         self.view.viewport.last_processed_count = total_processed;
     }
 
     /// Cập nhật log tăng dần từ background worker cho Unfiltered stream
     pub fn apply_incremental_unfiltered(&mut self, logs: Vec<LogEvent>) {
         if self.should_stream_unfiltered() {
-            let is_live = self.view.unfiltered.is_auto_scroll;
-            let added = self
-                .view
+            self.view
                 .unfiltered
                 .stream
                 .append_logs(logs, RAW_STREAM_LIMIT);
-            if !is_live && added > 0 {
-                self.view.unfiltered.snapshot_processed_count =
-                    self.session.engine.total_processed();
-            }
         }
     }
 
@@ -237,13 +216,11 @@ impl GuiSession {
     }
 
     pub fn unlatch(&mut self) {
-        let total = self.session.engine.total_processed();
-        self.view.viewport.unlatch(total);
+        self.view.viewport.unlatch();
     }
 
     pub fn toggle_latch(&mut self) {
-        let total = self.session.engine.total_processed();
-        if self.view.viewport.toggle_latch(total) {
+        if self.view.viewport.toggle_latch() {
             self.view.search.mark_needs_search();
         }
     }
@@ -251,15 +228,11 @@ impl GuiSession {
     /// Trích xuất nhẹ (Copy) trạng thái stream hiển thị cho bảng log
     pub fn stream_summary(&self, tab: ActiveTab) -> StreamSummary {
         let stream = self.view.stream(tab);
-        let target_scroll =
-            tab == ActiveTab::Unfiltered && self.view.unfiltered.request_scroll_to_target;
         StreamSummary {
             is_live: stream.is_auto_scroll,
             reached_oldest: stream.reached_oldest,
             is_loading_older: stream.is_loading_older,
-            had_forced_scroll: stream.request_scroll_to_bottom
-                || target_scroll
-                || stream.request_maintain_scroll_offset.is_some(),
+            had_forced_scroll: stream.pending_scroll.is_some(),
         }
     }
 
@@ -269,26 +242,7 @@ impl GuiSession {
         tab: ActiveTab,
         row_count: usize,
     ) -> Option<(usize, Option<egui::Align>)> {
-        if tab == ActiveTab::Unfiltered
-            && row_count > 0
-            && self.view.unfiltered.request_scroll_to_row.is_none()
-            && self
-                .view
-                .unfiltered
-                .request_maintain_scroll_offset
-                .is_none()
-            && self.view.unfiltered.request_scroll_to_target
-        {
-            self.view.unfiltered.request_scroll_to_target = false;
-            return self
-                .view
-                .unfiltered
-                .target_index
-                .map(|idx| (idx, Some(egui::Align::Center)));
-        }
-        self.view
-            .stream_mut(tab)
-            .consume_common_scroll_request(row_count)
+        self.view.stream_mut(tab).consume_scroll_request(row_count)
     }
 
     pub fn sync_discovered_fields(&mut self, logs: &[LogEvent]) {
@@ -369,11 +323,7 @@ impl GuiSession {
         if self.view.stream(tab).reached_oldest {
             return;
         }
-        if is_unfiltered {
-            self.unlatch_unfiltered();
-        } else {
-            self.unlatch();
-        }
+        self.view.stream_mut(tab).unlatch();
         let Some(before_id) = self.view.stream(tab).cached_logs.first().map(|e| e.id) else {
             return;
         };
@@ -409,9 +359,8 @@ impl GuiSession {
     /// Đặt yêu cầu cuộn bảng tới dòng chỉ định kèm kiểu căn lề tương ứng cho tab hiện tại
     #[inline]
     pub fn scroll_to_row(&mut self, row: usize, align: Option<egui::Align>) {
-        self.view
-            .stream_mut(self.view.active_tab)
-            .request_scroll_to_row = Some((row, align));
+        self.view.stream_mut(self.view.active_tab).pending_scroll =
+            Some(ScrollCommand::Row(row, align));
     }
 
     /// Trả về chỉ số dòng log đầu tiên đang nhìn thấy trong viewport
@@ -423,23 +372,34 @@ impl GuiSession {
             .unwrap_or(0)
     }
 
+    fn on_tab_relatched(&mut self, tab: ActiveTab) {
+        match tab {
+            ActiveTab::Filtered => self.view.search.mark_needs_search(),
+            ActiveTab::Unfiltered => {
+                self.refresh_unfiltered_snapshot();
+                self.view.unfiltered.pending_scroll = Some(ScrollCommand::Bottom);
+            }
+        }
+    }
+
     /// Tạm dừng auto-scroll (latch) cho tab đang xem
     pub fn unlatch_active(&mut self) {
-        match self.view.active_tab {
-            ActiveTab::Filtered => self.unlatch(),
-            ActiveTab::Unfiltered => self.unlatch_unfiltered(),
-        }
+        self.view.stream_mut(self.view.active_tab).unlatch();
     }
 
     /// Kích hoạt auto-scroll (latch) cho tab đang xem
     pub fn latch_active(&mut self) {
-        match self.view.active_tab {
-            ActiveTab::Filtered => {
-                if self.view.viewport.latch() {
-                    self.view.search.mark_needs_search();
-                }
-            }
-            ActiveTab::Unfiltered => self.view.unfiltered.is_auto_scroll = true,
+        let tab = self.view.active_tab;
+        if self.view.stream_mut(tab).latch() {
+            self.on_tab_relatched(tab);
+        }
+    }
+
+    /// Đảo trạng thái Live/Paused cho tab đang xem
+    pub fn toggle_active_latch(&mut self) {
+        let tab = self.view.active_tab;
+        if self.view.stream_mut(tab).toggle_latch() {
+            self.on_tab_relatched(tab);
         }
     }
 
@@ -577,41 +537,21 @@ impl GuiSession {
     }
 
     pub fn refresh_unfiltered_snapshot(&mut self) {
-        self.view.unfiltered.snapshot_processed_count = self.session.engine.total_processed();
         self.view.unfiltered.reached_oldest = false;
-        self.view.unfiltered.request_maintain_scroll_offset = None;
         let (target_idx, unfiltered) = self
             .session
             .engine
             .get_unfiltered_events(self.view.unfiltered.target_id, RAW_STREAM_LIMIT);
         self.view.unfiltered.cached_logs = unfiltered;
-        self.view.unfiltered.target_index = target_idx;
-        self.view.unfiltered.request_scroll_to_target = true;
-    }
-
-    pub fn toggle_unfiltered_live(&mut self) {
-        self.view.unfiltered.is_auto_scroll = !self.view.unfiltered.is_auto_scroll;
-        if self.view.unfiltered.is_auto_scroll {
-            self.refresh_unfiltered_snapshot();
-            self.view.unfiltered.request_scroll_to_bottom = true;
-        } else {
-            self.view.unfiltered.snapshot_processed_count = self.session.engine.total_processed();
-        }
-    }
-
-    pub fn unlatch_unfiltered(&mut self) {
-        if !self.view.unfiltered.is_auto_scroll {
-            return;
-        }
-        self.view.unfiltered.is_auto_scroll = false;
-        self.view.unfiltered.snapshot_processed_count = self.session.engine.total_processed();
+        self.view.unfiltered.pending_scroll =
+            target_idx.map(|idx| ScrollCommand::Row(idx, Some(egui::Align::Center)));
     }
 
     pub fn close_unfiltered_stream(&mut self) {
         self.view.unfiltered.is_open = false;
         self.view.unfiltered.target_id = None;
-        self.view.unfiltered.target_index = None;
         self.view.unfiltered.cached_logs.clear();
+        self.view.unfiltered.pending_scroll = None;
         self.switch_tab(ActiveTab::Filtered);
     }
 
@@ -730,11 +670,7 @@ impl GuiSession {
                 true
             }
             AppAction::ToggleLatch => {
-                if self.view.active_tab == ActiveTab::Unfiltered {
-                    self.toggle_unfiltered_live();
-                } else {
-                    self.toggle_latch();
-                }
+                self.toggle_active_latch();
                 true
             }
             AppAction::Unlatch => {
@@ -743,10 +679,6 @@ impl GuiSession {
             }
             AppAction::Latch => {
                 self.latch_active();
-                true
-            }
-            AppAction::ToggleUnfilteredLive => {
-                self.toggle_unfiltered_live();
                 true
             }
             AppAction::RefreshUnfilteredSnapshot => {

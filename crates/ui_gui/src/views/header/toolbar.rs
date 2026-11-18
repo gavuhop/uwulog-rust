@@ -123,14 +123,7 @@ pub fn render_toolbar(
         .show(ui)
         .clicked()
     {
-        match session.view.active_tab {
-            ActiveTab::Filtered => {
-                dispatch(AppAction::ToggleLatch);
-            }
-            ActiveTab::Unfiltered => {
-                dispatch(AppAction::ToggleUnfilteredLive);
-            }
-        }
+        dispatch(AppAction::ToggleLatch);
     }
 
     ui.add_space(8.0);
