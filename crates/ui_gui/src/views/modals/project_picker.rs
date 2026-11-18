@@ -55,7 +55,7 @@ pub enum ProjectRowAction {
 
 /// Tham số cấu hình hiển thị cho một hàng project
 pub struct ProjectRowConfig<'a> {
-    pub icon: IconName,
+    pub icon: Option<IconName>,
     pub label: &'a str,
     pub is_active: bool,
     pub location_tooltip: Option<&'a str>,
@@ -100,21 +100,41 @@ pub fn render_project_row(ui: &mut egui::Ui, config: ProjectRowConfig<'_>) -> Pr
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
         |ui| {
             ui.style_mut().interaction.selectable_labels = false;
-            let (icon_rect, _) =
-                ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
-            config.icon.paint(ui.painter(), icon_rect, theme.text.muted);
+            let item_gap = ui.spacing().item_spacing.x;
 
-            ui.add_space(4.0);
+            if let Some(icon) = config.icon {
+                let (icon_rect, _) =
+                    ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
+                icon.paint(ui.painter(), icon_rect, theme.text.muted);
 
-            ui.add(
-                egui::Label::new(
-                    egui::RichText::new(config.label)
-                        .size(12.0)
-                        .color(theme.text.primary),
-                )
-                .selectable(false)
-                .truncate(),
-            );
+                ui.add_space(4.0);
+            }
+
+            // Chừa sẵn chỗ cho icon Check và các nút hover bên phải để text dài tự truncate, không tràn ngang
+            let mut trailing_reserved = 0.0;
+            if config.is_active {
+                trailing_reserved += 12.0 + item_gap;
+            }
+            if is_hovered && !config.close_tooltip.is_empty() {
+                trailing_reserved += 22.0 + item_gap;
+                if config.action_icon.is_some() {
+                    trailing_reserved += 22.0 + 2.0;
+                }
+            }
+            let max_label_w = (ui.available_width() - trailing_reserved).max(20.0);
+
+            ui.scope(|ui| {
+                ui.set_max_width(max_label_w);
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(config.label)
+                            .size(12.0)
+                            .color(theme.text.primary),
+                    )
+                    .selectable(false)
+                    .truncate(),
+                );
+            });
 
             if config.is_active {
                 let (check_r, _) =
@@ -280,7 +300,7 @@ pub fn render_project_picker_popup(
                             let action = render_project_row(
                                 ui,
                                 ProjectRowConfig {
-                                    icon: session.icon,
+                                    icon: Some(session.icon),
                                     label: &label,
                                     is_active,
                                     location_tooltip: tooltip_loc,
@@ -444,7 +464,7 @@ pub fn render_project_picker_popup(
                                 let action = render_project_row(
                                     ui,
                                     ProjectRowConfig {
-                                        icon: ws_icon,
+                                        icon: Some(ws_icon),
                                         label: &label,
                                         is_active: false,
                                         location_tooltip: tooltip_loc,

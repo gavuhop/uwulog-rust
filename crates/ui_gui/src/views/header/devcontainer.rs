@@ -402,10 +402,32 @@ pub fn render_source_switcher_popup(
         }
     }
 
+    const MIN_SWITCHER_WIDTH: f32 = 180.0;
+    const MAX_SWITCHER_WIDTH: f32 = 420.0;
+
+    let candidate_containers = scan_state
+        .loaded
+        .as_deref()
+        .map(|containers| {
+            filter_project_candidate_containers(docker_opts, active_containers, containers)
+        })
+        .unwrap_or_default();
+
+    let mut seen_active = HashSet::new();
+    let deduped_active: Vec<&ActiveContainerSessionInfo> = active_containers
+        .iter()
+        .filter(|c| seen_active.insert(c.container_name.to_ascii_lowercase()))
+        .collect();
+
     let area_pos = egui::pos2(trigger_rect.min.x, trigger_rect.max.y + 4.0);
-    let popup_width = 300.0;
     let available_below = (ctx.viewport_rect().max.y - area_pos.y - 12.0).max(120.0);
     let popup_max_height = 420.0_f32.min(available_below);
+
+    let min_width = trigger_rect.width().max(MIN_SWITCHER_WIDTH);
+    let available_right = (ctx.viewport_rect().max.x - area_pos.x - 12.0).max(min_width);
+    let max_width = MAX_SWITCHER_WIDTH.min(available_right).max(min_width);
+
+    let is_empty_scanning = scan_state.in_flight && deduped_active.is_empty();
 
     let area_resp = egui::Area::new(popup_id)
         .order(Order::Foreground)
@@ -424,14 +446,71 @@ pub fn render_source_switcher_popup(
                     color: egui::Color32::from_black_alpha(50),
                 });
             let total_margin = frame.total_margin();
+            let item_spacing_x = ui.spacing().item_spacing.x;
+
+            let desired_content_width = ui.fonts_mut(|fonts| {
+                if is_empty_scanning {
+                    fonts
+                        .layout_no_wrap(
+                            "Scanning containers...".to_owned(),
+                            egui::FontId::proportional(11.5),
+                            egui::Color32::PLACEHOLDER,
+                        )
+                        .size()
+                        .x
+                } else {
+                    let active_max = deduped_active
+                        .iter()
+                        .map(|c| {
+                            let text_w = fonts
+                                .layout_no_wrap(
+                                    c.short_label.clone(),
+                                    egui::FontId::proportional(12.0),
+                                    egui::Color32::PLACEHOLDER,
+                                )
+                                .size()
+                                .x;
+                            let check_w = if c.is_active {
+                                12.0 + item_spacing_x
+                            } else {
+                                0.0
+                            };
+                            // Chừa sẵn chiều ngang nút close khi hover + padding 2 đầu hàng (12.0)
+                            text_w + check_w + 22.0 + item_spacing_x + 12.0
+                        })
+                        .fold(0.0_f32, f32::max);
+
+                    let candidate_max = candidate_containers
+                        .iter()
+                        .map(|c| {
+                            let text_w = fonts
+                                .layout_no_wrap(
+                                    c.short_label().to_owned(),
+                                    egui::FontId::proportional(12.0),
+                                    egui::Color32::PLACEHOLDER,
+                                )
+                                .size()
+                                .x;
+                            text_w + 12.0
+                        })
+                        .fold(0.0_f32, f32::max);
+
+                    // Cộng thêm khoảng dự phòng cho scrollbar dọc khi danh sách dài
+                    active_max.max(candidate_max) + 14.0
+                }
+            });
+
+            let popup_width =
+                (desired_content_width + total_margin.sum().x).clamp(min_width, max_width);
             let inner_width = (popup_width - total_margin.sum().x).max(0.0);
             let inner_max_height = (popup_max_height - total_margin.sum().y).max(80.0);
 
             frame.show(ui, |ui| {
                 ui.set_width(inner_width);
+                ui.set_max_width(inner_width);
                 ui.set_max_height(inner_max_height);
 
-                if scan_state.in_flight && active_containers.is_empty() {
+                if is_empty_scanning {
                     ui.label(
                         egui::RichText::new("Scanning containers...")
                             .size(11.5)
@@ -445,33 +524,17 @@ pub fn render_source_switcher_popup(
                     ctx.request_repaint_after(Duration::from_millis(50));
                 }
 
-                let candidate_containers = scan_state
-                    .loaded
-                    .as_deref()
-                    .map(|containers| {
-                        filter_project_candidate_containers(
-                            docker_opts,
-                            active_containers,
-                            containers,
-                        )
-                    })
-                    .unwrap_or_default();
-
-                let mut seen_active = HashSet::new();
                 egui::ScrollArea::vertical()
                     .id_salt("source_switcher_containers_scroll")
                     .auto_shrink([false, true])
                     .max_height(inner_max_height)
                     .show(ui, |ui| {
-                        for c in active_containers {
-                            if !seen_active.insert(c.container_name.to_ascii_lowercase()) {
-                                continue;
-                            }
+                        for c in deduped_active {
                             let tip = format!("{}\n{}", c.container_name, c.source_summary);
                             let action = render_project_row(
                                 ui,
                                 ProjectRowConfig {
-                                    icon: IconName::Box,
+                                    icon: None,
                                     label: &c.short_label,
                                     is_active: c.is_active,
                                     location_tooltip: Some(&tip),
@@ -498,7 +561,7 @@ pub fn render_source_switcher_popup(
                             let action = render_project_row(
                                 ui,
                                 ProjectRowConfig {
-                                    icon: IconName::Box,
+                                    icon: None,
                                     label: c.short_label(),
                                     is_active: false,
                                     location_tooltip: Some(&tip),
@@ -546,7 +609,7 @@ pub fn render_source_switcher_popup(
 mod tests {
     use super::*;
 
-    fn run_switcher_measure(item_count: usize) -> Rect {
+    fn run_switcher_measure_labels(labels: &[String]) -> Rect {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _guard = rt.enter();
         let ctx = egui::Context::default();
@@ -560,11 +623,13 @@ mod tests {
         );
         let session = GuiSession::from_workspace(&ws, 1000, 1000);
 
-        let active_containers: Vec<ActiveContainerSessionInfo> = (0..item_count)
-            .map(|i| ActiveContainerSessionInfo {
+        let active_containers: Vec<ActiveContainerSessionInfo> = labels
+            .iter()
+            .enumerate()
+            .map(|(i, label)| ActiveContainerSessionInfo {
                 session_index: i,
                 container_name: format!("demo-svc-{i}-1"),
-                short_label: format!("svc-{i}"),
+                short_label: label.clone(),
                 source_summary: "Container Logs".to_string(),
                 is_active: i == 0,
             })
@@ -617,6 +682,11 @@ mod tests {
             .unwrap_or(Rect::NOTHING)
     }
 
+    fn run_switcher_measure(item_count: usize) -> Rect {
+        let labels: Vec<String> = (0..item_count).map(|i| format!("svc-{i}")).collect();
+        run_switcher_measure_labels(&labels)
+    }
+
     #[test]
     fn source_switcher_popup_auto_grows_up_to_modal_picker_max_height() {
         let two_items = run_switcher_measure(2);
@@ -624,8 +694,8 @@ mod tests {
         let thirty_items = run_switcher_measure(30);
 
         assert!(
-            (two_items.width() - 300.0).abs() <= 2.0,
-            "expected popup width ~300, got {}",
+            (two_items.width() - 180.0).abs() <= 2.0,
+            "expected short labels to clamp to min width ~180, got {}",
             two_items.width()
         );
         assert!(
@@ -638,6 +708,34 @@ mod tests {
             thirty_items.height() <= 422.0 && thirty_items.height() >= 400.0,
             "expected 30 items to clamp near 420.0 max height, got {}",
             thirty_items.height()
+        );
+    }
+
+    #[test]
+    fn source_switcher_popup_width_clamps_between_min_and_max_without_horizontal_overflow() {
+        let short_rect = run_switcher_measure_labels(&["app".into(), "db".into()]);
+        let medium_rect = run_switcher_measure_labels(&[
+            "app".into(),
+            "psittacus-erithacus-background-worker".into(),
+        ]);
+        let long_rect = run_switcher_measure_labels(&[
+            "super-long-container-service-name-that-should-truncate-at-max-width-without-expanding-popup-or-scrolling-horizontally".into(),
+        ]);
+
+        assert!(
+            (short_rect.width() - 180.0).abs() <= 2.0,
+            "expected min width ~180, got {}",
+            short_rect.width()
+        );
+        assert!(
+            medium_rect.width() > short_rect.width() + 40.0 && medium_rect.width() <= 422.0,
+            "expected medium label to grow width between 180 and 420, got {}",
+            medium_rect.width()
+        );
+        assert!(
+            (long_rect.width() - 420.0).abs() <= 2.0,
+            "expected long label to clamp at max width ~420 without horizontal overflow, got {}",
+            long_rect.width()
         );
     }
 

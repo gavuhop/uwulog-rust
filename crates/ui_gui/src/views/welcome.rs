@@ -96,7 +96,7 @@ pub fn render_welcome_view(
                                         let action = render_project_row(
                                             ui,
                                             ProjectRowConfig {
-                                                icon: ws_icon,
+                                                icon: Some(ws_icon),
                                                 label: &label,
                                                 is_active: false,
                                                 location_tooltip: tooltip_loc,
