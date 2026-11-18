@@ -195,3 +195,99 @@ async fn test_switch_tab_preserves_picked_row_and_inspector() {
         Some(202)
     );
 }
+
+#[tokio::test]
+async fn test_view_in_raw_log_references_exact_spilled_disk_row() {
+    use crate::actions::AppAction;
+    use uwu_core_workspace::{SourceConfig, SourceType, Workspace, WorkspaceLocation};
+
+    let mut app = create_test_app();
+    let mut ws = Workspace::new(
+        "spill-raw-ref-test",
+        WorkspaceLocation::local("/tmp"),
+        SourceType::Process,
+    );
+    ws.last_query = String::new();
+    app.dispatch_action(AppAction::OpenWorkspace(ws));
+
+    // Khởi tạo WorkspaceSession với capacity = 10 để ép 30/40 dòng phải spill thực sự ra file Arrow IPC trên ổ cứng
+    {
+        let active = app.active_session_mut();
+        active.session = uwu_core_workspace::WorkspaceSession::new(
+            "spill-raw-ref-test",
+            WorkspaceLocation::local("/tmp"),
+            SourceConfig {
+                capacity: 10,
+                display_limit: 50,
+                ..Default::default()
+            },
+        );
+    }
+
+    let tx = app.active_session().session.engine.get_channel();
+    for seq in 0..40 {
+        let level = if seq % 5 == 0 { "ERROR" } else { "INFO" };
+        tx.send(RawLogEntry {
+            payload: RawPayload::Json(serde_json::json!({
+                "seq": seq,
+                "level": level,
+                "message": format!("log_seq_{:02}", seq),
+            })),
+        })
+        .await
+        .unwrap();
+    }
+    tokio::time::sleep(Duration::from_millis(60)).await;
+    app.active_session().session.engine.flush_spill();
+
+    // RAM chỉ giữ 10 dòng cuối (30..39); 30 dòng đầu (0..29) đã nằm trong Cold Disk (.arrow)
+    assert_eq!(app.active_session().session.engine.total_logs(), 10);
+    assert_eq!(app.active_session().session.engine.total_spilled(), 30);
+
+    // Lọc `level:error` trong tab Filtered -> chọn dòng `log_seq_05` (nằm hoàn toàn trên ổ đĩa)
+    {
+        let active = app.active_session_mut();
+        active.view.search.query = "level:error".to_string();
+        active.trigger_full_search();
+    }
+    let target_event = app
+        .active_session()
+        .view
+        .viewport
+        .cached_logs
+        .iter()
+        .find(|e| e.message == "log_seq_05")
+        .cloned()
+        .expect("filtered logs must include spilled row log_seq_05 from disk");
+
+    app.dispatch_action(AppAction::SelectLog(Some(target_event.clone())));
+    app.dispatch_action(AppAction::ViewRawContext);
+
+    let session = app.active_session();
+    assert_eq!(session.view.active_tab, ActiveTab::Unfiltered);
+    assert!(!session.view.unfiltered.is_live);
+    assert_eq!(session.view.unfiltered.target_id, Some(target_event.id));
+
+    let target_idx = session
+        .view
+        .unfiltered
+        .target_index
+        .expect("target_index must resolve for spilled row");
+    let raw_row = &session.view.unfiltered.cached_unfiltered[target_idx];
+    assert_eq!(raw_row.id, target_event.id);
+    assert_eq!(raw_row.message, "log_seq_05");
+
+    // Kiểm tra ngữ cảnh Raw xung quanh dòng trên đĩa phải đúng thứ tự gốc (04 -> 05 -> 06)
+    assert_eq!(
+        session.view.unfiltered.cached_unfiltered[target_idx - 1].message,
+        "log_seq_04"
+    );
+    assert_eq!(
+        session.view.unfiltered.cached_unfiltered[target_idx + 1].message,
+        "log_seq_06"
+    );
+    assert_eq!(
+        session.view.inspector.selected_log.as_ref().map(|l| l.id),
+        Some(target_event.id)
+    );
+}

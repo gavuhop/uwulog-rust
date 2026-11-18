@@ -27,6 +27,7 @@ pub struct GuiViewState {
     pub columns: ColumnState,
     pub unfiltered: UnfilteredViewState,
     pub active_tab: ActiveTab,
+    pub buffer_overflow_dismissed: bool,
 }
 
 impl GuiViewState {
@@ -51,5 +52,6 @@ impl GuiViewState {
         self.unfiltered.selected_log = None;
         self.search.autocomplete.is_open = false;
         self.search.autocomplete.suggestions.clear();
+        self.buffer_overflow_dismissed = false;
     }
 }

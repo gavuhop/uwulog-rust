@@ -10,6 +10,8 @@ use uwu_driver_sources::{LogNormalizer, LogSource};
 
 pub mod arrow_storage;
 use arrow_storage::ArrowStorage;
+pub use arrow_storage::{ColdCountTask, TwoPhaseSearchResult};
+use std::path::PathBuf;
 
 pub struct SystemEngine {
     raw_tx: mpsc::Sender<RawLogEntry>,
@@ -21,10 +23,28 @@ pub struct SystemEngine {
     schema_version: Arc<AtomicU64>,
 }
 
+static NEXT_ENGINE_ID: AtomicU64 = AtomicU64::new(1);
+
 impl SystemEngine {
     pub fn new(max_capacity: usize) -> Self {
+        let seq = NEXT_ENGINE_ID.fetch_add(1, Ordering::Relaxed);
+        let dir =
+            uwu_core_util::app_spill_dir().join(format!("engine_{}_{}", std::process::id(), seq));
+        Self::new_with_spill_dir(max_capacity, dir)
+    }
+
+    pub fn new_with_session_id(max_capacity: usize, session_id: impl std::fmt::Display) -> Self {
+        let dir = uwu_core_util::app_spill_dir().join(format!(
+            "ws_{}_{}",
+            session_id,
+            std::process::id()
+        ));
+        Self::new_with_spill_dir(max_capacity, dir)
+    }
+
+    pub fn new_with_spill_dir(max_capacity: usize, spill_dir: PathBuf) -> Self {
         let (raw_tx, mut raw_rx) = mpsc::channel::<RawLogEntry>(10_000);
-        let storage = Arc::new(ArrowStorage::new(max_capacity));
+        let storage = Arc::new(ArrowStorage::new_with_spill_dir(max_capacity, spill_dir));
 
         let default_schema = {
             let mut map = HashMap::new();
@@ -257,6 +277,19 @@ impl SystemEngine {
         self.storage.search_with_count(expr.as_ref(), limit, now)
     }
 
+    /// Pha 1 của Two-Phase Search (không khóa UI, hủy sớm theo `cancel_token`).
+    pub fn search_phase1(
+        &self,
+        query: &str,
+        limit: usize,
+        cancel_token: &AtomicU64,
+        query_id: u64,
+    ) -> Option<(TwoPhaseSearchResult, Option<ColdCountTask>)> {
+        let (expr, now) = self.parse_query_expr(query);
+        self.storage
+            .search_phase1(expr.as_ref(), limit, now, cancel_token, query_id)
+    }
+
     /// Tìm kiếm phân trang ngược (Reverse Pagination): lấy tối đa `limit` logs nằm ngay trước `before_id`.
     /// Nếu `query` rỗng, trả về các bản ghi liên tục trước `before_id`.
     /// Nếu có `query`, trả về các bản ghi khớp bộ lọc nằm trước `before_id`.
@@ -278,6 +311,14 @@ impl SystemEngine {
 
     pub fn total_processed(&self) -> u64 {
         self.storage.total_processed()
+    }
+
+    pub fn total_spilled(&self) -> u64 {
+        self.storage.total_spilled()
+    }
+
+    pub fn flush_spill(&self) {
+        self.storage.flush_spill();
     }
 
     pub fn max_capacity(&self) -> usize {
@@ -492,7 +533,69 @@ mod tests {
         engine.clear();
         assert_eq!(engine.total_logs(), 0);
         assert_eq!(engine.total_processed(), 0);
+        assert_eq!(engine.total_spilled(), 0);
         assert_eq!(engine.max_capacity(), 10);
+    }
+
+    #[tokio::test]
+    async fn test_system_engine_tracks_spilled_rows_and_cold_queries() {
+        let spill_dir = std::env::temp_dir().join(format!(
+            "uwu_core_engine_spill_test_{}",
+            uuid::Uuid::new_v4()
+        ));
+        let engine = SystemEngine::new_with_spill_dir(5, spill_dir.clone());
+        let tx = engine.get_channel();
+
+        for i in 0..12 {
+            let level = if i % 2 == 0 { "ERROR" } else { "INFO" };
+            let status = if i % 2 == 0 { 500 } else { 200 };
+            tx.send(RawLogEntry {
+                payload: RawPayload::Json(serde_json::json!({
+                    "level": level,
+                    "message": format!("Row {i}"),
+                    "status": status
+                })),
+            })
+            .await
+            .unwrap();
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(60)).await;
+        engine.flush_spill();
+
+        assert_eq!(engine.total_processed(), 12);
+        assert_eq!(engine.total_logs(), 5);
+        assert_eq!(engine.total_spilled(), 7);
+        assert!(spill_dir.exists());
+
+        // 1. Two-phase search trên query `level:error` với limit=2 (chỉ RAM đã đủ 2 kết quả ở cuối -> Pha 1 trả ngay 2+, Pha 2 đếm đủ 6)
+        let cancel = AtomicU64::new(1);
+        let (phase1, count_task) = engine.search_phase1("level:error", 2, &cancel, 1).unwrap();
+        assert_eq!(phase1.logs.len(), 2);
+        assert!(!phase1.is_count_exact);
+        let exact_total = count_task.unwrap().execute(&cancel, 1).unwrap();
+        assert_eq!(exact_total, 6);
+
+        // 2. Synchronous full search + Reverse pagination vượt ranh giới Hot -> Cold Disk
+        let (all_err_count, latest_errs) = engine.search_with_count("level:error", 3);
+        assert_eq!(all_err_count, 6);
+        assert_eq!(latest_errs.len(), 3);
+        let older_errs = engine.search_before("level:error", latest_errs[0].id, 10);
+        assert_eq!(older_errs.len(), 3);
+        assert!(older_errs[0].message.contains("Row 0"));
+
+        // 3. Raw Context (`get_unfiltered_events`) tìm log cũ đã spill xuống đĩa (Row 1)
+        let (_, all_logs) = engine.search_with_count("", 20);
+        assert_eq!(all_logs.len(), 12);
+        let cold_target_id = all_logs[1].id;
+        let (idx_opt, raw_ctx) = engine.get_unfiltered_events(Some(cold_target_id), 4);
+        assert_eq!(raw_ctx.len(), 4);
+        assert!(idx_opt.is_some());
+        assert_eq!(raw_ctx[idx_opt.unwrap()].id, cold_target_id);
+
+        // 4. clear() xóa sạch file tạm trên đĩa và reset total_spilled
+        engine.clear();
+        assert_eq!(engine.total_spilled(), 0);
+        assert!(!spill_dir.exists());
     }
 
     #[tokio::test]

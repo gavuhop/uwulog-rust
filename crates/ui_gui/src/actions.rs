@@ -111,6 +111,12 @@ pub enum AppEvent {
         query_id: u64,
         total_matched: usize,
         logs: Vec<LogEvent>,
+        is_count_exact: bool,
+    },
+    SearchCountUpdated {
+        session_id: uuid::Uuid,
+        query_id: u64,
+        total_matched: usize,
     },
     IncrementalLogsReady {
         session_id: uuid::Uuid,

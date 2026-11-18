@@ -35,22 +35,25 @@ pub fn render_log_counter(ui: &mut egui::Ui, session: &GuiSession) {
         }
         ActiveTab::Filtered => {
             if is_filtering {
+                let total_matched = session.view.viewport.total_matched;
+                let total_label = if session.view.viewport.is_count_exact {
+                    theme::format_number(total_matched)
+                } else {
+                    format!("{}+", theme::format_number(total_matched))
+                };
+
                 if session.view.viewport.is_auto_scroll {
-                    let total_matched = session.view.viewport.total_matched;
                     let cached_len = session.view.viewport.cached_logs.len();
-                    let text = if total_matched > cached_len {
-                        format!(
-                            "{}/{}",
-                            theme::format_number(cached_len),
-                            theme::format_number(total_matched)
-                        )
-                    } else {
-                        theme::format_number(total_matched)
-                    };
+                    let text =
+                        if total_matched > cached_len || !session.view.viewport.is_count_exact {
+                            format!("{}/{}", theme::format_number(cached_len), total_label)
+                        } else {
+                            total_label.clone()
+                        };
                     let tooltip = format!(
                         "Filter Query: \"{}\" (Live)\n• Total Matched: {}\n• Displayed: {} (Limit: {})",
                         session.view.search.query.trim(),
-                        theme::format_number(total_matched),
+                        total_label,
                         theme::format_number(cached_len),
                         theme::format_number(session.session.display_limit),
                     );
@@ -62,23 +65,34 @@ pub fn render_log_counter(ui: &mut egui::Ui, session: &GuiSession) {
                         .viewport
                         .pause_snapshot
                         .paused_new_matched_count;
-                    let text = format_fraction(new_matched, seen_matched_at_pause);
+                    let seen_label = if session.view.viewport.is_count_exact {
+                        theme::format_number(seen_matched_at_pause)
+                    } else {
+                        format!("{}+", theme::format_number(seen_matched_at_pause))
+                    };
+                    let text = format!("{}/{}", theme::format_number(new_matched), seen_label);
                     let tooltip = format!(
                         "Filter Query: \"{}\" (Paused)\n• New Matched Logs Since Pause: {}\n• Matched at Pause: {}\n• Displayed: {}",
                         session.view.search.query.trim(),
                         theme::format_number(new_matched),
-                        theme::format_number(seen_matched_at_pause),
+                        seen_label,
                         theme::format_number(session.view.viewport.cached_logs.len()),
                     );
                     (text, theme.text.accent, tooltip)
                 }
             } else {
                 let total_now = session.session.engine.total_processed() as usize;
+                let spilled = session.session.engine.total_spilled() as usize;
+                let spill_line = if spilled > 0 {
+                    format!("\n• Disk Spill: {} logs", theme::format_number(spilled))
+                } else {
+                    String::new()
+                };
 
                 if session.view.viewport.is_auto_scroll {
                     let text = theme::format_number(total_now);
                     let tooltip = format!(
-                        "Main Stream (Live)\n• Total Ingested: {}\n• In-Memory Buffer: {} / {}\n• Displayed: {}",
+                        "Main Stream (Live)\n• Total Ingested: {}\n• In-Memory Buffer: {} / {}{spill_line}\n• Displayed: {}",
                         theme::format_number(total_now),
                         theme::format_number(session.session.engine.total_logs()),
                         theme::format_number(session.session.engine.max_capacity()),

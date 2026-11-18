@@ -309,6 +309,80 @@ pub fn parse_iso_to_secs(s: &str) -> Option<f64> {
     detect_timestamp_format(s).map(|(_, ts)| ts)
 }
 
+/// Thư mục gốc lưu trữ file spill tạm theo phiên (`~/.local/share/uwulog/spill` trên Linux,
+/// `%LOCALAPPDATA%\uwulog\spill` trên Windows).
+pub fn app_spill_dir() -> std::path::PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+            if !local_app_data.trim().is_empty() {
+                return std::path::PathBuf::from(local_app_data)
+                    .join("uwulog")
+                    .join("spill");
+            }
+        }
+    }
+
+    if let Ok(xdg_data) = std::env::var("XDG_DATA_HOME") {
+        if !xdg_data.trim().is_empty() {
+            return std::path::PathBuf::from(xdg_data)
+                .join("uwulog")
+                .join("spill");
+        }
+    }
+
+    if let Ok(home) = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
+        if !home.trim().is_empty() {
+            return std::path::PathBuf::from(home)
+                .join(".local")
+                .join("share")
+                .join("uwulog")
+                .join("spill");
+        }
+    }
+
+    std::env::temp_dir().join("uwulog-spill")
+}
+
+fn dir_last_activity(dir: &std::path::Path) -> Option<std::time::SystemTime> {
+    let mut latest = std::fs::metadata(dir).ok()?.modified().ok()?;
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            if let Ok(meta) = entry.metadata() {
+                if let Ok(mtime) = meta.modified() {
+                    if mtime > latest {
+                        latest = mtime;
+                    }
+                }
+            }
+        }
+    }
+    Some(latest)
+}
+
+/// Xóa các thư mục spill cũ (mồ côi do crash/tắt đột ngột) không được sử dụng quá `max_age`.
+pub fn cleanup_stale_spill_dirs(root_dir: &std::path::Path, max_age: std::time::Duration) -> usize {
+    let Ok(entries) = std::fs::read_dir(root_dir) else {
+        return 0;
+    };
+    let now = std::time::SystemTime::now();
+    let mut removed = 0;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let is_stale = dir_last_activity(&path)
+            .and_then(|last| now.duration_since(last).ok())
+            .is_some_and(|age| age >= max_age);
+        if is_stale && std::fs::remove_dir_all(&path).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -474,5 +548,28 @@ mod tests {
         let (new_fmt, new_ts) = detect_timestamp_format(new_str).unwrap();
         assert_eq!(new_fmt, TimestampFormat::EpochSeconds);
         assert_eq!(new_ts, 1724148000.5);
+    }
+
+    #[test]
+    fn test_cleanup_stale_spill_dirs_zero_age_vs_week() {
+        let root = std::env::temp_dir().join(format!("uwu_util_spill_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dir_a = root.join("sess_a");
+        std::fs::create_dir_all(&dir_a).unwrap();
+        std::fs::write(dir_a.join("seg_1.arrow"), b"data").unwrap();
+
+        // Với max_age = 7 ngày, thư mục mới tạo không bị xóa
+        let removed_week =
+            cleanup_stale_spill_dirs(&root, std::time::Duration::from_secs(7 * 24 * 3600));
+        assert_eq!(removed_week, 0);
+        assert!(dir_a.exists());
+
+        // Với max_age = 0, thư mục được coi là quá hạn và bị dọn
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let removed_now = cleanup_stale_spill_dirs(&root, std::time::Duration::from_millis(1));
+        assert_eq!(removed_now, 1);
+        assert!(!dir_a.exists());
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

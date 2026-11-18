@@ -362,23 +362,38 @@ impl UwuGuiApp {
         let egui_ctx = self.egui_ctx.clone();
 
         self.rt.spawn_blocking(move || {
-            // Early Cancellation Check 1: Trước khi tốn CPU quét dữ liệu
-            if cancel_token.load(std::sync::atomic::Ordering::Relaxed) != query_id {
+            let Some((phase1, count_task)) =
+                engine.search_phase1(&query, limit, &cancel_token, query_id)
+            else {
                 return;
-            }
-            let (total_matched, logs) = engine.search_with_count(&query, limit);
-            // Early Cancellation Check 2: Sau khi quét xong (tránh gửi event/repaint nếu user vừa gõ tiếp)
+            };
             if cancel_token.load(std::sync::atomic::Ordering::Relaxed) != query_id {
                 return;
             }
             let _ = tx.send(AppEvent::SearchResultsReady {
                 session_id,
                 query_id,
-                total_matched,
-                logs,
+                total_matched: phase1.total_matched,
+                logs: phase1.logs,
+                is_count_exact: phase1.is_count_exact,
             });
-            if let Some(c) = egui_ctx {
+            if let Some(ref c) = egui_ctx {
                 c.request_repaint();
+            }
+
+            if let Some(task) = count_task {
+                if let Some(exact_total) = task.execute(&cancel_token, query_id) {
+                    if cancel_token.load(std::sync::atomic::Ordering::Relaxed) == query_id {
+                        let _ = tx.send(AppEvent::SearchCountUpdated {
+                            session_id,
+                            query_id,
+                            total_matched: exact_total,
+                        });
+                        if let Some(ref c) = egui_ctx {
+                            c.request_repaint();
+                        }
+                    }
+                }
             }
         });
     }
@@ -571,6 +586,15 @@ impl UwuGuiApp {
     }
 
     pub fn new(cc: &eframe::CreationContext<'_>, rt: Handle) -> Self {
+        // Dọn sạch các thư mục spill mồ côi trên đĩa không sử dụng quá 7 ngày
+        rt.spawn_blocking(|| {
+            let root = uwu_core_util::app_spill_dir();
+            let _ = uwu_core_util::cleanup_stale_spill_dirs(
+                &root,
+                std::time::Duration::from_secs(7 * 24 * 3600),
+            );
+        });
+
         let cli = CliArgs::parse();
         let mut store = WorkspaceStore::load();
         store.recent_workspaces.retain(|w| {

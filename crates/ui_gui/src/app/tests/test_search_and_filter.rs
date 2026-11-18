@@ -139,7 +139,7 @@ async fn test_apply_search_results_stale_generation_discarded() {
     );
 
     // 1. Event lỗi thời (query_id 1 < 2) -> phải bị bỏ qua, không ghi đè cache
-    session.apply_search_results(1, 999, vec![stale_log]);
+    session.apply_search_results(1, 999, vec![stale_log], true);
     assert_eq!(session.view.viewport.total_matched, 10);
     assert!(session.view.viewport.cached_logs.is_empty());
 
@@ -150,7 +150,7 @@ async fn test_apply_search_results_stale_generation_discarded() {
         "fresh log",
         HashMap::new(),
     );
-    session.apply_search_results(2, 42, vec![fresh_log]);
+    session.apply_search_results(2, 42, vec![fresh_log], true);
     assert_eq!(session.view.viewport.total_matched, 42);
     assert_eq!(session.view.viewport.cached_logs.len(), 1);
     assert_eq!(session.view.viewport.cached_logs[0].message, "fresh log");
@@ -178,6 +178,7 @@ async fn test_app_event_drain_pipeline() {
             query_id: 1,
             total_matched: 1,
             logs: vec![log],
+            is_count_exact: true,
         })
         .unwrap();
 
@@ -217,13 +218,14 @@ async fn test_reducer_drops_out_of_order_query() {
         query_id: 2,
         total_matched: 50,
         logs: vec![stale_log],
+        is_count_exact: true,
     });
 
     // Kết quả của query 2 phải bị Reducer drop thẳng tay, không làm bẩn state
     assert_eq!(app.active_session().view.viewport.total_matched, 0);
     assert!(app.active_session().view.viewport.cached_logs.is_empty());
 
-    // Worker của query 3 hoàn thành -> Reducer chấp nhận và cập nhật O(1)
+    // Worker của query 3 hoàn thành Pha 1 (đếm chưa xong trên Cold Disk)
     let valid_log = LogEvent::new(
         "2026-08-20T10:01:00Z",
         LogColor::Default,
@@ -235,14 +237,33 @@ async fn test_reducer_drops_out_of_order_query() {
         query_id: 3,
         total_matched: 10,
         logs: vec![valid_log],
+        is_count_exact: false,
     });
 
     assert_eq!(app.active_session().view.viewport.total_matched, 10);
+    assert!(!app.active_session().view.viewport.is_count_exact);
     assert_eq!(app.active_session().view.viewport.cached_logs.len(), 1);
     assert_eq!(
         app.active_session().view.viewport.cached_logs[0].message,
         "valid from query 3"
     );
+
+    // Pha 2 đếm xong -> cập nhật exact total và is_count_exact = true (event cũ query 2 bị drop)
+    app.apply_event(AppEvent::SearchCountUpdated {
+        session_id,
+        query_id: 2,
+        total_matched: 999,
+    });
+    assert_eq!(app.active_session().view.viewport.total_matched, 10);
+    assert!(!app.active_session().view.viewport.is_count_exact);
+
+    app.apply_event(AppEvent::SearchCountUpdated {
+        session_id,
+        query_id: 3,
+        total_matched: 142,
+    });
+    assert_eq!(app.active_session().view.viewport.total_matched, 142);
+    assert!(app.active_session().view.viewport.is_count_exact);
 }
 
 #[tokio::test]

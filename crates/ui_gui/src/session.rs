@@ -111,7 +111,7 @@ impl GuiSession {
             .session
             .engine
             .search_with_count(&self.view.search.query, self.session.display_limit);
-        self.apply_search_results(self.view.search.active_query_id, matched, logs);
+        self.apply_search_results(self.view.search.active_query_id, matched, logs, true);
     }
 
     /// Cập nhật kết quả tìm kiếm bất đồng bộ gửi về từ Background Search Worker (O(1))
@@ -120,6 +120,7 @@ impl GuiSession {
         query_id: u64,
         total_matched: usize,
         logs: Vec<LogEvent>,
+        is_count_exact: bool,
     ) {
         // Loại bỏ kết quả lỗi thời nếu người dùng đã gõ query mới hơn
         if query_id < self.view.search.active_query_id {
@@ -127,6 +128,7 @@ impl GuiSession {
         }
 
         self.view.viewport.total_matched = total_matched;
+        self.view.viewport.is_count_exact = is_count_exact;
         self.sync_discovered_fields(&logs);
         self.view.viewport.cached_logs = logs;
         self.view.viewport.reached_oldest = false;
@@ -138,6 +140,18 @@ impl GuiSession {
             .viewport
             .record_pause(self.view.viewport.last_processed_count);
         self.view.viewport.has_new_data = true;
+    }
+
+    /// Cập nhật tổng số kết quả chính xác từ Pha 2 (đếm Cold Segments ở nền)
+    pub fn apply_search_count_update(&mut self, query_id: u64, total_matched: usize) {
+        if query_id < self.view.search.active_query_id {
+            return;
+        }
+        self.view.viewport.total_matched = total_matched;
+        self.view.viewport.is_count_exact = true;
+        if !self.view.viewport.is_auto_scroll {
+            self.view.viewport.pause_snapshot.filtered_seen = total_matched;
+        }
     }
 
     /// Cập nhật log tăng dần từ background worker cho Filtered stream

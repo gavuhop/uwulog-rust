@@ -11,9 +11,19 @@ pub fn reduce(app: &mut UwuGuiApp, event: AppEvent) {
             query_id,
             total_matched,
             logs,
+            is_count_exact,
         } => {
             if let Some(session) = find_session_mut(app, session_id) {
-                session.apply_search_results(query_id, total_matched, logs);
+                session.apply_search_results(query_id, total_matched, logs, is_count_exact);
+            }
+        }
+        AppEvent::SearchCountUpdated {
+            session_id,
+            query_id,
+            total_matched,
+        } => {
+            if let Some(session) = find_session_mut(app, session_id) {
+                session.apply_search_count_update(query_id, total_matched);
             }
         }
         AppEvent::IncrementalLogsReady {

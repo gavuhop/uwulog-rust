@@ -74,14 +74,23 @@ impl WorkspaceSession {
         location: WorkspaceLocation,
         source_config: SourceConfig,
     ) -> Self {
+        Self::new_with_id(Uuid::new_v4(), name, location, source_config)
+    }
+
+    fn new_with_id(
+        id: Uuid,
+        name: impl Into<String>,
+        location: WorkspaceLocation,
+        source_config: SourceConfig,
+    ) -> Self {
         let capacity = source_config.capacity;
         let display_limit = source_config.display_limit;
-        let engine = Arc::new(SystemEngine::new(capacity));
+        let engine = Arc::new(SystemEngine::new_with_session_id(capacity, id));
         let (env_watch_tx, env_watch_rx) = watch::channel(None);
         let name = crate::sanitize_project_name(&name.into(), &location);
 
         Self {
-            id: Uuid::new_v4(),
+            id,
             name,
             location,
             source_config,
@@ -133,8 +142,7 @@ impl WorkspaceSession {
             display_limit,
             ..Default::default()
         };
-        let mut session = Self::new(&ws.name, ws.location.clone(), source_config);
-        session.id = ws.id;
+        let mut session = Self::new_with_id(ws.id, &ws.name, ws.location.clone(), source_config);
         session.apply_workspace(ws);
         session
     }
@@ -505,7 +513,8 @@ impl WorkspaceSession {
         self.capacity = self.source_config.capacity;
         self.display_limit = self.source_config.display_limit;
         if self.capacity != self.engine.max_capacity() {
-            self.engine = Arc::new(SystemEngine::new(self.capacity));
+            self.engine.clear();
+            self.engine = Arc::new(SystemEngine::new_with_session_id(self.capacity, self.id));
         } else {
             self.engine.clear();
         }
