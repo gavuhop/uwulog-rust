@@ -218,10 +218,8 @@ impl WorkspaceManager {
                 .any(|w| w.id == removed.session.id);
 
         if !is_transient_container_tab {
-            let mut ws = removed.session.to_workspace();
-            ws.last_query = removed.view.search.query.clone();
-            ws.filter_history = removed.view.search.history.entries.clone();
-            self.store.add_or_update(ws);
+            self.store
+                .add_or_update(Self::gui_session_to_workspace(&removed));
         }
 
         if self.sessions.is_empty() {
@@ -269,6 +267,14 @@ impl WorkspaceManager {
     }
 
     /// Lưu trạng thái workspace hiện tại vào file lưu trữ cấu hình
+    fn gui_session_to_workspace(gui_session: &GuiSession) -> Workspace {
+        let mut ws = gui_session.session.to_workspace();
+        ws.last_query = gui_session.view.search.query.clone();
+        ws.filter_history = gui_session.view.search.history.entries.clone();
+        ws.columns = gui_session.view.columns.to_saved_columns();
+        ws
+    }
+
     pub fn save_current_workspace(&mut self) {
         if self.sessions.is_empty() {
             self.store.active_workspace_id = None;
@@ -285,9 +291,7 @@ impl WorkspaceManager {
         gui_session.session.sync_location();
 
         if !gui_session.session.is_following_container_logs() {
-            let mut ws = gui_session.session.to_workspace();
-            ws.last_query = gui_session.view.search.query.clone();
-            ws.filter_history = gui_session.view.search.history.entries.clone();
+            let ws = Self::gui_session_to_workspace(gui_session);
             self.store.add_or_update(ws);
             self.store.active_workspace_id = Some(self.sessions[active_idx].session.id);
         }
@@ -316,10 +320,7 @@ impl WorkspaceManager {
                 s.session.name = "Workspace".to_string();
             }
             s.session.sync_location();
-            let mut ws = s.session.to_workspace();
-            ws.last_query = s.view.search.query.clone();
-            ws.filter_history = s.view.search.history.entries.clone();
-            self.store.add_or_update(ws);
+            self.store.add_or_update(Self::gui_session_to_workspace(s));
         }
         self.store.open_workspace_ids = self
             .sessions
@@ -348,11 +349,7 @@ impl WorkspaceManager {
         gui_session.has_auto_started_source = false;
         gui_session.user_stopped_source = false;
         gui_session.view.viewport.latch();
-        gui_session.view.search.query = ws.last_query.clone();
-        gui_session.view.search.history.entries = ws.filter_history.clone();
-        if gui_session.view.search.history.entries.is_empty() && !ws.last_query.trim().is_empty() {
-            gui_session.view.search.history.record(&ws.last_query);
-        }
+        gui_session.apply_workspace_view(ws);
         gui_session.session.spawn_load_environment(rt);
         self.save_current_workspace();
         self.auto_start_container_log_if_needed(rt);

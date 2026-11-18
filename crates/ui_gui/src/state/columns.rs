@@ -1,5 +1,8 @@
 use std::collections::HashSet;
 use uwu_core_schema::LogEvent;
+use uwu_core_workspace::SavedColumnConfig;
+
+const DEFAULT_ROLES: [(&str, f32); 3] = [("timestamp", 150.0), ("level", 56.0), ("message", 350.0)];
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ColumnItem {
@@ -26,6 +29,11 @@ pub struct ColumnState {
     pub table_animations: crate::animation::MoveAnimationManager,
     pub modal_animations: crate::animation::MoveAnimationManager,
     pub layout_version: u64,
+    default_slot_keys: [String; 3],
+    saved_layout: Vec<SavedColumnConfig>,
+    columns_dirty_for_save: bool,
+    pending_save_frames: Option<u8>,
+    draft_did_reset: bool,
 }
 
 impl Default for ColumnState {
@@ -46,6 +54,11 @@ impl Default for ColumnState {
             table_animations: crate::animation::MoveAnimationManager::default(),
             modal_animations: crate::animation::MoveAnimationManager::default(),
             layout_version: 0,
+            default_slot_keys: DEFAULT_ROLES.map(|(n, _)| n.to_string()),
+            saved_layout: Vec::new(),
+            columns_dirty_for_save: false,
+            pending_save_frames: None,
+            draft_did_reset: false,
         }
     }
 }
@@ -60,12 +73,14 @@ fn reorder_vec(list: &mut Vec<ColumnItem>, from_idx: usize, to_idx: usize) {
 impl ColumnState {
     pub fn open_modal(&mut self) {
         self.draft_columns = Some(self.columns.clone());
+        self.draft_did_reset = false;
         self.is_modal_open = true;
     }
 
     pub fn close_modal(&mut self) {
         self.is_modal_open = false;
         self.draft_columns = None;
+        self.draft_did_reset = false;
         self.clear_modal_drag();
     }
 
@@ -73,8 +88,13 @@ impl ColumnState {
         if let Some(draft) = self.draft_columns.take() {
             self.columns = draft;
             self.known_keys = self.columns.iter().map(|c| c.name.clone()).collect();
+            if self.draft_did_reset {
+                self.saved_layout.clear();
+            }
             self.layout_version = self.layout_version.wrapping_add(1);
+            self.columns_dirty_for_save = true;
         }
+        self.draft_did_reset = false;
         self.is_modal_open = false;
         self.clear_modal_drag();
     }
@@ -90,37 +110,65 @@ impl ColumnState {
     }
 
     pub fn default_columns() -> Vec<ColumnItem> {
-        uwu_core_schema::StandardField::default_columns()
+        DEFAULT_ROLES
             .iter()
-            .map(|f| {
-                let name = f.canonical_name().to_string();
-                let width = match f {
-                    uwu_core_schema::StandardField::Timestamp => 150.0,
-                    uwu_core_schema::StandardField::Level => 56.0,
-                    uwu_core_schema::StandardField::Message => 350.0,
-                    _ => 120.0,
-                };
-                ColumnItem {
-                    name,
-                    visible: true,
-                    width,
-                }
+            .map(|&(name, width)| ColumnItem {
+                name: name.to_string(),
+                visible: true,
+                width,
             })
             .collect()
     }
 
-    pub fn merge_with_defaults(source_cols: &[ColumnItem]) -> Vec<ColumnItem> {
-        let mut new_cols = Self::default_columns();
+    fn reset_order_and_visibility(
+        source_cols: &[ColumnItem],
+        default_slots: &[String; 3],
+    ) -> Vec<ColumnItem> {
+        let mut new_cols = Vec::with_capacity(source_cols.len().max(3));
+        for (slot_idx, slot_key) in default_slots.iter().enumerate() {
+            let width = source_cols
+                .iter()
+                .find(|c| c.name == *slot_key)
+                .map_or(DEFAULT_ROLES[slot_idx].1, |c| c.width);
+            new_cols.push(ColumnItem {
+                name: slot_key.clone(),
+                visible: true,
+                width,
+            });
+        }
         for existing in source_cols {
-            if !new_cols.iter().any(|c| c.name == existing.name) {
+            if !default_slots.iter().any(|k| k == &existing.name) {
                 new_cols.push(ColumnItem {
                     name: existing.name.clone(),
                     visible: false,
-                    width: 120.0,
+                    width: existing.width,
                 });
             }
         }
         new_cols
+    }
+
+    pub fn merge_with_defaults(source_cols: &[ColumnItem]) -> Vec<ColumnItem> {
+        Self::reset_order_and_visibility(source_cols, &DEFAULT_ROLES.map(|(n, _)| n.to_string()))
+    }
+
+    fn sanitize_width(width: f32, fallback: f32) -> f32 {
+        if width.is_finite() && width >= 10.0 {
+            width
+        } else {
+            fallback
+        }
+    }
+
+    fn saved_rank(&self, name: &str) -> usize {
+        self.saved_layout
+            .iter()
+            .position(|c| {
+                c.name == name
+                    || (self.default_slot_keys.iter().any(|k| k == name)
+                        && c.default_role.as_deref() == Some(name))
+            })
+            .unwrap_or(usize::MAX)
     }
 
     pub fn reset_to_defaults(&mut self) {
@@ -129,12 +177,19 @@ impl ColumnState {
         self.clear_header_drag();
         self.known_keys = self.columns.iter().map(|c| c.name.clone()).collect();
         self.seen_keys.clear();
+        self.default_slot_keys = DEFAULT_ROLES.map(|(n, _)| n.to_string());
+        self.saved_layout.clear();
+        self.columns_dirty_for_save = true;
         self.layout_version = self.layout_version.wrapping_add(1);
     }
 
     pub fn reset_draft_to_defaults(&mut self) {
         let source = self.draft_columns.as_deref().unwrap_or(&self.columns);
-        self.draft_columns = Some(Self::merge_with_defaults(source));
+        self.draft_columns = Some(Self::reset_order_and_visibility(
+            source,
+            &self.default_slot_keys,
+        ));
+        self.draft_did_reset = true;
         self.clear_modal_drag();
     }
 
@@ -143,14 +198,137 @@ impl ColumnState {
             if let Some(col) = self.columns.iter_mut().find(|c| c.name == name) {
                 if (col.width - width).abs() > 0.01 {
                     col.width = width;
+                    self.columns_dirty_for_save = true;
                 }
             }
         }
     }
 
+    /// Hẹn kiểm tra lưu vào `workspaces.json` sau khi nhả chuột kéo/resize xong.
+    pub fn schedule_save_after_drag(&mut self) {
+        self.pending_save_frames = Some(2);
+    }
+
+    /// Trả về `true` đúng một lần sau khi đếm lùi kết thúc và có thay đổi cột cần lưu.
+    pub fn poll_pending_save(&mut self) -> bool {
+        let Some(rem) = self.pending_save_frames else {
+            return false;
+        };
+        if rem > 0 {
+            self.pending_save_frames = Some(rem - 1);
+            return false;
+        }
+        self.pending_save_frames = None;
+        std::mem::take(&mut self.columns_dirty_for_save)
+    }
+
+    /// Xuất các cột đã tuỳ chỉnh để lưu vào `workspaces.json` (bỏ cột custom ẩn độ rộng mặc định).
+    pub fn to_saved_columns(&self) -> Vec<SavedColumnConfig> {
+        let mut saved = Vec::new();
+        let mut active_roles = HashSet::new();
+        let mut active_names = HashSet::new();
+
+        for col in &self.columns {
+            let role_idx = self.default_slot_keys.iter().position(|k| k == &col.name);
+            let role = role_idx.map(|i| DEFAULT_ROLES[i].0);
+            let default_w = role_idx.map_or(120.0, |i| DEFAULT_ROLES[i].1);
+            if role.is_none() && !col.visible && (col.width - default_w).abs() <= 0.5 {
+                continue;
+            }
+            let pending_alias = if self.seen_keys.is_empty() {
+                role.and_then(|r| {
+                    self.saved_layout
+                        .iter()
+                        .find(|p| p.default_role.as_deref() == Some(r))
+                })
+            } else {
+                None
+            };
+            let (name, width) = pending_alias.map_or_else(
+                || (col.name.clone(), col.width),
+                |p| (p.name.clone(), p.width),
+            );
+            if let Some(r) = role {
+                active_roles.insert(r);
+            }
+            active_names.insert(name.clone());
+            saved.push(SavedColumnConfig {
+                name,
+                visible: col.visible,
+                width,
+                default_role: role.map(str::to_string),
+            });
+        }
+
+        // Giữ lại các cột chưa gặp lại trong phiên để không mất cấu hình của field ít xuất hiện
+        for cfg in &self.saved_layout {
+            let covered = cfg
+                .default_role
+                .as_deref()
+                .is_some_and(|r| active_roles.contains(r))
+                || active_names.contains(&cfg.name);
+            if !covered {
+                let idx = self.saved_rank(&cfg.name);
+                let pos = saved
+                    .iter()
+                    .position(|s| self.saved_rank(&s.name) > idx)
+                    .unwrap_or(saved.len());
+                saved.insert(pos, cfg.clone());
+            }
+        }
+        saved
+    }
+
+    /// Khôi phục bố cục cột từ `workspaces.json`.
+    /// Cột custom chỉ hiện và nhận lại độ rộng khi log mới khớp đúng key.
+    pub fn restore_from_saved(&mut self, saved: &[SavedColumnConfig]) {
+        if saved.is_empty() {
+            return;
+        }
+        self.reset_to_defaults();
+        self.saved_layout = saved.to_vec();
+
+        let mut default_items: Vec<(usize, ColumnItem)> = DEFAULT_ROLES
+            .iter()
+            .enumerate()
+            .map(|(fallback, &(canon, default_w))| {
+                let matched = saved.iter().enumerate().find(|(_, c)| {
+                    c.default_role.as_deref() == Some(canon)
+                        || (c.default_role.is_none() && c.name == canon)
+                });
+                match matched {
+                    Some((idx, cfg)) => (
+                        idx,
+                        ColumnItem {
+                            name: canon.to_string(),
+                            visible: cfg.visible,
+                            width: if cfg.name == canon {
+                                Self::sanitize_width(cfg.width, default_w)
+                            } else {
+                                default_w
+                            },
+                        },
+                    ),
+                    None => (
+                        usize::MAX - 3 + fallback,
+                        ColumnItem {
+                            name: canon.to_string(),
+                            visible: true,
+                            width: default_w,
+                        },
+                    ),
+                }
+            })
+            .collect();
+        default_items.sort_by_key(|(idx, _)| *idx);
+        self.columns = default_items.into_iter().map(|(_, item)| item).collect();
+        self.columns_dirty_for_save = false;
+    }
+
     pub fn reorder(&mut self, from_idx: usize, to_idx: usize) {
         if from_idx < self.columns.len() && to_idx < self.columns.len() && from_idx != to_idx {
             reorder_vec(&mut self.columns, from_idx, to_idx);
+            self.columns_dirty_for_save = true;
             self.layout_version = self.layout_version.wrapping_add(1);
         }
     }
@@ -178,12 +356,17 @@ impl ColumnState {
                 if !self.seen_keys.insert(key.clone()) {
                     continue;
                 }
-
-                // Nếu cột cùng tên đã tồn tại (ví dụ canonical default "level"), giữ nguyên
                 if self.columns.iter().any(|c| c.name == *key) {
                     self.known_keys.insert(key.clone());
                     continue;
                 }
+
+                let saved_match = self
+                    .saved_layout
+                    .iter()
+                    .enumerate()
+                    .find(|(_, c)| c.name == *key)
+                    .map(|(rank, c)| (rank, c.clone()));
 
                 // Nếu key là alias của trường mặc định và cột mặc định vẫn đang ở tên canonical
                 // (chưa từng thấy tên canonical trong log), chỉ đổi tên 1 lần duy nhất
@@ -194,17 +377,45 @@ impl ColumnState {
                             self.known_keys.remove(canonical);
                             self.columns[idx].name = key.clone();
                             self.known_keys.insert(key.clone());
+                            if let Some(slot) =
+                                DEFAULT_ROLES.iter().position(|(n, _)| *n == canonical)
+                            {
+                                self.default_slot_keys[slot] = key.clone();
+                            }
+                            if let Some((_, cfg)) = saved_match {
+                                self.columns[idx].visible = cfg.visible;
+                                self.columns[idx].width =
+                                    Self::sanitize_width(cfg.width, self.columns[idx].width);
+                                self.layout_version = self.layout_version.wrapping_add(1);
+                            }
                             continue;
                         }
                     }
                 }
 
                 if self.known_keys.insert(key.clone()) {
-                    self.columns.push(ColumnItem {
-                        name: key.clone(),
-                        visible: false,
-                        width: 120.0,
-                    });
+                    if let Some((rank, cfg)) = saved_match {
+                        let idx = self
+                            .columns
+                            .iter()
+                            .position(|c| self.saved_rank(&c.name) > rank)
+                            .unwrap_or(self.columns.len());
+                        self.columns.insert(
+                            idx,
+                            ColumnItem {
+                                name: key.clone(),
+                                visible: cfg.visible,
+                                width: Self::sanitize_width(cfg.width, 120.0),
+                            },
+                        );
+                        self.layout_version = self.layout_version.wrapping_add(1);
+                    } else {
+                        self.columns.push(ColumnItem {
+                            name: key.clone(),
+                            visible: false,
+                            width: 120.0,
+                        });
+                    }
                 }
             }
         }
@@ -327,18 +538,40 @@ mod tests {
     #[test]
     fn test_reset_draft_to_defaults() {
         let mut state = ColumnState::default();
-        state.draft_columns = Some(state.columns.clone());
+        let mut f = HashMap::new();
+        f.insert("lvl".to_string(), serde_json::json!("INFO"));
+        f.insert("custom".to_string(), serde_json::json!("val"));
+        state.sync_discovered_keys(&[LogEvent::new("t1", LogColor::Green, "hi", f)]);
+        state.set_column_width("timestamp", 220.0);
+        state.set_column_width("lvl", 92.0);
+        state.set_column_width("custom", 180.0);
+
+        state.open_modal();
+        if let Some(ref mut draft) = state.draft_columns {
+            if let Some(c) = draft.iter_mut().find(|c| c.name == "custom") {
+                c.visible = true;
+            }
+        }
         state.reorder_draft(1, 0);
         state.draft_columns.as_mut().unwrap()[2].visible = false;
 
         state.reset_draft_to_defaults();
-        let draft = state.draft_columns.unwrap();
+        let draft = state.draft_columns.as_ref().unwrap();
+        // Reset thứ tự và visible về 3 cột mặc định (giữ alias "lvl" và giữ nguyên width đã chỉnh)
         assert_eq!(draft[0].name, "timestamp");
         assert!(draft[0].visible);
-        assert_eq!(draft[1].name, "level");
+        assert!((draft[0].width - 220.0).abs() < 0.01);
+
+        assert_eq!(draft[1].name, "lvl");
         assert!(draft[1].visible);
+        assert!((draft[1].width - 92.0).abs() < 0.01);
+
         assert_eq!(draft[2].name, "message");
         assert!(draft[2].visible);
+
+        assert_eq!(draft[3].name, "custom");
+        assert!(!draft[3].visible);
+        assert!((draft[3].width - 180.0).abs() < 0.01);
     }
 
     #[test]
@@ -457,5 +690,101 @@ mod tests {
             .collect();
         assert!(rev_names.contains(&"lvl"));
         assert!(rev_names.contains(&"level"));
+    }
+
+    #[test]
+    fn test_saved_columns_exact_key_match_and_no_ghost_columns() {
+        let mut s1 = ColumnState::default();
+        let mut f1 = HashMap::new();
+        f1.insert("aaa".to_string(), serde_json::json!("v1"));
+        f1.insert("unused_hidden".to_string(), serde_json::json!("v2"));
+        s1.sync_discovered_keys(&[LogEvent::new("t1", LogColor::Green, "m", f1)]);
+
+        // Bật "aaa", chỉnh độ rộng thành 220.0 và đưa lên ngay trước "message"
+        if let Some(col) = s1.columns.iter_mut().find(|c| c.name == "aaa") {
+            col.visible = true;
+            col.width = 220.0;
+        }
+        s1.move_column("aaa", "message");
+        s1.set_column_width("timestamp", 190.0);
+
+        let saved = s1.to_saved_columns();
+        // Không lưu cột ẩn mặc định ("unused_hidden")
+        assert!(!saved.iter().any(|c| c.name == "unused_hidden"));
+        assert!(saved
+            .iter()
+            .any(|c| c.name == "aaa" && c.visible && (c.width - 220.0).abs() < 0.01));
+
+        // Trường hợp 1: Mở lại với log CÓ đúng key "aaa" -> khôi phục đúng vị trí, visible và width 220.0
+        let mut s2 = ColumnState::default();
+        s2.restore_from_saved(&saved);
+        // Trước khi log có "aaa" tới, không hiện cột ma "aaa"
+        assert!(!s2.columns.iter().any(|c| c.name == "aaa"));
+
+        let mut f2 = HashMap::new();
+        f2.insert("bbb".to_string(), serde_json::json!("other"));
+        f2.insert("aaa".to_string(), serde_json::json!("matched"));
+        s2.sync_discovered_keys(&[LogEvent::new("t2", LogColor::Green, "m", f2)]);
+
+        let vis_names: Vec<&str> = s2
+            .columns
+            .iter()
+            .filter(|c| c.visible)
+            .map(|c| c.name.as_str())
+            .collect();
+        assert_eq!(vis_names, ["timestamp", "level", "aaa", "message"]);
+        let aaa = s2.columns.iter().find(|c| c.name == "aaa").unwrap();
+        assert!((aaa.width - 220.0).abs() < 0.01);
+        // Key khác ("bbb") KHÔNG ăn nhầm width/visible của "aaa"
+        let bbb = s2.columns.iter().find(|c| c.name == "bbb").unwrap();
+        assert!(!bbb.visible);
+        assert!((bbb.width - 120.0).abs() < 0.01);
+
+        // Trường hợp 2: Mở lại nhưng dev đã bỏ "aaa", chỉ có "bbb" -> "aaa" không thành cột ma
+        let mut s3 = ColumnState::default();
+        s3.restore_from_saved(&saved);
+        let mut f3 = HashMap::new();
+        f3.insert("bbb".to_string(), serde_json::json!("only_b"));
+        s3.sync_discovered_keys(&[LogEvent::new("t3", LogColor::Green, "m", f3)]);
+        assert!(!s3.columns.iter().any(|c| c.name == "aaa"));
+        let bbb3 = s3.columns.iter().find(|c| c.name == "bbb").unwrap();
+        assert!(!bbb3.visible);
+        assert!((bbb3.width - 120.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_saved_default_alias_only_applies_width_on_exact_key_match() {
+        let mut s1 = ColumnState::default();
+        let mut f1 = HashMap::new();
+        f1.insert("lvl".to_string(), serde_json::json!("INFO"));
+        s1.sync_discovered_keys(&[LogEvent::new("t1", LogColor::Green, "m", f1)]);
+        s1.set_column_width("lvl", 88.0);
+        let saved = s1.to_saved_columns();
+
+        // Mở rồi đóng ngay khi chưa có log nào -> không làm mất cấu hình "lvl" (88.0)
+        let mut empty_reopen = ColumnState::default();
+        empty_reopen.restore_from_saved(&saved);
+        let preserved = empty_reopen.to_saved_columns();
+        assert!(preserved
+            .iter()
+            .any(|c| c.name == "lvl" && (c.width - 88.0).abs() < 0.01));
+
+        // Dev đổi logger từ "lvl" -> "level": "level" KHÔNG ăn nhầm width 88.0 của "lvl"
+        let mut s_canon = ColumnState::default();
+        s_canon.restore_from_saved(&saved);
+        let mut f_canon = HashMap::new();
+        f_canon.insert("level".to_string(), serde_json::json!("INFO"));
+        s_canon.sync_discovered_keys(&[LogEvent::new("t2", LogColor::Green, "m", f_canon)]);
+        let level_col = s_canon.columns.iter().find(|c| c.name == "level").unwrap();
+        assert!((level_col.width - 56.0).abs() < 0.01);
+
+        // Nếu log vẫn dùng "lvl": khớp đúng key "lvl" -> áp dụng lại width 88.0
+        let mut s_alias = ColumnState::default();
+        s_alias.restore_from_saved(&saved);
+        let mut f_alias = HashMap::new();
+        f_alias.insert("lvl".to_string(), serde_json::json!("INFO"));
+        s_alias.sync_discovered_keys(&[LogEvent::new("t3", LogColor::Green, "m", f_alias)]);
+        let lvl_col = s_alias.columns.iter().find(|c| c.name == "lvl").unwrap();
+        assert!((lvl_col.width - 88.0).abs() < 0.01);
     }
 }

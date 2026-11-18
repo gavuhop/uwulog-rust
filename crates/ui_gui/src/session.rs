@@ -38,18 +38,19 @@ impl GuiSession {
 
     pub fn from_workspace(ws: &Workspace, capacity: usize, display_limit: usize) -> Self {
         let session = WorkspaceSession::from_workspace(ws, capacity, display_limit);
-        let mut view = GuiViewState::with_schema(session.engine.get_schema_map());
-        view.search.query = ws.last_query.clone();
-        view.search.history.entries = ws.filter_history.clone();
-        if view.search.history.entries.is_empty() && !ws.last_query.trim().is_empty() {
-            view.search.history.record(&ws.last_query);
+        let mut gui_session = Self::new(session);
+        gui_session.apply_workspace_view(ws);
+        gui_session
+    }
+
+    /// Khôi phục trạng thái giao diện (query, lịch sử tìm kiếm, bố cục cột) từ `Workspace`.
+    pub fn apply_workspace_view(&mut self, ws: &Workspace) {
+        self.view.search.query = ws.last_query.clone();
+        self.view.search.history.entries = ws.filter_history.clone();
+        if self.view.search.history.entries.is_empty() && !ws.last_query.trim().is_empty() {
+            self.view.search.history.record(&ws.last_query);
         }
-        Self {
-            session,
-            view,
-            has_auto_started_source: false,
-            user_stopped_source: false,
-        }
+        self.view.columns.restore_from_saved(&ws.columns);
     }
 
     /// Xử lý cập nhật định kỳ cho từng session (incremental search, debounced history, latch scroll sync, unfiltered sync)

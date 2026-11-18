@@ -410,6 +410,93 @@ async fn test_on_exit_saves_current_workspace() {
 }
 
 #[tokio::test]
+async fn test_workspace_persists_and_restores_columns_only_on_matching_keys() {
+    use eframe::App;
+    use std::collections::HashMap;
+    use uwu_core_schema::{LogColor, LogEvent};
+
+    let temp_dir =
+        std::env::temp_dir().join(format!("uwulog_cols_persist_test_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let store_path = temp_dir.join("workspaces.json");
+
+    let mut app = create_test_app();
+    app.workspaces.store.set_storage_path(&store_path);
+    app.workspaces.sessions[0].session.name = "ColsPersistProj".to_string();
+    app.workspaces.sessions[0].sync_discovered_fields(&[LogEvent::new(
+        "2026-11-18T00:00:00Z",
+        LogColor::Green,
+        "m1",
+        HashMap::from([
+            ("aaa".to_string(), serde_json::json!("x")),
+            ("hidden_col".to_string(), serde_json::json!("y")),
+        ]),
+    )]);
+    app.active_session_mut().view.columns.open_modal();
+    if let Some(ref mut draft) = app.active_session_mut().view.columns.draft_columns {
+        if let Some(c) = draft.iter_mut().find(|c| c.name == "aaa") {
+            c.visible = true;
+            c.width = 240.0;
+        }
+    }
+    app.dispatch_action(AppAction::ApplyColumnsModal);
+    app.on_exit();
+
+    // Đọc lại từ JSON trên đĩa -> mở WorkspaceSession mới
+    let reloaded_store = uwu_core_workspace::WorkspaceStore::load_from_path(&store_path);
+    let saved_ws = reloaded_store
+        .recent_workspaces
+        .iter()
+        .find(|w| w.name == "ColsPersistProj")
+        .expect("saved workspace must exist")
+        .clone();
+    assert!(!saved_ws.columns.iter().any(|c| c.name == "hidden_col"));
+
+    let mut restored_session = GuiSession::from_workspace(&saved_ws, 1000, 100);
+    // Nếu log mới không có "aaa" (chỉ có "bbb") -> không hiện cột ma "aaa", "bbb" dùng mặc định 120.0
+    restored_session.sync_discovered_fields(&[LogEvent::new(
+        "2026-11-18T00:00:01Z",
+        LogColor::Green,
+        "m2",
+        HashMap::from([("bbb".to_string(), serde_json::json!("only_b"))]),
+    )]);
+    assert!(!restored_session
+        .view
+        .columns
+        .columns
+        .iter()
+        .any(|c| c.name == "aaa"));
+    let bbb = restored_session
+        .view
+        .columns
+        .columns
+        .iter()
+        .find(|c| c.name == "bbb")
+        .unwrap();
+    assert!(!bbb.visible);
+    assert!((bbb.width - 120.0).abs() < 0.01);
+
+    // Khi log xuất hiện đúng key "aaa" -> khôi phục lại visible: true và width 240.0
+    restored_session.sync_discovered_fields(&[LogEvent::new(
+        "2026-11-18T00:00:02Z",
+        LogColor::Green,
+        "m3",
+        HashMap::from([("aaa".to_string(), serde_json::json!("matched"))]),
+    )]);
+    let aaa = restored_session
+        .view
+        .columns
+        .columns
+        .iter()
+        .find(|c| c.name == "aaa")
+        .unwrap();
+    assert!(aaa.visible);
+    assert!((aaa.width - 240.0).abs() < 0.01);
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[tokio::test]
 #[cfg(target_os = "windows")]
 async fn test_project_picker_and_server_list_consistency() {
     use crate::views::remote_servers::RemoteServerKind;

@@ -546,24 +546,13 @@ impl UwuGuiApp {
         };
 
         let mut gui_session = GuiSession::new(initial_session);
+        if let Some(ws) = saved_ws {
+            gui_session.apply_workspace_view(ws);
+        }
         if let Some(ref q) = cli.query {
             gui_session.view.search.query = q.clone();
-        } else if !has_custom_source {
-            if let Some(ws) = saved_ws {
-                gui_session.view.search.query = ws.last_query.clone();
-            }
-        }
-        if let Some(ws) = saved_ws {
-            gui_session.view.search.history.entries = ws.filter_history.clone();
-            if gui_session.view.search.history.entries.is_empty()
-                && !gui_session.view.search.query.trim().is_empty()
-            {
-                gui_session
-                    .view
-                    .search
-                    .history
-                    .record(&gui_session.view.search.query);
-            }
+        } else if has_custom_source {
+            gui_session.view.search.query.clear();
         }
 
         (gui_session, has_custom_source, saved_id)
@@ -896,6 +885,7 @@ impl UwuGuiApp {
             AppAction::ApplyColumnsModal => {
                 self.active_session_mut().view.columns.apply_modal();
                 self.close_overlay(OverlayLayer::ColumnsModal);
+                self.workspaces.save_current_workspace();
             }
             AppAction::ToggleProjectPicker => {
                 if self.is_overlay_open(OverlayLayer::ProjectPicker) {
@@ -1082,6 +1072,16 @@ impl eframe::App for UwuGuiApp {
         self.tick();
         ctx.request_repaint_after(Duration::from_millis(100));
         crate::views::render_ui(ui, self);
+        if self.workspaces.has_active_session()
+            && self
+                .workspaces
+                .active_session_mut()
+                .view
+                .columns
+                .poll_pending_save()
+        {
+            self.workspaces.save_current_workspace();
+        }
     }
 
     fn on_exit(&mut self) {

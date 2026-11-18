@@ -160,6 +160,16 @@ pub fn sanitize_project_name(name: &str, location: &WorkspaceLocation) -> String
     }
 }
 
+/// Cấu hình bố cục cột đã lưu cho từng Workspace trong `workspaces.json`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SavedColumnConfig {
+    pub name: String,
+    pub visible: bool,
+    pub width: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_role: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Workspace {
     pub id: Uuid,
@@ -173,6 +183,8 @@ pub struct Workspace {
     pub last_opened: DateTime<Utc>,
     #[serde(default)]
     pub env_vars: HashMap<String, String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub columns: Vec<SavedColumnConfig>,
 }
 
 impl Workspace {
@@ -193,6 +205,7 @@ impl Workspace {
             filter_history: Vec::new(),
             last_opened: Utc::now(),
             env_vars: HashMap::new(),
+            columns: Vec::new(),
         }
     }
 
@@ -1082,6 +1095,19 @@ mod tests {
         assert_eq!(deserialized_wsl.location.display_name(), "Ubuntu");
         assert_eq!(deserialized_wsl.location.icon(), IconName::Linux);
         assert_eq!(deserialized_wsl.location.working_dir(), "/home/user");
+
+        // Khi `columns` rỗng sẽ không serialize dư thừa và JSON cũ thiếu `columns` vẫn đọc bình thường
+        assert!(!json.contains("\"columns\""));
+        let mut ws_with_cols = ws;
+        ws_with_cols.columns.push(SavedColumnConfig {
+            name: "aaa".to_string(),
+            visible: true,
+            width: 220.0,
+            default_role: None,
+        });
+        let cols_json = serde_json::to_string(&ws_with_cols).unwrap();
+        let back: Workspace = serde_json::from_str(&cols_json).unwrap();
+        assert_eq!(back.columns, ws_with_cols.columns);
     }
 
     #[tokio::test]

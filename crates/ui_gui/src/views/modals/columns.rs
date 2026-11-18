@@ -454,7 +454,7 @@ pub fn render_columns_modal(
             if crate::components::ui::AppButton::new()
                 .label("Reset Defaults")
                 .icon(crate::components::ui::IconName::Restart)
-                .tooltip("Reset draft column order and visibility to default")
+                .tooltip("Reset column order and visibility to default (keeps column widths)")
                 .show(ui)
                 .clicked()
             {

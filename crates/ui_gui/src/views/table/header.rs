@@ -100,6 +100,7 @@ pub fn render_table_headers(
             }
         }
         columns.clear_header_drag();
+        columns.schedule_save_after_drag();
     }
 
     // Tự động dọn dẹp animation kết thúc và repaint mượt mà nếu còn chuyển động
