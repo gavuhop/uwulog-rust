@@ -82,6 +82,12 @@ impl MoveAnimationManager {
         }
     }
 
+    /// Xóa toàn bộ trạng thái animation và vị trí cũ (ví dụ khi chuyển tab có scroll khác nhau).
+    pub fn reset(&mut self) {
+        self.animations.clear();
+        self.previous_rects.clear();
+    }
+
     /// Bắt đầu một animation di chuyển từ `from` đến `to` với thời lượng mặc định
     pub fn start(&mut self, id: &str, from: Pos2, to: Pos2, now: Instant) {
         if from.distance_sq(to) > 0.25 {

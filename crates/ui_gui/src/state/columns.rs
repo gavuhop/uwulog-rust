@@ -26,8 +26,6 @@ pub struct ColumnState {
     pub table_animations: crate::animation::MoveAnimationManager,
     pub modal_animations: crate::animation::MoveAnimationManager,
     pub layout_version: u64,
-    pub width_version: u64,
-    tab_width_versions: [Option<u64>; 2],
 }
 
 impl Default for ColumnState {
@@ -48,8 +46,6 @@ impl Default for ColumnState {
             table_animations: crate::animation::MoveAnimationManager::default(),
             modal_animations: crate::animation::MoveAnimationManager::default(),
             layout_version: 0,
-            width_version: 0,
-            tab_width_versions: [None, None],
         }
     }
 }
@@ -147,32 +143,9 @@ impl ColumnState {
             if let Some(col) = self.columns.iter_mut().find(|c| c.name == name) {
                 if (col.width - width).abs() > 0.01 {
                     col.width = width;
-                    self.width_version = self.width_version.wrapping_add(1);
                 }
             }
         }
-    }
-
-    fn tab_slot(tab: super::ActiveTab) -> usize {
-        match tab {
-            super::ActiveTab::Filtered => 0,
-            super::ActiveTab::Unfiltered => 1,
-        }
-    }
-
-    /// Nếu tab còn lại đã thay đổi độ rộng cột kể từ lần render trước của `tab`,
-    /// tăng `layout_version` để `TableBuilder` khởi tạo lại từ `col.width` mới nhất.
-    pub fn prepare_tab_layout(&mut self, tab: super::ActiveTab) {
-        let slot = Self::tab_slot(tab);
-        if self.tab_width_versions[slot].is_some_and(|v| v != self.width_version) {
-            self.layout_version = self.layout_version.wrapping_add(1);
-        }
-        self.tab_width_versions[slot] = Some(self.width_version);
-    }
-
-    /// Ghi nhận `tab` đã đồng bộ tới `width_version` hiện tại sau khi render xong.
-    pub fn finish_tab_layout(&mut self, tab: super::ActiveTab) {
-        self.tab_width_versions[Self::tab_slot(tab)] = Some(self.width_version);
     }
 
     pub fn reorder(&mut self, from_idx: usize, to_idx: usize) {
@@ -429,38 +402,6 @@ mod tests {
 
         // Di chuyển ngược lại vẫn tăng layout_version để TableBuilder không đọc cache cũ
         state.move_column("timestamp", "level");
-        assert_eq!(state.layout_version, 2);
-    }
-
-    #[test]
-    fn test_tab_layout_syncs_column_widths_between_main_and_raw() {
-        let mut state = ColumnState::default();
-
-        // Mở lần đầu ở cả Main và Raw: không tự bump layout_version
-        state.prepare_tab_layout(super::super::ActiveTab::Filtered);
-        state.finish_tab_layout(super::super::ActiveTab::Filtered);
-        state.prepare_tab_layout(super::super::ActiveTab::Unfiltered);
-        state.finish_tab_layout(super::super::ActiveTab::Unfiltered);
-        assert_eq!(state.layout_version, 0);
-
-        // Resize ở Main: đang kéo trên Main không bump layout_version của chính Main
-        state.prepare_tab_layout(super::super::ActiveTab::Filtered);
-        state.set_column_width("message", 520.0);
-        state.finish_tab_layout(super::super::ActiveTab::Filtered);
-        assert_eq!(state.layout_version, 0);
-
-        // Chuyển sang Raw: phải bump layout_version để Raw nạp width 520.0 thay vì cache cũ
-        state.prepare_tab_layout(super::super::ActiveTab::Unfiltered);
-        assert_eq!(state.layout_version, 1);
-        state.finish_tab_layout(super::super::ActiveTab::Unfiltered);
-
-        // Resize ngược lại ở Raw -> chuyển về Main cũng tự đồng bộ tương ứng
-        state.prepare_tab_layout(super::super::ActiveTab::Unfiltered);
-        state.set_column_width("message", 280.0);
-        state.finish_tab_layout(super::super::ActiveTab::Unfiltered);
-        assert_eq!(state.layout_version, 1);
-
-        state.prepare_tab_layout(super::super::ActiveTab::Filtered);
         assert_eq!(state.layout_version, 2);
     }
 

@@ -58,10 +58,9 @@ pub fn render_log_table(
         return;
     }
 
-    session.columns.prepare_tab_layout(tab);
-
+    // Dùng chung một table_salt giữa Main và Raw để chia sẻ trực tiếp một TableState (độ rộng cột);
+    // chỉ tách riêng trạng thái cuộn dọc/ngang theo từng tab khi chuyển tab.
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    tab.hash(&mut hasher);
     session.columns.layout_version.hash(&mut hasher);
     for c in &visible_cols {
         c.name.hash(&mut hasher);
@@ -98,13 +97,26 @@ pub fn render_log_table(
     });
     let level_needed_width = (level_text_width + 8.0).max(65.0);
 
-    let hscroll_id = match tab {
-        ActiveTab::Filtered => "main_table_hscroll",
-        ActiveTab::Unfiltered => "unfiltered_table_hscroll",
-    };
-    let scroll_id = ui.id().with(egui::IdSalt::new(hscroll_id));
+    const SHARED_HSCROLL_SALT: &str = "log_table_hscroll";
+    let scroll_id = ui.id().with(egui::IdSalt::new(SHARED_HSCROLL_SALT));
     let mut hstate = egui::scroll_area::State::load(ui.ctx(), scroll_id).unwrap_or_default();
     let mut hstate_changed = false;
+
+    let prev_tab_id = ui.make_persistent_id("log_table_prev_tab");
+    let prev_tab = ui.data(|d| d.get_temp::<ActiveTab>(prev_tab_id));
+    let tab_changed = prev_tab.is_some_and(|p| p != tab);
+    if let Some(prev) = prev_tab.filter(|&p| p != tab) {
+        let prev_hscroll_id = ui.make_persistent_id((prev, "table_hscroll_offset"));
+        let next_hscroll_id = ui.make_persistent_id((tab, "table_hscroll_offset"));
+        let next_x = ui
+            .data(|d| d.get_temp::<f32>(next_hscroll_id))
+            .unwrap_or(0.0);
+        ui.data_mut(|d| d.insert_temp(prev_hscroll_id, hstate.offset.x));
+        hstate.offset.x = next_x;
+        hstate_changed = true;
+        session.columns.table_animations.reset();
+    }
+    ui.data_mut(|d| d.insert_temp(prev_tab_id, tab));
 
     // 1. Phím tắt cuộn ngang (ArrowLeft / ArrowRight) từ session
     if let Some(delta) = session.consume_horizontal_scroll(tab) {
@@ -120,18 +132,13 @@ pub fn render_log_table(
     }
 
     // 3. Cuộn tự động theo tâm bằng chuột giữa (Web-style Center-Anchor Autoscroll)
-    let vscroll_id = ui.make_persistent_id(match tab {
-        ActiveTab::Filtered => "main_table_vscroll_offset",
-        ActiveTab::Unfiltered => "unfiltered_table_vscroll_offset",
-    });
+    let vscroll_id = ui.make_persistent_id((tab, "table_vscroll_offset"));
     let mut current_v_offset = ui.data(|d| d.get_temp::<f32>(vscroll_id)).unwrap_or(0.0);
-    let prev_salt_id = ui.make_persistent_id(match tab {
-        ActiveTab::Filtered => "main_table_prev_salt",
-        ActiveTab::Unfiltered => "unfiltered_table_prev_salt",
-    });
+    let prev_salt_id = ui.make_persistent_id("log_table_prev_salt");
     let prev_salt = ui.data(|d| d.get_temp::<u64>(prev_salt_id));
-    let mut vstate_changed = prev_salt.is_some_and(|s| s != table_salt) && current_v_offset > 0.0;
+    let salt_changed = prev_salt.is_some_and(|s| s != table_salt);
     ui.data_mut(|d| d.insert_temp(prev_salt_id, table_salt));
+    let mut vstate_changed = tab_changed || (salt_changed && current_v_offset > 0.0);
 
     let autoscroll = autoscroll::handle_middle_autoscroll(ui, table_rect);
     if autoscroll.is_active {
@@ -153,7 +160,7 @@ pub fn render_log_table(
     }
 
     let mut scroll_area = egui::ScrollArea::horizontal()
-        .id_salt(hscroll_id)
+        .id_salt(SHARED_HSCROLL_SALT)
         .auto_shrink([false, false]);
 
     if hstate_changed {
@@ -271,8 +278,13 @@ pub fn render_log_table(
     });
 
     let (v_offset, content_h, viewport_h) = hscroll_out.inner;
-    session.columns.finish_tab_layout(tab);
-    ui.data_mut(|d| d.insert_temp(vscroll_id, v_offset));
+    ui.data_mut(|d| {
+        d.insert_temp(vscroll_id, v_offset);
+        d.insert_temp(
+            ui.make_persistent_id((tab, "table_hscroll_offset")),
+            hscroll_out.state.offset.x,
+        );
+    });
 
     // Chỉ chuyển sang Pause (Unlatch) khi cuộn chuột lên nếu bảng thực sự có nội dung tràn màn hình để cuộn;
     // khi mới có vài dòng nằm gọn trong khung nhìn, lăn chuột lên không được ngắt Live.
@@ -558,5 +570,88 @@ mod tests {
             !actions.iter().any(|a| matches!(a, AppAction::Unlatch)),
             "expected scrolling up with only 5 rows (no overflow) not to dispatch Unlatch, got: {actions:?}"
         );
+    }
+
+    #[test]
+    fn shared_table_state_preserves_column_widths_across_tabs_and_reorders() {
+        let mut session = make_session_with_logs(5);
+        session.unfiltered.is_open = true;
+        session.unfiltered.cached_logs = session.viewport.cached_logs.clone();
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 600.0));
+
+        let run_tab = |tab: ActiveTab, session: &mut GuiSession, events: Vec<egui::Event>| {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::CentralPanel::default().show(ui, |ui| {
+                        render_log_table(ui, session, tab, &mut |_| {});
+                    });
+                },
+            );
+            out.textures_delta.clear();
+        };
+
+        // Render lần đầu ở Filtered và lấy vị trí mép phải cột đầu tiên ("timestamp")
+        run_tab(ActiveTab::Filtered, &mut session, vec![]);
+        let initial_w = session.columns.columns[0].width;
+        let sep_x = 8.0 + initial_w + 4.0;
+        let drag_y = 20.0;
+
+        // Kéo vạch phân cách cột "timestamp" sang phải +60px trên tab Filtered
+        run_tab(
+            ActiveTab::Filtered,
+            &mut session,
+            vec![
+                egui::Event::PointerMoved(egui::pos2(sep_x, drag_y)),
+                egui::Event::PointerButton {
+                    pos: egui::pos2(sep_x, drag_y),
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        run_tab(
+            ActiveTab::Filtered,
+            &mut session,
+            vec![egui::Event::PointerMoved(egui::pos2(sep_x + 60.0, drag_y))],
+        );
+        run_tab(
+            ActiveTab::Filtered,
+            &mut session,
+            vec![egui::Event::PointerButton {
+                pos: egui::pos2(sep_x + 60.0, drag_y),
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        run_tab(ActiveTab::Filtered, &mut session, vec![]);
+        let resized_w = session.columns.columns[0].width;
+        assert!(
+            resized_w > initial_w + 30.0,
+            "expected timestamp width to grow from {initial_w}, got {resized_w}"
+        );
+
+        // Chuyển sang Raw (Unfiltered): dùng chung TableState nên giữ nguyên độ rộng vừa kéo
+        run_tab(ActiveTab::Unfiltered, &mut session, vec![]);
+        assert!((session.columns.columns[0].width - resized_w).abs() < 0.5);
+
+        // Đổi vị trí cột trên Raw: vẫn giữ nguyên độ rộng đã resize
+        session.columns.move_column("timestamp", "message");
+        run_tab(ActiveTab::Unfiltered, &mut session, vec![]);
+        let moved_w = session
+            .columns
+            .columns
+            .iter()
+            .find(|c| c.name == "timestamp")
+            .map(|c| c.width)
+            .unwrap();
+        assert!((moved_w - resized_w).abs() < 0.5);
     }
 }

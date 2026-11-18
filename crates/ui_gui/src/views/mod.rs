@@ -303,27 +303,21 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 )
                 .show(ui, |ui| {
                     let tab = active_session.view.active_tab;
-                    let scope = match tab {
-                        crate::state::ActiveTab::Filtered => "main_filtered_table_scope",
-                        crate::state::ActiveTab::Unfiltered => "unfiltered_table_scope",
+                    let mut table_dispatch = |action: crate::actions::AppAction| {
+                        // Không cho click/cuộn xuyên qua modal/popup làm chọn dòng hoặc tắt Live
+                        if is_any_overlay_open
+                            && matches!(
+                                action,
+                                crate::actions::AppAction::Unlatch
+                                    | crate::actions::AppAction::Latch
+                                    | crate::actions::AppAction::SelectLog(_)
+                            )
+                        {
+                            return;
+                        }
+                        dispatch(action);
                     };
-                    ui.push_id(scope, |ui| {
-                        let mut table_dispatch = |action: crate::actions::AppAction| {
-                            // Không cho click/cuộn xuyên qua modal/popup làm chọn dòng hoặc tắt Live
-                            if is_any_overlay_open
-                                && matches!(
-                                    action,
-                                    crate::actions::AppAction::Unlatch
-                                        | crate::actions::AppAction::Latch
-                                        | crate::actions::AppAction::SelectLog(_)
-                                )
-                            {
-                                return;
-                            }
-                            dispatch(action);
-                        };
-                        table::render_log_table(ui, active_session, tab, &mut table_dispatch);
-                    });
+                    table::render_log_table(ui, active_session, tab, &mut table_dispatch);
                 });
         });
 
