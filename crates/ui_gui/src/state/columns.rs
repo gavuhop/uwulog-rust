@@ -138,14 +138,15 @@ impl ColumnState {
         reorder_vec(&mut self.columns, from_idx, to_idx);
     }
 
-    pub fn swap_columns(&mut self, col_a: &str, col_b: &str) {
-        let pos_a = self.columns.iter().position(|c| c.name == col_a);
-        let pos_b = self.columns.iter().position(|c| c.name == col_b);
-        if let (Some(a), Some(b)) = (pos_a, pos_b) {
-            if a != b {
-                self.columns.swap(a, b);
-            }
-        }
+    /// Dịch chuyển cột `dragged` tới vị trí của `target`, kéo các cột nằm giữa dịch sang trái/phải.
+    pub fn move_column(&mut self, dragged: &str, target: &str) {
+        let Some(from) = self.columns.iter().position(|c| c.name == dragged) else {
+            return;
+        };
+        let Some(to) = self.columns.iter().position(|c| c.name == target) else {
+            return;
+        };
+        self.reorder(from, to);
     }
 
     pub fn reorder_draft(&mut self, from_idx: usize, to_idx: usize) {
@@ -324,18 +325,38 @@ mod tests {
     }
 
     #[test]
-    fn test_swap_columns() {
+    fn test_move_column_shifts_affected_columns() {
         let mut state = ColumnState::default();
-        // Ban đầu: ["timestamp", "level", "message"]
-        state.swap_columns("timestamp", "level");
-        assert_eq!(state.columns[0].name, "level");
-        assert_eq!(state.columns[1].name, "timestamp");
-        assert_eq!(state.columns[2].name, "message");
+        state.columns.push(ColumnItem {
+            name: "hidden".into(),
+            visible: false,
+            width: 80.0,
+        });
+        state.columns.push(ColumnItem {
+            name: "extra".into(),
+            visible: true,
+            width: 100.0,
+        });
 
-        // Swap lại về cũ
-        state.swap_columns("level", "timestamp");
-        assert_eq!(state.columns[0].name, "timestamp");
-        assert_eq!(state.columns[1].name, "level");
+        let vis = |s: &ColumnState| -> Vec<String> {
+            s.columns
+                .iter()
+                .filter(|c| c.visible)
+                .map(|c| c.name.clone())
+                .collect()
+        };
+
+        // Kéo sang cột kế bên -> đổi chỗ 2 cột
+        state.move_column("timestamp", "level");
+        assert_eq!(vis(&state), ["level", "timestamp", "message", "extra"]);
+
+        // Kéo sang phải qua nhiều cột -> các cột giữa dịch sang trái
+        state.move_column("level", "extra");
+        assert_eq!(vis(&state), ["timestamp", "message", "extra", "level"]);
+
+        // Kéo sang trái qua nhiều cột -> các cột giữa dịch sang phải
+        state.move_column("level", "timestamp");
+        assert_eq!(vis(&state), ["level", "timestamp", "message", "extra"]);
     }
 
     #[test]

@@ -1,13 +1,14 @@
 use crate::state::{ColumnItem, ColumnState};
 use crate::theme::ActiveTheme;
-use eframe::egui::{self, Color32, CornerRadius, FontId, Pos2, Rect, Stroke};
+use eframe::egui::{self, CornerRadius, FontId, Pos2, Rect, Stroke};
 use std::time::Instant;
 
 /// Hiển thị thanh tiêu đề cột của bảng dữ liệu log.
-/// Hỗ trợ kéo thả theo cơ chế trực quan:
-/// - Khi rê chuột qua cột khác: ô bị chuột đè lên sẽ đổi màu highlight báo hiệu chuẩn bị swap.
-/// - Chỉ khi nào thả chuột ra (mouse released) thì mới thực hiện hoán đổi (swap) vị trí cột.
-/// - Sau khi swap, tự động nội suy chuyển động mượt mà (position interpolation animation).
+/// Hỗ trợ kéo thả theo cơ chế dịch chuyển cột:
+/// - Khi rê chuột vào cột khác: chỉ cột đang kéo và cột đích đổi màu, kèm vạch dọc tô đậm
+///   ở mép chèn chính xác (mép phải khi kéo sang phải, mép trái khi kéo sang trái).
+/// - Các cột nằm giữa giữ nguyên màu bình thường.
+/// - Chỉ khi nào thả chuột ra (mouse released) thì mới thực hiện dịch chuyển các cột.
 pub fn render_table_headers(
     header: &mut egui_extras::TableRow<'_, '_>,
     ctx: &egui::Context,
@@ -17,7 +18,10 @@ pub fn render_table_headers(
     let current_dragged = columns.header_dragged_name.clone();
     let pointer_pos = ctx.input(|i| i.pointer.latest_pos());
     let now = Instant::now();
-    let mut detected_drop_target: Option<String> = None;
+    let dragged_idx = current_dragged
+        .as_deref()
+        .and_then(|d| visible_cols.iter().position(|c| c.name == d));
+    let mut col_rects: Vec<Rect> = Vec::with_capacity(visible_cols.len());
 
     for (col_idx, col) in visible_cols.iter().enumerate() {
         header.col(|ui| {
@@ -26,6 +30,7 @@ pub fn render_table_headers(
             let available_size = ui.available_size();
             let (rect, resp) =
                 ui.allocate_exact_size(available_size, egui::Sense::click_and_drag());
+            col_rects.push(rect);
 
             if resp.drag_started() {
                 columns.header_dragged_name = Some(col.name.clone());
@@ -37,15 +42,6 @@ pub fn render_table_headers(
                 ctx.request_repaint();
             }
 
-            // Kiểm tra xem cột này có phải là ô đang bị chuột đè lên (Drop Target) không.
-            // Vùng nhận diện tính trên TOÀN BỘ chiều dọc của cột (trục X).
-            let is_last = col_idx == visible_cols.len() - 1;
-            let is_in_col = pointer_pos.is_some_and(|p| is_pointer_in_col(p.x, rect, is_last));
-            let is_drop_target = current_dragged.is_some() && !is_dragged && is_in_col;
-            if is_drop_target {
-                detected_drop_target = Some(col.name.clone());
-            }
-
             // Đổi cursor icon: Grab khi hover, Grabbing khi đang drag
             if is_dragged {
                 columns.header_dragged_width = Some(rect.width());
@@ -54,35 +50,47 @@ pub fn render_table_headers(
                 ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
             }
 
-            // Render ô header với highlight trực quan nếu là drop target
+            let is_last = col_idx + 1 == visible_cols.len();
+            let is_in_col = pointer_pos.is_some_and(|p| {
+                p.x >= rect.min.x && (p.x < rect.max.x || (is_last && p.x <= rect.max.x))
+            });
+            let drop_edge = match dragged_idx {
+                Some(d) if !is_dragged && is_in_col => Some(col_idx > d),
+                _ => None,
+            };
+
             render_header_cell(
                 ui,
                 columns,
                 &col.name,
                 rect,
-                is_drop_target,
+                is_dragged,
+                drop_edge,
                 resp.hovered(),
                 now,
             );
         });
     }
 
+    let drop_target_idx = current_dragged
+        .as_deref()
+        .zip(pointer_pos)
+        .and_then(|(dragged, pos)| find_drop_target_idx(dragged, visible_cols, &col_rects, pos));
+
     // Cập nhật trạng thái đang kéo
     if columns.header_dragged_name.is_some() {
         ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
-        // Repaint liên tục để phản hồi highlight lập tức theo từng pixel di chuyển của chuột
+        // Repaint liên tục để phản hồi highlight và animation mượt mà
         ctx.request_repaint();
     }
 
     // Khi người dùng THẢ CHUỘT (pointer released):
-    // Chỉ lúc này mới thực hiện hoán đổi (swap) vị trí cột!
+    // Dịch chuyển cột đang kéo tới vị trí cột đích
     if ctx.input(|i| i.pointer.any_released()) {
         if let Some(dragged_name) = columns.header_dragged_name.take() {
-            if let Some(ref target) = detected_drop_target {
-                if &dragged_name != target {
-                    columns.swap_columns(&dragged_name, target);
-                    ctx.request_repaint();
-                }
+            if let Some(target_col) = drop_target_idx.and_then(|idx| visible_cols.get(idx)) {
+                columns.move_column(&dragged_name, &target_col.name);
+                ctx.request_repaint();
             }
         }
         columns.clear_header_drag();
@@ -92,56 +100,55 @@ pub fn render_table_headers(
     columns.table_animations.update(ctx, now);
 }
 
-/// Kiểm tra tọa độ X của con trỏ chuột có nằm trong phạm vi của một cột hay không
-#[inline]
-pub fn is_pointer_in_col(pointer_x: f32, rect: Rect, is_last: bool) -> bool {
-    if is_last {
-        pointer_x >= rect.min.x && pointer_x <= rect.max.x
-    } else {
-        pointer_x >= rect.min.x && pointer_x < rect.max.x
-    }
-}
-
-/// Tìm cột mục tiêu (drop target) dựa trên tọa độ con trỏ chuột.
-/// Phạm vi nhận diện tính trên TOÀN BỘ chiều dọc của cột (trục X).
-/// Trả về None nếu con trỏ chuột nằm trong chính cột đang được kéo, hoặc nằm ngoài các cột.
-pub fn find_drop_target(
+/// Tìm chỉ số cột mục tiêu khi rê chuột vào bất kỳ phạm vi cột nào khác cột đang kéo.
+pub fn find_drop_target_idx(
     dragged_name: &str,
-    col_rects: &[(usize, Rect, String)],
+    visible_cols: &[ColumnItem],
+    col_rects: &[Rect],
     pointer: Pos2,
-) -> Option<String> {
-    for (i, (_col_idx, rect, name)) in col_rects.iter().enumerate() {
-        let is_last = i == col_rects.len() - 1;
-        if is_pointer_in_col(pointer.x, *rect, is_last) {
-            return if name == dragged_name {
-                None
-            } else {
-                Some(name.clone())
-            };
-        }
+) -> Option<usize> {
+    if col_rects.is_empty() || col_rects.len() != visible_cols.len() {
+        return None;
     }
-    None
+    let (first, last) = (col_rects.first()?, col_rects.last()?);
+    if pointer.x < first.min.x || pointer.x > last.max.x {
+        return None;
+    }
+    let target_idx = (0..col_rects.len() - 1)
+        .position(|i| pointer.x < (col_rects[i].max.x + col_rects[i + 1].min.x) * 0.5)
+        .unwrap_or(col_rects.len() - 1);
+    (visible_cols[target_idx].name != dragged_name).then_some(target_idx)
 }
 
 /// Áp dụng position interpolation animation, background highlight,
-/// grip icon, tên cột và separator line cho một ô header.
+/// grip icon, tên cột, separator line và vạch dọc mép chèn cho một ô header.
+#[allow(clippy::too_many_arguments)]
 fn render_header_cell(
     ui: &mut egui::Ui,
     columns: &mut ColumnState,
     col_name: &str,
     rect: Rect,
-    is_drop_target: bool,
+    is_dragged: bool,
+    drop_edge: Option<bool>,
     is_hovered: bool,
     now: Instant,
 ) {
     let theme = ui.app_theme();
-    // Tự động phát hiện thay đổi vị trí logic (swap/reorder) và lấy visual_rect nội suy chuyển động
+    // Tự động phát hiện thay đổi vị trí logic và lấy visual_rect nội suy chuyển động
     let visual_rect = columns.table_animations.track_rect(col_name, rect, now);
+    let is_drop_target = drop_edge.is_some();
+
+    let drop_t = ui.ctx().animate_bool_with_time(
+        egui::Id::new(("header_col_drop", col_name)),
+        is_drop_target,
+        0.08,
+    );
 
     // 1. Vẽ nền tiêu đề tại vị trí trực quan visual_rect
-    let header_bg = if is_drop_target {
-        // Ô bị swap đè lên: đổi màu sáng rõ rệt báo hiệu chuẩn bị swap
+    let header_bg = if is_dragged {
         theme.surfaces.surface1
+    } else if is_drop_target {
+        theme.surfaces.surface0
     } else if is_hovered {
         theme.log.row_hover
     } else {
@@ -150,25 +157,23 @@ fn render_header_cell(
     ui.painter()
         .rect_filled(visual_rect, CornerRadius::ZERO, header_bg);
 
-    // 2. Báo hiệu trực quan khi ô là drop target (ô bị swap đè lên)
-    if is_drop_target {
-        // Phủ lớp phát sáng màu accent xanh dương pastel dịu mắt
+    // 2. Giữ màu nhấn trên cột đang kéo và tô đậm nhẹ cột đích
+    if is_dragged {
         ui.painter().rect_filled(
             visual_rect,
             CornerRadius::ZERO,
-            theme.text.accent.gamma_multiply(0.22),
+            theme.text.accent.gamma_multiply(0.14),
         );
-        // Viền nổi bật báo hiệu vị trí sẽ tiếp đất
-        ui.painter().rect_stroke(
+    } else if drop_t > 0.01 {
+        ui.painter().rect_filled(
             visual_rect,
             CornerRadius::ZERO,
-            Stroke::new(2.0, theme.text.accent),
-            egui::StrokeKind::Inside,
+            theme.text.primary.gamma_multiply(0.05 * drop_t),
         );
     }
 
     // 3. Vẽ grip handle
-    let grip_color = if is_drop_target || is_hovered {
+    let grip_color = if is_dragged || is_drop_target || is_hovered {
         theme.text.accent
     } else {
         theme.text.muted
@@ -181,7 +186,7 @@ fn render_header_cell(
 
     // 4. Vẽ tên nhãn cột
     let font_id = FontId::monospace(crate::theme::TABLE_FONT_SIZE);
-    let text_color = if is_drop_target {
+    let text_color = if is_dragged || is_drop_target {
         theme.text.primary
     } else {
         theme.text.muted
@@ -234,6 +239,36 @@ fn render_header_cell(
         ],
         line_stroke,
     );
+
+    // 6. Vạch dọc tô đậm ở mép chèn chính xác của cột đích (phải khi kéo sang phải, trái khi kéo sang trái)
+    let edge_id = egui::Id::new(("header_col_drop_edge", col_name));
+    let on_right = match drop_edge {
+        Some(right) => {
+            ui.ctx().data_mut(|d| d.insert_temp(edge_id, right));
+            right
+        }
+        None => ui
+            .ctx()
+            .data(|d| d.get_temp::<bool>(edge_id).unwrap_or(true)),
+    };
+    if drop_t > 0.01 {
+        let edge_rect = if on_right {
+            Rect::from_min_max(
+                Pos2::new(visual_rect.max.x - 3.0, visual_rect.min.y),
+                visual_rect.max,
+            )
+        } else {
+            Rect::from_min_max(
+                visual_rect.min,
+                Pos2::new(visual_rect.min.x + 3.0, visual_rect.max.y),
+            )
+        };
+        ui.painter().rect_filled(
+            edge_rect,
+            CornerRadius::ZERO,
+            theme.text.primary.gamma_multiply(0.85 * drop_t),
+        );
+    }
 }
 
 /// Vẽ chip tiêu đề nổi bám theo con trỏ chuột (Floating Drag Ghost Chip)
@@ -260,18 +295,10 @@ pub fn render_drag_ghost(
         egui::vec2(ghost_w, ghost_h),
     );
 
-    // Deep smooth drop shadow
     painter.rect_filled(
-        ghost_rect.expand(3.0),
-        CornerRadius::same(5),
-        Color32::from_black_alpha(130),
-    );
-    painter.rect_filled(ghost_rect, CornerRadius::same(4), theme.surfaces.surface0);
-    painter.rect_stroke(
         ghost_rect,
         CornerRadius::same(4),
-        Stroke::new(1.5, theme.text.accent),
-        egui::StrokeKind::Inside,
+        theme.surfaces.surface0.gamma_multiply(0.95),
     );
     let grip_rect = Rect::from_center_size(
         Pos2::new(ghost_rect.min.x + 8.0, ghost_rect.center().y),
@@ -291,159 +318,92 @@ pub fn render_drag_ghost(
 mod tests {
     use super::*;
 
-    fn setup_test_columns() -> (ColumnState, Vec<ColumnItem>, Vec<(usize, Rect, String)>) {
+    fn setup_test_columns() -> (ColumnState, Vec<ColumnItem>, Vec<Rect>) {
         let mut columns = ColumnState::default();
-        let visible_cols = vec![
-            ColumnItem {
-                name: "timestamp".to_string(),
-                visible: true,
-                width: 150.0,
-            },
-            ColumnItem {
-                name: "level".to_string(),
-                visible: true,
-                width: 80.0,
-            },
-            ColumnItem {
-                name: "message".to_string(),
-                visible: true,
-                width: 300.0,
-            },
-        ];
-        columns.columns = visible_cols.clone();
-
-        // Giả lập tọa độ X trên màn hình:
-        // Cột 0 ("timestamp"): [0.0 .. 150.0]
-        // Cột 1 ("level"):     [150.0 .. 230.0]
-        // Cột 2 ("message"):   [230.0 .. 530.0]
-        let col_rects = vec![
-            (
-                0,
-                Rect::from_min_size(Pos2::new(0.0, 0.0), egui::vec2(150.0, 26.0)),
-                "timestamp".to_string(),
-            ),
-            (
-                1,
-                Rect::from_min_size(Pos2::new(150.0, 0.0), egui::vec2(80.0, 26.0)),
-                "level".to_string(),
-            ),
-            (
-                2,
-                Rect::from_min_size(Pos2::new(230.0, 0.0), egui::vec2(300.0, 26.0)),
-                "message".to_string(),
-            ),
-        ];
-
+        columns.columns.push(ColumnItem {
+            name: "extra".into(),
+            visible: true,
+            width: 100.0,
+        });
+        let visible_cols = columns.columns.clone();
+        // ["timestamp" (0..150), "level" (150..206), "message" (206..556), "extra" (556..656)]
+        let mut x = 0.0;
+        let col_rects = visible_cols
+            .iter()
+            .map(|c| {
+                let r = Rect::from_min_size(Pos2::new(x, 0.0), egui::vec2(c.width, 26.0));
+                x += c.width;
+                r
+            })
+            .collect();
         (columns, visible_cols, col_rects)
     }
 
     #[test]
-    fn test_no_drop_target_when_pointer_inside_dragged_column() {
-        let (_columns, _visible_cols, col_rects) = setup_test_columns();
+    fn test_find_drop_target_idx_enters_any_other_column() {
+        let (_columns, visible_cols, col_rects) = setup_test_columns();
 
-        // Đang kéo cột "level" [150.0 .. 230.0]
-        // Chuột nằm ở X = 190.0 (vẫn trong cột "level")
-        let pointer = Pos2::new(190.0, 13.0);
-        let drop_target = find_drop_target("level", &col_rects, pointer);
-
+        // Trong chính cột đang kéo ("level": 150..206) -> None
         assert_eq!(
-            drop_target, None,
-            "Khi chuột vẫn ở trong cột đang kéo thì không có drop target"
+            find_drop_target_idx("level", &visible_cols, &col_rects, Pos2::new(178.0, 13.0)),
+            None
+        );
+
+        // Vừa rê vào cột kế bên ("timestamp": 0..150 hoặc "message": 206..556) là nhận ngay
+        assert_eq!(
+            find_drop_target_idx("level", &visible_cols, &col_rects, Pos2::new(148.0, 13.0)),
+            Some(0)
+        );
+        assert_eq!(
+            find_drop_target_idx("level", &visible_cols, &col_rects, Pos2::new(210.0, 13.0)),
+            Some(2)
+        );
+
+        // Nhận trên toàn bộ chiều dọc cột (kể cả Y ở dưới bảng)
+        assert_eq!(
+            find_drop_target_idx("level", &visible_cols, &col_rects, Pos2::new(620.0, 600.0)),
+            Some(3)
+        );
+
+        // Ngoài phạm vi bảng -> None
+        assert_eq!(
+            find_drop_target_idx("level", &visible_cols, &col_rects, Pos2::new(700.0, 13.0)),
+            None
         );
     }
 
     #[test]
-    fn test_detect_drop_target_in_other_column_right() {
-        let (_columns, _visible_cols, col_rects) = setup_test_columns();
+    fn test_shift_only_executed_on_release_both_directions() {
+        let (mut columns, visible_cols, col_rects) = setup_test_columns();
+        columns.header_dragged_name = Some("timestamp".into());
 
-        // Đang kéo cột "level", chuột di chuyển sang X = 250.0 (nằm trong cột "message" [230.0 .. 530.0])
-        let pointer = Pos2::new(250.0, 13.0);
-        let drop_target = find_drop_target("level", &col_rects, pointer);
-
-        assert_eq!(
-            drop_target,
-            Some("message".to_string()),
-            "Phải nhận diện cột 'message' là drop target để đổi màu highlight"
+        // Kéo "timestamp" (0) vào "extra" (3) -> trước khi nhả chuột thứ tự giữ nguyên
+        let target = find_drop_target_idx(
+            "timestamp",
+            &visible_cols,
+            &col_rects,
+            Pos2::new(580.0, 13.0),
         );
-    }
+        assert_eq!(target, Some(3));
 
-    #[test]
-    fn test_detect_drop_target_in_other_column_left() {
-        let (_columns, _visible_cols, col_rects) = setup_test_columns();
+        let names =
+            |c: &ColumnState| -> Vec<String> { c.columns.iter().map(|i| i.name.clone()).collect() };
+        assert_eq!(names(&columns), ["timestamp", "level", "message", "extra"]);
 
-        // Đang kéo cột "level", chuột di chuyển sang X = 100.0 (nằm trong cột "timestamp" [0.0 .. 150.0])
-        let pointer = Pos2::new(100.0, 13.0);
-        let drop_target = find_drop_target("level", &col_rects, pointer);
-
-        assert_eq!(
-            drop_target,
-            Some("timestamp".to_string()),
-            "Phải nhận diện cột 'timestamp' là drop target để đổi màu highlight"
-        );
-    }
-
-    #[test]
-    fn test_detect_drop_target_works_anywhere_vertically() {
-        let (_columns, _visible_cols, col_rects) = setup_test_columns();
-
-        // Chuột nằm ở tít bên dưới bảng log (Y = 600.0), nhưng hoành độ X = 280.0
-        let pointer_down_in_logs = Pos2::new(280.0, 600.0);
-        let drop_target = find_drop_target("level", &col_rects, pointer_down_in_logs);
-
-        assert_eq!(
-            drop_target,
-            Some("message".to_string()),
-            "Phải nhận diện drop target trên toàn bộ chiều dọc của cột"
-        );
-    }
-
-    #[test]
-    fn test_swap_only_executed_on_release() {
-        let (mut columns, _visible_cols, col_rects) = setup_test_columns();
-        columns.header_dragged_name = Some("level".to_string());
-
-        // 1. Trong lúc đang kéo: chuột ở X = 260.0 (cột "message")
-        let pointer = Pos2::new(260.0, 13.0);
-        let drop_target = find_drop_target("level", &col_rects, pointer);
-        assert_eq!(drop_target, Some("message".to_string()));
-
-        // Trong lúc kéo, danh sách columns VẪN GIỮ NGUYÊN (KHÔNG live-swap)
-        assert_eq!(columns.columns[0].name, "timestamp");
-        assert_eq!(columns.columns[1].name, "level");
-        assert_eq!(columns.columns[2].name, "message");
-
-        // 2. Người dùng thả chuột ra (release):
-        if let (Some(dragged), Some(target)) = (columns.header_dragged_name.take(), drop_target) {
-            if dragged != target {
-                columns.swap_columns(&dragged, &target);
-            }
+        // Nhả chuột -> các cột bị ảnh hưởng ("level", "message", "extra") dịch sang trái
+        if let (Some(dragged), Some(idx)) = (columns.header_dragged_name.take(), target) {
+            columns.move_column(&dragged, &visible_cols[idx].name);
         }
+        assert_eq!(names(&columns), ["level", "message", "extra", "timestamp"]);
 
-        // Sau khi thả chuột, vị trí mới chính thức được swap!
-        assert_eq!(columns.columns[0].name, "timestamp");
-        assert_eq!(columns.columns[1].name, "message");
-        assert_eq!(columns.columns[2].name, "level");
-    }
-
-    #[test]
-    fn test_no_swap_when_released_in_same_column() {
-        let (mut columns, _visible_cols, col_rects) = setup_test_columns();
-        columns.header_dragged_name = Some("level".to_string());
-
-        // Chuột được thả ở trong chính cột "level" (X = 180.0)
-        let pointer = Pos2::new(180.0, 13.0);
-        let drop_target = find_drop_target("level", &col_rects, pointer);
-        assert_eq!(drop_target, None);
-
-        // Thả chuột nhưng không có drop target -> không swap
-        if let (Some(dragged), Some(target)) = (columns.header_dragged_name.take(), drop_target) {
-            if dragged != target {
-                columns.swap_columns(&dragged, &target);
-            }
+        // Kéo ngược sang trái vào cột kế bên ("extra" vào "message") -> đổi chỗ
+        let vis_after = columns.columns.clone();
+        let target_left =
+            find_drop_target_idx("extra", &vis_after, &col_rects, Pos2::new(180.0, 13.0));
+        assert_eq!(target_left, Some(1));
+        if let Some(idx) = target_left {
+            columns.move_column("extra", &vis_after[idx].name);
         }
-
-        assert_eq!(columns.columns[0].name, "timestamp");
-        assert_eq!(columns.columns[1].name, "level");
-        assert_eq!(columns.columns[2].name, "message");
+        assert_eq!(names(&columns), ["level", "extra", "message", "timestamp"]);
     }
 }
