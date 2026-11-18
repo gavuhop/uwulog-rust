@@ -157,7 +157,7 @@ pub fn render_toolbar(
         }
     }
 
-    ui.add_space(4.0);
+    ui.add_space(8.0);
 
     // Log Count / Filter Matched Indicator
     render_log_counter(ui, session);

@@ -9,13 +9,16 @@ pub fn render_search_bar(
     session: &mut GuiSession,
     dispatch: &mut impl FnMut(AppAction),
 ) {
-    let button_extras = if !session.view.search.query.is_empty() {
-        56.0
+    let item_gap = ui.spacing().item_spacing.x;
+    let has_clear = !session.view.search.query.is_empty();
+    let input_btn_gap = if item_gap == 0.0 { 2.0 } else { 0.0 };
+    let buttons_w = if has_clear {
+        input_btn_gap + item_gap + 24.0 + item_gap + 24.0
     } else {
-        28.0
+        input_btn_gap + item_gap + 24.0
     };
     let available_w = ui.available_width();
-    let search_box_width = (available_w - button_extras - 6.0).max(40.0);
+    let search_box_width = (available_w - buttons_w).max(40.0);
 
     let search_id = Id::new("search_query_input");
 
@@ -77,6 +80,9 @@ pub fn render_search_bar(
     }
 
     let search_rect = search_response.rect;
+    if input_btn_gap > 0.0 {
+        ui.add_space(input_btn_gap);
+    }
 
     // Quick Clear button if query is not empty
     let clear_resp = if !session.view.search.query.is_empty() {

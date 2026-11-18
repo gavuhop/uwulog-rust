@@ -257,7 +257,7 @@ pub fn render_header(
                 // Các nút công cụ: Columns modal, Settings, Stop/Restart, Snapshot, Latch, Log counter
                 render_toolbar(ui, session, dispatch);
 
-                ui.add_space(6.0);
+                ui.add_space(2.0);
 
                 // 4. Ở giữa: Search Box Command Palette Style
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
@@ -424,4 +424,99 @@ fn render_header_pipe_separator(ui: &mut egui::Ui, color: egui::Color32) {
         [egui::pos2(c.x, c.y - 5.5), egui::pos2(c.x, c.y + 5.5)],
         egui::Stroke::new(1.0, color),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::overlay::OverlayStack;
+    use uwu_core_workspace::{
+        SourceConfig, SourceType, WorkspaceLocation, WorkspaceSession, WorkspaceStore,
+    };
+
+    fn measure_counter_gaps(query: &str) -> (f32, f32) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let _guard = rt.enter();
+        let ctx = egui::Context::default();
+        crate::theme::setup_fonts(&ctx);
+        let ws = WorkspaceSession::new(
+            "psittacus-erithacus".to_string(),
+            WorkspaceLocation::local("/tmp"),
+            SourceConfig {
+                source_type: SourceType::Process,
+                command_str: String::new(),
+                file_path: String::new(),
+                working_dir: String::new(),
+                capacity: 100,
+                display_limit: 50,
+            },
+        );
+        let mut session = GuiSession::new(ws);
+        session.view.search.query = query.to_string();
+        let mut stack = OverlayStack::new();
+        let store = WorkspaceStore::default();
+        let mut q = String::new();
+
+        let raw_input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1280.0, 800.0),
+            )),
+            ..Default::default()
+        };
+
+        let mut output = ctx.run_ui(raw_input, |ui| {
+            let mut cx = HeaderContext {
+                overlay_stack: &mut stack,
+                store: &store,
+                sessions: &[],
+                container_sessions: &[],
+                active_index: 0,
+                project_search_query: &mut q,
+                project_shortcut: "",
+            };
+            let mut dispatch = |_| {};
+            render_header(ui, &mut session, &mut cx, &mut dispatch);
+        });
+        output.textures_delta.clear();
+
+        let rects: Vec<egui::Rect> = output
+            .shapes
+            .iter()
+            .map(|s| s.shape.visual_bounding_rect())
+            .collect();
+
+        // Nút Live/Paused là pill wide > 60px nằm quanh x ~ 1000..1120
+        let live_pill = rects
+            .iter()
+            .find(|r| r.width() > 60.0 && r.width() < 120.0 && r.min.x > 950.0)
+            .expect("live/paused pill rect");
+        // Counter text nằm ngay bên trái live_pill
+        let counter_text = rects
+            .iter()
+            .filter(|r| r.max.x < live_pill.min.x && r.min.x > 950.0)
+            .max_by(|a, b| a.max.x.partial_cmp(&b.max.x).unwrap())
+            .expect("counter text rect");
+        // Icon history nằm ngay bên trái counter_text
+        let history_glyph = rects
+            .iter()
+            .filter(|r| r.max.x < counter_text.min.x && r.min.x > 900.0)
+            .max_by(|a, b| a.max.x.partial_cmp(&b.max.x).unwrap())
+            .expect("history glyph rect");
+
+        let left_gap = counter_text.min.x - history_glyph.max.x;
+        let right_gap = live_pill.min.x - counter_text.max.x;
+        (left_gap, right_gap)
+    }
+
+    #[test]
+    fn test_header_log_counter_has_balanced_horizontal_gaps() {
+        for query in ["err", ""] {
+            let (left_gap, right_gap) = measure_counter_gaps(query);
+            assert!(
+                (left_gap - right_gap).abs() <= 2.5,
+                "query={query:?}: expected balanced counter gaps, got left={left_gap:.1} right={right_gap:.1}"
+            );
+        }
+    }
 }
