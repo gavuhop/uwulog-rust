@@ -42,6 +42,7 @@ pub struct AppButton<'a> {
     label: Option<&'a str>,
     icon: Option<ButtonIcon<'a>>,
     icon_size: Option<IconSize>,
+    icon_gap: f32,
     status_dot: Option<Color32>,
     tooltip: Option<&'a str>,
     variant: ButtonVariant,
@@ -68,6 +69,7 @@ impl<'a> AppButton<'a> {
             label: None,
             icon: None,
             icon_size: None,
+            icon_gap: 5.0,
             status_dot: None,
             tooltip: None,
             variant: ButtonVariant::Default,
@@ -95,6 +97,11 @@ impl<'a> AppButton<'a> {
 
     pub fn icon_size(mut self, size: impl Into<IconSize>) -> Self {
         self.icon_size = Some(size.into());
+        self
+    }
+
+    pub fn icon_gap(mut self, gap: f32) -> Self {
+        self.icon_gap = gap.max(0.0);
         self
     }
 
@@ -180,6 +187,8 @@ impl<'a> AppButton<'a> {
                 .map(|s| s.px())
                 .unwrap_or(if self.small { 12.0 } else { 14.0 });
 
+        let icon_gap = self.icon_gap;
+
         let (desired_w, desired_h, label_galley) = match (self.icon, self.label) {
             (Some(ButtonIcon::Named(_)), Some(label)) => {
                 let galley = ui.painter().layout_no_wrap(
@@ -187,7 +196,7 @@ impl<'a> AppButton<'a> {
                     font_id.clone(),
                     Color32::PLACEHOLDER,
                 );
-                let content_w = icon_size_px + 5.0 + galley.size().x;
+                let content_w = icon_size_px + icon_gap + galley.size().x;
                 let min_w = if self.full_width {
                     ui.available_width()
                 } else if let Some(w) = self.min_width {
@@ -365,14 +374,14 @@ impl<'a> AppButton<'a> {
 
             if let Some(ButtonIcon::Named(icon_name)) = self.icon {
                 if let Some(galley) = label_galley {
-                    let content_w = icon_size_px + 5.0 + galley.size().x;
+                    let content_w = icon_size_px + icon_gap + galley.size().x;
                     let (icon_rect, text_pos) = if self.align_left {
                         let icon_r = Rect::from_center_size(
                             Pos2::new(rect.min.x + padding_x + icon_size_px * 0.5, rect.center().y),
                             Vec2::splat(icon_size_px),
                         );
                         let text_p = Pos2::new(
-                            rect.min.x + padding_x + icon_size_px + 5.0,
+                            rect.min.x + padding_x + icon_size_px + icon_gap,
                             rect.center().y - galley.size().y * 0.5,
                         );
                         (icon_r, text_p)
@@ -383,7 +392,7 @@ impl<'a> AppButton<'a> {
                             Vec2::splat(icon_size_px),
                         );
                         let text_p = Pos2::new(
-                            start_x + icon_size_px + 5.0,
+                            start_x + icon_size_px + icon_gap,
                             rect.center().y - galley.size().y * 0.5,
                         );
                         (icon_r, text_p)
@@ -567,6 +576,7 @@ impl<'a> IconButton<'a> {
 pub struct TabButton<'a> {
     label: &'a str,
     active: bool,
+    active_background: bool,
     enabled: bool,
     badge_count: Option<usize>,
 }
@@ -576,9 +586,15 @@ impl<'a> TabButton<'a> {
         Self {
             label,
             active,
+            active_background: true,
             enabled: true,
             badge_count: None,
         }
+    }
+
+    pub fn active_background(mut self, enabled: bool) -> Self {
+        self.active_background = enabled;
+        self
     }
 
     pub fn enabled(mut self, enabled: bool) -> Self {
@@ -623,7 +639,12 @@ impl<'a> TabButton<'a> {
             let (text_color, bg_color, stroke) = if !self.enabled {
                 (theme.text.muted, Color32::TRANSPARENT, Stroke::NONE)
             } else if self.active {
-                (theme.text.accent, theme.surfaces.surface0, Stroke::NONE)
+                let active_bg = if self.active_background {
+                    theme.surfaces.surface0
+                } else {
+                    Color32::TRANSPARENT
+                };
+                (theme.text.accent, active_bg, Stroke::NONE)
             } else if is_active {
                 (theme.text.primary, theme.surfaces.surface1, Stroke::NONE)
             } else if is_hovered {

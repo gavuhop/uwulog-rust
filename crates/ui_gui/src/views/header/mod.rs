@@ -62,6 +62,8 @@ pub fn render_header(
         egui::vec2(available_w, TITLEBAR_HEIGHT),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+
             // Nút điều khiển cửa sổ phía bên trái (chỉ hiển thị trên macOS theo chuẩn Apple Traffic Lights của Zed)
             if render_left_window_controls(ui) {
                 ui.add_space(4.0);
@@ -81,14 +83,15 @@ pub fn render_header(
                 dispatch(AppAction::ToggleMainMenu);
             }
 
-            // Nhận diện môi trường remote (WSL / SSH) hiển thị trước tên Project;
-            // Riêng Docker / Dev Container hiển thị sau tên Project để gọn và rõ ngữ cảnh hơn.
+            let is_docker_session = matches!(
+                session.session.location.as_remote(),
+                Some(uwu_core_workspace::RemoteConnectionOptions::Docker(_))
+            );
+
+            // Nhận diện môi trường remote (WSL / SSH) hiển thị trước nút Project;
+            // Với Docker / Dev Container: icon + chấm xanh nằm gộp ngay trong nút Project Picker.
             if let Some(remote) = session.session.location.as_remote() {
-                if !matches!(
-                    remote,
-                    uwu_core_workspace::RemoteConnectionOptions::Docker(_)
-                ) {
-                    ui.add_space(2.0);
+                if !is_docker_session {
                     let remote_tip = format!(
                         "Connected to {}: {}\nSwitch or manage remote servers",
                         remote.connection_type().to_uppercase(),
@@ -100,11 +103,10 @@ pub fn render_header(
                     } else {
                         crate::components::ui::ButtonVariant::Ghost
                     };
-                    let remote_icon = remote.icon();
-                    let remote_label = remote.short_label();
                     let remote_resp = crate::components::ui::AppButton::new()
-                        .label(remote_label)
-                        .icon(remote_icon)
+                        .icon(remote.icon())
+                        .icon_gap(9.0)
+                        .label(remote.short_label())
                         .status_dot(theme.status.success)
                         .variant(remote_variant)
                         .text_color(if is_remote_open {
@@ -125,7 +127,7 @@ pub fn render_header(
                 }
             }
 
-            // Project Button
+            // Project Button (nếu là Dev Container thì hiển thị thêm icon Box + chấm xanh ngay đầu nút)
             let is_project_picker_open = cx.overlay_stack.is_open(OverlayLayer::ProjectPicker);
             if !session.session.name.is_empty() {
                 let summary = session.session.target_summary();
@@ -152,7 +154,7 @@ pub fn render_header(
                     crate::components::ui::ButtonVariant::Ghost
                 };
 
-                let proj_resp = crate::components::ui::AppButton::new()
+                let mut proj_btn = crate::components::ui::AppButton::new()
                     .label(&session.session.name)
                     .variant(proj_variant)
                     .text_color(if is_project_picker_open {
@@ -160,8 +162,14 @@ pub fn render_header(
                     } else {
                         theme.text.primary
                     })
-                    .tooltip(&tooltip)
-                    .show(ui);
+                    .tooltip(&tooltip);
+                if is_docker_session {
+                    proj_btn = proj_btn
+                        .icon(crate::components::ui::IconName::Box)
+                        .icon_gap(9.0)
+                        .status_dot(theme.status.success);
+                }
+                let proj_resp = proj_btn.show(ui);
                 proj_btn_rect = Some(proj_resp.rect);
 
                 if proj_resp.clicked() {
@@ -180,8 +188,6 @@ pub fn render_header(
             // Environment Status Indicator
             toolbar::render_environment_status(ui, session, dispatch);
 
-            ui.add_space(4.0);
-
             // 2. Stream Tabs: Main / Filtered and Raw Stream
             let is_filtered_tab = session.view.active_tab == ActiveTab::Filtered;
             let is_unfiltered_tab = session.view.active_tab == ActiveTab::Unfiltered;
@@ -196,6 +202,7 @@ pub fn render_header(
             };
 
             if crate::components::ui::TabButton::new(filtered_tab_text, is_filtered_tab)
+                .active_background(false)
                 .show(ui)
                 .on_hover_text(filtered_tooltip)
                 .clicked()
@@ -204,20 +211,20 @@ pub fn render_header(
             }
 
             // Tab 2: Raw Stream (Chỉ xuất hiện khi người dùng đang có bộ lọc)
-            if is_filtering {
-                ui.add_space(2.0);
-
-                if crate::components::ui::TabButton::new("Raw", is_unfiltered_tab)
+            if is_filtering
+                && crate::components::ui::TabButton::new("Raw", is_unfiltered_tab)
+                    .active_background(false)
                     .show(ui)
                     .on_hover_text("Switch to Raw Stream view (Alt+2, Ctrl+Tab)")
                     .clicked()
-                {
-                    dispatch(AppAction::SwitchTab(ActiveTab::Unfiltered));
-                }
+            {
+                dispatch(AppAction::SwitchTab(ActiveTab::Unfiltered));
             }
 
             // 3. Phía bên phải: Window Controls, Toolbar & Search Box
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // Giữ nguyên item_spacing mặc định cho thanh filter và các nút toolbar bên phải
+                ui.spacing_mut().item_spacing.x = ui.style().spacing.item_spacing.x;
                 // Nút điều khiển cửa sổ phía bên phải (Windows / Linux chuẩn Zed)
                 if render_right_window_controls(ui) {
                     ui.add_space(4.0);
@@ -297,6 +304,8 @@ pub fn render_empty_header(
         egui::vec2(available_w, TITLEBAR_HEIGHT),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+
             if render_left_window_controls(ui) {
                 ui.add_space(4.0);
             }
@@ -346,6 +355,7 @@ pub fn render_empty_header(
 
             // 3. Phía bên phải: Window Controls
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = ui.style().spacing.item_spacing.x;
                 render_right_window_controls(ui);
             });
         },

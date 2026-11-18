@@ -245,7 +245,6 @@ pub fn render_docker_source_switcher_pill(
     let label = session.session.active_docker_short_label()?;
 
     let theme = ui.app_theme();
-    ui.add_space(2.0);
 
     let is_open = overlay_stack.is_open(OverlayLayer::SourceSwitcher);
     let source_summary = session.session.source_badge_label();
@@ -255,9 +254,7 @@ pub fn render_docker_source_switcher_pill(
     );
 
     let resp = AppButton::new()
-        .icon(IconName::Box)
         .label(&label)
-        .status_dot(theme.status.success)
         .variant(if is_open {
             ButtonVariant::Selected
         } else {
@@ -270,10 +267,6 @@ pub fn render_docker_source_switcher_pill(
         })
         .tooltip(&tooltip)
         .show(ui);
-
-    ui.ctx().data_mut(|d| {
-        d.insert_temp(egui::Id::new("server_button_rect"), resp.rect);
-    });
 
     if resp.clicked() {
         dispatch(AppAction::ToggleSourceSwitcher);
