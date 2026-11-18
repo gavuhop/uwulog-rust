@@ -67,8 +67,8 @@ pub fn render_cell(
     let resp = ui.add(edit);
     let is_secondary_down = ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary));
     let is_primary_clicked = ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary));
-    let pointer_pos = ui.input(|i| i.pointer.interact_pos().or_else(|| i.pointer.latest_pos()));
-    let pointer_in_cell = resp.hovered() || pointer_pos.is_some_and(|pos| cell_rect.contains(pos));
+    // Dùng ui.rect_contains_pointer thay vì raw cell_rect.contains để tôn trọng lớp popup/modal phía trên
+    let pointer_in_cell = resp.hovered() || ui.rect_contains_pointer(cell_rect);
     let clicked = (resp.clicked() || (is_primary_clicked && pointer_in_cell)) && !is_secondary_down;
 
     let selected_text =

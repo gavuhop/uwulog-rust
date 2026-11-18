@@ -631,3 +631,85 @@ async fn test_no_project_open_does_not_use_current_dir() {
         .iter()
         .any(|w| w.location.working_dir() == current_dir));
 }
+
+#[tokio::test]
+async fn test_open_normal_workspace_does_not_auto_run_while_container_log_tab_streams() {
+    let mut app = create_test_app();
+
+    // 1. Dự án bình thường (File / Run Command) khi mở qua OpenWorkspace:
+    // KHÔNG tự động chạy lệnh/nguồn, nhưng trạng thái hiển thị vẫn ở Live (is_auto_scroll = true)
+    let log_dir = std::env::temp_dir();
+    let log_file = log_dir.join(format!("uwu_test_normal_{}.log", uuid::Uuid::new_v4()));
+    std::fs::write(&log_file, "hello log\n").unwrap();
+    let mut file_ws = Workspace::new(
+        "local-log",
+        WorkspaceLocation::local(log_dir.to_string_lossy().to_string()),
+        SourceType::File,
+    );
+    file_ws.file_path = log_file.to_string_lossy().to_string();
+    app.dispatch_action(AppAction::OpenWorkspace(file_ws));
+
+    assert!(!app.active_session().has_auto_started_source);
+    assert!(!app.active_session().session.is_source_running);
+    assert!(app.active_session().view.viewport.is_auto_scroll);
+
+    // 2. App Container (Dev Container chính mở dự án): cũng KHÔNG tự động chạy
+    let app_container_ws = Workspace::new(
+        "psittacus",
+        WorkspaceLocation::remote(
+            uwu_core_workspace::DockerConnectionOptions::new("psittacus-app-1", "/workspaces/p")
+                .with_compose_project("psittacus_devcontainer")
+                .with_compose_service("app")
+                .with_devcontainer(true),
+        ),
+        SourceType::Process,
+    );
+    app.dispatch_action(AppAction::OpenWorkspace(app_container_ws));
+
+    assert!(!app.active_session().session.is_following_container_logs());
+    assert!(!app.active_session().has_auto_started_source);
+    assert!(!app.active_session().session.is_source_running);
+    assert!(app.active_session().view.viewport.is_auto_scroll);
+
+    // 3. Mở container log tab khác (vd: `db` với follow_container_logs = true):
+    // Tự động lấy log từ Docker và bật Live
+    let svc_container_ws = Workspace::new(
+        "psittacus",
+        WorkspaceLocation::remote(
+            uwu_core_workspace::DockerConnectionOptions::new("psittacus-db-1", "/workspaces/p")
+                .with_compose_project("psittacus_devcontainer")
+                .with_compose_service("db")
+                .with_follow_container_logs(true),
+        ),
+        SourceType::Process,
+    );
+    app.dispatch_action(AppAction::OpenContainerLogSession(svc_container_ws));
+
+    assert!(app.active_session().session.is_following_container_logs());
+    assert!(app.active_session().has_auto_started_source);
+    assert!(app.active_session().session.is_source_running);
+    assert!(app.active_session().view.viewport.is_auto_scroll);
+
+    // Tab container phụ (`follow_container_logs`) không được lưu trùng vào recent_workspaces / open_workspace_ids
+    app.workspaces.save_all_open_workspaces();
+    let docker_recent_count = app
+        .workspaces
+        .store
+        .recent_workspaces
+        .iter()
+        .filter(|w| w.name == "psittacus")
+        .count();
+    assert_eq!(docker_recent_count, 1);
+
+    // 4. Nếu user bấm Stop thủ công rồi chuyển tab qua lại -> không tự khởi chạy đè
+    let svc_idx = app.workspaces.active_index;
+    app.dispatch_action(AppAction::StopSource);
+    assert!(app.active_session().user_stopped_source);
+    assert!(!app.active_session().session.is_source_running);
+
+    app.dispatch_action(AppAction::SwitchSession(svc_idx - 1));
+    app.dispatch_action(AppAction::SwitchSession(svc_idx));
+    assert!(!app.active_session().session.is_source_running);
+
+    let _ = std::fs::remove_file(&log_file);
+}

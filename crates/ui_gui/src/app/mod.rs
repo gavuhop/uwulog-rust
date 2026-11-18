@@ -256,7 +256,11 @@ impl UwuGuiApp {
     /// Chuyển đổi session đang xem sang chỉ mục tương ứng
     #[inline]
     pub fn switch_session(&mut self, index: usize) {
+        let prev_index = self.workspaces.active_index;
         self.workspaces.switch_session(index);
+        if self.workspaces.active_index != prev_index {
+            self.workspaces.auto_start_container_log_if_needed(&self.rt);
+        }
     }
 
     /// Mở hoặc kích hoạt một Workspace từ danh sách lưu trữ
@@ -303,7 +307,11 @@ impl UwuGuiApp {
     /// Chuyển đổi session theo vòng lặp (Next / Prev)
     #[inline]
     pub fn cycle_project(&mut self, forward: bool) {
+        let prev_index = self.workspaces.active_index;
         self.workspaces.cycle_project(forward);
+        if self.workspaces.active_index != prev_index {
+            self.workspaces.auto_start_container_log_if_needed(&self.rt);
+        }
     }
 
     /// Bắt đầu stream nguồn cho session đang hoạt động
@@ -564,7 +572,15 @@ impl UwuGuiApp {
 
     pub fn new(cc: &eframe::CreationContext<'_>, rt: Handle) -> Self {
         let cli = CliArgs::parse();
-        let store = WorkspaceStore::load();
+        let mut store = WorkspaceStore::load();
+        store.recent_workspaces.retain(|w| {
+            !matches!(
+                &w.location,
+                uwu_core_workspace::WorkspaceLocation::Remote(
+                    uwu_core_workspace::RemoteConnectionOptions::Docker(d)
+                ) if d.follow_container_logs
+            )
+        });
 
         // Đảm bảo file template mẫu luôn tồn tại sẵn trong thư mục themes
         let _ = crate::theme::ensure_template_file();
@@ -596,7 +612,11 @@ impl UwuGuiApp {
             let open_ids = store.open_workspace_ids.clone();
             for id in open_ids {
                 if let Some(ws) = store.recent_workspaces.iter().find(|w| w.id == id).cloned() {
-                    if ws.is_valid_to_open() {
+                    if ws.is_valid_to_open()
+                        && !sessions.iter().any(|s| {
+                            crate::views::is_same_docker_project(&s.session.location, &ws.location)
+                        })
+                    {
                         let mut gui_session =
                             GuiSession::from_workspace(&ws, cli.capacity, cli.display_limit);
                         gui_session.session.spawn_load_environment(&rt);
@@ -648,6 +668,8 @@ impl UwuGuiApp {
 
             if has_custom_source {
                 app.start_configured_source();
+            } else {
+                app.workspaces.auto_start_container_log_if_needed(&app.rt);
             }
             app.active_session_mut().view.search.mark_needs_search();
         }
@@ -755,16 +777,50 @@ impl UwuGuiApp {
                 self.switch_session(idx);
                 self.close_project_picker();
             }
-            AppAction::CloseSession(idx) => self.close_session(idx),
+            AppAction::CloseSession(idx) => {
+                if self.is_overlay_open(OverlayLayer::ProjectPicker) {
+                    if let Some(target_loc) = self
+                        .workspaces
+                        .sessions
+                        .get(idx)
+                        .map(|s| s.session.location.clone())
+                    {
+                        if matches!(
+                            target_loc,
+                            uwu_core_workspace::WorkspaceLocation::Remote(
+                                uwu_core_workspace::RemoteConnectionOptions::Docker(_)
+                            )
+                        ) {
+                            let indices: Vec<usize> = self
+                                .workspaces
+                                .sessions
+                                .iter()
+                                .enumerate()
+                                .filter(|(_, s)| {
+                                    crate::views::is_same_docker_project(
+                                        &s.session.location,
+                                        &target_loc,
+                                    )
+                                })
+                                .map(|(i, _)| i)
+                                .rev()
+                                .collect();
+                            for i in indices {
+                                self.close_session(i);
+                            }
+                            return;
+                        }
+                    }
+                }
+                self.close_session(idx);
+            }
             AppAction::CycleSession(forward) => self.cycle_project(forward),
             AppAction::OpenWorkspace(ws) => {
                 self.open_or_switch_workspace(&ws);
                 self.close_project_picker();
             }
             AppAction::OpenContainerLogSession(ws) => {
-                if self.workspaces.open_container_log_session(&ws, &self.rt) {
-                    self.start_configured_source();
-                }
+                self.workspaces.open_container_log_session(&ws, &self.rt);
                 self.close_overlay(OverlayLayer::SourceSwitcher);
             }
             AppAction::OpenWorkspaceInNewWindow(ws) => {

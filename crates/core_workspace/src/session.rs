@@ -320,6 +320,7 @@ impl WorkspaceSession {
                                 let current_envs = self.env_vars.clone();
                                 let tx = source_tx.clone();
                                 rt.spawn(async move {
+                                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                                     let envs = if !current_envs.is_empty() {
                                         if let Some(latest) = watch_rx.borrow().as_ref() {
                                             latest.clone()
@@ -474,6 +475,7 @@ impl WorkspaceSession {
         let tx = source_tx.clone();
         let tx_err = source_tx;
         rt.spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             if let Err(e) = source.start_stream(tx).await {
                 log::error!("{} stream error: {:#}", label, e);
                 let _ = tx_err

@@ -408,30 +408,44 @@ pub fn render_project_picker_popup(
                     }
                 }
 
-                let filtered_recent: Vec<_> = all_recent
-                    .into_iter()
-                    .filter(|ws| {
-                        // Bỏ qua nếu đã mở trong window hiện tại
-                        if open_ids.contains(&ws.id) {
-                            return false;
-                        }
-                        let ws_dir = ws.location.normalized_dir();
-                        if !ws_dir.is_empty() && open_dirs.contains(&ws_dir) {
-                            return false;
-                        }
+                let mut filtered_recent: Vec<Workspace> = Vec::new();
+                for ws in all_recent {
+                    // Bỏ qua các tab log container phụ hoặc nếu đã mở trong window hiện tại
+                    if matches!(
+                        &ws.location,
+                        WorkspaceLocation::Remote(
+                            uwu_core_workspace::RemoteConnectionOptions::Docker(d)
+                        ) if d.follow_container_logs
+                    ) {
+                        continue;
+                    }
+                    if open_ids.contains(&ws.id) {
+                        continue;
+                    }
+                    let ws_dir = ws.location.normalized_dir();
+                    if !ws_dir.is_empty() && open_dirs.contains(&ws_dir) {
+                        continue;
+                    }
+                    if filtered_recent.iter().any(|existing| {
+                        crate::views::is_same_docker_project(&existing.location, &ws.location)
+                    }) {
+                        continue;
+                    }
 
-                        if search_filter.is_empty() {
-                            true
-                        } else {
-                            let name = ws.name.as_str();
-                            let remote_info = ws.server_name().unwrap_or("");
-                            let dir = ws.location.working_dir();
-                            name.to_lowercase().contains(&search_filter)
-                                || remote_info.to_lowercase().contains(&search_filter)
-                                || dir.to_lowercase().contains(&search_filter)
-                        }
-                    })
-                    .collect();
+                    let matches_search = if search_filter.is_empty() {
+                        true
+                    } else {
+                        let name = ws.name.as_str();
+                        let remote_info = ws.server_name().unwrap_or("");
+                        let dir = ws.location.working_dir();
+                        name.to_lowercase().contains(&search_filter)
+                            || remote_info.to_lowercase().contains(&search_filter)
+                            || dir.to_lowercase().contains(&search_filter)
+                    };
+                    if matches_search {
+                        filtered_recent.push(ws);
+                    }
+                }
 
                 if filtered_recent.is_empty() {
                     ui.add_space(2.0);

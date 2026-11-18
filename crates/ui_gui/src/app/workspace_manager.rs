@@ -41,7 +41,11 @@ impl WorkspaceManager {
         } else {
             active_index.min(sessions.len() - 1)
         };
-        store.open_workspace_ids = sessions.iter().map(|s| s.session.id).collect();
+        store.open_workspace_ids = sessions
+            .iter()
+            .filter(|s| !s.session.is_following_container_logs())
+            .map(|s| s.session.id)
+            .collect();
         store.active_workspace_id = sessions.get(active_index).map(|s| s.session.id);
         let _ = store.save();
 
@@ -91,8 +95,15 @@ impl WorkspaceManager {
                 return;
             }
             self.active_index = index;
-            self.store.active_workspace_id = Some(self.sessions[index].session.id);
-            self.store.open_workspace_ids = self.sessions.iter().map(|s| s.session.id).collect();
+            if !self.sessions[index].session.is_following_container_logs() {
+                self.store.active_workspace_id = Some(self.sessions[index].session.id);
+            }
+            self.store.open_workspace_ids = self
+                .sessions
+                .iter()
+                .filter(|s| !s.session.is_following_container_logs())
+                .map(|s| s.session.id)
+                .collect();
             let _ = self.store.save();
             self.active_session_mut().view.search.mark_needs_search();
         }
@@ -114,18 +125,36 @@ impl WorkspaceManager {
         self.active_session_mut().view.search.mark_needs_search();
     }
 
+    /// Chỉ tự động lấy log cho các tab container gắn chế độ stream Docker (`follow_container_logs`);
+    /// KHÔNG tự chạy lệnh run/file đối với dự án bình thường hay app container.
+    pub fn auto_start_container_log_if_needed(&mut self, rt: &Handle) {
+        let Some(active) = self.active_session_opt_mut() else {
+            return;
+        };
+        if active.session.is_following_container_logs()
+            && !active.has_auto_started_source
+            && !active.user_stopped_source
+            && !active.session.is_source_running
+        {
+            active.has_auto_started_source = true;
+            active.session.start_source(rt);
+        }
+    }
+
     /// Mở hoặc kích hoạt một Workspace từ danh sách lưu trữ
     pub fn open_or_switch_workspace(&mut self, ws: &Workspace, rt: &Handle) {
-        if let Some(pos) = self
-            .sessions
-            .iter()
-            .position(|s| s.session.id == ws.id || s.session.location.is_same(&ws.location))
-        {
+        if let Some(pos) = self.sessions.iter().position(|s| {
+            s.session.id == ws.id
+                || s.session.location.is_same(&ws.location)
+                || crate::views::is_same_docker_project(&s.session.location, &ws.location)
+        }) {
             self.switch_session(pos);
+            self.auto_start_container_log_if_needed(rt);
             return;
         }
 
         self.push_new_session(ws, rt);
+        self.auto_start_container_log_if_needed(rt);
         self.store.active_workspace_id = Some(ws.id);
         if let uwu_core_workspace::WorkspaceLocation::Remote(
             uwu_core_workspace::RemoteConnectionOptions::Docker(ref d),
@@ -139,13 +168,18 @@ impl WorkspaceManager {
             }
         }
         self.store.add_or_update(ws.clone());
-        self.store.open_workspace_ids = self.sessions.iter().map(|s| s.session.id).collect();
+        self.store.open_workspace_ids = self
+            .sessions
+            .iter()
+            .filter(|s| !s.session.is_following_container_logs())
+            .map(|s| s.session.id)
+            .collect();
         let _ = self.store.save();
     }
 
     /// Mở hoặc chuyển sang session xem log của một container anh em (`docker logs -f`)
     /// theo cơ chế giống `This Window`: giữ nguyên buffer & stream của các container đang mở khác.
-    /// Trả về `true` nếu vừa tạo session mới (cần auto-start stream).
+    /// Trả về `true` nếu vừa tạo session mới (cần lưu/khởi chạy stream).
     pub fn open_container_log_session(&mut self, ws: &Workspace, rt: &Handle) -> bool {
         let target_container = ws.location.display_name();
 
@@ -159,10 +193,12 @@ impl WorkspaceManager {
             same_docker_target || s.session.location.is_same(&ws.location)
         }) {
             self.switch_session(pos);
+            self.auto_start_container_log_if_needed(rt);
             return false;
         }
 
         self.push_new_session(ws, rt);
+        self.auto_start_container_log_if_needed(rt);
         true
     }
 
@@ -248,12 +284,19 @@ impl WorkspaceManager {
 
         gui_session.session.sync_location();
 
-        let mut ws = gui_session.session.to_workspace();
-        ws.last_query = gui_session.view.search.query.clone();
-        ws.filter_history = gui_session.view.search.history.entries.clone();
-        self.store.add_or_update(ws);
-        self.store.open_workspace_ids = self.sessions.iter().map(|s| s.session.id).collect();
-        self.store.active_workspace_id = Some(self.sessions[active_idx].session.id);
+        if !gui_session.session.is_following_container_logs() {
+            let mut ws = gui_session.session.to_workspace();
+            ws.last_query = gui_session.view.search.query.clone();
+            ws.filter_history = gui_session.view.search.history.entries.clone();
+            self.store.add_or_update(ws);
+            self.store.active_workspace_id = Some(self.sessions[active_idx].session.id);
+        }
+        self.store.open_workspace_ids = self
+            .sessions
+            .iter()
+            .filter(|s| !s.session.is_following_container_logs())
+            .map(|s| s.session.id)
+            .collect();
         let _ = self.store.save();
     }
 
@@ -266,6 +309,9 @@ impl WorkspaceManager {
             return;
         }
         for s in &mut self.sessions {
+            if s.session.is_following_container_logs() {
+                continue;
+            }
             if s.session.name.trim().is_empty() {
                 s.session.name = "Workspace".to_string();
             }
@@ -275,8 +321,18 @@ impl WorkspaceManager {
             ws.filter_history = s.view.search.history.entries.clone();
             self.store.add_or_update(ws);
         }
-        self.store.open_workspace_ids = self.sessions.iter().map(|s| s.session.id).collect();
-        self.store.active_workspace_id = self.sessions.get(self.active_index).map(|s| s.session.id);
+        self.store.open_workspace_ids = self
+            .sessions
+            .iter()
+            .filter(|s| !s.session.is_following_container_logs())
+            .map(|s| s.session.id)
+            .collect();
+        self.store.active_workspace_id = self
+            .sessions
+            .get(self.active_index)
+            .filter(|s| !s.session.is_following_container_logs())
+            .map(|s| s.session.id)
+            .or_else(|| self.store.open_workspace_ids.first().copied());
         let _ = self.store.save();
     }
 
@@ -289,6 +345,9 @@ impl WorkspaceManager {
         let active_idx = self.active_index;
         let gui_session = &mut self.sessions[active_idx];
         gui_session.session.apply_workspace(ws);
+        gui_session.has_auto_started_source = false;
+        gui_session.user_stopped_source = false;
+        gui_session.view.viewport.latch();
         gui_session.view.search.query = ws.last_query.clone();
         gui_session.view.search.history.entries = ws.filter_history.clone();
         if gui_session.view.search.history.entries.is_empty() && !ws.last_query.trim().is_empty() {
@@ -296,6 +355,7 @@ impl WorkspaceManager {
         }
         gui_session.session.spawn_load_environment(rt);
         self.save_current_workspace();
+        self.auto_start_container_log_if_needed(rt);
     }
 
     /// Bắt đầu stream nguồn cho session đang hoạt động
@@ -305,6 +365,8 @@ impl WorkspaceManager {
         }
         self.save_current_workspace();
         let active_idx = self.active_index;
+        self.sessions[active_idx].has_auto_started_source = true;
+        self.sessions[active_idx].user_stopped_source = false;
         self.sessions[active_idx].session.start_source(rt);
     }
 
@@ -314,6 +376,7 @@ impl WorkspaceManager {
             return;
         }
         let active_idx = self.active_index;
+        self.sessions[active_idx].user_stopped_source = true;
         self.sessions[active_idx].session.stop_source();
     }
 
@@ -324,6 +387,8 @@ impl WorkspaceManager {
         }
         self.save_current_workspace();
         let active_idx = self.active_index;
+        self.sessions[active_idx].has_auto_started_source = true;
+        self.sessions[active_idx].user_stopped_source = false;
         self.sessions[active_idx].session.restart_source(rt);
         self.sessions[active_idx].view.reset_stream_data();
         self.active_session_mut().view.search.mark_needs_search();

@@ -476,8 +476,8 @@ pub fn render_source_switcher_popup(
                             } else {
                                 0.0
                             };
-                            // Chừa sẵn chiều ngang nút close khi hover + padding 2 đầu hàng (12.0)
-                            text_w + check_w + 22.0 + item_spacing_x + 12.0
+                            // Padding 2 đầu hàng (12.0)
+                            text_w + check_w + 12.0
                         })
                         .fold(0.0_f32, f32::max);
 
@@ -541,18 +541,12 @@ pub fn render_source_switcher_popup(
                                     location_tooltip: Some(&tip),
                                     action_icon: None,
                                     action_tooltip: None,
-                                    close_tooltip: "Close and stop this container log session",
+                                    close_tooltip: "",
                                 },
                             );
-                            match action {
-                                ProjectRowAction::Select => {
-                                    dispatch(AppAction::SwitchSession(c.session_index));
-                                    dispatch(AppAction::CloseSourceSwitcher);
-                                }
-                                ProjectRowAction::Close => {
-                                    dispatch(AppAction::CloseSession(c.session_index));
-                                }
-                                ProjectRowAction::OpenInNewWindow | ProjectRowAction::None => {}
+                            if action == ProjectRowAction::Select {
+                                dispatch(AppAction::SwitchSession(c.session_index));
+                                dispatch(AppAction::CloseSourceSwitcher);
                             }
                         }
 

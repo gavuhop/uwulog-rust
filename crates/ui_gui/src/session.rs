@@ -19,12 +19,21 @@ pub struct StreamSummary {
 pub struct GuiSession {
     pub session: WorkspaceSession,
     pub view: GuiViewState,
+    /// Đánh dấu tab này đã từng được tự động start source một lần khi mở/kích hoạt.
+    pub has_auto_started_source: bool,
+    /// Đánh dấu người dùng đã bấm Stop thủ công trên tab này (tránh tự chạy lại khi chuyển tab qua lại).
+    pub user_stopped_source: bool,
 }
 
 impl GuiSession {
     pub fn new(session: WorkspaceSession) -> Self {
         let view = GuiViewState::with_schema(session.engine.get_schema_map());
-        Self { session, view }
+        Self {
+            session,
+            view,
+            has_auto_started_source: false,
+            user_stopped_source: false,
+        }
     }
 
     pub fn from_workspace(ws: &Workspace, capacity: usize, display_limit: usize) -> Self {
@@ -35,7 +44,12 @@ impl GuiSession {
         if view.search.history.entries.is_empty() && !ws.last_query.trim().is_empty() {
             view.search.history.record(&ws.last_query);
         }
-        Self { session, view }
+        Self {
+            session,
+            view,
+            has_auto_started_source: false,
+            user_stopped_source: false,
+        }
     }
 
     /// Xử lý cập nhật định kỳ cho từng session (incremental search, debounced history, latch scroll sync, unfiltered sync)

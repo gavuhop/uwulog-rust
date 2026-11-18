@@ -39,10 +39,14 @@ pub fn render_log_table(
     let mut min_visible_row: Option<usize> = None;
     let mut last_row_visible = false;
 
+    let table_rect = ui.available_rect_before_wrap();
+    // Chỉ xử lý wheel/drag unlatch khi con trỏ thực sự đang nằm trên bảng (không bị popup/modal che)
+    let pointer_over_table = ui.rect_contains_pointer(table_rect);
+
     // Đọc thao tác cuộn chuột trước khi vẽ TableBuilder
     let is_shift_down = ui.input(|i| i.modifiers.shift);
     let scroll_delta_y = ui.input(|i| i.smooth_scroll_delta.y);
-    if scroll_delta_y > 0.0 && !is_shift_down {
+    if pointer_over_table && scroll_delta_y > 0.0 && !is_shift_down {
         dispatch(AppAction::Unlatch);
     }
 
@@ -131,7 +135,6 @@ pub fn render_log_table(
     let mut current_v_offset = ui.data(|d| d.get_temp::<f32>(vscroll_id)).unwrap_or(0.0);
     let mut vstate_changed = false;
 
-    let table_rect = ui.available_rect_before_wrap();
     let autoscroll = autoscroll::handle_middle_autoscroll(ui, table_rect);
     if autoscroll.is_active {
         if autoscroll.scroll_delta.x != 0.0 {
@@ -300,7 +303,11 @@ pub fn render_log_table(
     }
 
     // Nếu người dùng cuộn/kéo thanh cuộn rời khỏi dòng cuối
-    if ui.input(|i| i.pointer.is_decidedly_dragging()) && row_count > 0 && !last_row_visible {
+    if pointer_over_table
+        && ui.input(|i| i.pointer.is_decidedly_dragging())
+        && row_count > 0
+        && !last_row_visible
+    {
         dispatch(AppAction::Unlatch);
     }
 
@@ -318,9 +325,173 @@ pub fn render_log_table(
     }
 
     if last_row_visible
-        && (scroll_delta_y < 0.0 || (autoscroll.is_active && autoscroll.scroll_delta.y > 0.0))
+        && ((pointer_over_table && scroll_delta_y < 0.0)
+            || (autoscroll.is_active && autoscroll.scroll_delta.y > 0.0))
         && !is_shift_down
     {
         dispatch(AppAction::Latch);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uwu_core_schema::{LogColor, LogEvent, LogFields};
+    use uwu_core_workspace::{SourceType, Workspace, WorkspaceLocation};
+
+    fn make_session_with_logs(count: usize) -> GuiSession {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let _guard = rt.enter();
+        let ws = Workspace::new(
+            "demo",
+            WorkspaceLocation::local("/tmp"),
+            SourceType::Process,
+        );
+        let mut session = GuiSession::from_workspace(&ws, 1000, 1000);
+        for i in 0..count {
+            session.viewport.cached_logs.push(
+                LogEvent::new(
+                    "12:00:00",
+                    LogColor::Default,
+                    format!("log line {i}"),
+                    LogFields::default(),
+                )
+                .with_id(i as u64 + 1),
+            );
+        }
+        session
+    }
+
+    #[test]
+    fn popup_occlusion_prevents_click_through_and_scroll_unlatch() {
+        let mut session = make_session_with_logs(200);
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 600.0));
+        let click_pos = egui::pos2(200.0, 200.0);
+
+        // 2 warmup frames để Area foreground hoàn tất sizing_pass và ghi nhận visible_areas_last_frame
+        let mut actions = Vec::new();
+        for _ in 0..2 {
+            let mut out1 = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::CentralPanel::default().show(ui, |ui| {
+                        render_log_table(ui, &mut session, ActiveTab::Filtered, &mut |a| {
+                            actions.push(a);
+                        });
+                    });
+                    egui::Area::new(egui::Id::new("test_foreground_popup"))
+                        .order(egui::Order::Foreground)
+                        .fixed_pos(egui::pos2(100.0, 100.0))
+                        .show(ui.ctx(), |ui| {
+                            ui.allocate_exact_size(egui::vec2(300.0, 300.0), egui::Sense::click());
+                        });
+                },
+            );
+            out1.textures_delta.clear();
+        }
+
+        // Frame 2: click + scroll lên bên trên popup -> KHÔNG được phát AppAction::Unlatch
+        actions.clear();
+        let mut events = vec![
+            egui::Event::PointerMoved(click_pos),
+            egui::Event::PointerButton {
+                pos: click_pos,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos: click_pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(0.0, 40.0),
+                modifiers: egui::Modifiers::NONE,
+                phase: egui::TouchPhase::Move,
+            },
+        ];
+        let mut out2 = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(screen),
+                events: std::mem::take(&mut events),
+                ..Default::default()
+            },
+            |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    render_log_table(ui, &mut session, ActiveTab::Filtered, &mut |a| {
+                        actions.push(a);
+                    });
+                });
+                egui::Area::new(egui::Id::new("test_foreground_popup"))
+                    .order(egui::Order::Foreground)
+                    .fixed_pos(egui::pos2(100.0, 100.0))
+                    .show(ui.ctx(), |ui| {
+                        ui.allocate_exact_size(egui::vec2(300.0, 300.0), egui::Sense::click());
+                    });
+            },
+        );
+        out2.textures_delta.clear();
+
+        assert!(
+            !actions
+                .iter()
+                .any(|a| matches!(a, AppAction::Unlatch | AppAction::SelectLog(_))),
+            "expected foreground popup click/scroll not to unlatch or select background table row, got: {actions:?}"
+        );
+
+        // Frame 3 & 4: không còn popup, cuộn lên trực tiếp trên bảng -> phải phát Unlatch
+        actions.clear();
+        let mut out3 = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(screen),
+                events: vec![egui::Event::PointerMoved(click_pos)],
+                ..Default::default()
+            },
+            |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    render_log_table(ui, &mut session, ActiveTab::Filtered, &mut |a| {
+                        actions.push(a);
+                    });
+                });
+            },
+        );
+        out3.textures_delta.clear();
+
+        actions.clear();
+        let mut out4 = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(screen),
+                events: vec![
+                    egui::Event::PointerMoved(click_pos),
+                    egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Point,
+                        delta: egui::vec2(0.0, 40.0),
+                        modifiers: egui::Modifiers::NONE,
+                        phase: egui::TouchPhase::Move,
+                    },
+                ],
+                ..Default::default()
+            },
+            |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    render_log_table(ui, &mut session, ActiveTab::Filtered, &mut |a| {
+                        actions.push(a);
+                    });
+                });
+            },
+        );
+        out4.textures_delta.clear();
+
+        assert!(
+            actions.iter().any(|a| matches!(a, AppAction::Unlatch)),
+            "expected scrolling up over uncovered table to dispatch Unlatch, got: {actions:?}"
+        );
     }
 }

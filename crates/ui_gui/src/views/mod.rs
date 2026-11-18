@@ -50,19 +50,46 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     let session_summaries: Vec<modals::ProjectPickerSessionInfo> = if is_project_picker_open {
         let mut list = Vec::new();
         for (ix, s) in app.workspaces.sessions.iter().enumerate() {
-            let is_transient_sibling = s.session.is_following_container_logs()
-                && app
-                    .workspaces
-                    .sessions
-                    .iter()
-                    .enumerate()
-                    .any(|(other_ix, other)| {
-                        other_ix != ix
-                            && !other.session.is_following_container_logs()
-                            && is_same_docker_project(&s.session.location, &other.session.location)
-                    });
-            if is_transient_sibling {
-                continue;
+            if matches!(
+                s.session.location,
+                uwu_core_workspace::WorkspaceLocation::Remote(
+                    uwu_core_workspace::RemoteConnectionOptions::Docker(_)
+                )
+            ) {
+                let rep_ix = if active_loc
+                    .is_some_and(|al| is_same_docker_project(&s.session.location, al))
+                {
+                    active_index
+                } else {
+                    app.workspaces
+                        .sessions
+                        .iter()
+                        .enumerate()
+                        .find(|(_, other)| {
+                            !other.session.is_following_container_logs()
+                                && is_same_docker_project(
+                                    &s.session.location,
+                                    &other.session.location,
+                                )
+                        })
+                        .or_else(|| {
+                            app.workspaces
+                                .sessions
+                                .iter()
+                                .enumerate()
+                                .find(|(_, other)| {
+                                    is_same_docker_project(
+                                        &s.session.location,
+                                        &other.session.location,
+                                    )
+                                })
+                        })
+                        .map(|(j, _)| j)
+                        .unwrap_or(ix)
+                };
+                if ix != rep_ix {
+                    continue;
+                }
             }
 
             let is_active = ix == active_index
@@ -195,6 +222,16 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
             header::render_header(ui, active_session, &mut header_cx, &mut dispatch);
         });
 
+    let is_any_overlay_open = !app.overlays.stack.is_empty()
+        || (active_session.view.search.autocomplete.is_open
+            && !active_session
+                .view
+                .search
+                .autocomplete
+                .suggestions
+                .is_empty())
+        || active_session.view.search.history.is_open;
+
     // Central Panel: Left Table View & Right Inspector Panel
     egui::CentralPanel::default()
         .frame(
@@ -270,7 +307,21 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                         crate::state::ActiveTab::Unfiltered => "unfiltered_table_scope",
                     };
                     ui.push_id(scope, |ui| {
-                        table::render_log_table(ui, active_session, tab, &mut dispatch);
+                        let mut table_dispatch = |action: crate::actions::AppAction| {
+                            // Không cho click/cuộn xuyên qua modal/popup làm chọn dòng hoặc tắt Live
+                            if is_any_overlay_open
+                                && matches!(
+                                    action,
+                                    crate::actions::AppAction::Unlatch
+                                        | crate::actions::AppAction::Latch
+                                        | crate::actions::AppAction::SelectLog(_)
+                                )
+                            {
+                                return;
+                            }
+                            dispatch(action);
+                        };
+                        table::render_log_table(ui, active_session, tab, &mut table_dispatch);
                     });
                 });
         });
@@ -327,7 +378,7 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     }
 }
 
-fn is_same_docker_project(
+pub(crate) fn is_same_docker_project(
     a: &uwu_core_workspace::WorkspaceLocation,
     b: &uwu_core_workspace::WorkspaceLocation,
 ) -> bool {
@@ -348,15 +399,24 @@ fn is_same_docker_project(
     if let (Some(p1), Some(p2)) = (compose_a, compose_b) {
         return p1 == p2;
     }
-    if compose_a.is_some() || compose_b.is_some() {
-        return false;
-    }
 
     let same_folder = da
         .local_folder
         .as_deref()
         .zip(db.local_folder.as_deref())
         .is_some_and(|(f1, f2)| !f1.is_empty() && f1.eq_ignore_ascii_case(f2));
+    if same_folder {
+        return true;
+    }
 
-    same_folder || da.container_name.eq_ignore_ascii_case(&db.container_name)
+    if compose_a.is_some() || compose_b.is_some() {
+        let dir_a = uwu_core_workspace::normalize_workdir(&da.working_dir);
+        let dir_b = uwu_core_workspace::normalize_workdir(&db.working_dir);
+        if !dir_a.is_empty() && dir_a == dir_b {
+            return true;
+        }
+        return false;
+    }
+
+    da.container_name.eq_ignore_ascii_case(&db.container_name)
 }

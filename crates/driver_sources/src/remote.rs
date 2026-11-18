@@ -109,7 +109,11 @@ impl LogSource for RemoteSource {
         // 4. Vòng lặp nhận dữ liệu (Ingestion Loop)
         tokio::spawn(async move {
             loop {
-                match framed_reader.next::<ServerEnvelope>().await {
+                let next_envelope = tokio::select! {
+                    _ = tx.closed() => break,
+                    res = framed_reader.next::<ServerEnvelope>() => res,
+                };
+                match next_envelope {
                     Ok(Some(envelope)) => match envelope {
                         ServerEnvelope::LogBatch(batch) => {
                             for entry in batch {
@@ -154,6 +158,7 @@ impl LogSource for RemoteSource {
             }
 
             heartbeat_handle.abort();
+            let _ = heartbeat_handle.await;
             // Gửi tín hiệu StopStream dọn dẹp trước khi đóng
             let mut guard = framed_writer.lock().await;
             let _ = guard.send(&ClientEnvelope::StopStream).await;

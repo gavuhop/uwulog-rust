@@ -69,6 +69,8 @@ impl LogSource for ProcessSource {
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
         cmd.kill_on_drop(true);
+        #[cfg(unix)]
+        cmd.process_group(0);
 
         let mut child = cmd.spawn().with_context(|| {
             format!("Failed to spawn process: {} {:?}", self.command, self.args)
@@ -103,9 +105,16 @@ impl LogSource for ProcessSource {
                             .args(["/F", "/T", "/PID", &pid.to_string()])
                             .output();
                     }
-                    #[cfg(not(target_os = "windows"))]
-                    let _ = child_pid;
+                    #[cfg(unix)]
+                    if let Some(pid) = child_pid {
+                        let _ = std::process::Command::new("kill")
+                            .args(["-KILL", &format!("-{pid}")])
+                            .stdout(Stdio::null())
+                            .stderr(Stdio::null())
+                            .status();
+                    }
                     let _ = child.kill().await;
+                    let _ = child.wait().await;
                 }
             }
         });

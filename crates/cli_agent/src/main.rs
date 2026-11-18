@@ -178,6 +178,8 @@ pub async fn run_rpc_proxy_mode(default_workdir: Option<String>) -> Result<()> {
                 // Dừng task stream cũ nếu đang chạy
                 if let Some(handle) = active_task.take() {
                     handle.abort();
+                    let _ = handle.await;
+                    tokio::time::sleep(Duration::from_millis(50)).await;
                 }
 
                 let source = match create_source_from_spec(&spec, default_workdir.clone()) {
@@ -262,6 +264,8 @@ pub async fn run_rpc_proxy_mode(default_workdir: Option<String>) -> Result<()> {
             ClientEnvelope::StopStream => {
                 if let Some(handle) = active_task.take() {
                     handle.abort();
+                    let _ = handle.await;
+                    tokio::time::sleep(Duration::from_millis(50)).await;
                 }
             }
         }
@@ -269,6 +273,8 @@ pub async fn run_rpc_proxy_mode(default_workdir: Option<String>) -> Result<()> {
 
     if let Some(handle) = active_task.take() {
         handle.abort();
+        let _ = handle.await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
     Ok(())
