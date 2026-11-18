@@ -6,7 +6,7 @@ pub mod traits;
 pub mod wsl;
 
 pub use file_tailer::FileSource;
-pub use normalizer::LogNormalizer;
+pub use normalizer::{LogNormalizer, NormalizedLog};
 pub use process::ProcessSource;
 pub use remote::RemoteSource;
 pub use traits::LogSource;
