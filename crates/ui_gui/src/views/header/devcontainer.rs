@@ -254,6 +254,7 @@ pub fn render_docker_source_switcher_pill(
     );
 
     let resp = AppButton::new()
+        .icon(IconName::Docker)
         .label(&label)
         .variant(if is_open {
             ButtonVariant::Selected

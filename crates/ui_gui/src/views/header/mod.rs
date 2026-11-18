@@ -88,6 +88,8 @@ pub fn render_header(
                 Some(uwu_core_workspace::RemoteConnectionOptions::Docker(_))
             );
 
+            let mut has_breadcrumb_item = false;
+
             // Nhận diện môi trường remote (WSL / SSH) hiển thị trước nút Project;
             // Với Docker / Dev Container: icon + chấm xanh nằm gộp ngay trong nút Project Picker.
             if let Some(remote) = session.session.location.as_remote() {
@@ -124,12 +126,17 @@ pub fn render_header(
                     if remote_resp.clicked() {
                         dispatch(AppAction::ToggleRemoteServersModal);
                     }
+                    has_breadcrumb_item = true;
                 }
             }
 
             // Project Button (nếu là Dev Container thì hiển thị thêm icon Box + chấm xanh ngay đầu nút)
             let is_project_picker_open = cx.overlay_stack.is_open(OverlayLayer::ProjectPicker);
             if !session.session.name.is_empty() {
+                if has_breadcrumb_item {
+                    render_header_slash_separator(ui, theme.text.muted);
+                }
+
                 let summary = session.session.target_summary();
                 let shortcut_suffix = if cx.project_shortcut.is_empty() {
                     String::new()
@@ -171,6 +178,7 @@ pub fn render_header(
                 }
                 let proj_resp = proj_btn.show(ui);
                 proj_btn_rect = Some(proj_resp.rect);
+                has_breadcrumb_item = true;
 
                 if proj_resp.clicked() {
                     dispatch(AppAction::ToggleProjectPicker);
@@ -178,17 +186,29 @@ pub fn render_header(
             }
 
             // Chỉ báo nguồn log + Quick Switcher (cho Dev Container / Docker)
+            if has_breadcrumb_item
+                && is_docker_session
+                && session.session.active_docker_short_label().is_some()
+            {
+                render_header_slash_separator(ui, theme.text.muted);
+            }
             source_btn_rect = devcontainer::render_docker_source_switcher_pill(
                 ui,
                 session,
                 cx.overlay_stack,
                 dispatch,
             );
+            if source_btn_rect.is_some() {
+                has_breadcrumb_item = true;
+            }
 
             // Environment Status Indicator
             toolbar::render_environment_status(ui, session, dispatch);
 
             // 2. Stream Tabs: Main / Filtered and Raw Stream
+            if has_breadcrumb_item {
+                render_header_slash_separator(ui, theme.text.muted);
+            }
             let is_filtered_tab = session.view.active_tab == ActiveTab::Filtered;
             let is_unfiltered_tab = session.view.active_tab == ActiveTab::Unfiltered;
             let is_filtering = !session.view.search.query.trim().is_empty();
@@ -211,14 +231,16 @@ pub fn render_header(
             }
 
             // Tab 2: Raw Stream (Chỉ xuất hiện khi người dùng đang có bộ lọc)
-            if is_filtering
-                && crate::components::ui::TabButton::new("Raw", is_unfiltered_tab)
+            if is_filtering {
+                render_header_pipe_separator(ui, theme.borders.border);
+                if crate::components::ui::TabButton::new("Raw", is_unfiltered_tab)
                     .active_background(false)
                     .show(ui)
                     .on_hover_text("Switch to Raw Stream view (Alt+2, Ctrl+Tab)")
                     .clicked()
-            {
-                dispatch(AppAction::SwitchTab(ActiveTab::Unfiltered));
+                {
+                    dispatch(AppAction::SwitchTab(ActiveTab::Unfiltered));
+                }
             }
 
             // 3. Phía bên phải: Window Controls, Toolbar & Search Box
@@ -379,4 +401,27 @@ pub fn render_empty_header(
         };
         crate::views::modals::render_project_picker_popup(ui.ctx(), args, dispatch);
     }
+}
+
+/// Vẽ dấu `/` mảnh phân tách breadcrumb phân cấp trên Header (`Remote / Project / Container / View`).
+fn render_header_slash_separator(ui: &mut egui::Ui, color: egui::Color32) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(8.0, 20.0), egui::Sense::hover());
+    let c = rect.center();
+    ui.painter().line_segment(
+        [
+            egui::pos2(c.x + 2.0, c.y - 5.5),
+            egui::pos2(c.x - 2.0, c.y + 5.5),
+        ],
+        egui::Stroke::new(0.8, color.gamma_multiply(0.75)),
+    );
+}
+
+/// Vẽ dấu `|` phân tách hai tab ngang hàng (`Filtered | Raw`) trên Header.
+fn render_header_pipe_separator(ui: &mut egui::Ui, color: egui::Color32) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(4.0, 20.0), egui::Sense::hover());
+    let c = rect.center();
+    ui.painter().line_segment(
+        [egui::pos2(c.x, c.y - 5.5), egui::pos2(c.x, c.y + 5.5)],
+        egui::Stroke::new(1.0, color),
+    );
 }
