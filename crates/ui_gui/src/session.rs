@@ -89,9 +89,7 @@ impl GuiSession {
         }
 
         if new_logs_arrived {
-            self.view
-                .search
-                .sync_schema(self.session.engine.get_schema_map());
+            self.sync_engine_schema_if_changed();
             self.view.viewport.last_processed_count = total_processed;
             self.view.search.last_search_time = now;
         }
@@ -251,11 +249,20 @@ impl GuiSession {
         self.view.stream_mut(tab).consume_scroll_request(row_count)
     }
 
+    #[inline]
+    pub fn sync_engine_schema_if_changed(&mut self) {
+        let ver = self.session.engine.get_schema_version();
+        if ver != self.view.search.last_synced_schema_version {
+            self.view.search.last_synced_schema_version = ver;
+            self.view
+                .search
+                .sync_schema(self.session.engine.get_schema_map());
+        }
+    }
+
     pub fn sync_discovered_fields(&mut self, logs: &[LogEvent]) {
         self.view.columns.sync_discovered_keys(logs);
-        self.view
-            .search
-            .sync_schema(self.session.engine.get_schema_map());
+        self.sync_engine_schema_if_changed();
     }
 
     pub fn toggle_row_highlight(&mut self, id: u64) {

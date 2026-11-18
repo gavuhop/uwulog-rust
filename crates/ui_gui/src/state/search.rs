@@ -16,6 +16,7 @@ pub struct SearchState {
     pub autocomplete: AutocompleteState,
     pub history: SearchHistoryState,
     pub schema_cache: BTreeMap<String, FieldType>,
+    pub last_synced_schema_version: u64,
     pub active_query_id: u64,
     /// Atomic token phục vụ cooperative early cancellation cho background search worker
     pub active_query_atomic: Arc<AtomicU64>,
@@ -33,6 +34,7 @@ impl Default for SearchState {
             autocomplete: AutocompleteState::default(),
             history: SearchHistoryState::default(),
             schema_cache: BTreeMap::new(),
+            last_synced_schema_version: 0,
             active_query_id: 0,
             active_query_atomic: Arc::new(AtomicU64::new(0)),
             focus_requested: false,

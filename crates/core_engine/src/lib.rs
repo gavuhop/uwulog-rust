@@ -21,6 +21,7 @@ pub struct SystemEngine {
     /// Trạng thái nhận diện timestamp: (key_name, format) — gộp 1 RwLock để tránh inconsistent state
     active_timestamp_info: Arc<RwLock<Option<(String, TimestampFormat)>>>,
     schema_version: Arc<AtomicU64>,
+    cached_query: RwLock<Option<(String, Option<Expr>)>>,
 }
 
 static NEXT_ENGINE_ID: AtomicU64 = AtomicU64::new(1);
@@ -231,6 +232,7 @@ impl SystemEngine {
             known_keys,
             active_timestamp_info,
             schema_version,
+            cached_query: RwLock::new(None),
         }
     }
 
@@ -256,12 +258,36 @@ impl SystemEngine {
         let trimmed = query.trim();
         let data_now = self.current_data_now();
         if trimmed.is_empty() {
-            (None, data_now)
-        } else {
-            let tokens = tokenize(trimmed);
-            let mut parser = Parser::new(tokens, data_now);
-            (parser.parse(), data_now)
+            return (None, data_now);
         }
+
+        // Các biểu thức không chứa mốc tương đối `now` có AST & Regex bất biến -> tái sử dụng cache giữa các nhịp 150ms
+        let uses_now = trimmed
+            .as_bytes()
+            .windows(3)
+            .any(|w| w.eq_ignore_ascii_case(b"now"));
+
+        if !uses_now {
+            if let Ok(guard) = self.cached_query.read() {
+                if let Some((cached_str, cached_expr)) = guard.as_ref() {
+                    if cached_str == trimmed {
+                        return (cached_expr.clone(), data_now);
+                    }
+                }
+            }
+        }
+
+        let tokens = tokenize(trimmed);
+        let mut parser = Parser::new(tokens, data_now);
+        let parsed = parser.parse();
+
+        if !uses_now {
+            if let Ok(mut guard) = self.cached_query.write() {
+                *guard = Some((trimmed.to_string(), parsed.clone()));
+            }
+        }
+
+        (parsed, data_now)
     }
 
     pub fn search(&self, query: &str) -> Vec<LogEvent> {
@@ -1100,5 +1126,64 @@ mod tests {
         assert_eq!(before_filtered.len(), 6);
         assert_eq!(before_filtered[0].message, "[INFO] Message index 1");
         assert_eq!(before_filtered[5].message, "[INFO] Message index 14");
+    }
+
+    #[tokio::test]
+    async fn test_incremental_slice_and_query_cache() {
+        let engine = SystemEngine::new(100);
+        let tx = engine.get_channel();
+
+        for i in 0..10 {
+            tx.send(RawLogEntry {
+                payload: RawPayload::Text(format!("[ERROR] batch row {i}")),
+            })
+            .await
+            .unwrap();
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let query = "message:~\"^\\[ERROR\\]\"";
+        let (c1, logs1) = engine.filter_incremental(query, 0);
+        assert_eq!(c1, 10);
+        assert_eq!(logs1.len(), 10);
+        assert_eq!(
+            engine
+                .cached_query
+                .read()
+                .unwrap()
+                .as_ref()
+                .map(|(q, _)| q.as_str()),
+            Some(query)
+        );
+
+        let total_after_first = engine.total_processed();
+        tx.send(RawLogEntry {
+            payload: RawPayload::Text("[ERROR] delta row 10".to_string()),
+        })
+        .await
+        .unwrap();
+        tx.send(RawLogEntry {
+            payload: RawPayload::Text("[INFO] ignored delta".to_string()),
+        })
+        .await
+        .unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let (c2, logs2) = engine.filter_incremental(query, total_after_first);
+        assert_eq!(c2, 1);
+        assert_eq!(logs2.len(), 1);
+        assert_eq!(logs2[0].message, "[ERROR] delta row 10");
+
+        // Biểu thức chứa mốc tương đối `now` không được đóng băng vào cached_query
+        let _ = engine.filter_incremental("ts:>now-5m", total_after_first);
+        assert_eq!(
+            engine
+                .cached_query
+                .read()
+                .unwrap()
+                .as_ref()
+                .map(|(q, _)| q.as_str()),
+            Some(query)
+        );
     }
 }

@@ -68,6 +68,7 @@ impl GuiViewState {
         self.inspector.selected_log = None;
         self.unfiltered.stream.reset();
         self.unfiltered.target_id = None;
+        self.search.last_synced_schema_version = 0;
         self.search.autocomplete.is_open = false;
         self.search.autocomplete.suggestions.clear();
         self.buffer_overflow_dismissed = false;

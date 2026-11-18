@@ -193,7 +193,7 @@ impl<'a> BatchColumns<'a> {
 // ArrowStorage: Concurrent Columnar In-Memory Store
 // ============================================================================
 
-const TARGET_BATCH_SIZE: usize = 4096;
+const TARGET_BATCH_SIZE: usize = 1024;
 
 /// Hợp nhất hai RecordBatches nếu tổng số dòng <= TARGET_BATCH_SIZE.
 /// - Nếu cùng Schema: gộp trực tiếp qua Arrow concat_batches kernel.
@@ -247,7 +247,7 @@ impl ArrowStorage {
         Self {
             max_capacity,
             sealed_batches: RwLock::new(Arc::new(Vec::new())),
-            active_builder: Mutex::new(ActiveRecordBatchBuilder::new(4096)),
+            active_builder: Mutex::new(ActiveRecordBatchBuilder::new(TARGET_BATCH_SIZE)),
             total_stored_rows: AtomicU64::new(0),
             total_ingested: AtomicU64::new(0),
             max_timestamp: AtomicU64::new(0),
@@ -398,7 +398,7 @@ impl ArrowStorage {
 
         let mut builder = self.active_builder.lock();
         builder.append_log(event);
-        if builder.len() >= 4096 {
+        if builder.len() >= TARGET_BATCH_SIZE {
             if let Some(batch) = builder.seal() {
                 drop(builder); // Drop builder lock before acquiring sealed_batches lock
                 self.append_sealed_batch(batch);
@@ -426,12 +426,12 @@ impl ArrowStorage {
 
         let count = events.len();
 
-        // For large bulk ingestion (>= 4096 logs, like preloading or file import):
+        // For large bulk ingestion (>= TARGET_BATCH_SIZE logs, like preloading or file import):
         // Leverage Rayon parallel workers to build Arrow columnar RecordBatches concurrently!
-        if count >= 4096 {
+        if count >= TARGET_BATCH_SIZE {
             self.flush();
 
-            let chunk_size = 4096;
+            let chunk_size = TARGET_BATCH_SIZE;
             let new_batches: Vec<RecordBatch> = events
                 .par_chunks(chunk_size)
                 .filter_map(|chunk| {
@@ -448,7 +448,7 @@ impl ArrowStorage {
             let mut builder = self.active_builder.lock();
             for event in events {
                 builder.append_log(&event);
-                if builder.len() >= 4096 {
+                if builder.len() >= TARGET_BATCH_SIZE {
                     if let Some(batch) = builder.seal() {
                         drop(builder);
                         self.append_sealed_batch(batch);
@@ -869,10 +869,21 @@ impl ArrowStorage {
         let mut matched_events = Vec::new();
 
         for (batch, row_range) in BatchSliceIterator::new(&sealed, start_storage_idx, take_rows) {
-            let mask = QueryCompiler::eval_batch(expr_ref, batch, now);
-            let cols = BatchColumns::extract(batch);
+            // Cắt zero-copy đúng vùng dòng mới để không eval lại các dòng cũ trong batch TARGET_BATCH_SIZE
+            let sliced;
+            let target_batch = if row_range.start == 0 && row_range.len() == batch.num_rows() {
+                batch
+            } else {
+                sliced = batch.slice(row_range.start, row_range.len());
+                &sliced
+            };
+            let mask = QueryCompiler::eval_batch(expr_ref, target_batch, now);
+            if mask.true_count() == 0 {
+                continue;
+            }
+            let cols = BatchColumns::extract(target_batch);
 
-            for r in row_range {
+            for r in 0..target_batch.num_rows() {
                 if mask.value(r) {
                     matched_events.push(cols.materialize_row(r));
                 }
