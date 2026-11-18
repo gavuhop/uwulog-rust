@@ -19,6 +19,8 @@ pub struct SystemEngine {
     /// Trạng thái nhận diện timestamp: (key_name, format) — gộp 1 RwLock để tránh inconsistent state
     active_timestamp_info: Arc<RwLock<Option<(String, TimestampFormat)>>>,
     schema_version: Arc<AtomicU64>,
+    field_collisions: Arc<RwLock<HashMap<String, u64>>>,
+    collisions_version: Arc<AtomicU64>,
 }
 
 impl SystemEngine {
@@ -35,23 +37,22 @@ impl SystemEngine {
         };
         let schema = Arc::new(RwLock::new(default_schema));
 
-        let default_known_keys = {
-            let mut set = HashSet::new();
-            for field in StandardField::default_columns() {
-                set.insert(field.canonical_name().to_string());
-            }
-            set
-        };
-        let known_keys = Arc::new(RwLock::new(default_known_keys));
+        // Chỉ chứa các key thực sự xuất hiện trong log (không nạp sẵn canonical defaults)
+        // để tránh xóa nhầm canonical key thật khi log có đồng thời cả canonical và alias.
+        let known_keys = Arc::new(RwLock::new(HashSet::new()));
         let active_timestamp_info: Arc<RwLock<Option<(String, TimestampFormat)>>> =
             Arc::new(RwLock::new(None));
         let schema_version = Arc::new(AtomicU64::new(1));
+        let field_collisions = Arc::new(RwLock::new(HashMap::new()));
+        let collisions_version = Arc::new(AtomicU64::new(0));
 
         let storage_clone = Arc::clone(&storage);
         let schema_clone = Arc::clone(&schema);
         let known_keys_clone = Arc::clone(&known_keys);
         let ts_info_clone = Arc::clone(&active_timestamp_info);
         let schema_version_clone = Arc::clone(&schema_version);
+        let collisions_clone = Arc::clone(&field_collisions);
+        let collisions_version_clone = Arc::clone(&collisions_version);
 
         // Async task liên tục đọc RawLogEntry -> Normalizer -> Adaptive Timestamp & Change-Driven Schema -> Storage
         tokio::spawn(async move {
@@ -72,13 +73,18 @@ impl SystemEngine {
                 let mut batch_max_ts = 0.0f64;
                 let mut event_batch = Vec::with_capacity(raw_batch.len());
                 let mut schema_updates: HashMap<String, FieldType> = HashMap::new();
+                let mut batch_collisions: HashMap<String, u64> = HashMap::new();
                 let current_schema = schema_clone.read().ok();
                 let current_known_keys = known_keys_clone.read().ok();
                 let mut cached_ts_info = ts_info_clone.read().ok().and_then(|g| g.clone());
                 let mut ts_info_dirty = false;
 
                 for raw_entry in raw_batch.drain(..) {
-                    let mut event = LogNormalizer::normalize(raw_entry);
+                    let normalized = LogNormalizer::normalize_report(raw_entry);
+                    for col_key in normalized.key_collisions {
+                        *batch_collisions.entry(col_key).or_insert(0) += 1;
+                    }
+                    let mut event = normalized.event;
 
                     // A. Fast-Path / Adaptive Timestamp: Tự thích ứng format động
                     if !event.timestamp.is_empty() {
@@ -170,13 +176,23 @@ impl SystemEngine {
                     }
                 }
 
-                // Cập nhật Schema Registry và known_keys nếu có trường mới
+                // Cập nhật Schema Registry và known_keys nếu có trường mới (không giữ 2 lock lồng nhau)
                 if !schema_updates.is_empty() {
+                    let known_snapshot: HashSet<String> =
+                        if let Ok(mut known_write) = known_keys_clone.write() {
+                            for k in schema_updates.keys() {
+                                known_write.insert(k.clone());
+                            }
+                            known_write.clone()
+                        } else {
+                            HashSet::new()
+                        };
+
                     if let Ok(mut schema_write) = schema_clone.write() {
                         for (k, ft) in &schema_updates {
                             if let Some(std_field) = StandardField::from_alias(k) {
                                 let canonical = std_field.canonical_name();
-                                if canonical != k {
+                                if canonical != k && !known_snapshot.contains(canonical) {
                                     schema_write.remove(canonical);
                                 }
                             }
@@ -184,13 +200,16 @@ impl SystemEngine {
                         }
                     }
 
-                    if let Ok(mut known_write) = known_keys_clone.write() {
-                        for k in schema_updates.keys() {
-                            known_write.insert(k.clone());
+                    schema_version_clone.fetch_add(1, Ordering::Release);
+                }
+
+                if !batch_collisions.is_empty() {
+                    if let Ok(mut col_write) = collisions_clone.write() {
+                        for (k, count) in batch_collisions {
+                            *col_write.entry(k).or_insert(0) += count;
                         }
                     }
-
-                    schema_version_clone.fetch_add(1, Ordering::Release);
+                    collisions_version_clone.fetch_add(1, Ordering::Release);
                 }
 
                 // Push vào Arrow Storage
@@ -211,6 +230,8 @@ impl SystemEngine {
             known_keys,
             active_timestamp_info,
             schema_version,
+            field_collisions,
+            collisions_version,
         }
     }
 
@@ -330,11 +351,13 @@ impl SystemEngine {
             *schema_write = map;
         }
         if let Ok(mut known_write) = self.known_keys.write() {
-            let mut set = HashSet::new();
-            for field in StandardField::default_columns() {
-                set.insert(field.canonical_name().to_string());
+            known_write.clear();
+        }
+        if let Ok(mut col_write) = self.field_collisions.write() {
+            if !col_write.is_empty() {
+                col_write.clear();
+                self.collisions_version.fetch_add(1, Ordering::Release);
             }
-            *known_write = set;
         }
         self.schema_version.fetch_add(1, Ordering::Release);
     }
@@ -342,6 +365,23 @@ impl SystemEngine {
     /// Lấy phiên bản schema hiện tại (tăng dần khi có key mới hoặc type promotion)
     pub fn get_schema_version(&self) -> u64 {
         self.schema_version.load(Ordering::Acquire)
+    }
+
+    /// Phiên bản cảnh báo va chạm key JSON (tăng khi phát hiện va chạm mới hoặc reset)
+    pub fn get_collisions_version(&self) -> u64 {
+        self.collisions_version.load(Ordering::Acquire)
+    }
+
+    /// Trả về danh sách các key bị va chạm khi flatten JSON (kèm số lượng log bị ảnh hưởng), sắp xếp ổn định
+    pub fn get_field_collisions(&self) -> Vec<(String, u64)> {
+        if let Ok(col_read) = self.field_collisions.read() {
+            let mut list: Vec<(String, u64)> =
+                col_read.iter().map(|(k, v)| (k.clone(), *v)).collect();
+            list.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+            list
+        } else {
+            Vec::new()
+        }
     }
 
     /// Lấy thông tin định dạng timestamp đang hoạt động (key_name, TimestampFormat)
@@ -997,5 +1037,386 @@ mod tests {
         assert_eq!(before_filtered.len(), 6);
         assert_eq!(before_filtered[0].message, "[INFO] Message index 1");
         assert_eq!(before_filtered[5].message, "[INFO] Message index 14");
+    }
+
+    #[tokio::test]
+    async fn test_user_id_field_discovery_and_queries() {
+        let engine = SystemEngine::new(50);
+        let tx = engine.get_channel();
+
+        // Batch 1: log without "id" field (internal __id = 1)
+        tx.send(RawLogEntry {
+            payload: RawPayload::Json(serde_json::json!({
+                "level": "INFO",
+                "message": "no id field"
+            })),
+        })
+        .await
+        .unwrap();
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(40)).await;
+
+        // Batch 2: logs with numeric "id" field
+        tx.send(RawLogEntry {
+            payload: RawPayload::Json(serde_json::json!({
+                "id": 500,
+                "level": "INFO",
+                "message": "order created"
+            })),
+        })
+        .await
+        .unwrap();
+        tx.send(RawLogEntry {
+            payload: RawPayload::Json(serde_json::json!({
+                "id": 1200,
+                "level": "WARN",
+                "message": "slow order"
+            })),
+        })
+        .await
+        .unwrap();
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let schema = engine.get_schema_map();
+        assert_eq!(schema.get("id"), Some(&FieldType::Number));
+
+        let (_, all_logs) = engine.search_with_count("", 10);
+        assert_eq!(all_logs.len(), 3);
+        let no_id_internal_id = all_logs[0].id;
+
+        // Queries on "id" must inspect the log's "id" field, not internal __id
+        let exact_internal_query = format!("id={}", no_id_internal_id);
+        let (c1, r1) = engine.search_with_count(&exact_internal_query, 10);
+        assert_eq!(
+            c1, 0,
+            "id=<internal_id> must not match internal __id when field is absent"
+        );
+        assert!(r1.is_empty());
+
+        let (c2, r2) = engine.search_with_count("id=500", 10);
+        assert_eq!(c2, 1);
+        assert_eq!(r2[0].fields.get("id"), Some(&serde_json::json!(500)));
+
+        let (c3, r3) = engine.search_with_count("id>600", 10);
+        assert_eq!(c3, 1);
+        assert_eq!(r3[0].fields.get("id"), Some(&serde_json::json!(1200)));
+
+        let (c4, r4) = engine.search_with_count("id:400..600", 10);
+        assert_eq!(c4, 1);
+        assert_eq!(r4[0].fields.get("id"), Some(&serde_json::json!(500)));
+
+        // String "id" field on a fresh engine
+        let str_engine = SystemEngine::new(50);
+        let str_tx = str_engine.get_channel();
+        str_tx
+            .send(RawLogEntry {
+                payload: RawPayload::Json(serde_json::json!({
+                    "id": "req-abc",
+                    "level": "INFO",
+                    "message": "string id log"
+                })),
+            })
+            .await
+            .unwrap();
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        assert_eq!(
+            str_engine.get_schema_map().get("id"),
+            Some(&FieldType::Text)
+        );
+        let (sc, sr) = str_engine.search_with_count("id:req-abc", 10);
+        assert_eq!(sc, 1);
+        assert_eq!(sr[0].get_field_cow("id").as_deref(), Some("req-abc"));
+    }
+
+    #[tokio::test]
+    async fn test_log_field_fidelity_round_trip_and_parity() {
+        let engine = SystemEngine::new(50);
+        let tx = engine.get_channel();
+
+        // Batch 1: null first, bool, __* keys, empty object, structured array, conflicting aliases
+        let log1 = serde_json::json!({
+            "__id": 777,
+            "__message": "shadow",
+            "__meta": "internal_like",
+            "id": 42,
+            "level": "INFO",
+            "lvl": 30,
+            "message": "first log",
+            "status": null,
+            "ok": true,
+            "tags": [1, 2],
+            "meta": {},
+            "raw_str_arr": "[1,2]"
+        });
+        let log2 = serde_json::json!({
+            "id": 43,
+            "level": "WARN",
+            "message": "second log",
+            "status": 200,
+            "ok": false,
+            "tags": [3],
+            "only_null": null
+        });
+        let log3 = serde_json::json!({
+            "id": 44,
+            "level": "ERROR",
+            "message": "third log",
+            "status": null
+        });
+
+        for payload in [log1, log2, log3] {
+            tx.send(RawLogEntry {
+                payload: RawPayload::Json(payload),
+            })
+            .await
+            .unwrap();
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(60)).await;
+
+        // Batch 2: tags switches from array to plain string across batches (unify_and_concat safety)
+        tx.send(RawLogEntry {
+            payload: RawPayload::Json(serde_json::json!({
+                "id": 45,
+                "level": "INFO",
+                "message": "fourth log",
+                "tags": "plain_string"
+            })),
+        })
+        .await
+        .unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        // E3: Both "level" and "lvl" must remain in schema
+        let schema = engine.get_schema_map();
+        assert!(schema.contains_key("level"));
+        assert!(schema.contains_key("lvl"));
+        assert!(schema.contains_key("__id"));
+        assert!(schema.contains_key("__meta"));
+
+        let all_logs = engine.search("");
+        assert_eq!(all_logs.len(), 4);
+
+        // E1: __id / __message / __meta preserved without colliding with Arrow system columns
+        assert_eq!(
+            all_logs[0].fields.get("__id"),
+            Some(&serde_json::json!(777))
+        );
+        assert_eq!(
+            all_logs[0].fields.get("__message"),
+            Some(&serde_json::json!("shadow"))
+        );
+        assert_eq!(
+            all_logs[0].fields.get("__meta"),
+            Some(&serde_json::json!("internal_like"))
+        );
+        assert_eq!(all_logs[0].message, "first log");
+
+        // E6, E7, E8: bool, null, empty object preserved accurately
+        assert_eq!(all_logs[0].fields.get("ok"), Some(&serde_json::json!(true)));
+        assert_eq!(
+            all_logs[0].fields.get("status"),
+            Some(&serde_json::Value::Null)
+        );
+        assert_eq!(all_logs[0].fields.get("meta"), Some(&serde_json::json!({})));
+        assert_eq!(
+            all_logs[0].fields.get("raw_str_arr"),
+            Some(&serde_json::json!("[1,2]"))
+        );
+        assert_eq!(
+            all_logs[1].fields.get("status"),
+            Some(&serde_json::json!(200))
+        );
+        assert_eq!(
+            all_logs[1].fields.get("ok"),
+            Some(&serde_json::json!(false))
+        );
+        assert_eq!(
+            all_logs[1].fields.get("only_null"),
+            Some(&serde_json::Value::Null)
+        );
+        assert_eq!(
+            all_logs[2].fields.get("status"),
+            Some(&serde_json::Value::Null)
+        );
+        assert_eq!(all_logs[3].fields.get("status"), None);
+        assert_eq!(
+            all_logs[3].fields.get("tags"),
+            Some(&serde_json::json!("plain_string"))
+        );
+
+        // E2: Free-text numeric search for internal __id must NOT match log3 (whose user fields don't have that number)
+        let log3_internal_id = all_logs[2].id.to_string();
+        let (internal_hits, _) = engine.search_with_count(&log3_internal_id, 10);
+        let scalar_internal_hits = all_logs
+            .iter()
+            .filter(|e| e.matches_text(&log3_internal_id))
+            .count();
+        assert_eq!(internal_hits, scalar_internal_hits);
+
+        // Parity between Arrow QueryCompiler and scalar eval_event
+        let queries = [
+            "true",
+            "false",
+            "200",
+            "id=42",
+            "__id=777",
+            "__meta:internal_like",
+            "ok:true",
+            "status>100",
+            "lvl=30",
+            "tags:plain_string",
+            "shadow",
+        ];
+        let now = uwu_core_util::now_secs();
+        for q in queries {
+            let arrow_ids: Vec<u64> = engine.search(q).into_iter().map(|e| e.id).collect();
+            let tokens = uwu_core_filter::parser::tokenize(q);
+            let mut parser = uwu_core_filter::parser::Parser::new(tokens, now);
+            let expr = parser.parse().unwrap();
+            let scalar_ids: Vec<u64> = all_logs
+                .iter()
+                .filter(|e| uwu_core_filter::evaluator::eval_event(&expr, e, now))
+                .map(|e| e.id)
+                .collect();
+            assert_eq!(arrow_ids, scalar_ids, "Parity mismatch for query '{q}'");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_edge_case_promotions_order_and_non_object_end_to_end() {
+        let engine = SystemEngine::new(50);
+        let tx = engine.get_channel();
+
+        // Batch 1: E4 (JSON array text), E5 (non-object Json), E10 (spaced key), alias "lvl" BEFORE "level", all-null field
+        tx.send(RawLogEntry {
+            payload: RawPayload::Text("[1, 2, 3]".to_string()),
+        })
+        .await
+        .unwrap();
+        tx.send(RawLogEntry {
+            payload: RawPayload::Json(serde_json::json!(["x", "y"])),
+        })
+        .await
+        .unwrap();
+        tx.send(RawLogEntry {
+            payload: RawPayload::Json(serde_json::json!({
+                "lvl": "INFO",
+                " level ": "spaced_val",
+                "message": "alias first",
+                "cross_null": null
+            })),
+        })
+        .await
+        .unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        // Batch 2: canonical "level" arrives AFTER "lvl", cross_null becomes Int64,
+        // plus same-batch promotions: bool->String, Int64->null, json_array->String
+        tx.send(RawLogEntry {
+            payload: RawPayload::Json(serde_json::json!({
+                "level": "WARN",
+                "message": "canonical second",
+                "cross_null": 250,
+                "bool_mix": true,
+                "num_then_null": 99,
+                "json_mix": [1, 2]
+            })),
+        })
+        .await
+        .unwrap();
+        tx.send(RawLogEntry {
+            payload: RawPayload::Json(serde_json::json!({
+                "level": "ERROR",
+                "message": "same batch promotion",
+                "bool_mix": "fallback_str",
+                "num_then_null": null,
+                "json_mix": "plain_after_array"
+            })),
+        })
+        .await
+        .unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let schema = engine.get_schema_map();
+        assert!(schema.contains_key("lvl"));
+        assert!(schema.contains_key("level"));
+        assert!(schema.contains_key(" level "));
+
+        let logs = engine.search("");
+        assert_eq!(logs.len(), 5);
+        assert_eq!(logs[0].message, "[1, 2, 3]");
+        assert_eq!(logs[1].message, "[\"x\",\"y\"]");
+        assert_eq!(
+            logs[2].fields.get(" level "),
+            Some(&serde_json::json!("spaced_val"))
+        );
+        assert_eq!(
+            logs[2].fields.get("cross_null"),
+            Some(&serde_json::Value::Null)
+        );
+        assert_eq!(
+            logs[3].fields.get("cross_null"),
+            Some(&serde_json::json!(250))
+        );
+        assert_eq!(
+            logs[3].fields.get("bool_mix"),
+            Some(&serde_json::json!("true"))
+        );
+        assert_eq!(
+            logs[4].fields.get("bool_mix"),
+            Some(&serde_json::json!("fallback_str"))
+        );
+        assert_eq!(
+            logs[3].fields.get("num_then_null"),
+            Some(&serde_json::json!(99))
+        );
+        assert_eq!(
+            logs[4].fields.get("num_then_null"),
+            Some(&serde_json::Value::Null)
+        );
+        assert_eq!(
+            logs[3].fields.get("json_mix"),
+            Some(&serde_json::json!("[1,2]"))
+        );
+        assert_eq!(
+            logs[4].fields.get("json_mix"),
+            Some(&serde_json::json!("plain_after_array"))
+        );
+
+        // Queries on cross-batch null->Int64 and num_then_null
+        let (c_cross, _) = engine.search_with_count("cross_null>200", 10);
+        assert_eq!(c_cross, 1);
+        let (c_num, _) = engine.search_with_count("num_then_null=99", 10);
+        assert_eq!(c_num, 1);
+    }
+
+    #[tokio::test]
+    async fn test_engine_records_and_resets_field_collisions_without_dropping_logs() {
+        let engine = SystemEngine::new(50);
+        let tx = engine.get_channel();
+
+        assert_eq!(engine.get_collisions_version(), 0);
+        assert!(engine.get_field_collisions().is_empty());
+
+        for _ in 0..2 {
+            tx.send(RawLogEntry {
+                payload: RawPayload::Text(
+                    r#"{"a.b": 1, "a": {"b": 2}, "message": "colliding"}"#.to_string(),
+                ),
+            })
+            .await
+            .unwrap();
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        assert!(engine.get_collisions_version() >= 1);
+        assert_eq!(engine.get_field_collisions(), vec![("a.b".to_string(), 2)]);
+        assert_eq!(engine.search("").len(), 2);
+
+        engine.clear();
+        assert!(engine.get_field_collisions().is_empty());
     }
 }

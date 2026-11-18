@@ -1,10 +1,14 @@
-use super::builder::ActiveRecordBatchBuilder;
+use super::builder::{
+    strip_null_mark_prefix, strip_user_prefix, ActiveRecordBatchBuilder, JSON_VALUE_META_KEY,
+};
 use super::compiler::{ColumnView, QueryCompiler};
+use ahash::AHashMap;
 use arrow::array::{
     new_null_array, Array, BooleanArray, Float64Array, RecordBatch, StringArray, UInt64Array,
     UInt8Array,
 };
 use arrow::compute::concat_batches;
+use arrow::datatypes::Field;
 use parking_lot::{Mutex, RwLock};
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -65,14 +69,21 @@ impl<'a> Iterator for BatchSliceIterator<'a> {
 // BatchColumns: Zero-Lookup Column Cache
 // ============================================================================
 
+struct DynamicColMeta<'a> {
+    key: &'a str,
+    view: ColumnView<'a>,
+    arr: &'a dyn Array,
+    is_json: bool,
+    null_mark: Option<&'a BooleanArray>,
+}
+
 pub struct BatchColumns<'a> {
-    batch: &'a RecordBatch,
     id_col: Option<&'a UInt64Array>,
     color_col: Option<&'a UInt8Array>,
     ts_col: Option<&'a StringArray>,
     ts_secs_col: Option<&'a Float64Array>,
     msg_col: Option<&'a StringArray>,
-    dynamic_indices: Vec<usize>,
+    dynamic_cols: Vec<DynamicColMeta<'a>>,
 }
 
 impl<'a> BatchColumns<'a> {
@@ -93,21 +104,46 @@ impl<'a> BatchColumns<'a> {
             .column_by_name("__message")
             .and_then(|c| c.as_any().downcast_ref::<StringArray>());
 
-        let mut dynamic_indices = Vec::new();
-        for (col_idx, field) in batch.schema().fields().iter().enumerate() {
-            if !field.name().starts_with("__") {
-                dynamic_indices.push(col_idx);
+        let fields = batch.schema_ref().fields();
+        let mut null_marks: AHashMap<&'a str, &'a BooleanArray> = AHashMap::new();
+        for (col_idx, field) in fields.iter().enumerate() {
+            if let Some(raw_key) = strip_null_mark_prefix(field.name()) {
+                if let Some(arr) = batch
+                    .column(col_idx)
+                    .as_any()
+                    .downcast_ref::<BooleanArray>()
+                {
+                    null_marks.insert(raw_key, arr);
+                }
+            }
+        }
+
+        let mut dynamic_cols = Vec::new();
+        for (col_idx, field) in fields.iter().enumerate() {
+            if let Some(raw_key) = strip_user_prefix(field.name()) {
+                let arr = batch.column(col_idx).as_ref();
+                let is_json = field
+                    .metadata()
+                    .get(JSON_VALUE_META_KEY)
+                    .is_some_and(|v| v == "1");
+                let null_mark = null_marks.get(raw_key).copied();
+                dynamic_cols.push(DynamicColMeta {
+                    key: raw_key,
+                    view: ColumnView::from_array(arr),
+                    arr,
+                    is_json,
+                    null_mark,
+                });
             }
         }
 
         Self {
-            batch,
             id_col,
             color_col,
             ts_col,
             ts_secs_col,
             msg_col,
-            dynamic_indices,
+            dynamic_cols,
         }
     }
 
@@ -141,14 +177,17 @@ impl<'a> BatchColumns<'a> {
             .map(|c| c.value(row_idx).to_string())
             .unwrap_or_default();
 
-        let mut fields = LogFields::with_capacity(self.dynamic_indices.len());
-        let schema = self.batch.schema();
-        for &col_idx in &self.dynamic_indices {
-            let col = self.batch.column(col_idx);
-            if col.is_null(row_idx) {
+        let mut fields = LogFields::with_capacity(self.dynamic_cols.len());
+        for meta in &self.dynamic_cols {
+            if meta.arr.is_null(row_idx) {
+                if let Some(n_col) = meta.null_mark {
+                    if n_col.is_valid(row_idx) && n_col.value(row_idx) {
+                        fields.insert(meta.key.to_string(), serde_json::Value::Null);
+                    }
+                }
                 continue;
             }
-            let val = match ColumnView::from_array(col.as_ref()) {
+            let val = match meta.view {
                 ColumnView::Int64(c) => serde_json::Value::Number(c.value(row_idx).into()),
                 ColumnView::Float64(c) => {
                     if let Some(n) = serde_json::Number::from_f64(c.value(row_idx)) {
@@ -157,12 +196,20 @@ impl<'a> BatchColumns<'a> {
                         continue;
                     }
                 }
-                ColumnView::Utf8(c) => serde_json::Value::String(c.value(row_idx).to_string()),
+                ColumnView::Utf8(c) => {
+                    let s = c.value(row_idx);
+                    if meta.is_json {
+                        serde_json::from_str(s)
+                            .unwrap_or_else(|_| serde_json::Value::String(s.to_string()))
+                    } else {
+                        serde_json::Value::String(s.to_string())
+                    }
+                }
                 ColumnView::Boolean(c) => serde_json::Value::Bool(c.value(row_idx)),
                 ColumnView::UInt64(c) => serde_json::Value::Number(c.value(row_idx).into()),
                 _ => continue,
             };
-            fields.insert(schema.field(col_idx).name().clone(), val);
+            fields.insert(meta.key.to_string(), val);
         }
 
         LogEvent {
@@ -217,23 +264,50 @@ fn unify_and_concat(a: &RecordBatch, b: &RecordBatch) -> Option<RecordBatch> {
         .into_iter()
         .collect();
 
-    // Sắp xếp xác định: các trường cố định '__' trước, sau đó sắp xếp theo alphabet
+    // Sắp xếp xác định: cột hệ thống '__' trước, sau đó cột user 'f:', cuối cùng 'n:'
     field_names.sort_by(|x, y| {
-        let x_core = x.starts_with("__");
-        let y_core = y.starts_with("__");
-        match (x_core, y_core) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => x.cmp(y),
-        }
+        let rank = |name: &str| -> u8 {
+            if name.starts_with("__") {
+                0
+            } else if strip_user_prefix(name).is_some() {
+                1
+            } else {
+                2
+            }
+        };
+        rank(x).cmp(&rank(y)).then_with(|| x.cmp(y))
     });
 
     let mut unified_fields = Vec::with_capacity(field_names.len());
     for name in &field_names {
-        if let Ok(f) = schema_a.field_with_name(name) {
-            unified_fields.push(f.clone());
-        } else if let Ok(f) = schema_b.field_with_name(name) {
-            unified_fields.push(f.clone());
+        match (
+            schema_a.field_with_name(name).ok(),
+            schema_b.field_with_name(name).ok(),
+        ) {
+            (Some(fa), Some(fb)) => {
+                // Giữ uwu.json="1" chỉ khi cả hai batch cùng đánh dấu structured JSON
+                let mut f = Field::new(
+                    fa.name(),
+                    fa.data_type().clone(),
+                    fa.is_nullable() || fb.is_nullable(),
+                );
+                let both_json = fa
+                    .metadata()
+                    .get(JSON_VALUE_META_KEY)
+                    .is_some_and(|v| v == "1")
+                    && fb
+                        .metadata()
+                        .get(JSON_VALUE_META_KEY)
+                        .is_some_and(|v| v == "1");
+                if both_json {
+                    f = f.with_metadata(fa.metadata().clone());
+                }
+                unified_fields.push(f);
+            }
+            (Some(f), None) | (None, Some(f)) => {
+                unified_fields.push(f.clone());
+            }
+            (None, None) => {}
         }
     }
     let unified_schema = Arc::new(arrow::datatypes::Schema::new(unified_fields));

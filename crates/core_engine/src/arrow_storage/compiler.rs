@@ -1,3 +1,4 @@
+use super::builder::strip_user_prefix;
 use arrow::array::{
     Array, ArrayRef, BooleanArray, Float64Array, Int64Array, RecordBatch, StringArray, UInt64Array,
 };
@@ -191,9 +192,12 @@ impl QueryCompiler {
     }
 
     pub fn resolve_column<'a>(batch: &'a RecordBatch, field_name: &str) -> Option<&'a ArrayRef> {
-        // 1. Direct match by exact name
-        if let Some(col) = batch.column_by_name(field_name) {
-            return Some(col);
+        let schema = batch.schema_ref();
+        // 1. Direct match on user fields (`f:<field_name>`) with zero allocation
+        for (idx, f) in schema.fields().iter().enumerate() {
+            if strip_user_prefix(f.name()) == Some(field_name) {
+                return Some(batch.column(idx));
+            }
         }
 
         // 2. Check if field_name is an alias of a StandardField
@@ -205,18 +209,17 @@ impl QueryCompiler {
                         .or_else(|| batch.column_by_name("__timestamp_secs"));
                 }
                 StandardField::Id => {
-                    return batch.column_by_name("__id");
+                    return None;
                 }
                 StandardField::Message => {
                     return batch.column_by_name("__message");
                 }
                 StandardField::Level => {
-                    if let Some(col) = batch.column_by_name("level") {
-                        return Some(col);
-                    }
-                    for f in batch.schema().fields() {
-                        if StandardField::from_alias(f.name()) == Some(StandardField::Level) {
-                            return batch.column_by_name(f.name());
+                    for (idx, f) in schema.fields().iter().enumerate() {
+                        if let Some(raw_key) = strip_user_prefix(f.name()) {
+                            if StandardField::from_alias(raw_key) == Some(StandardField::Level) {
+                                return Some(batch.column(idx));
+                            }
                         }
                     }
                 }
@@ -242,11 +245,6 @@ impl QueryCompiler {
         if StandardField::from_alias(field_name) == Some(StandardField::Timestamp) {
             return batch
                 .column_by_name("__timestamp_secs")
-                .map(|c| ColumnView::from_array(c.as_ref()));
-        }
-        if StandardField::from_alias(field_name) == Some(StandardField::Id) {
-            return batch
-                .column_by_name("__id")
                 .map(|c| ColumnView::from_array(c.as_ref()));
         }
         Self::resolve_column_view(batch, field_name)
@@ -796,8 +794,14 @@ impl QueryCompiler {
             };
         }
 
-        // 1. Quét các cột số nếu từ khóa là số (Type-Aware Free-Text Search)
+        // 1. Quét các cột số và boolean của user (`f:*`) nếu từ khóa khớp
         let num_match_buf = Self::match_numeric_columns(batch, alts, mask);
+        let bool_match_buf = Self::match_bool_columns(batch, alts, mask);
+        let non_str_match_buf = match (num_match_buf, bool_match_buf) {
+            (Some(a), Some(b)) => Some(&a | &b),
+            (Some(a), None) | (None, Some(a)) => Some(a),
+            (None, None) => None,
+        };
 
         let msg_col = batch
             .column_by_name("__message")
@@ -821,18 +825,18 @@ impl QueryCompiler {
             false
         };
 
-        // 3. Scan other string columns only if candidate exists
+        // 3. Scan __timestamp and user string columns (`f:*`) only if candidate exists
         let other_str_cols: Vec<&StringArray> = batch
-            .schema()
+            .schema_ref()
             .fields()
             .iter()
             .enumerate()
             .filter_map(|(idx, f)| {
-                if f.name() == "__message" {
-                    None
-                } else if let Some(str_col) =
-                    batch.column(idx).as_any().downcast_ref::<StringArray>()
-                {
+                let name = f.name();
+                if name != "__timestamp" && strip_user_prefix(name).is_none() {
+                    return None;
+                }
+                if let Some(str_col) = batch.column(idx).as_any().downcast_ref::<StringArray>() {
                     let data = str_col.value_data();
                     if data.is_empty() {
                         return None;
@@ -857,8 +861,8 @@ impl QueryCompiler {
 
         // Chunk Pruning: Nếu không cột chuỗi nào chứa từ khóa
         if !msg_can_match && other_str_cols.is_empty() {
-            if let Some(num_buf) = num_match_buf {
-                return BooleanArray::new(num_buf, None);
+            if let Some(extra_buf) = non_str_match_buf {
+                return BooleanArray::new(extra_buf, None);
             }
             return Self::all_false(num_rows);
         }
@@ -941,14 +945,54 @@ impl QueryCompiler {
             .clone()
         };
 
-        let final_buf = match num_match_buf {
-            Some(num_buf) => &str_buf | &num_buf,
+        let final_buf = match non_str_match_buf {
+            Some(extra_buf) => &str_buf | &extra_buf,
             None => str_buf,
         };
         BooleanArray::new(final_buf, None)
     }
 
-    /// Khi query tự do (free-text) chứa số (ví dụ: "500", "404"), hàm này quét song song các cột số (Int64, UInt64, Float64)
+    /// Quét các cột Boolean của user (`f:*`) khi từ khóa free-text có thể khớp `"true"` hoặc `"false"`.
+    fn match_bool_columns(
+        batch: &RecordBatch,
+        alts: &[String],
+        mask: Option<&BooleanBuffer>,
+    ) -> Option<BooleanBuffer> {
+        let match_true = alts.iter().any(|a| contains_ignore_case("true", a));
+        let match_false = alts.iter().any(|a| contains_ignore_case("false", a));
+        if !match_true && !match_false {
+            return None;
+        }
+
+        let bool_cols: Vec<&BooleanArray> = batch
+            .schema_ref()
+            .fields()
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, f)| {
+                if strip_user_prefix(f.name()).is_some() {
+                    batch.column(idx).as_any().downcast_ref::<BooleanArray>()
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if bool_cols.is_empty() {
+            return None;
+        }
+
+        let buf = eval_masked(batch.num_rows(), mask, |i| {
+            bool_cols.iter().any(|col| {
+                col.is_valid(i) && ((col.value(i) && match_true) || (!col.value(i) && match_false))
+            })
+        })
+        .values()
+        .clone();
+        Some(buf)
+    }
+
+    /// Khi query tự do (free-text) chứa số (ví dụ: "500", "404"), hàm này quét song song các cột số của user (`f:*`)
     /// bằng SIMD equality của Arrow. Nếu từ khóa là chữ thuần ("database"), hàm return None ngay lập tức (0ns overhead).
     fn match_numeric_columns(
         batch: &RecordBatch,
@@ -956,6 +1000,7 @@ impl QueryCompiler {
         mask: Option<&BooleanBuffer>,
     ) -> Option<BooleanBuffer> {
         let mut combined_buf: Option<BooleanBuffer> = None;
+        let schema = batch.schema_ref();
 
         for alt in alts {
             let trimmed = alt.trim();
@@ -967,7 +1012,11 @@ impl QueryCompiler {
                 continue;
             }
 
-            for col in batch.columns() {
+            for (idx, f) in schema.fields().iter().enumerate() {
+                if strip_user_prefix(f.name()).is_none() {
+                    continue;
+                }
+                let col = batch.column(idx);
                 match ColumnView::from_array(col.as_ref()) {
                     ColumnView::Int64(int_col) => {
                         if let Some(val) = parsed_i64 {
