@@ -108,13 +108,14 @@ graph TD
 - Tên package trong `Cargo.toml` khớp chính xác mẫu `uwu-<dir_name>` (thay `_` bằng `-`).
 
 ### 2.2. SSOT Schema & Cột Hệ thống Arrow
-- Mọi tên trường chuẩn (`timestamp`, `level`, `message`, `id`) và bí danh (`ts`, `time`, `@timestamp`, `lvl`, `severity`, `msg`, `body`...) chỉ được định nghĩa và quy đổi qua `StandardField::from_alias` và `StandardField::canonical_name()` tại [crates/core_schema/src/lib.rs](../../crates/core_schema/src/lib.rs).
+- Mọi tên trường chuẩn (`timestamp`, `level`, `message`, `id`) và bí danh (`ts`, `time`, `@timestamp`, `lvl`, `severity`, `msg`, `body`...) chỉ được định nghĩa qua `StandardField` tại [crates/core_schema/src/lib.rs](../../crates/core_schema/src/lib.rs); key `"id"` của log người dùng không còn bị alias sang `LogEvent.id` nội bộ.
 - Mọi cột nội bộ trong `ArrowStorage` dùng tiền tố hai gạch dưới `__`:
   - `__id` (`UInt64`, non-null)
   - `__color` (`UInt8`, non-null)
   - `__timestamp` (`Utf8`, non-null)
   - `__timestamp_secs` (`Float64`, nullable)
   - `__message` (`Utf8`, non-null)
+- Mọi cột dữ liệu người dùng dùng tiền tố `f:` (`f:<key>`, kèm metadata `uwu.json="1"` cho cột thuần array/object), và cột đánh dấu `null` tường minh dùng tiền tố `n:` (`n:<key>`, `Boolean`).
 
 ### 2.3. Tối ưu Bộ nhớ Hot Path (Zero-Allocation)
 - **Ưu tiên `Cow<'_, str>`**: Dùng `value_to_cow`, `LogEvent::get_field_cow`, `strip_ansi` để tránh `.to_string()` khi không cần biến đổi chuỗi.
