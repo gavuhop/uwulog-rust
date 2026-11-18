@@ -58,6 +58,8 @@ pub fn render_log_table(
         return;
     }
 
+    session.columns.prepare_tab_layout(tab);
+
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     tab.hash(&mut hasher);
     session.columns.layout_version.hash(&mut hasher);
@@ -269,6 +271,7 @@ pub fn render_log_table(
     });
 
     let (v_offset, content_h, viewport_h) = hscroll_out.inner;
+    session.columns.finish_tab_layout(tab);
     ui.data_mut(|d| d.insert_temp(vscroll_id, v_offset));
 
     // Chỉ chuyển sang Pause (Unlatch) khi cuộn chuột lên nếu bảng thực sự có nội dung tràn màn hình để cuộn;
