@@ -30,6 +30,7 @@ pub fn render_table_headers(
             let available_size = ui.available_size();
             let (rect, resp) =
                 ui.allocate_exact_size(available_size, egui::Sense::click_and_drag());
+            columns.set_column_width(&col.name, rect.width());
             col_rects.push(rect);
 
             if resp.drag_started() {

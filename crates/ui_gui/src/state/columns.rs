@@ -25,6 +25,7 @@ pub struct ColumnState {
     pub seen_keys: HashSet<String>,
     pub table_animations: crate::animation::MoveAnimationManager,
     pub modal_animations: crate::animation::MoveAnimationManager,
+    pub layout_version: u64,
 }
 
 impl Default for ColumnState {
@@ -44,6 +45,7 @@ impl Default for ColumnState {
             seen_keys: HashSet::new(),
             table_animations: crate::animation::MoveAnimationManager::default(),
             modal_animations: crate::animation::MoveAnimationManager::default(),
+            layout_version: 0,
         }
     }
 }
@@ -71,6 +73,7 @@ impl ColumnState {
         if let Some(draft) = self.draft_columns.take() {
             self.columns = draft;
             self.known_keys = self.columns.iter().map(|c| c.name.clone()).collect();
+            self.layout_version = self.layout_version.wrapping_add(1);
         }
         self.is_modal_open = false;
         self.clear_modal_drag();
@@ -126,6 +129,7 @@ impl ColumnState {
         self.clear_header_drag();
         self.known_keys = self.columns.iter().map(|c| c.name.clone()).collect();
         self.seen_keys.clear();
+        self.layout_version = self.layout_version.wrapping_add(1);
     }
 
     pub fn reset_draft_to_defaults(&mut self) {
@@ -134,8 +138,21 @@ impl ColumnState {
         self.clear_modal_drag();
     }
 
+    pub fn set_column_width(&mut self, name: &str, width: f32) {
+        if width.is_finite() && width >= 10.0 {
+            if let Some(col) = self.columns.iter_mut().find(|c| c.name == name) {
+                if (col.width - width).abs() > 0.01 {
+                    col.width = width;
+                }
+            }
+        }
+    }
+
     pub fn reorder(&mut self, from_idx: usize, to_idx: usize) {
-        reorder_vec(&mut self.columns, from_idx, to_idx);
+        if from_idx < self.columns.len() && to_idx < self.columns.len() && from_idx != to_idx {
+            reorder_vec(&mut self.columns, from_idx, to_idx);
+            self.layout_version = self.layout_version.wrapping_add(1);
+        }
     }
 
     /// Dịch chuyển cột `dragged` tới vị trí của `target`, kéo các cột nằm giữa dịch sang trái/phải.
@@ -357,6 +374,35 @@ mod tests {
         // Kéo sang trái qua nhiều cột -> các cột giữa dịch sang phải
         state.move_column("level", "timestamp");
         assert_eq!(vis(&state), ["level", "timestamp", "message", "extra"]);
+    }
+
+    #[test]
+    fn test_move_column_preserves_resized_widths_and_bumps_layout_version() {
+        let mut state = ColumnState::default();
+        assert_eq!(state.layout_version, 0);
+
+        state.set_column_width("timestamp", 225.0);
+        state.set_column_width("level", 90.0);
+        state.set_column_width("message", 180.0);
+
+        state.move_column("timestamp", "message");
+        assert_eq!(state.layout_version, 1);
+
+        // Chiều rộng đã resize phải đi theo đúng từng cột, không reset về mặc định
+        let width_of = |name: &str| {
+            state
+                .columns
+                .iter()
+                .find(|c| c.name == name)
+                .map(|c| c.width)
+        };
+        assert_eq!(width_of("timestamp"), Some(225.0));
+        assert_eq!(width_of("level"), Some(90.0));
+        assert_eq!(width_of("message"), Some(180.0));
+
+        // Di chuyển ngược lại vẫn tăng layout_version để TableBuilder không đọc cache cũ
+        state.move_column("timestamp", "level");
+        assert_eq!(state.layout_version, 2);
     }
 
     #[test]

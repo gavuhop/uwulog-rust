@@ -60,6 +60,7 @@ pub fn render_log_table(
 
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     tab.hash(&mut hasher);
+    session.columns.layout_version.hash(&mut hasher);
     for c in &visible_cols {
         c.name.hash(&mut hasher);
     }
@@ -117,10 +118,18 @@ pub fn render_log_table(
     }
 
     // 3. Cuộn tự động theo tâm bằng chuột giữa (Web-style Center-Anchor Autoscroll)
-    let vscroll_key = format!("{table_salt}_vscroll_offset");
-    let vscroll_id = ui.make_persistent_id(vscroll_key);
+    let vscroll_id = ui.make_persistent_id(match tab {
+        ActiveTab::Filtered => "main_table_vscroll_offset",
+        ActiveTab::Unfiltered => "unfiltered_table_vscroll_offset",
+    });
     let mut current_v_offset = ui.data(|d| d.get_temp::<f32>(vscroll_id)).unwrap_or(0.0);
-    let mut vstate_changed = false;
+    let prev_salt_id = ui.make_persistent_id(match tab {
+        ActiveTab::Filtered => "main_table_prev_salt",
+        ActiveTab::Unfiltered => "unfiltered_table_prev_salt",
+    });
+    let prev_salt = ui.data(|d| d.get_temp::<u64>(prev_salt_id));
+    let mut vstate_changed = prev_salt.is_some_and(|s| s != table_salt) && current_v_offset > 0.0;
+    ui.data_mut(|d| d.insert_temp(prev_salt_id, table_salt));
 
     let autoscroll = autoscroll::handle_middle_autoscroll(ui, table_rect);
     if autoscroll.is_active {
@@ -162,14 +171,13 @@ pub fn render_log_table(
             let std_field = uwu_core_schema::StandardField::from_alias(&col.name);
             let (initial_w, min_w) = match std_field {
                 Some(uwu_core_schema::StandardField::Timestamp) => {
-                    (ts_needed_width, ts_needed_width)
+                    (col.width.max(ts_needed_width), ts_needed_width)
                 }
                 Some(uwu_core_schema::StandardField::Level) => {
-                    (level_needed_width, level_needed_width)
+                    (col.width.max(level_needed_width), level_needed_width)
                 }
-                Some(uwu_core_schema::StandardField::Message) => (col.width.max(350.0), 100.0),
-                _ if col.width >= 40.0 => (col.width, 40.0),
-                _ => (120.0, 40.0),
+                Some(uwu_core_schema::StandardField::Message) => (col.width.max(100.0), 100.0),
+                _ => (col.width.max(40.0), 40.0),
             };
 
             builder = builder.column(Column::initial(initial_w).at_least(min_w).clip(true));
