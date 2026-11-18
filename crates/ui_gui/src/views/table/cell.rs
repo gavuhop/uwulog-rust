@@ -19,23 +19,50 @@ fn extract_cell_content<'a>(event: &'a LogEvent, col_name: &str) -> (Cow<'a, str
     }
 }
 
+pub struct CellRenderState {
+    pub is_selected: bool,
+    pub is_row_highlighted: bool,
+    pub offset_x: f32,
+    pub table_clip_rect: egui::Rect,
+}
+
 pub fn render_cell(
     ui: &mut egui::Ui,
     event: &LogEvent,
     col_name: &str,
     row_color: egui::Color32,
-    is_selected: bool,
-    is_row_highlighted: bool,
+    state: CellRenderState,
     ctx: &mut ActionContext<'_>,
 ) -> bool {
     let theme = ui.app_theme();
     let cell_rect = ui.max_rect();
-    if is_row_highlighted {
+    let is_animating = state.offset_x.abs() > 0.01;
+    let visual_rect = if is_animating {
+        let moved = cell_rect.translate(egui::vec2(state.offset_x, 0.0));
+        let mut anim_clip = moved.intersect(state.table_clip_rect);
+        anim_clip.min.y = anim_clip.min.y.max(ui.clip_rect().min.y);
+        anim_clip.max.y = anim_clip.max.y.min(ui.clip_rect().max.y);
+        ui.set_clip_rect(anim_clip);
+        moved
+    } else {
+        cell_rect
+    };
+
+    if state.is_row_highlighted {
+        ui.painter().rect_filled(
+            visual_rect,
+            egui::CornerRadius::ZERO,
+            theme.log.row_highlight,
+        );
+    } else if state.is_selected {
+        ui.painter().rect_filled(
+            visual_rect,
+            egui::CornerRadius::ZERO,
+            theme.log.row_selected,
+        );
+    } else if is_animating {
         ui.painter()
-            .rect_filled(cell_rect, egui::CornerRadius::ZERO, theme.log.row_highlight);
-    } else if is_selected {
-        ui.painter()
-            .rect_filled(cell_rect, egui::CornerRadius::ZERO, theme.log.row_selected);
+            .rect_filled(visual_rect, egui::CornerRadius::ZERO, theme.surfaces.base);
     }
 
     let (cell_text, raw_cell_val) = extract_cell_content(event, col_name);
@@ -64,11 +91,20 @@ pub fn render_cell(
         .desired_width(f32::INFINITY)
         .layouter(&mut layouter);
 
-    let resp = ui.add(edit);
+    let resp = if is_animating {
+        ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(visual_rect)
+                .layout(*ui.layout()),
+        )
+        .add(edit)
+    } else {
+        ui.add(edit)
+    };
     let is_secondary_down = ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary));
     let is_primary_clicked = ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary));
     // Dùng ui.rect_contains_pointer thay vì raw cell_rect.contains để tôn trọng lớp popup/modal phía trên
-    let pointer_in_cell = resp.hovered() || ui.rect_contains_pointer(cell_rect);
+    let pointer_in_cell = resp.hovered() || ui.rect_contains_pointer(visual_rect);
     let clicked = (resp.clicked() || (is_primary_clicked && pointer_in_cell)) && !is_secondary_down;
 
     let selected_text =
@@ -79,7 +115,7 @@ pub fn render_cell(
             col_name,
             raw_cell_val: &raw_cell_val,
             selected_text: selected_text.as_deref(),
-            is_row_highlighted,
+            is_row_highlighted: state.is_row_highlighted,
             event_id: event.id,
         };
         render_cell_context_menu(ui, menu_ctx, ctx);

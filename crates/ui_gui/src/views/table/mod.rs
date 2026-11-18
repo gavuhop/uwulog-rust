@@ -7,7 +7,7 @@ use crate::actions::{ActionContext, AppAction};
 use crate::session::GuiSession;
 use crate::state::{ActiveTab, ColumnItem};
 use crate::theme;
-use cell::render_cell;
+use cell::{render_cell, CellRenderState};
 use eframe::egui::{self, Pos2};
 use egui_extras::{Column, TableBuilder};
 use header::{render_drag_ghost, render_table_headers};
@@ -160,6 +160,7 @@ pub fn render_log_table(
 
     let hscroll_out = scroll_area.show(ui, |ui| {
         let ctx = ui.ctx().clone();
+        let table_clip_rect = ui.clip_rect();
         let mut builder = TableBuilder::new(ui)
             .id_salt(table_salt)
             .striped(false)
@@ -189,9 +190,17 @@ pub fn render_log_table(
             builder = builder.vertical_scroll_offset(current_v_offset);
         }
 
+        let mut col_offsets = Vec::with_capacity(visible_cols.len());
         let body_output = builder
             .header(26.0, |mut tbl_header| {
-                render_table_headers(&mut tbl_header, &ctx, &visible_cols, &mut session.columns);
+                render_table_headers(
+                    &mut tbl_header,
+                    &ctx,
+                    &visible_cols,
+                    &mut session.columns,
+                    table_clip_rect,
+                    &mut col_offsets,
+                );
             })
             .body(|body| {
                 let mut render_ctx = ActionContext {
@@ -227,15 +236,20 @@ pub fn render_log_table(
                         let is_highlighted = session.is_row_highlighted(&event.id);
                         let row_color = theme::log_color_to_egui(event.color);
 
-                        for col in &visible_cols {
+                        for (col_idx, col) in visible_cols.iter().enumerate() {
+                            let offset_x = col_offsets.get(col_idx).copied().unwrap_or(0.0);
                             row.col(|ui| {
                                 let cell_clicked = render_cell(
                                     ui,
                                     event,
                                     &col.name,
                                     row_color,
-                                    is_selected,
-                                    is_highlighted,
+                                    CellRenderState {
+                                        is_selected,
+                                        is_row_highlighted: is_highlighted,
+                                        offset_x,
+                                        table_clip_rect,
+                                    },
                                     &mut render_ctx,
                                 );
                                 if cell_clicked {

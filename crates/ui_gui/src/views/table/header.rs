@@ -14,7 +14,10 @@ pub fn render_table_headers(
     ctx: &egui::Context,
     visible_cols: &[ColumnItem],
     columns: &mut ColumnState,
+    table_clip_rect: Rect,
+    col_offsets: &mut Vec<f32>,
 ) {
+    col_offsets.clear();
     let current_dragged = columns.header_dragged_name.clone();
     let pointer_pos = ctx.input(|i| i.pointer.latest_pos());
     let now = Instant::now();
@@ -60,16 +63,18 @@ pub fn render_table_headers(
                 _ => None,
             };
 
-            render_header_cell(
+            let offset_x = render_header_cell(
                 ui,
                 columns,
                 &col.name,
                 rect,
+                table_clip_rect,
                 is_dragged,
                 drop_edge,
                 resp.hovered(),
                 now,
             );
+            col_offsets.push(offset_x);
         });
     }
 
@@ -129,14 +134,22 @@ fn render_header_cell(
     columns: &mut ColumnState,
     col_name: &str,
     rect: Rect,
+    table_clip_rect: Rect,
     is_dragged: bool,
     drop_edge: Option<bool>,
     is_hovered: bool,
     now: Instant,
-) {
+) -> f32 {
     let theme = ui.app_theme();
     // Tự động phát hiện thay đổi vị trí logic và lấy visual_rect nội suy chuyển động
     let visual_rect = columns.table_animations.track_rect(col_name, rect, now);
+    let offset_x = visual_rect.min.x - rect.min.x;
+    if offset_x.abs() > 0.01 {
+        let mut anim_clip = visual_rect.intersect(table_clip_rect);
+        anim_clip.min.y = anim_clip.min.y.max(ui.clip_rect().min.y);
+        anim_clip.max.y = anim_clip.max.y.min(ui.clip_rect().max.y);
+        ui.set_clip_rect(anim_clip);
+    }
     let is_drop_target = drop_edge.is_some();
 
     let drop_t = ui.ctx().animate_bool_with_time(
@@ -270,6 +283,8 @@ fn render_header_cell(
             theme.text.primary.gamma_multiply(0.85 * drop_t),
         );
     }
+
+    offset_x
 }
 
 /// Vẽ chip tiêu đề nổi bám theo con trỏ chuột (Floating Drag Ghost Chip)
