@@ -40,10 +40,10 @@ Full crate-by-crate dependency matrix and convention rules are documented in [.a
 
 ## 3. Extending SSOT Schema (`core_schema`)
 
-1. All canonical fields (`timestamp`, `level`, `message`, `id`) and aliases (`ts`, `lvl`, `severity`, `msg`, etc.) are owned exclusively by `StandardField` in [crates/core_schema/src/lib.rs](../../../crates/core_schema/src/lib.rs).
+1. Canonical semantic fields (`timestamp`, `level`, `message`) and their aliases (`ts`, `lvl`, `severity`, `msg`, etc.) are owned exclusively by `StandardField` in [crates/core_schema/src/lib.rs](../../../crates/core_schema/src/lib.rs) (user `"id"` keys are never aliased to internal row IDs).
 2. When adding an alias or canonical field:
    - Update `StandardField::from_alias`, `canonical_name()`, and `field_type()`.
-   - Keep Arrow's `__`-prefixed system columns (`__id`, `__color`, `__timestamp`, `__timestamp_secs`, `__message`) aligned in `ActiveRecordBatchBuilder::seal` (`builder.rs`), `BatchColumns::extract` (`storage.rs`), and `QueryCompiler::resolve_column` (`compiler.rs`).
+   - Keep Arrow's `__`-prefixed system columns (`__id`, `__color`, `__timestamp`, `__timestamp_secs`, `__message`), `f:`-prefixed user columns, and `n:`-prefixed null-marker columns aligned in `ActiveRecordBatchBuilder::seal` (`builder.rs`), `BatchColumns::extract` (`storage.rs`), and `QueryCompiler::resolve_column` (`compiler.rs`).
    - Keep `LogFields` flat-vector representation ([fields.rs](../../../crates/core_schema/src/fields.rs)) and `value_to_cow` zero-alloc paths intact.
 
 ---

@@ -1,9 +1,12 @@
-use super::builder::ActiveRecordBatchBuilder;
+use super::builder::{
+    strip_null_mark_prefix, strip_user_prefix, ActiveRecordBatchBuilder, JSON_VALUE_META_KEY,
+};
 use super::compiler::{ColumnView, QueryCompiler};
 use super::spill::{
     align_batch_to_schema, build_unified_schema, can_segment_match, collect_projection_plan,
     scan_cold_segment, schemas_compatible, ColdCountTask, ColdSegmentMeta, ColdSpillManager,
 };
+use ahash::AHashMap;
 use arrow::array::{
     Array, BooleanArray, Float64Array, RecordBatch, StringArray, UInt64Array, UInt8Array,
 };
@@ -78,14 +81,21 @@ impl<'a> Iterator for BatchSliceIterator<'a> {
 // BatchColumns: Zero-Lookup Column Cache
 // ============================================================================
 
+struct DynamicColMeta<'a> {
+    key: &'a str,
+    view: ColumnView<'a>,
+    arr: &'a dyn Array,
+    is_json: bool,
+    null_mark: Option<&'a BooleanArray>,
+}
+
 pub struct BatchColumns<'a> {
-    batch: &'a RecordBatch,
     pub(crate) id_col: Option<&'a UInt64Array>,
     color_col: Option<&'a UInt8Array>,
     ts_col: Option<&'a StringArray>,
     pub(crate) ts_secs_col: Option<&'a Float64Array>,
     msg_col: Option<&'a StringArray>,
-    dynamic_indices: Vec<usize>,
+    dynamic_cols: Vec<DynamicColMeta<'a>>,
 }
 
 impl<'a> BatchColumns<'a> {
@@ -106,21 +116,46 @@ impl<'a> BatchColumns<'a> {
             .column_by_name("__message")
             .and_then(|c| c.as_any().downcast_ref::<StringArray>());
 
-        let mut dynamic_indices = Vec::new();
-        for (col_idx, field) in batch.schema().fields().iter().enumerate() {
-            if !field.name().starts_with("__") {
-                dynamic_indices.push(col_idx);
+        let fields = batch.schema_ref().fields();
+        let mut null_marks: AHashMap<&'a str, &'a BooleanArray> = AHashMap::new();
+        for (col_idx, field) in fields.iter().enumerate() {
+            if let Some(raw_key) = strip_null_mark_prefix(field.name()) {
+                if let Some(arr) = batch
+                    .column(col_idx)
+                    .as_any()
+                    .downcast_ref::<BooleanArray>()
+                {
+                    null_marks.insert(raw_key, arr);
+                }
+            }
+        }
+
+        let mut dynamic_cols = Vec::new();
+        for (col_idx, field) in fields.iter().enumerate() {
+            if let Some(raw_key) = strip_user_prefix(field.name()) {
+                let arr = batch.column(col_idx).as_ref();
+                let is_json = field
+                    .metadata()
+                    .get(JSON_VALUE_META_KEY)
+                    .is_some_and(|v| v == "1");
+                let null_mark = null_marks.get(raw_key).copied();
+                dynamic_cols.push(DynamicColMeta {
+                    key: raw_key,
+                    view: ColumnView::from_array(arr),
+                    arr,
+                    is_json,
+                    null_mark,
+                });
             }
         }
 
         Self {
-            batch,
             id_col,
             color_col,
             ts_col,
             ts_secs_col,
             msg_col,
-            dynamic_indices,
+            dynamic_cols,
         }
     }
 
@@ -154,14 +189,17 @@ impl<'a> BatchColumns<'a> {
             .map(|c| c.value(row_idx).to_string())
             .unwrap_or_default();
 
-        let mut fields = LogFields::with_capacity(self.dynamic_indices.len());
-        let schema = self.batch.schema();
-        for &col_idx in &self.dynamic_indices {
-            let col = self.batch.column(col_idx);
-            if col.is_null(row_idx) {
+        let mut fields = LogFields::with_capacity(self.dynamic_cols.len());
+        for meta in &self.dynamic_cols {
+            if meta.arr.is_null(row_idx) {
+                if let Some(n_col) = meta.null_mark {
+                    if n_col.is_valid(row_idx) && n_col.value(row_idx) {
+                        fields.insert(meta.key.to_string(), serde_json::Value::Null);
+                    }
+                }
                 continue;
             }
-            let val = match ColumnView::from_array(col.as_ref()) {
+            let val = match meta.view {
                 ColumnView::Int64(c) => serde_json::Value::Number(c.value(row_idx).into()),
                 ColumnView::Float64(c) => {
                     if let Some(n) = serde_json::Number::from_f64(c.value(row_idx)) {
@@ -170,12 +208,20 @@ impl<'a> BatchColumns<'a> {
                         continue;
                     }
                 }
-                ColumnView::Utf8(c) => serde_json::Value::String(c.value(row_idx).to_string()),
+                ColumnView::Utf8(c) => {
+                    let s = c.value(row_idx);
+                    if meta.is_json {
+                        serde_json::from_str(s)
+                            .unwrap_or_else(|_| serde_json::Value::String(s.to_string()))
+                    } else {
+                        serde_json::Value::String(s.to_string())
+                    }
+                }
                 ColumnView::Boolean(c) => serde_json::Value::Bool(c.value(row_idx)),
                 ColumnView::UInt64(c) => serde_json::Value::Number(c.value(row_idx).into()),
                 _ => continue,
             };
-            fields.insert(schema.field(col_idx).name().clone(), val);
+            fields.insert(meta.key.to_string(), val);
         }
 
         LogEvent {

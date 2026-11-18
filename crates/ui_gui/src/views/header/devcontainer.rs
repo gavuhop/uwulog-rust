@@ -55,19 +55,19 @@ pub fn render_devcontainer_suggest_popup(
     ctx: &egui::Context,
     session: &GuiSession,
     dispatch: &mut impl FnMut(AppAction),
-) {
+) -> bool {
     let WorkspaceLocation::Local { ref working_dir } = session.session.location else {
-        return;
+        return false;
     };
     let dir_trimmed = working_dir.trim();
     if dir_trimmed.is_empty() {
-        return;
+        return false;
     }
 
     // Kiểm tra nhanh syscall stat: chỉ probe Docker khi thư mục thực sự có `.devcontainer`
     let local_path = Path::new(dir_trimmed);
     if find_devcontainer_config(local_path).is_none() {
-        return;
+        return false;
     }
 
     let cache_id = egui::Id::new("local_devcontainer_probe_cache");
@@ -76,7 +76,7 @@ pub fn render_devcontainer_suggest_popup(
 
     let key = dir_trimmed.to_string();
     if cache.dismissed_paths.contains(&key) {
-        return;
+        return false;
     }
 
     let now = Instant::now();
@@ -129,7 +129,7 @@ pub fn render_devcontainer_suggest_popup(
     let detected = cache.entries.get(&key).and_then(|e| e.result.clone());
     let Some(opened) = detected else {
         ctx.data_mut(|d| d.insert_temp(cache_id, cache));
-        return;
+        return false;
     };
 
     let theme = ctx.app_theme();
@@ -227,6 +227,7 @@ pub fn render_devcontainer_suggest_popup(
         );
         dispatch(AppAction::OpenWorkspace(ws));
     }
+    true
 }
 
 /// Hiển thị nút container (đặt sau tên dự án trên Header) cho biết đang xem container nào

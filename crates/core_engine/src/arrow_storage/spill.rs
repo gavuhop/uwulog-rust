@@ -1,3 +1,4 @@
+use super::builder::{null_mark_col_name, strip_user_prefix, user_col_name, JSON_VALUE_META_KEY};
 use super::compiler::{ColumnView, QueryCompiler};
 use super::storage::BatchColumns;
 use arrow::array::{new_null_array, Array, Float64Array, Int64Array, UInt64Array};
@@ -106,16 +107,15 @@ impl ColdSegmentMeta {
                 }
             }
 
-            // Thu thập min/max cho các cột số dynamic (bỏ qua cột hệ thống `__*`)
+            // Thu thập min/max cho các cột số của người dùng (`f:<key>`)
             for (idx, field) in schema.fields().iter().enumerate() {
-                let name = field.name();
-                if name.starts_with("__") {
+                let Some(user_key) = strip_user_prefix(field.name()) else {
                     continue;
-                }
+                };
                 let col = batch.column(idx);
                 if let Some((lo, hi)) = compute_numeric_bounds(col.as_ref()) {
                     numeric_bounds
-                        .entry(name.clone())
+                        .entry(user_key.to_string())
                         .and_modify(|(cur_lo, cur_hi)| {
                             *cur_lo = cur_lo.min(lo);
                             *cur_hi = cur_hi.max(hi);
@@ -155,7 +155,11 @@ impl ColdSegmentMeta {
     }
 
     pub fn has_field(&self, field: &str) -> bool {
-        if self.schema_fields.iter().any(|f| f == field) {
+        if self
+            .schema_fields
+            .iter()
+            .any(|f| strip_user_prefix(f) == Some(field))
+        {
             return true;
         }
         if let Some(std_f) = StandardField::from_alias(field) {
@@ -164,12 +168,12 @@ impl ColdSegmentMeta {
                     .schema_fields
                     .iter()
                     .any(|f| f == "__timestamp" || f == "__timestamp_secs"),
-                StandardField::Id => self.schema_fields.iter().any(|f| f == "__id"),
+                StandardField::Id => false,
                 StandardField::Message => self.schema_fields.iter().any(|f| f == "__message"),
-                StandardField::Level => self
-                    .schema_fields
-                    .iter()
-                    .any(|f| StandardField::from_alias(f) == Some(StandardField::Level)),
+                StandardField::Level => self.schema_fields.iter().any(|f| {
+                    strip_user_prefix(f).and_then(StandardField::from_alias)
+                        == Some(StandardField::Level)
+                }),
             };
         }
         false
@@ -217,7 +221,6 @@ fn compute_numeric_bounds(col: &dyn Array) -> Option<(f64, f64)> {
 fn numeric_bounds_for_field(meta: &ColdSegmentMeta, field: &str) -> Option<(f64, f64)> {
     match StandardField::from_alias(field) {
         Some(StandardField::Timestamp) => meta.min_ts.zip(meta.max_ts),
-        Some(StandardField::Id) => Some((meta.min_id as f64, meta.max_id as f64)),
         _ => meta.numeric_bounds.get(field).copied(),
     }
 }
@@ -359,18 +362,20 @@ pub fn resolve_projection_indices(
     }
 
     for field in target_fields {
-        push_col_index(schema_fields, &mut indices, field);
+        push_col_index(schema_fields, &mut indices, &user_col_name(field));
+        push_col_index(schema_fields, &mut indices, &null_mark_col_name(field));
         if let Some(std_f) = StandardField::from_alias(field) {
             match std_f {
                 StandardField::Timestamp => {
                     push_col_index(schema_fields, &mut indices, "__timestamp");
                     push_col_index(schema_fields, &mut indices, "__timestamp_secs");
                 }
-                StandardField::Id => push_col_index(schema_fields, &mut indices, "__id"),
+                StandardField::Id => {}
                 StandardField::Message => push_col_index(schema_fields, &mut indices, "__message"),
                 StandardField::Level => {
                     for (pos, f) in schema_fields.iter().enumerate() {
-                        if StandardField::from_alias(f) == Some(StandardField::Level)
+                        if strip_user_prefix(f).and_then(StandardField::from_alias)
+                            == Some(StandardField::Level)
                             && !indices.contains(&pos)
                         {
                             indices.push(pos);
@@ -436,24 +441,52 @@ pub(crate) fn schemas_compatible(a: &Schema, b: &Schema) -> bool {
 pub(crate) fn build_unified_schema<'a>(
     schemas: impl IntoIterator<Item = &'a Schema>,
 ) -> Arc<Schema> {
-    let mut map: HashMap<String, Field> = HashMap::new();
+    let mut map: HashMap<String, (Field, bool)> = HashMap::new();
     for s in schemas {
         for f in s.fields() {
+            let is_json = f
+                .metadata()
+                .get(JSON_VALUE_META_KEY)
+                .is_some_and(|v| v == "1");
             map.entry(f.name().clone())
-                .or_insert_with(|| f.as_ref().clone());
+                .and_modify(|(existing, all_json)| {
+                    *all_json &= is_json;
+                    if f.is_nullable() && !existing.is_nullable() {
+                        *existing = Field::new(existing.name(), existing.data_type().clone(), true)
+                            .with_metadata(existing.metadata().clone());
+                    }
+                })
+                .or_insert_with(|| (f.as_ref().clone(), is_json));
         }
     }
     let mut names: Vec<String> = map.keys().cloned().collect();
+    // Sắp xếp xác định: cột hệ thống '__' trước, sau đó cột user 'f:', cuối cùng 'n:'
     names.sort_by(|x, y| {
-        let x_core = x.starts_with("__");
-        let y_core = y.starts_with("__");
-        match (x_core, y_core) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => x.cmp(y),
-        }
+        let rank = |name: &str| -> u8 {
+            if name.starts_with("__") {
+                0
+            } else if strip_user_prefix(name).is_some() {
+                1
+            } else {
+                2
+            }
+        };
+        rank(x).cmp(&rank(y)).then_with(|| x.cmp(y))
     });
-    let fields: Vec<Field> = names.into_iter().filter_map(|n| map.remove(&n)).collect();
+    let fields: Vec<Field> = names
+        .into_iter()
+        .filter_map(|n| {
+            map.remove(&n).map(|(f, all_json)| {
+                if !all_json && f.metadata().contains_key(JSON_VALUE_META_KEY) {
+                    let mut meta = f.metadata().clone();
+                    meta.remove(JSON_VALUE_META_KEY);
+                    f.with_metadata(meta)
+                } else {
+                    f
+                }
+            })
+        })
+        .collect();
     Arc::new(Schema::new(fields))
 }
 
@@ -1035,8 +1068,8 @@ mod tests {
                 "__timestamp".into(),
                 "__timestamp_secs".into(),
                 "__message".into(),
-                "level".into(),
-                "status".into(),
+                "f:level".into(),
+                "f:status".into(),
             ],
             distinct_levels: Some(["info".to_string(), "warn".to_string()].into()),
             numeric_bounds: [("status".to_string(), (200.0, 404.0))].into(),
@@ -1085,7 +1118,7 @@ mod tests {
             .iter()
             .map(|&i| meta.schema_fields[i].as_str())
             .collect();
-        assert_eq!(selected, vec!["level", "status"]);
+        assert_eq!(selected, vec!["f:level", "f:status"]);
         assert!(!selected.contains(&"__message"));
     }
 }

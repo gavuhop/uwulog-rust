@@ -325,3 +325,67 @@ async fn test_open_workspace_and_session_in_new_window() {
     assert_eq!(app.workspaces.sessions.len(), 0);
     assert!(!app.workspaces.has_active_session());
 }
+
+#[tokio::test]
+async fn test_field_collision_warnings_sync_and_dismiss() {
+    let mut app = create_test_app();
+    let tx = app.active_session().session.engine.get_channel();
+
+    tx.send(uwu_core_schema::RawLogEntry {
+        payload: uwu_core_schema::RawPayload::Text(
+            r#"{"a.b": 1, "a": {"b": 2}, "message": "collision 1"}"#.to_string(),
+        ),
+    })
+    .await
+    .unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+    app.active_session_mut().tick(std::time::Instant::now());
+    assert_eq!(
+        app.active_session().view.warnings.visible_collisions(),
+        vec![("a.b", 1)]
+    );
+
+    // Dismiss hides current key
+    app.dispatch_action(AppAction::DismissFieldWarnings);
+    assert!(app
+        .active_session()
+        .view
+        .warnings
+        .visible_collisions()
+        .is_empty());
+
+    // Another log with the SAME colliding key -> stays dismissed (no spam)
+    tx.send(uwu_core_schema::RawLogEntry {
+        payload: uwu_core_schema::RawPayload::Text(
+            r#"{"a.b": 3, "a": {"b": 4}, "message": "collision 2"}"#.to_string(),
+        ),
+    })
+    .await
+    .unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+    app.active_session_mut().tick(std::time::Instant::now());
+    assert!(app
+        .active_session()
+        .view
+        .warnings
+        .visible_collisions()
+        .is_empty());
+
+    // A log with a NEW colliding key -> toast re-appears for the new key
+    tx.send(uwu_core_schema::RawLogEntry {
+        payload: uwu_core_schema::RawPayload::Text(
+            r#"{"x.y": 10, "x": {"y": 20}, "message": "collision 3"}"#.to_string(),
+        ),
+    })
+    .await
+    .unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+    app.active_session_mut().tick(std::time::Instant::now());
+    assert_eq!(
+        app.active_session().view.warnings.visible_collisions(),
+        vec![("x.y", 1)]
+    );
+}

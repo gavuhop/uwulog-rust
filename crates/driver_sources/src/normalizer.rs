@@ -7,22 +7,50 @@ struct DetectedSemanticFields {
     message: String,
 }
 
+pub struct NormalizedLog {
+    pub event: LogEvent,
+    pub key_collisions: Vec<String>,
+}
+
 pub struct LogNormalizer;
 
 impl LogNormalizer {
     pub fn normalize(entry: RawLogEntry) -> LogEvent {
+        Self::normalize_report(entry).event
+    }
+
+    pub fn normalize_report(entry: RawLogEntry) -> NormalizedLog {
         match entry.payload {
-            RawPayload::Json(v) => Self::normalize_json(&v),
+            RawPayload::Json(v) => {
+                if v.is_object() {
+                    Self::normalize_json(&v)
+                } else {
+                    let message = if let Some(s) = v.as_str() {
+                        s.to_string()
+                    } else {
+                        v.to_string()
+                    };
+                    NormalizedLog {
+                        event: LogEvent::new(
+                            String::new(),
+                            LogColor::Default,
+                            message,
+                            LogFields::new(),
+                        ),
+                        key_collisions: Vec::new(),
+                    }
+                }
+            }
             RawPayload::Text(s) => {
                 let clean = strip_ansi(&s);
                 let trimmed = clean.trim();
 
-                // 1. Fast-check JSON: Chỉ thử parse JSON nếu bắt đầu và kết thúc bằng cặp ngoặc {} hoặc []
-                if (trimmed.starts_with('{') && trimmed.ends_with('}'))
-                    || (trimmed.starts_with('[') && trimmed.ends_with(']'))
-                {
+                // 1. Fast-check JSON: Chỉ parse JSON object {} (array [...] hoặc primitive giữ nguyên là plain text)
+                if trimmed.starts_with('{') && trimmed.ends_with('}') {
                     if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(trimmed) {
-                        return Self::normalize_json(&json_val);
+                        if json_val.is_object() {
+                            return Self::normalize_json(&json_val);
+                        }
                     }
                 }
 
@@ -32,7 +60,15 @@ impl LogNormalizer {
                     std::borrow::Cow::Owned(owned) => owned,
                 };
 
-                LogEvent::new(String::new(), LogColor::Default, message, LogFields::new())
+                NormalizedLog {
+                    event: LogEvent::new(
+                        String::new(),
+                        LogColor::Default,
+                        message,
+                        LogFields::new(),
+                    ),
+                    key_collisions: Vec::new(),
+                }
             }
             RawPayload::KeyValue(kv) => {
                 let fields: LogFields = kv
@@ -41,12 +77,25 @@ impl LogNormalizer {
                     .collect();
                 let detected = Self::detect_semantic_fields(&fields);
 
-                LogEvent::new(detected.timestamp, detected.color, detected.message, fields)
+                NormalizedLog {
+                    event: LogEvent::new(
+                        detected.timestamp,
+                        detected.color,
+                        detected.message,
+                        fields,
+                    ),
+                    key_collisions: Vec::new(),
+                }
             }
         }
     }
 
-    fn flatten_json_value(prefix: &str, v: &serde_json::Value, out: &mut LogFields) {
+    fn flatten_json_value(
+        prefix: &str,
+        v: &serde_json::Value,
+        out: &mut LogFields,
+        collisions: &mut Vec<String>,
+    ) {
         if let Some(obj) = v.as_object() {
             for (k, child_val) in obj {
                 let full_key = if prefix.is_empty() {
@@ -55,9 +104,19 @@ impl LogNormalizer {
                     format!("{}.{}", prefix, k)
                 };
 
-                if child_val.is_object() {
-                    Self::flatten_json_value(&full_key, child_val, out);
+                if let Some(child_obj) = child_val.as_object() {
+                    if child_obj.is_empty() {
+                        if out.contains_key(&full_key) && !collisions.contains(&full_key) {
+                            collisions.push(full_key.clone());
+                        }
+                        out.insert(full_key, child_val.clone());
+                    } else {
+                        Self::flatten_json_value(&full_key, child_val, out, collisions);
+                    }
                 } else {
+                    if out.contains_key(&full_key) && !collisions.contains(&full_key) {
+                        collisions.push(full_key.clone());
+                    }
                     out.insert(full_key, child_val.clone());
                 }
             }
@@ -120,13 +179,17 @@ impl LogNormalizer {
         }
     }
 
-    fn normalize_json(v: &serde_json::Value) -> LogEvent {
+    fn normalize_json(v: &serde_json::Value) -> NormalizedLog {
         let mut fields = LogFields::new();
-        Self::flatten_json_value("", v, &mut fields);
+        let mut key_collisions = Vec::new();
+        Self::flatten_json_value("", v, &mut fields, &mut key_collisions);
         fields.shrink_to_fit();
         let detected = Self::detect_semantic_fields(&fields);
 
-        LogEvent::new(detected.timestamp, detected.color, detected.message, fields)
+        NormalizedLog {
+            event: LogEvent::new(detected.timestamp, detected.color, detected.message, fields),
+            key_collisions,
+        }
     }
 }
 
@@ -344,5 +407,51 @@ mod tests {
             })),
         });
         assert_eq!(event_no_level.color, LogColor::Default);
+    }
+
+    #[test]
+    fn test_normalize_non_object_json_and_empty_nested_object() {
+        // E4: JSON array text line stays plain text in message
+        let arr_text_event = LogNormalizer::normalize(RawLogEntry {
+            payload: RawPayload::Text("[1, 2, 3]".to_string()),
+        });
+        assert_eq!(arr_text_event.message, "[1, 2, 3]");
+        assert!(arr_text_event.fields.is_empty());
+
+        // E5: RawPayload::Json non-object preserves message
+        let arr_json_event = LogNormalizer::normalize(RawLogEntry {
+            payload: RawPayload::Json(serde_json::json!(["a", "b"])),
+        });
+        assert_eq!(arr_json_event.message, "[\"a\",\"b\"]");
+        assert!(arr_json_event.fields.is_empty());
+
+        let str_json_event = LogNormalizer::normalize(RawLogEntry {
+            payload: RawPayload::Json(serde_json::json!("raw scalar")),
+        });
+        assert_eq!(str_json_event.message, "raw scalar");
+
+        // E6: Empty nested object is preserved as {}
+        let empty_obj_event = LogNormalizer::normalize(RawLogEntry {
+            payload: RawPayload::Json(serde_json::json!({
+                "message": "ok",
+                "meta": {}
+            })),
+        });
+        assert_eq!(
+            empty_obj_event.fields.get("meta"),
+            Some(&serde_json::json!({}))
+        );
+    }
+
+    #[test]
+    fn test_normalize_report_detects_key_collision() {
+        let raw_line = r#"{"a.b": 1, "a": {"b": 2}, "message": "colliding log"}"#;
+        let report = LogNormalizer::normalize_report(RawLogEntry {
+            payload: RawPayload::Text(raw_line.to_string()),
+        });
+
+        assert_eq!(report.event.message, "colliding log");
+        assert_eq!(report.key_collisions, vec!["a.b".to_string()]);
+        assert!(report.event.fields.contains_key("a.b"));
     }
 }

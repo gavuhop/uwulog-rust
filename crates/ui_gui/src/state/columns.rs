@@ -22,6 +22,7 @@ pub struct ColumnState {
     pub header_dragged_width: Option<f32>,
     pub header_drag_offset_x: Option<f32>,
     pub known_keys: HashSet<String>,
+    pub seen_keys: HashSet<String>,
     pub table_animations: crate::animation::MoveAnimationManager,
     pub modal_animations: crate::animation::MoveAnimationManager,
 }
@@ -40,6 +41,7 @@ impl Default for ColumnState {
             header_dragged_width: None,
             header_drag_offset_x: None,
             known_keys,
+            seen_keys: HashSet::new(),
             table_animations: crate::animation::MoveAnimationManager::default(),
             modal_animations: crate::animation::MoveAnimationManager::default(),
         }
@@ -123,6 +125,7 @@ impl ColumnState {
         self.clear_modal_drag();
         self.clear_header_drag();
         self.known_keys = self.columns.iter().map(|c| c.name.clone()).collect();
+        self.seen_keys.clear();
     }
 
     pub fn reset_draft_to_defaults(&mut self) {
@@ -154,20 +157,31 @@ impl ColumnState {
     pub fn sync_discovered_keys(&mut self, logs: &[LogEvent]) {
         for log in logs {
             for key in log.fields.keys() {
-                if let Some(std_field) = uwu_core_schema::StandardField::from_alias(key) {
-                    let found_idx = self.columns.iter().position(|c| {
-                        uwu_core_schema::StandardField::from_alias(&c.name) == Some(std_field)
-                    });
+                if !self.seen_keys.insert(key.clone()) {
+                    continue;
+                }
 
-                    if let Some(idx) = found_idx {
-                        if self.columns[idx].name != *key {
-                            let old_name = self.columns[idx].name.clone();
-                            self.known_keys.remove(&old_name);
+                // Nếu cột cùng tên đã tồn tại (ví dụ canonical default "level"), giữ nguyên
+                if self.columns.iter().any(|c| c.name == *key) {
+                    self.known_keys.insert(key.clone());
+                    continue;
+                }
+
+                // Nếu key là alias của trường mặc định và cột mặc định vẫn đang ở tên canonical
+                // (chưa từng thấy tên canonical trong log), chỉ đổi tên 1 lần duy nhất
+                if let Some(std_field) = uwu_core_schema::StandardField::from_alias(key) {
+                    let canonical = std_field.canonical_name();
+                    if !self.seen_keys.contains(canonical) {
+                        if let Some(idx) = self.columns.iter().position(|c| c.name == canonical) {
+                            self.known_keys.remove(canonical);
                             self.columns[idx].name = key.clone();
                             self.known_keys.insert(key.clone());
+                            continue;
                         }
                     }
-                } else if self.known_keys.insert(key.clone()) {
+                }
+
+                if self.known_keys.insert(key.clone()) {
                     self.columns.push(ColumnItem {
                         name: key.clone(),
                         visible: false,
@@ -208,13 +222,15 @@ mod tests {
     fn test_sync_discovered_keys() {
         let mut state = ColumnState::default();
         let mut fields = HashMap::new();
+        fields.insert("id".to_string(), serde_json::json!(42));
         fields.insert("latency_ms".to_string(), serde_json::json!(123));
         fields.insert("user_id".to_string(), serde_json::json!("u42"));
 
         let log = LogEvent::new("2026-08-20T10:00:00Z", LogColor::Green, "msg", fields);
 
         state.sync_discovered_keys(&[log]);
-        assert_eq!(state.columns.len(), 5);
+        assert_eq!(state.columns.len(), 6);
+        assert!(state.columns.iter().any(|c| c.name == "id" && !c.visible));
         assert!(state.columns.iter().any(|c| c.name == "latency_ms"));
         assert!(state.columns.iter().any(|c| c.name == "user_id"));
     }
@@ -320,5 +336,59 @@ mod tests {
         state.swap_columns("level", "timestamp");
         assert_eq!(state.columns[0].name, "timestamp");
         assert_eq!(state.columns[1].name, "level");
+    }
+
+    #[test]
+    fn test_sync_discovered_keys_multiple_aliases_no_loss() {
+        let mut state = ColumnState::default();
+
+        // Log 1 có đồng thời cả "level" và "lvl"
+        let mut fields1 = HashMap::new();
+        fields1.insert("level".to_string(), serde_json::json!("INFO"));
+        fields1.insert("lvl".to_string(), serde_json::json!(30));
+        fields1.insert("message".to_string(), serde_json::json!("hi"));
+        let log1 = LogEvent::new("2026-08-20T10:00:00Z", LogColor::Green, "hi", fields1);
+
+        // Log 2 xuất hiện thêm "severity" và "msg"
+        let mut fields2 = HashMap::new();
+        fields2.insert("severity".to_string(), serde_json::json!("WARN"));
+        fields2.insert("msg".to_string(), serde_json::json!("warn msg"));
+        let log2 = LogEvent::new(
+            "2026-08-20T10:00:01Z",
+            LogColor::Yellow,
+            "warn msg",
+            fields2,
+        );
+
+        state.sync_discovered_keys(&[log1]);
+        state.sync_discovered_keys(&[log2]);
+
+        let names: Vec<&str> = state.columns.iter().map(|c| c.name.as_str()).collect();
+        assert!(names.contains(&"level"));
+        assert!(names.contains(&"lvl"));
+        assert!(names.contains(&"severity"));
+        assert!(names.contains(&"message"));
+        assert!(names.contains(&"msg"));
+
+        // Reverse order: alias "lvl" arrives first, then canonical "level" arrives later -> neither is lost
+        let mut reverse_state = ColumnState::default();
+        let mut f_alias = HashMap::new();
+        f_alias.insert("lvl".to_string(), serde_json::json!(30));
+        let log_alias = LogEvent::new("2026-08-20T10:00:00Z", LogColor::Green, "hi", f_alias);
+
+        let mut f_canon = HashMap::new();
+        f_canon.insert("level".to_string(), serde_json::json!("INFO"));
+        let log_canon = LogEvent::new("2026-08-20T10:00:01Z", LogColor::Green, "hi2", f_canon);
+
+        reverse_state.sync_discovered_keys(&[log_alias]);
+        reverse_state.sync_discovered_keys(&[log_canon]);
+
+        let rev_names: Vec<&str> = reverse_state
+            .columns
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect();
+        assert!(rev_names.contains(&"lvl"));
+        assert!(rev_names.contains(&"level"));
     }
 }

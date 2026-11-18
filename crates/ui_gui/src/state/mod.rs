@@ -4,6 +4,7 @@ pub mod history;
 pub mod inspector;
 pub mod search;
 pub mod viewport;
+pub mod warnings;
 
 pub use autocomplete::{
     classify_field, generate_suggestions, AutocompleteState, FieldType, SuggestionItem,
@@ -16,6 +17,7 @@ pub use search::SearchState;
 pub use viewport::{
     ActiveTab, LogStreamView, ScrollCommand, UnfilteredViewState, ViewportState, RAW_STREAM_LIMIT,
 };
+pub use warnings::FieldWarningState;
 
 /// Lưu trữ trạng thái hiển thị giao diện của từng workspace session.
 /// Gom nhóm rõ ràng theo các Sub-Models chuyên trách.
@@ -26,6 +28,7 @@ pub struct GuiViewState {
     pub inspector: InspectorState,
     pub columns: ColumnState,
     pub unfiltered: UnfilteredViewState,
+    pub warnings: FieldWarningState,
     pub active_tab: ActiveTab,
     pub buffer_overflow_dismissed: bool,
 }
@@ -72,5 +75,6 @@ impl GuiViewState {
         self.search.autocomplete.is_open = false;
         self.search.autocomplete.suggestions.clear();
         self.buffer_overflow_dismissed = false;
+        self.warnings.reset();
     }
 }

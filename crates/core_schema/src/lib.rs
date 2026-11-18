@@ -36,15 +36,13 @@ impl StandardField {
 
     /// Tự động quy đổi mọi bí danh (aliases: ts, time, @timestamp, lvl, severity, msg...) về trường chuẩn
     pub fn from_alias(key: &str) -> Option<Self> {
-        let clean = key.trim();
-        match clean {
+        match key {
             "timestamp" | "time" | "ts" | "@timestamp" | "date" | "datetime" => {
                 Some(Self::Timestamp)
             }
             "level" | "lvl" | "lv" | "severity" | "priority" | "loglevel" | "log_level"
             | "log.level" | "levelname" => Some(Self::Level),
             "message" | "msg" | "text" | "body" | "log" | "content" => Some(Self::Message),
-            "id" => Some(Self::Id),
             _ => None,
         }
     }
@@ -111,36 +109,60 @@ pub fn cluster_fields<'a, V>(
     result
 }
 
-/// Chuyển đổi một danh sách các trường có thứ tự dạng dot-notation về cấu trúc JSON lồng nhau (nested JSON object)
+/// Chuyển đổi một danh sách các trường có thứ tự dạng dot-notation về cấu trúc JSON lồng nhau (nested JSON object).
+/// Bảo toàn không mất dữ liệu nếu một key vừa là lá vừa là tiền tố của key khác (vd: `"a": 1` và `"a.b": 2`).
 pub fn unflatten_json_ordered<'a>(
     fields: impl IntoIterator<Item = (&'a str, &'a serde_json::Value)>,
 ) -> serde_json::Value {
+    let items: Vec<(&'a str, &'a serde_json::Value)> = fields.into_iter().collect();
+    let has_dots = items.iter().any(|(k, _)| k.contains('.'));
     let mut root = serde_json::Map::new();
 
-    for (k, v) in fields {
-        if !k.contains('.') {
+    if !has_dots {
+        for (k, v) in items {
             root.insert(k.to_string(), v.clone());
-        } else {
-            let parts: Vec<&str> = k.split('.').filter(|s| !s.is_empty()).collect();
-            if parts.is_empty() {
-                root.insert(k.to_string(), v.clone());
-                continue;
-            }
-            let mut curr = &mut root;
-            let last_idx = parts.len() - 1;
-            for (i, &part) in parts.iter().enumerate() {
-                if i == last_idx {
-                    curr.insert(part.to_string(), v.clone());
+        }
+        return serde_json::Value::Object(root);
+    }
+
+    let occupied_keys: std::collections::HashSet<&str> = items.iter().map(|(k, _)| *k).collect();
+
+    for (k, v) in items {
+        let has_occupied_ancestor = k
+            .match_indices('.')
+            .any(|(dot_idx, _)| occupied_keys.contains(&k[..dot_idx]));
+
+        if !k.contains('.') || has_occupied_ancestor {
+            root.insert(k.to_string(), v.clone());
+            continue;
+        }
+
+        let parts: Vec<&str> = k.split('.').filter(|s| !s.is_empty()).collect();
+        if parts.is_empty() {
+            root.insert(k.to_string(), v.clone());
+            continue;
+        }
+
+        let mut curr = &mut root;
+        let last_idx = parts.len() - 1;
+        let mut fallback_flat = false;
+        for (i, &part) in parts.iter().enumerate() {
+            if i == last_idx {
+                curr.insert(part.to_string(), v.clone());
+            } else {
+                let entry = curr
+                    .entry(part.to_string())
+                    .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+                if let Some(next_obj) = entry.as_object_mut() {
+                    curr = next_obj;
                 } else {
-                    let entry = curr
-                        .entry(part.to_string())
-                        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
-                    if !entry.is_object() {
-                        *entry = serde_json::Value::Object(serde_json::Map::new());
-                    }
-                    curr = entry.as_object_mut().unwrap();
+                    fallback_flat = true;
+                    break;
                 }
             }
+        }
+        if fallback_flat {
+            root.insert(k.to_string(), v.clone());
         }
     }
 
@@ -395,7 +417,6 @@ impl LogEvent {
                         None
                     }
                 }
-                StandardField::Id => Some(Cow::Owned(self.id.to_string())),
                 _ => None,
             };
         }
@@ -410,7 +431,6 @@ impl LogEvent {
                 StandardField::Timestamp => self
                     .timestamp_secs
                     .or_else(|| uwu_core_util::parse_numeric_value(&self.timestamp, now)),
-                StandardField::Id => Some(self.id as f64),
                 _ => None,
             };
         }
@@ -568,6 +588,9 @@ mod tests {
             StandardField::from_alias("content"),
             Some(StandardField::Message)
         );
+        assert_eq!(StandardField::from_alias("id"), None);
+        assert_eq!(StandardField::from_alias(" level "), None);
+        assert_eq!(StandardField::from_alias(" ts "), None);
         assert_eq!(StandardField::from_alias("custom_field"), None);
     }
 
@@ -603,9 +626,33 @@ mod tests {
         // Numeric access
         assert_eq!(event.get_field_numeric("latency_ms", 0.0), Some(125.5));
         assert!(event.get_field_numeric("ts", 0.0).is_some());
-        assert_eq!(event.get_field_numeric("id", 0.0), Some(event.id as f64));
+        assert_eq!(event.get_field_numeric("id", 0.0), None);
+        assert_eq!(event.get_field_cow("id"), None);
         assert_eq!(event.get_field_numeric("lvl", 0.0), None);
         assert_eq!(event.get_field_numeric("non_existent", 0.0), None);
+
+        // User log with its own "id" field must be resolved from fields, not internal event.id
+        let mut fields_with_num_id = HashMap::new();
+        fields_with_num_id.insert("id".to_string(), serde_json::json!(999));
+        let event_num_id = LogEvent::new(
+            "2026-08-20T10:00:00Z",
+            LogColor::Green,
+            "ok",
+            fields_with_num_id,
+        );
+        assert_eq!(event_num_id.get_field_cow("id").as_deref(), Some("999"));
+        assert_eq!(event_num_id.get_field_numeric("id", 0.0), Some(999.0));
+
+        let mut fields_with_str_id = HashMap::new();
+        fields_with_str_id.insert("id".to_string(), serde_json::json!("req-abc"));
+        let event_str_id = LogEvent::new(
+            "2026-08-20T10:00:00Z",
+            LogColor::Green,
+            "ok",
+            fields_with_str_id,
+        );
+        assert_eq!(event_str_id.get_field_cow("id").as_deref(), Some("req-abc"));
+        assert_eq!(event_str_id.get_field_numeric("id", 0.0), None);
 
         // Full text search
         assert!(event.matches_text("failed"));
@@ -725,6 +772,33 @@ mod tests {
             parsed["metadata"]["system"]["infra"]["cluster"],
             "eu-central-cluster-a"
         );
+    }
+
+    #[test]
+    fn test_unflatten_preserves_scalar_and_nested_sibling() {
+        // Order 1: leaf "a" before "a.b"
+        let v1 = unflatten_json_ordered([
+            ("a", &serde_json::json!(1)),
+            ("a.b", &serde_json::json!(2)),
+            ("meta.region", &serde_json::json!("us")),
+        ]);
+        assert_eq!(v1["a"], serde_json::json!(1));
+        assert_eq!(v1["a.b"], serde_json::json!(2));
+        assert_eq!(v1["meta"]["region"], serde_json::json!("us"));
+
+        // Order 2: "a.b" before leaf "a"
+        let v2 =
+            unflatten_json_ordered([("a.b", &serde_json::json!(2)), ("a", &serde_json::json!(1))]);
+        assert_eq!(v2["a"], serde_json::json!(1));
+        assert_eq!(v2["a.b"], serde_json::json!(2));
+
+        // Nested leaf "a.b" + deeper "a.b.c"
+        let v3 = unflatten_json_ordered([
+            ("a.b", &serde_json::json!(1)),
+            ("a.b.c", &serde_json::json!(2)),
+        ]);
+        assert_eq!(v3["a"]["b"], serde_json::json!(1));
+        assert_eq!(v3["a.b.c"], serde_json::json!(2));
     }
 
     #[test]

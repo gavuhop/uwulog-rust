@@ -9,20 +9,20 @@ Tài liệu này mô tả chi tiết cấu trúc lưu trữ cột trong `uwu-cor
 | Module | Thành phần chính | Vai trò |
 | :--- | :--- | :--- |
 | [mod.rs](../../crates/core_engine/src/arrow_storage/mod.rs) | Re-exports | Xuất `ActiveRecordBatchBuilder`, `ColumnView`, `QueryCompiler`, `ArrowStorage`, `BatchSliceIterator`. |
-| [builder.rs](../../crates/core_engine/src/arrow_storage/builder.rs) | `ActiveRecordBatchBuilder`, `DynamicColumnBuilder` | Thu thập log vào builder cột cố định (`__id`, `__color`, `__timestamp`, `__timestamp_secs`, `__message`) và cột động. |
+| [builder.rs](../../crates/core_engine/src/arrow_storage/builder.rs) | `ActiveRecordBatchBuilder`, `DynamicColumnBuilder` | Thu thập log vào 5 cột hệ thống (`__id`, `__color`, `__timestamp`, `__timestamp_secs`, `__message`), cột dữ liệu user (`f:<key>`, kèm metadata `uwu.json="1"` cho array/object thuần), và cột đánh dấu null (`n:<key>`). |
 | [storage.rs](../../crates/core_engine/src/arrow_storage/storage.rs) | `ArrowStorage`, `BatchColumns`, `BatchSliceIterator` | Quản lý `sealed_batches: RwLock<Arc<Vec<RecordBatch>>>`, gộp batch nhỏ qua `unify_and_concat` (`TARGET_BATCH_SIZE = 4096`), và FIFO eviction theo `max_capacity`. |
 | [compiler.rs](../../crates/core_engine/src/arrow_storage/compiler.rs) | `QueryCompiler`, `ColumnView` | Biên dịch cây `Expr` thành `BooleanArray` mask có short-circuit và quét song song qua Rayon `par_iter`. |
 
 ### 1.1. Thăng cấp Kiểu Dữ liệu (Type Promotion)
 Trong hệ thống tồn tại hai lớp nhận diện kiểu dữ liệu bổ trợ cho nhau:
 1. **`DynamicColumnBuilder` (Arrow Storage, [builder.rs](../../crates/core_engine/src/arrow_storage/builder.rs#L10-L135))**:
-   - Bắt đầu ở kiểu hẹp nhất của giá trị đầu tiên: `Int64` $\rightarrow$ nếu gặp số thực thì thăng cấp lên `Float64` $\rightarrow$ nếu gặp chuỗi hoặc giá trị hỗn hợp thì thăng cấp sang `String` (`Utf8`), đồng thời bảo toàn toàn bộ giá trị cũ đã nạp.
+   - Bắt đầu ở kiểu hẹp nhất của giá trị khác-null đầu tiên: `Boolean`, `Int64` $\rightarrow$ nếu gặp số thực thì thăng cấp lên `Float64` $\rightarrow$ nếu gặp chuỗi hoặc giá trị hỗn hợp thì thăng cấp sang `String` (`Utf8`), đồng thời bảo toàn toàn bộ giá trị cũ đã nạp. Giá trị `null` tường minh được ghi vào cột `n:<key>` (1 bit/dòng) để không ép cột số/boolean thăng cấp sang `String`.
 2. **`SystemEngine` Schema Registry ([crates/core_engine/src/lib.rs](../../crates/core_engine/src/lib.rs#L114-L158))**:
    - Lưu `HashMap<String, FieldType>` (`Time`, `Number`, `Text`) phục vụ UI autocomplete và gợi ý toán tử; hỗ trợ thăng cấp `Text -> Number` khi gặp trường số mới.
 
 ### 1.2. Zero-Lookup `BatchColumns` & Hợp nhất Batch
-- Khi đọc hoặc materialize `LogEvent`, `BatchColumns::extract(&batch)` tra cứu chỉ mục của 5 cột `__*` và danh sách `dynamic_indices` **một lần duy nhất cho mỗi `RecordBatch`**.
-- `unify_and_concat(a, b)` hợp nhất các `RecordBatch` liền kề nếu tổng dòng $\le$ `4096` và không xung đột kiểu dữ liệu (tự điền `null` cho các cột động vắng mặt và sắp xếp cột `__*` lên đầu).
+- Khi đọc hoặc materialize `LogEvent`, `BatchColumns::extract(&batch)` tra cứu chỉ mục của 5 cột `__*`, các cột user `f:*`, và các cột `n:*` tương ứng **một lần duy nhất cho mỗi `RecordBatch`**.
+- `unify_and_concat(a, b)` hợp nhất các `RecordBatch` liền kề nếu tổng dòng $\le$ `4096` và không xung đột kiểu dữ liệu (tự điền `null` cho các cột động vắng mặt, chỉ giữ `uwu.json="1"` khi cả hai cùng thuần JSON, và sắp xếp `__*` $\rightarrow$ `f:*` $\rightarrow$ `n:*`).
 
 ---
 

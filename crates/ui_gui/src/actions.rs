@@ -51,6 +51,7 @@ pub enum AppAction {
     ToggleRowHighlight(u64),
     ToggleTermHighlight(String),
     ClearAllHighlights,
+    DismissFieldWarnings,
 
     // Stream & Latch Controls
     ToggleLatch,

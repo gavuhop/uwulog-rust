@@ -1,22 +1,77 @@
 use ahash::AHashMap;
 use arrow::array::{
-    Array, ArrayBuilder, ArrayRef, Float64Builder, Int64Builder, RecordBatch, StringBuilder,
-    UInt64Builder, UInt8Builder,
+    new_null_array, Array, ArrayBuilder, ArrayRef, BooleanBuilder, Float64Builder, Int64Builder,
+    RecordBatch, StringBuilder, UInt64Builder, UInt8Builder,
 };
 use arrow::datatypes::{DataType, Field, Schema};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use uwu_core_schema::{value_to_cow, LogEvent};
+
+pub(crate) const USER_COL_PREFIX: &str = "f:";
+pub(crate) const NULL_MARK_PREFIX: &str = "n:";
+pub(crate) const JSON_VALUE_META_KEY: &str = "uwu.json";
+
+#[inline]
+pub(crate) fn strip_user_prefix(name: &str) -> Option<&str> {
+    name.strip_prefix(USER_COL_PREFIX)
+}
+
+#[inline]
+pub(crate) fn strip_null_mark_prefix(name: &str) -> Option<&str> {
+    name.strip_prefix(NULL_MARK_PREFIX)
+}
+
+#[inline]
+pub(crate) fn user_col_name(key: &str) -> String {
+    format!("{USER_COL_PREFIX}{key}")
+}
+
+#[inline]
+pub(crate) fn null_mark_col_name(key: &str) -> String {
+    format!("{NULL_MARK_PREFIX}{key}")
+}
 
 pub enum DynamicColumnBuilder {
     Int64(Int64Builder),
     Float64(Float64Builder),
-    String(StringBuilder),
+    Boolean(BooleanBuilder),
+    String {
+        builder: StringBuilder,
+        is_json_only: bool,
+    },
+}
+
+fn is_structured_json(value: &serde_json::Value) -> bool {
+    value.is_array() || value.is_object()
+}
+
+fn promote_to_string_builder(
+    len: usize,
+    mut format_row: impl FnMut(usize, &mut StringBuilder),
+    next_value: &serde_json::Value,
+) -> DynamicColumnBuilder {
+    let mut new_b = StringBuilder::with_capacity(len + 16, len * 16 + 64);
+    for i in 0..len {
+        format_row(i, &mut new_b);
+    }
+    let s = value_to_cow(next_value);
+    new_b.append_value(s.as_ref());
+    DynamicColumnBuilder::String {
+        builder: new_b,
+        is_json_only: false,
+    }
 }
 
 impl DynamicColumnBuilder {
     pub fn new_for_value(value: &serde_json::Value, catchup_nulls: usize, capacity: usize) -> Self {
         let actual_cap = capacity.max(catchup_nulls + 1);
-        if let Some(i) = value.as_i64() {
+        if let Some(b_val) = value.as_bool() {
+            let mut b = BooleanBuilder::with_capacity(actual_cap);
+            b.append_nulls(catchup_nulls);
+            b.append_value(b_val);
+            DynamicColumnBuilder::Boolean(b)
+        } else if let Some(i) = value.as_i64() {
             let mut b = Int64Builder::with_capacity(actual_cap);
             b.append_nulls(catchup_nulls);
             b.append_value(i);
@@ -33,7 +88,10 @@ impl DynamicColumnBuilder {
             }
             let s = value_to_cow(value);
             b.append_value(s.as_ref());
-            DynamicColumnBuilder::String(b)
+            DynamicColumnBuilder::String {
+                builder: b,
+                is_json_only: is_structured_json(value),
+            }
         }
     }
 
@@ -41,12 +99,31 @@ impl DynamicColumnBuilder {
         match self {
             DynamicColumnBuilder::Int64(b) => b.append_null(),
             DynamicColumnBuilder::Float64(b) => b.append_null(),
-            DynamicColumnBuilder::String(b) => b.append_null(),
+            DynamicColumnBuilder::Boolean(b) => b.append_null(),
+            DynamicColumnBuilder::String { builder, .. } => builder.append_null(),
         }
     }
 
     pub fn append_value(&mut self, value: &serde_json::Value) {
         match self {
+            DynamicColumnBuilder::Boolean(b) => {
+                if let Some(v) = value.as_bool() {
+                    b.append_value(v);
+                } else {
+                    let old_arr = b.finish();
+                    *self = promote_to_string_builder(
+                        old_arr.len(),
+                        |i, nb| {
+                            if old_arr.is_null(i) {
+                                nb.append_null();
+                            } else {
+                                nb.append_value(if old_arr.value(i) { "true" } else { "false" });
+                            }
+                        },
+                        value,
+                    );
+                }
+            }
             DynamicColumnBuilder::Int64(b) => {
                 if let Some(i) = value.as_i64() {
                     b.append_value(i);
@@ -67,18 +144,17 @@ impl DynamicColumnBuilder {
                 } else {
                     // Promote to String
                     let old_arr = b.finish();
-                    let len = old_arr.len();
-                    let mut new_b = StringBuilder::with_capacity(len + 16, len * 16 + 64);
-                    for i in 0..len {
-                        if old_arr.is_null(i) {
-                            new_b.append_null();
-                        } else {
-                            new_b.append_value(old_arr.value(i).to_string());
-                        }
-                    }
-                    let s = value_to_cow(value);
-                    new_b.append_value(s.as_ref());
-                    *self = DynamicColumnBuilder::String(new_b);
+                    *self = promote_to_string_builder(
+                        old_arr.len(),
+                        |i, nb| {
+                            if old_arr.is_null(i) {
+                                nb.append_null();
+                            } else {
+                                nb.append_value(old_arr.value(i).to_string());
+                            }
+                        },
+                        value,
+                    );
                 }
             }
             DynamicColumnBuilder::Float64(b) => {
@@ -87,23 +163,28 @@ impl DynamicColumnBuilder {
                 } else {
                     // Promote to String
                     let old_arr = b.finish();
-                    let len = old_arr.len();
-                    let mut new_b = StringBuilder::with_capacity(len + 16, len * 16 + 64);
-                    for i in 0..len {
-                        if old_arr.is_null(i) {
-                            new_b.append_null();
-                        } else {
-                            new_b.append_value(old_arr.value(i).to_string());
-                        }
-                    }
-                    let s = value_to_cow(value);
-                    new_b.append_value(s.as_ref());
-                    *self = DynamicColumnBuilder::String(new_b);
+                    *self = promote_to_string_builder(
+                        old_arr.len(),
+                        |i, nb| {
+                            if old_arr.is_null(i) {
+                                nb.append_null();
+                            } else {
+                                nb.append_value(old_arr.value(i).to_string());
+                            }
+                        },
+                        value,
+                    );
                 }
             }
-            DynamicColumnBuilder::String(b) => {
+            DynamicColumnBuilder::String {
+                builder,
+                is_json_only,
+            } => {
+                if !is_structured_json(value) {
+                    *is_json_only = false;
+                }
                 let s = value_to_cow(value);
-                b.append_value(s.as_ref());
+                builder.append_value(s.as_ref());
             }
         }
     }
@@ -112,7 +193,8 @@ impl DynamicColumnBuilder {
         match self {
             DynamicColumnBuilder::Int64(b) => b.len(),
             DynamicColumnBuilder::Float64(b) => b.len(),
-            DynamicColumnBuilder::String(b) => b.len(),
+            DynamicColumnBuilder::Boolean(b) => b.len(),
+            DynamicColumnBuilder::String { builder, .. } => builder.len(),
         }
     }
 
@@ -120,17 +202,25 @@ impl DynamicColumnBuilder {
         self.len() == 0
     }
 
-    pub fn finish(self) -> (DataType, ArrayRef) {
+    pub fn finish(self) -> (DataType, ArrayRef, bool) {
         match self {
             DynamicColumnBuilder::Int64(mut b) => {
-                (DataType::Int64, Arc::new(b.finish()) as ArrayRef)
+                (DataType::Int64, Arc::new(b.finish()) as ArrayRef, false)
             }
             DynamicColumnBuilder::Float64(mut b) => {
-                (DataType::Float64, Arc::new(b.finish()) as ArrayRef)
+                (DataType::Float64, Arc::new(b.finish()) as ArrayRef, false)
             }
-            DynamicColumnBuilder::String(mut b) => {
-                (DataType::Utf8, Arc::new(b.finish()) as ArrayRef)
+            DynamicColumnBuilder::Boolean(mut b) => {
+                (DataType::Boolean, Arc::new(b.finish()) as ArrayRef, false)
             }
+            DynamicColumnBuilder::String {
+                mut builder,
+                is_json_only,
+            } => (
+                DataType::Utf8,
+                Arc::new(builder.finish()) as ArrayRef,
+                is_json_only,
+            ),
         }
     }
 }
@@ -146,6 +236,7 @@ pub struct ActiveRecordBatchBuilder {
     timestamp_secs_builder: Float64Builder,
     message_builder: StringBuilder,
     dynamic_builders: AHashMap<String, DynamicColumnBuilder>,
+    null_markers: AHashMap<String, BooleanBuilder>,
 }
 
 impl ActiveRecordBatchBuilder {
@@ -160,6 +251,7 @@ impl ActiveRecordBatchBuilder {
             timestamp_secs_builder: Float64Builder::with_capacity(initial_cap),
             message_builder: StringBuilder::with_capacity(initial_cap, initial_cap * 64),
             dynamic_builders: AHashMap::new(),
+            null_markers: AHashMap::new(),
         }
     }
 
@@ -185,8 +277,20 @@ impl ActiveRecordBatchBuilder {
         }
         self.message_builder.append_value(&event.message);
 
-        // 2. Dynamic columns
+        // 2. Dynamic columns & explicit null markers
         for (k, v) in &event.fields {
+            if v.is_null() {
+                if let Some(null_b) = self.null_markers.get_mut(k) {
+                    null_b.append_value(true);
+                } else {
+                    let cap = (row_idx + 16).min(self.capacity);
+                    let mut null_b = BooleanBuilder::with_capacity(cap);
+                    null_b.append_n(row_idx, false);
+                    null_b.append_value(true);
+                    self.null_markers.insert(k.clone(), null_b);
+                }
+                continue;
+            }
             if let Some(dyn_b) = self.dynamic_builders.get_mut(k) {
                 dyn_b.append_value(v);
             } else {
@@ -196,10 +300,15 @@ impl ActiveRecordBatchBuilder {
             }
         }
 
-        // Zero-alloc null filling: any builder whose len is still row_idx was absent in this row
+        // Zero-alloc null filling: any builder whose len is still row_idx was absent (or null) in this row
         for dyn_b in self.dynamic_builders.values_mut() {
             if dyn_b.len() == row_idx {
                 dyn_b.append_null();
+            }
+        }
+        for null_b in self.null_markers.values_mut() {
+            if null_b.len() == row_idx {
+                null_b.append_value(false);
             }
         }
 
@@ -211,8 +320,9 @@ impl ActiveRecordBatchBuilder {
             return None;
         }
 
-        let mut fields = Vec::with_capacity(5 + self.dynamic_builders.len());
-        let mut columns: Vec<ArrayRef> = Vec::with_capacity(5 + self.dynamic_builders.len());
+        let total_cols = 5 + self.dynamic_builders.len() + self.null_markers.len() * 2;
+        let mut fields = Vec::with_capacity(total_cols);
+        let mut columns: Vec<ArrayRef> = Vec::with_capacity(total_cols);
 
         fields.push(Field::new("__id", DataType::UInt64, false));
         columns.push(Arc::new(self.id_builder.finish()) as ArrayRef);
@@ -234,10 +344,32 @@ impl ActiveRecordBatchBuilder {
             self.dynamic_builders.drain().collect();
         dyn_items.sort_by(|a, b| a.0.cmp(&b.0));
 
+        let mut emitted_keys = HashSet::with_capacity(dyn_items.len());
         for (k, dyn_b) in dyn_items {
-            let (dtype, array) = dyn_b.finish();
-            fields.push(Field::new(k, dtype, true));
+            let (dtype, array, is_json_only) = dyn_b.finish();
+            let mut field = Field::new(user_col_name(&k), dtype, true);
+            if is_json_only {
+                field = field.with_metadata(HashMap::from([(
+                    JSON_VALUE_META_KEY.to_string(),
+                    "1".to_string(),
+                )]));
+            }
+            fields.push(field);
             columns.push(array);
+            emitted_keys.insert(k);
+        }
+
+        // Emit explicit null marker columns (n:<key>) and ensure f:<key> exists even for all-null columns
+        let mut null_items: Vec<(String, BooleanBuilder)> = self.null_markers.drain().collect();
+        null_items.sort_by(|a, b| a.0.cmp(&b.0));
+
+        for (k, mut null_b) in null_items {
+            if !emitted_keys.contains(&k) {
+                fields.push(Field::new(user_col_name(&k), DataType::Utf8, true));
+                columns.push(new_null_array(&DataType::Utf8, self.row_count));
+            }
+            fields.push(Field::new(null_mark_col_name(&k), DataType::Boolean, true));
+            columns.push(Arc::new(null_b.finish()) as ArrayRef);
         }
 
         let schema = Arc::new(Schema::new(fields));
@@ -252,6 +384,7 @@ impl ActiveRecordBatchBuilder {
         self.timestamp_secs_builder = Float64Builder::with_capacity(initial_cap);
         self.message_builder = StringBuilder::with_capacity(initial_cap, initial_cap * 64);
         self.dynamic_builders.clear();
+        self.null_markers.clear();
 
         batch
     }
