@@ -56,6 +56,7 @@ pub enum IconName {
     Linux,
     Server,
     Box,
+    Docker,
     Screen,
 }
 
@@ -101,6 +102,7 @@ impl IconName {
             Self::Linux => "linux",
             Self::Server => "server",
             Self::Box => "box",
+            Self::Docker => "docker",
             Self::Screen => "screen",
         }
     }
@@ -146,6 +148,7 @@ impl IconName {
             Self::Linux => "icons/linux.svg",
             Self::Server => "icons/server.svg",
             Self::Box => "icons/box.svg",
+            Self::Docker => "icons/docker.svg",
             Self::Screen => "icons/screen.svg",
         }
     }
@@ -198,6 +201,7 @@ impl IconName {
         IconName::Linux,
         IconName::Server,
         IconName::Box,
+        IconName::Docker,
         IconName::Screen,
     ];
 
@@ -263,7 +267,7 @@ mod tests {
 
     #[test]
     fn test_icon_count() {
-        assert_eq!(IconName::ALL.len(), 35);
+        assert_eq!(IconName::ALL.len(), 36);
     }
 
     #[test]
