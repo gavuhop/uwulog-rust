@@ -119,7 +119,7 @@ impl OverlayManager {
                     self.project_search_query.clear();
                 }
                 OverlayLayer::ColumnsModal => {
-                    active_session.view.columns.close_modal();
+                    active_session.view.shared.columns.close_modal();
                 }
                 OverlayLayer::RemoteServersModal => {}
                 OverlayLayer::SourceSwitcher => {}
@@ -134,7 +134,7 @@ impl OverlayManager {
         } else if active_session.view.active_tab == ActiveTab::Unfiltered {
             active_session.close_unfiltered_stream();
             true
-        } else if active_session.view.inspector.selected_log.is_some() {
+        } else if active_session.view.shared.inspector.selected_log.is_some() {
             active_session.set_selected_log(None);
             true
         } else {

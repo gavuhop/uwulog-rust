@@ -181,6 +181,15 @@ impl WorkspaceSession {
         ws
     }
 
+    /// Khóa định danh viewer chuẩn hóa cho session này.
+    pub fn viewer_key(&self) -> String {
+        crate::WorkspaceStore::viewer_key(
+            &self.location,
+            self.source_config.source_type,
+            &self.source_config.file_path,
+        )
+    }
+
     pub fn apply_workspace(&mut self, ws: &Workspace) {
         self.name = ws.name.clone();
         self.location = ws.location.clone();

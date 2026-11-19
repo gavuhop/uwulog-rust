@@ -60,6 +60,8 @@ fn render_log_table_scoped(
     let pointer_pos: Option<Pos2> = ui.input(|i| i.pointer.latest_pos());
 
     let visible_cols: Vec<ColumnItem> = session
+        .view
+        .shared
         .columns
         .columns
         .iter()
@@ -75,7 +77,7 @@ fn render_log_table_scoped(
     // vẫn cô lập giữa các session khác nhau bằng `session.session.id`.
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     session.session.id.hash(&mut hasher);
-    session.columns.layout_version.hash(&mut hasher);
+    session.view.shared.columns.layout_version.hash(&mut hasher);
     for c in &visible_cols {
         c.name.hash(&mut hasher);
     }
@@ -120,15 +122,12 @@ fn render_log_table_scoped(
     let prev_tab = ui.data(|d| d.get_temp::<ActiveTab>(prev_tab_id));
     let tab_changed = prev_tab.is_some_and(|p| p != tab);
     if let Some(prev) = prev_tab.filter(|&p| p != tab) {
-        let prev_hscroll_id = ui.make_persistent_id((prev, "table_hscroll_offset"));
-        let next_hscroll_id = ui.make_persistent_id((tab, "table_hscroll_offset"));
-        let next_x = ui
-            .data(|d| d.get_temp::<f32>(next_hscroll_id))
-            .unwrap_or(0.0);
-        ui.data_mut(|d| d.insert_temp(prev_hscroll_id, hstate.offset.x));
-        hstate.offset.x = next_x;
+        if let Some(prev_state) = session.view.tab_mut(prev) {
+            prev_state.hscroll_offset = hstate.offset.x;
+        }
+        hstate.offset.x = session.view.tab_or_main(tab).hscroll_offset;
         hstate_changed = true;
-        session.columns.table_animations.reset();
+        session.view.shared.columns.table_animations.reset();
     }
     ui.data_mut(|d| d.insert_temp(prev_tab_id, tab));
 
@@ -146,8 +145,7 @@ fn render_log_table_scoped(
     }
 
     // 3. Cuộn tự động theo tâm bằng chuột giữa (Web-style Center-Anchor Autoscroll)
-    let vscroll_id = ui.make_persistent_id((tab, "table_vscroll_offset"));
-    let mut current_v_offset = ui.data(|d| d.get_temp::<f32>(vscroll_id)).unwrap_or(0.0);
+    let mut current_v_offset = session.view.tab_or_main(tab).vscroll_offset;
     let prev_salt_id = ui.make_persistent_id("log_table_prev_salt");
     let prev_salt = ui.data(|d| d.get_temp::<u64>(prev_salt_id));
     let salt_changed = prev_salt.is_some_and(|s| s != table_salt);
@@ -220,25 +218,21 @@ fn render_log_table_scoped(
                     &mut tbl_header,
                     &ctx,
                     &visible_cols,
-                    &mut session.columns,
+                    &mut session.view.shared.columns,
                     table_clip_rect,
                     &mut col_offsets,
                 );
             })
             .body(|body| {
                 let mut render_ctx = ActionContext {
-                    highlighted_terms: &session.inspector.highlighted_terms,
+                    highlighted_terms: &session.view.shared.inspector.highlighted_terms,
                     has_any_highlights,
                     is_filtering: !session.view.search.query.trim().is_empty(),
                     is_unfiltered_tab: tab == ActiveTab::Unfiltered,
                     action: &mut action_to_dispatch,
                 };
 
-                let target_id = if tab == ActiveTab::Unfiltered {
-                    session.unfiltered.target_id
-                } else {
-                    None
-                };
+                let target_id = session.view.tab_or_main(tab).target_id();
 
                 body.rows(text_height + 4.0, row_count, |mut row| {
                     let row_index = row.index();
@@ -292,13 +286,12 @@ fn render_log_table_scoped(
     });
 
     let (v_offset, content_h, viewport_h) = hscroll_out.inner;
-    ui.data_mut(|d| {
-        d.insert_temp(vscroll_id, v_offset);
-        d.insert_temp(
-            ui.make_persistent_id((tab, "table_hscroll_offset")),
-            hscroll_out.state.offset.x,
-        );
-    });
+    {
+        let tab_state = session.view.tab_or_main_mut(tab);
+        tab_state.vscroll_offset = v_offset;
+        tab_state.hscroll_offset = hscroll_out.state.offset.x;
+        tab_state.stream.first_visible_row = min_visible_row;
+    }
 
     // Chỉ chuyển sang Pause (Unlatch) khi cuộn chuột lên nếu bảng thực sự có nội dung tràn màn hình để cuộn;
     // khi mới có vài dòng nằm gọn trong khung nhìn, lăn chuột lên không được ngắt Live.
@@ -307,16 +300,15 @@ fn render_log_table_scoped(
         dispatch(AppAction::Unlatch);
     }
 
-    let stream_mut = session.stream_mut(tab);
-    stream_mut.first_visible_row = min_visible_row;
-
     if let Some(action) = action_to_dispatch {
         dispatch(action);
     }
 
-    if let Some(ref dragged_name) = session.columns.header_dragged_name {
+    if let Some(ref dragged_name) = session.view.shared.columns.header_dragged_name {
         if let Some(pos) = pointer_pos {
             let width = session
+                .view
+                .shared
                 .columns
                 .header_dragged_width
                 .or_else(|| {
@@ -326,7 +318,7 @@ fn render_log_table_scoped(
                         .map(|c| c.width)
                 })
                 .unwrap_or(100.0);
-            let offset_x = session.columns.header_drag_offset_x;
+            let offset_x = session.view.shared.columns.header_drag_offset_x;
             render_drag_ghost(ui, dragged_name, pos, width, offset_x);
         }
     }
@@ -383,7 +375,7 @@ mod tests {
         );
         let mut session = GuiSession::from_workspace(&ws, 1000, 1000);
         for i in 0..count {
-            session.viewport.cached_logs.push(
+            session.view.main_tab_mut().stream.cached_logs.push(
                 LogEvent::new(
                     "12:00:00",
                     LogColor::Default,
@@ -589,8 +581,8 @@ mod tests {
     #[test]
     fn shared_table_state_preserves_column_widths_across_tabs_and_reorders() {
         let mut session = make_session_with_logs(5);
-        session.unfiltered.is_open = true;
-        session.unfiltered.cached_logs = session.viewport.cached_logs.clone();
+        let logs = session.view.main_tab().stream.cached_logs.clone();
+        session.view.open_raw_tab(None).stream.cached_logs = logs;
         let ctx = egui::Context::default();
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 600.0));
 
@@ -612,7 +604,7 @@ mod tests {
 
         // Render lần đầu ở Filtered và lấy vị trí mép phải cột đầu tiên ("timestamp")
         run_tab(ActiveTab::Filtered, &mut session, vec![]);
-        let initial_w = session.columns.columns[0].width;
+        let initial_w = session.view.shared.columns.columns[0].width;
         let sep_x = 8.0 + initial_w + 4.0;
         let drag_y = 20.0;
 
@@ -646,7 +638,7 @@ mod tests {
             }],
         );
         run_tab(ActiveTab::Filtered, &mut session, vec![]);
-        let resized_w = session.columns.columns[0].width;
+        let resized_w = session.view.shared.columns.columns[0].width;
         assert!(
             resized_w > initial_w + 30.0,
             "expected timestamp width to grow from {initial_w}, got {resized_w}"
@@ -654,12 +646,18 @@ mod tests {
 
         // Chuyển sang Raw (Unfiltered): dùng chung TableState nên giữ nguyên độ rộng vừa kéo
         run_tab(ActiveTab::Unfiltered, &mut session, vec![]);
-        assert!((session.columns.columns[0].width - resized_w).abs() < 0.5);
+        assert!((session.view.shared.columns.columns[0].width - resized_w).abs() < 0.5);
 
         // Đổi vị trí cột trên Raw: vẫn giữ nguyên độ rộng đã resize
-        session.columns.move_column("timestamp", "message");
+        session
+            .view
+            .shared
+            .columns
+            .move_column("timestamp", "message");
         run_tab(ActiveTab::Unfiltered, &mut session, vec![]);
         let moved_w = session
+            .view
+            .shared
             .columns
             .columns
             .iter()
@@ -695,7 +693,7 @@ mod tests {
 
         // 1. Render App tab và kéo rộng cột "timestamp" thêm +70px
         render_session(&mut app_session, vec![]);
-        let initial_app_w = app_session.columns.columns[0].width;
+        let initial_app_w = app_session.view.shared.columns.columns[0].width;
         let sep_x = 8.0 + initial_app_w + 4.0;
         let drag_y = 20.0;
 
@@ -725,7 +723,7 @@ mod tests {
             }],
         );
         render_session(&mut app_session, vec![]);
-        let resized_app_w = app_session.columns.columns[0].width;
+        let resized_app_w = app_session.view.shared.columns.columns[0].width;
         assert!(
             resized_app_w > initial_app_w + 40.0,
             "expected app timestamp width to grow from {initial_app_w}, got {resized_app_w}"
@@ -733,10 +731,10 @@ mod tests {
 
         // 2. Chuyển sang tab Container (`db`) có cùng layout_version = 0 và cột mặc định:
         //    không được dùng chung TableState với tab App.
-        let initial_container_w = container_session.columns.columns[0].width;
+        let initial_container_w = container_session.view.shared.columns.columns[0].width;
         render_session(&mut container_session, vec![]);
         render_session(&mut container_session, vec![]);
-        let after_container_w = container_session.columns.columns[0].width;
+        let after_container_w = container_session.view.shared.columns.columns[0].width;
         assert!(
             (after_container_w - initial_container_w).abs() < 1.0,
             "container tab should keep its own initial width ({initial_container_w}), got {after_container_w}"
@@ -749,7 +747,7 @@ mod tests {
         // 3. Chuyển ngược về tab App: độ rộng cột đã kéo của App vẫn còn nguyên vẹn.
         render_session(&mut app_session, vec![]);
         render_session(&mut app_session, vec![]);
-        let app_w_after_switch_back = app_session.columns.columns[0].width;
+        let app_w_after_switch_back = app_session.view.shared.columns.columns[0].width;
         assert!(
             (app_w_after_switch_back - resized_app_w).abs() < 0.5,
             "app tab width must stay {resized_app_w} after switching back, got {app_w_after_switch_back}"

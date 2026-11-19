@@ -406,7 +406,9 @@ async fn test_on_exit_saves_current_workspace() {
         .iter()
         .find(|w| w.name == "ExitTestProj");
     assert!(ws.is_some());
-    assert_eq!(ws.unwrap().last_query, "error_query");
+    let key = ws.unwrap().viewer_key();
+    let prefs = app.workspaces.store.get_viewer_prefs(&key);
+    assert_eq!(prefs.map(|p| p.main_query.as_str()), Some("error_query"));
 }
 
 #[tokio::test]
@@ -432,8 +434,8 @@ async fn test_workspace_persists_and_restores_columns_only_on_matching_keys() {
             ("hidden_col".to_string(), serde_json::json!("y")),
         ]),
     )]);
-    app.active_session_mut().view.columns.open_modal();
-    if let Some(ref mut draft) = app.active_session_mut().view.columns.draft_columns {
+    app.active_session_mut().view.shared.columns.open_modal();
+    if let Some(ref mut draft) = app.active_session_mut().view.shared.columns.draft_columns {
         if let Some(c) = draft.iter_mut().find(|c| c.name == "aaa") {
             c.visible = true;
             c.width = 240.0;
@@ -442,7 +444,7 @@ async fn test_workspace_persists_and_restores_columns_only_on_matching_keys() {
     app.dispatch_action(AppAction::ApplyColumnsModal);
     app.on_exit();
 
-    // Đọc lại từ JSON trên đĩa -> mở WorkspaceSession mới
+    // Đọc lại từ JSON trên đĩa -> mở WorkspaceSession mới và nạp ViewerPrefs theo ViewerKey
     let reloaded_store = uwu_core_workspace::WorkspaceStore::load_from_path(&store_path);
     let saved_ws = reloaded_store
         .recent_workspaces
@@ -450,9 +452,13 @@ async fn test_workspace_persists_and_restores_columns_only_on_matching_keys() {
         .find(|w| w.name == "ColsPersistProj")
         .expect("saved workspace must exist")
         .clone();
-    assert!(!saved_ws.columns.iter().any(|c| c.name == "hidden_col"));
+    let saved_prefs = reloaded_store
+        .get_viewer_prefs(&saved_ws.viewer_key())
+        .expect("saved viewer prefs must exist");
+    assert!(!saved_prefs.columns.iter().any(|c| c.name == "hidden_col"));
 
     let mut restored_session = GuiSession::from_workspace(&saved_ws, 1000, 100);
+    restored_session.apply_viewer_prefs(saved_prefs);
     // Nếu log mới không có "aaa" (chỉ có "bbb") -> không hiện cột ma "aaa", "bbb" dùng mặc định 120.0
     restored_session.sync_discovered_fields(&[LogEvent::new(
         "2026-11-18T00:00:01Z",
@@ -462,12 +468,14 @@ async fn test_workspace_persists_and_restores_columns_only_on_matching_keys() {
     )]);
     assert!(!restored_session
         .view
+        .shared
         .columns
         .columns
         .iter()
         .any(|c| c.name == "aaa"));
     let bbb = restored_session
         .view
+        .shared
         .columns
         .columns
         .iter()
@@ -485,6 +493,7 @@ async fn test_workspace_persists_and_restores_columns_only_on_matching_keys() {
     )]);
     let aaa = restored_session
         .view
+        .shared
         .columns
         .columns
         .iter()
@@ -738,7 +747,7 @@ async fn test_open_normal_workspace_does_not_auto_run_while_container_log_tab_st
 
     assert!(!app.active_session().has_auto_started_source);
     assert!(!app.active_session().session.is_source_running);
-    assert!(app.active_session().view.viewport.is_auto_scroll);
+    assert!(app.active_session().view.main_tab().stream.is_auto_scroll);
 
     // 2. App Container (Dev Container chính mở dự án): cũng KHÔNG tự động chạy
     let app_container_ws = Workspace::new(
@@ -756,7 +765,7 @@ async fn test_open_normal_workspace_does_not_auto_run_while_container_log_tab_st
     assert!(!app.active_session().session.is_following_container_logs());
     assert!(!app.active_session().has_auto_started_source);
     assert!(!app.active_session().session.is_source_running);
-    assert!(app.active_session().view.viewport.is_auto_scroll);
+    assert!(app.active_session().view.main_tab().stream.is_auto_scroll);
 
     // 3. Mở container log tab khác (vd: `db` với follow_container_logs = true):
     // Tự động lấy log từ Docker và bật Live
@@ -775,7 +784,7 @@ async fn test_open_normal_workspace_does_not_auto_run_while_container_log_tab_st
     assert!(app.active_session().session.is_following_container_logs());
     assert!(app.active_session().has_auto_started_source);
     assert!(app.active_session().session.is_source_running);
-    assert!(app.active_session().view.viewport.is_auto_scroll);
+    assert!(app.active_session().view.main_tab().stream.is_auto_scroll);
 
     // Tab container phụ (`follow_container_logs`) không được lưu trùng vào recent_workspaces / open_workspace_ids
     app.workspaces.save_all_open_workspaces();
@@ -841,71 +850,86 @@ async fn test_devcontainer_tab_switching_and_reopen_preserves_state() {
     // Chỉnh trạng thái riêng trên tab `db`: cột, query, inspector, unlatch
     {
         let db = app.active_session_mut();
-        db.view.columns.set_column_width("timestamp", 185.0);
-        db.view.columns.schedule_save_after_drag();
+        db.view.shared.columns.set_column_width("timestamp", 185.0);
+        db.view.shared.columns.schedule_save_after_drag();
         db.view.search.query = "db_slow".into();
         db.view.search.last_query = "db_slow".into();
         db.view.search.needs_search = false;
-        db.view.inspector.width_ratio = 0.28;
-        db.view.viewport.is_auto_scroll = false;
-        db.view.viewport.last_processed_count = 1;
-        db.view
-            .viewport
-            .cached_logs
-            .push(uwu_core_schema::LogEvent::new(
-                "12:00:00",
-                uwu_core_schema::LogColor::Default,
-                "db line",
-                uwu_core_schema::LogFields::default(),
-            ));
+        db.view.shared.inspector.width_ratio = 0.28;
+        let main = db.view.main_tab_mut();
+        main.stream.is_auto_scroll = false;
+        main.set_last_processed_count(1);
+        main.stream.cached_logs.push(uwu_core_schema::LogEvent::new(
+            "12:00:00",
+            uwu_core_schema::LogColor::Default,
+            "db line",
+            uwu_core_schema::LogFields::default(),
+        ));
     }
 
     // Chuyển sang `app`, chỉnh trạng thái riêng trên `app`
     app.dispatch_action(AppAction::SwitchSession(app_idx));
     {
         let main_app = app.active_session_mut();
-        main_app.view.columns.set_column_width("timestamp", 245.0);
-        main_app.view.columns.schedule_save_after_drag();
+        main_app
+            .view
+            .shared
+            .columns
+            .set_column_width("timestamp", 245.0);
+        main_app.view.shared.columns.schedule_save_after_drag();
         main_app.view.search.query = "level:error".into();
         main_app.view.search.last_query = "level:error".into();
         main_app.view.search.needs_search = false;
-        main_app.view.inspector.width_ratio = 0.42;
-        main_app.view.viewport.is_auto_scroll = false;
-        main_app.view.viewport.last_processed_count = 1;
-        main_app
-            .view
-            .viewport
-            .cached_logs
-            .push(uwu_core_schema::LogEvent::new(
-                "12:00:01",
-                uwu_core_schema::LogColor::Default,
-                "app line",
-                uwu_core_schema::LogFields::default(),
-            ));
+        main_app.view.shared.inspector.width_ratio = 0.42;
+        let main = main_app.view.main_tab_mut();
+        main.stream.is_auto_scroll = false;
+        main.set_last_processed_count(1);
+        main.stream.cached_logs.push(uwu_core_schema::LogEvent::new(
+            "12:00:01",
+            uwu_core_schema::LogColor::Default,
+            "app line",
+            uwu_core_schema::LogFields::default(),
+        ));
     }
 
     // Đổi qua lại giữa `db` và `app`: cả hai phải giữ nguyên độ rộng cột, query, inspector, cache
     app.dispatch_action(AppAction::SwitchSession(db_idx));
     assert!(
-        (app.active_session().view.columns.columns[0].width - 185.0).abs() < 0.1,
+        (app.active_session().view.shared.columns.columns[0].width - 185.0).abs() < 0.1,
         "db timestamp width lost"
     );
     assert_eq!(app.active_session().view.search.query, "db_slow");
-    assert!((app.active_session().view.inspector.width_ratio - 0.28).abs() < 0.01);
-    assert!(!app.active_session().view.viewport.is_auto_scroll);
+    assert!((app.active_session().view.shared.inspector.width_ratio - 0.28).abs() < 0.01);
+    assert!(!app.active_session().view.main_tab().stream.is_auto_scroll);
     assert!(!app.active_session().view.search.needs_search);
-    assert_eq!(app.active_session().view.viewport.cached_logs.len(), 1);
+    assert_eq!(
+        app.active_session()
+            .view
+            .main_tab()
+            .stream
+            .cached_logs
+            .len(),
+        1
+    );
 
     app.dispatch_action(AppAction::SwitchSession(app_idx));
     assert!(
-        (app.active_session().view.columns.columns[0].width - 245.0).abs() < 0.1,
+        (app.active_session().view.shared.columns.columns[0].width - 245.0).abs() < 0.1,
         "app timestamp width lost"
     );
     assert_eq!(app.active_session().view.search.query, "level:error");
-    assert!((app.active_session().view.inspector.width_ratio - 0.42).abs() < 0.01);
-    assert!(!app.active_session().view.viewport.is_auto_scroll);
+    assert!((app.active_session().view.shared.inspector.width_ratio - 0.42).abs() < 0.01);
+    assert!(!app.active_session().view.main_tab().stream.is_auto_scroll);
     assert!(!app.active_session().view.search.needs_search);
-    assert_eq!(app.active_session().view.viewport.cached_logs.len(), 1);
+    assert_eq!(
+        app.active_session()
+            .view
+            .main_tab()
+            .stream
+            .cached_logs
+            .len(),
+        1
+    );
 
     // Đóng tab `db`, reload store từ đĩa (mô phỏng tắt app mở lại) và mở lại `db`:
     // không tạo duplicate trong `recent_workspaces`, đồng thời khôi phục toàn bộ view state của `db`.
@@ -922,11 +946,11 @@ async fn test_devcontainer_tab_switching_and_reopen_preserves_state() {
     app.workspaces.store = WorkspaceStore::load_from_path(&storage_path);
     app.dispatch_action(AppAction::OpenContainerLogSession(make_db_ws()));
     assert!(
-        (app.active_session().view.columns.columns[0].width - 185.0).abs() < 0.1,
+        (app.active_session().view.shared.columns.columns[0].width - 185.0).abs() < 0.1,
         "reopened db tab should restore saved timestamp width"
     );
     assert_eq!(app.active_session().view.search.query, "db_slow");
-    assert!((app.active_session().view.inspector.width_ratio - 0.28).abs() < 0.01);
+    assert!((app.active_session().view.shared.inspector.width_ratio - 0.28).abs() < 0.01);
 
     app.dispatch_action(AppAction::CloseSession(db_idx));
     app.dispatch_action(AppAction::CloseSession(app_idx));

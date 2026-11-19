@@ -123,36 +123,36 @@ async fn test_zed_style_app_action_dispatch() {
 #[tokio::test]
 async fn test_app_action_columns_modal_flow() {
     let mut app = create_test_app();
-    let initial_cols = app.active_session().columns.columns.clone();
+    let initial_cols = app.active_session().shared.columns.columns.clone();
 
     // 1. Open columns modal
     app.dispatch_action(AppAction::OpenColumnsModal);
-    assert!(app.active_session().columns.is_modal_open);
-    assert!(app.active_session().columns.draft_columns.is_some());
+    assert!(app.active_session().shared.columns.is_modal_open);
+    assert!(app.active_session().shared.columns.draft_columns.is_some());
 
     // 2. Modify draft
-    if let Some(ref mut draft) = app.active_session_mut().columns.draft_columns {
+    if let Some(ref mut draft) = app.active_session_mut().shared.columns.draft_columns {
         draft[0].visible = false;
     }
 
     // Live columns should still be unchanged (Live vs Draft separation)
-    assert_eq!(app.active_session().columns.columns, initial_cols);
-    assert!(app.active_session().columns.columns[0].visible);
+    assert_eq!(app.active_session().shared.columns.columns, initial_cols);
+    assert!(app.active_session().shared.columns.columns[0].visible);
 
     // 3. Cancel / Close modal
     app.dispatch_action(AppAction::CloseColumnsModal);
-    assert!(!app.active_session().columns.is_modal_open);
-    assert!(app.active_session().columns.draft_columns.is_none());
-    assert_eq!(app.active_session().columns.columns, initial_cols);
+    assert!(!app.active_session().shared.columns.is_modal_open);
+    assert!(app.active_session().shared.columns.draft_columns.is_none());
+    assert_eq!(app.active_session().shared.columns.columns, initial_cols);
 
     // 4. Open again, modify and Apply
     app.dispatch_action(AppAction::OpenColumnsModal);
-    if let Some(ref mut draft) = app.active_session_mut().columns.draft_columns {
+    if let Some(ref mut draft) = app.active_session_mut().shared.columns.draft_columns {
         draft[0].visible = false;
     }
     app.dispatch_action(AppAction::ApplyColumnsModal);
-    assert!(!app.active_session().columns.is_modal_open);
-    assert!(!app.active_session().columns.columns[0].visible);
+    assert!(!app.active_session().shared.columns.is_modal_open);
+    assert!(!app.active_session().shared.columns.columns[0].visible);
 }
 
 #[tokio::test]
@@ -161,13 +161,14 @@ async fn test_columns_all_hidden_safe_and_reset() {
 
     // 1. Open modal and hide ALL columns
     app.dispatch_action(AppAction::OpenColumnsModal);
-    if let Some(ref mut draft) = app.active_session_mut().columns.draft_columns {
+    if let Some(ref mut draft) = app.active_session_mut().shared.columns.draft_columns {
         for col in draft.iter_mut() {
             col.visible = false;
         }
     }
     assert!(app
         .active_session()
+        .shared
         .columns
         .draft_columns
         .as_ref()
@@ -177,18 +178,20 @@ async fn test_columns_all_hidden_safe_and_reset() {
 
     // 2. Apply all hidden columns
     app.dispatch_action(AppAction::ApplyColumnsModal);
-    assert!(!app.active_session().columns.is_modal_open);
+    assert!(!app.active_session().shared.columns.is_modal_open);
     assert!(app
         .active_session()
+        .shared
         .columns
         .columns
         .iter()
         .all(|c| !c.visible));
 
     // 3. Reset to defaults restores visibility
-    app.active_session_mut().columns.reset_to_defaults();
+    app.active_session_mut().shared.columns.reset_to_defaults();
     let visible_count = app
         .active_session()
+        .shared
         .columns
         .columns
         .iter()
@@ -209,9 +212,10 @@ async fn test_app_action_select_log_and_switch_tab() {
     );
 
     app.dispatch_action(AppAction::SelectLog(Some(event.clone())));
-    assert!(app.active_session().inspector.selected_log.is_some());
+    assert!(app.active_session().shared.inspector.selected_log.is_some());
     assert_eq!(
         app.active_session()
+            .shared
             .inspector
             .selected_log
             .as_ref()
@@ -221,7 +225,7 @@ async fn test_app_action_select_log_and_switch_tab() {
     );
 
     app.dispatch_action(AppAction::SelectLog(None));
-    assert!(app.active_session().inspector.selected_log.is_none());
+    assert!(app.active_session().shared.inspector.selected_log.is_none());
 
     // Không có filter -> không thể đổi sang tab Unfiltered
     app.dispatch_action(AppAction::SwitchTab(ActiveTab::Unfiltered));
@@ -248,8 +252,8 @@ async fn test_app_action_dismiss_top_layer() {
         HashMap::new(),
     )
     .with_id(123);
-    app.active_session_mut().inspector.selected_log = Some(test_log);
-    assert!(app.active_session().inspector.selected_log.is_some());
+    app.active_session_mut().shared.inspector.selected_log = Some(test_log);
+    assert!(app.active_session().shared.inspector.selected_log.is_some());
 
     // 2. Add unfiltered stream on top
     app.active_session_mut().open_unfiltered_stream(None);
@@ -259,7 +263,7 @@ async fn test_app_action_dismiss_top_layer() {
     app.push_overlay(OverlayLayer::LaunchModal);
 
     // 4. Add columns modal on top (stack)
-    app.active_session_mut().columns.open_modal();
+    app.active_session_mut().shared.columns.open_modal();
     app.push_overlay(OverlayLayer::ColumnsModal);
 
     // 5. Add project picker on top (stack)
@@ -284,11 +288,11 @@ async fn test_app_action_dismiss_top_layer() {
     // Pop 4: Unfiltered stream tab
     app.dispatch_action(AppAction::DismissTopLayer);
     assert_eq!(app.active_session().active_tab, ActiveTab::Filtered);
-    assert!(app.active_session().inspector.selected_log.is_some());
+    assert!(app.active_session().shared.inspector.selected_log.is_some());
 
     // Pop 5: Selected log inspector
     app.dispatch_action(AppAction::DismissTopLayer);
-    assert!(app.active_session().inspector.selected_log.is_none());
+    assert!(app.active_session().shared.inspector.selected_log.is_none());
 
     // Pop 6: Nothing left to pop
     assert!(!app.dismiss_top_layer());

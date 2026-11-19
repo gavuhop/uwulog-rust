@@ -241,21 +241,22 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 .inner_margin(egui::Margin::ZERO),
         )
         .show(ui, |ui| {
-            if active_session.view.inspector.is_open() {
+            if active_session.view.shared.inspector.is_open() {
                 let screen_width = ctx.viewport_rect().width();
                 let panel_salt = ("detail_inspector_panel", active_session.session.id);
                 let panel_id = egui::Id::new(panel_salt);
 
                 // Nếu tỷ lệ chưa hợp lệ, đặt mặc định 35% chiều rộng màn hình
-                if !(0.15..=0.85).contains(&active_session.view.inspector.width_ratio) {
-                    active_session.view.inspector.width_ratio = 0.35;
+                if !(0.15..=0.85).contains(&active_session.view.shared.inspector.width_ratio) {
+                    active_session.view.shared.inspector.width_ratio = 0.35;
                 }
 
                 // Khi kích thước màn hình thay đổi (Resize cửa sổ hoặc Zoom In/Out):
                 // Tự động cập nhật lại kích thước panel theo đúng tỷ lệ inspector.width_ratio!
                 if app.prev_screen_width > 0.0 && (screen_width - app.prev_screen_width).abs() > 2.0
                 {
-                    let new_width = (screen_width * active_session.view.inspector.width_ratio)
+                    let new_width = (screen_width
+                        * active_session.view.shared.inspector.width_ratio)
                         .clamp(240.0, screen_width * 0.75);
                     ctx.data_mut(|d| {
                         if let Some(mut state) =
@@ -269,7 +270,8 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 app.prev_screen_width = screen_width;
 
                 // Chiều rộng pixel thực tế
-                let target_width = (screen_width * active_session.view.inspector.width_ratio)
+                let target_width = (screen_width
+                    * active_session.view.shared.inspector.width_ratio)
                     .clamp(240.0, screen_width * 0.75);
                 let min_sidebar_width = 240.0_f32.min(screen_width * 0.4);
                 let max_sidebar_width = (screen_width * 0.75).max(min_sidebar_width + 100.0);
@@ -289,7 +291,7 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                         let actual_width = ui.available_width();
                         if actual_width > 50.0 && screen_width > 100.0 {
                             // Cập nhật tỷ lệ khi người dùng chủ động kéo dãn thanh Inspector
-                            active_session.view.inspector.width_ratio =
+                            active_session.view.shared.inspector.width_ratio =
                                 (actual_width / screen_width).clamp(0.15, 0.75);
                         }
                         ui.push_id(active_session.session.id, |ui| {
@@ -337,7 +339,7 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     // Modal Dialog: Table Columns & Ordering
     modals::render_columns_modal(
         ctx,
-        &mut active_session.view.columns,
+        &mut active_session.view.shared.columns,
         &app.keymap,
         &mut dispatch,
     );

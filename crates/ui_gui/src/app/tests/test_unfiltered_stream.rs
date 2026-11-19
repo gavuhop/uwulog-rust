@@ -11,14 +11,13 @@ async fn test_unfiltered_stream_open_close_and_focus() {
 
     session.open_unfiltered_stream(Some(12345));
     assert_eq!(session.active_tab, ActiveTab::Unfiltered);
-    assert!(session.unfiltered.is_open);
-    assert_eq!(session.unfiltered.target_id, Some(12345));
-    assert!(!session.unfiltered.is_auto_scroll);
+    assert!(session.has_raw_tab());
+    assert_eq!(session.raw_tab().unwrap().target_id(), Some(12345));
+    assert!(!session.raw_tab().unwrap().stream.is_auto_scroll);
 
     session.close_unfiltered_stream();
     assert_eq!(session.active_tab, ActiveTab::Filtered);
-    assert!(!session.unfiltered.is_open);
-    assert!(session.unfiltered.target_id.is_none());
+    assert!(!session.has_raw_tab());
 }
 
 #[tokio::test]
@@ -36,12 +35,26 @@ async fn test_unfiltered_live_tick_sync_both_branches() {
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
     app.active_session_mut().trigger_full_search();
-    assert_eq!(app.active_session().viewport.cached_logs.len(), 5);
+    assert_eq!(app.active_session().main_tab().stream.cached_logs.len(), 5);
 
     // 2. Open unfiltered stream in LIVE mode
     app.active_session_mut().open_unfiltered_stream(None);
-    assert!(app.active_session().unfiltered.is_auto_scroll);
-    assert_eq!(app.active_session().unfiltered.cached_logs.len(), 5);
+    assert!(
+        app.active_session()
+            .raw_tab()
+            .unwrap()
+            .stream
+            .is_auto_scroll
+    );
+    assert_eq!(
+        app.active_session()
+            .raw_tab()
+            .unwrap()
+            .stream
+            .cached_logs
+            .len(),
+        5
+    );
 
     // 3. Ingest 5 more logs
     for i in 5..10 {
@@ -57,8 +70,16 @@ async fn test_unfiltered_live_tick_sync_both_branches() {
     app.tick();
 
     // Both filtered and unfiltered live buffers must have received all 10 logs
-    assert_eq!(app.active_session().viewport.cached_logs.len(), 10);
-    assert_eq!(app.active_session().unfiltered.cached_logs.len(), 10);
+    assert_eq!(app.active_session().main_tab().stream.cached_logs.len(), 10);
+    assert_eq!(
+        app.active_session()
+            .raw_tab()
+            .unwrap()
+            .stream
+            .cached_logs
+            .len(),
+        10
+    );
 }
 
 #[tokio::test]
@@ -75,8 +96,20 @@ async fn test_unfiltered_frozen_snapshot_no_drift() {
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     app.active_session_mut().open_unfiltered_stream(Some(2));
-    assert!(!app.active_session().unfiltered.is_auto_scroll);
-    let initial_count = app.active_session().unfiltered.cached_logs.len();
+    assert!(
+        !app.active_session()
+            .raw_tab()
+            .unwrap()
+            .stream
+            .is_auto_scroll
+    );
+    let initial_count = app
+        .active_session()
+        .raw_tab()
+        .unwrap()
+        .stream
+        .cached_logs
+        .len();
 
     let new_entry = RawLogEntry {
         payload: RawPayload::Text("{\"level\":\"INFO\",\"message\":\"msg 99\"}".to_string()),
@@ -86,7 +119,12 @@ async fn test_unfiltered_frozen_snapshot_no_drift() {
 
     app.tick();
     assert_eq!(
-        app.active_session().unfiltered.cached_logs.len(),
+        app.active_session()
+            .raw_tab()
+            .unwrap()
+            .stream
+            .cached_logs
+            .len(),
         initial_count
     );
 }
@@ -97,7 +135,7 @@ async fn test_close_unfiltered_stream_frees_ram() {
     let session = app.active_session_mut();
     session.open_unfiltered_stream(None);
     session.close_unfiltered_stream();
-    assert!(session.unfiltered.cached_logs.is_empty());
+    assert!(!session.has_raw_tab());
 }
 
 #[tokio::test]
@@ -127,6 +165,7 @@ async fn test_switch_tab_preserves_picked_row_and_inspector() {
     )));
     assert_eq!(
         app.active_session()
+            .shared
             .inspector
             .selected_log
             .as_ref()
@@ -135,7 +174,8 @@ async fn test_switch_tab_preserves_picked_row_and_inspector() {
     );
     assert_eq!(
         app.active_session()
-            .viewport
+            .main_tab()
+            .stream
             .selected_log
             .as_ref()
             .map(|l| l.id),
@@ -146,7 +186,7 @@ async fn test_switch_tab_preserves_picked_row_and_inspector() {
     app.dispatch_action(crate::actions::AppAction::SwitchTab(ActiveTab::Unfiltered));
     assert_eq!(app.active_session().active_tab, ActiveTab::Unfiltered);
     // Tab Raw chưa pick dòng nào -> inspector chưa có dòng nào
-    assert!(app.active_session().inspector.selected_log.is_none());
+    assert!(app.active_session().shared.inspector.selected_log.is_none());
 
     // 3. Ở Raw, pick dòng event_raw
     app.dispatch_action(crate::actions::AppAction::SelectLog(Some(
@@ -154,6 +194,7 @@ async fn test_switch_tab_preserves_picked_row_and_inspector() {
     )));
     assert_eq!(
         app.active_session()
+            .shared
             .inspector
             .selected_log
             .as_ref()
@@ -162,7 +203,9 @@ async fn test_switch_tab_preserves_picked_row_and_inspector() {
     );
     assert_eq!(
         app.active_session()
-            .unfiltered
+            .raw_tab()
+            .unwrap()
+            .stream
             .selected_log
             .as_ref()
             .map(|l| l.id),
@@ -175,6 +218,7 @@ async fn test_switch_tab_preserves_picked_row_and_inspector() {
     // Inspector tự động khôi phục đúng dòng đang pick của tab Main (event_main)!
     assert_eq!(
         app.active_session()
+            .shared
             .inspector
             .selected_log
             .as_ref()
@@ -188,6 +232,7 @@ async fn test_switch_tab_preserves_picked_row_and_inspector() {
     // Inspector tự động khôi phục đúng dòng đang pick của tab Raw (event_raw)!
     assert_eq!(
         app.active_session()
+            .shared
             .inspector
             .selected_log
             .as_ref()
@@ -202,12 +247,11 @@ async fn test_view_in_raw_log_references_exact_spilled_disk_row() {
     use uwu_core_workspace::{SourceConfig, SourceType, Workspace, WorkspaceLocation};
 
     let mut app = create_test_app();
-    let mut ws = Workspace::new(
+    let ws = Workspace::new(
         "spill-raw-ref-test",
         WorkspaceLocation::local("/tmp"),
         SourceType::Process,
     );
-    ws.last_query = String::new();
     app.dispatch_action(AppAction::OpenWorkspace(ws));
 
     // Khởi tạo WorkspaceSession với capacity = 10 để ép 30/40 dòng phải spill thực sự ra file Arrow IPC trên ổ cứng
@@ -253,7 +297,8 @@ async fn test_view_in_raw_log_references_exact_spilled_disk_row() {
     let target_event = app
         .active_session()
         .view
-        .viewport
+        .main_tab()
+        .stream
         .cached_logs
         .iter()
         .find(|e| e.message == "log_seq_05")
@@ -265,28 +310,29 @@ async fn test_view_in_raw_log_references_exact_spilled_disk_row() {
 
     let session = app.active_session();
     assert_eq!(session.view.active_tab, ActiveTab::Unfiltered);
-    assert!(!session.view.unfiltered.is_auto_scroll);
-    assert_eq!(session.view.unfiltered.target_id, Some(target_event.id));
+    let raw = session.view.raw_tab().unwrap();
+    assert!(!raw.stream.is_auto_scroll);
+    assert_eq!(raw.target_id(), Some(target_event.id));
 
-    let target_idx = match session.view.unfiltered.pending_scroll {
+    let target_idx = match raw.stream.pending_scroll {
         Some(crate::state::ScrollCommand::Row(idx, _)) => idx,
         other => panic!("expected ScrollCommand::Row for spilled row, got {other:?}"),
     };
-    let raw_row = &session.view.unfiltered.cached_logs[target_idx];
+    let raw_row = &raw.stream.cached_logs[target_idx];
     assert_eq!(raw_row.id, target_event.id);
     assert_eq!(raw_row.message, "log_seq_05");
 
     // Kiểm tra ngữ cảnh Raw xung quanh dòng trên đĩa phải đúng thứ tự gốc (04 -> 05 -> 06)
+    assert_eq!(raw.stream.cached_logs[target_idx - 1].message, "log_seq_04");
+    assert_eq!(raw.stream.cached_logs[target_idx + 1].message, "log_seq_06");
     assert_eq!(
-        session.view.unfiltered.cached_logs[target_idx - 1].message,
-        "log_seq_04"
-    );
-    assert_eq!(
-        session.view.unfiltered.cached_logs[target_idx + 1].message,
-        "log_seq_06"
-    );
-    assert_eq!(
-        session.view.inspector.selected_log.as_ref().map(|l| l.id),
+        session
+            .view
+            .shared
+            .inspector
+            .selected_log
+            .as_ref()
+            .map(|l| l.id),
         Some(target_event.id)
     );
 }

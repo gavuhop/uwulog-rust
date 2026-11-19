@@ -129,7 +129,7 @@ async fn test_apply_search_results_stale_generation_discarded() {
 
     // Thiết lập active_query_id = 2
     session.view.search.active_query_id = 2;
-    session.view.viewport.total_matched = 10;
+    session.view.main_tab_mut().set_search_counts(10, true);
 
     let stale_log = LogEvent::new(
         "2026-08-20T10:00:00Z",
@@ -140,8 +140,8 @@ async fn test_apply_search_results_stale_generation_discarded() {
 
     // 1. Event lỗi thời (query_id 1 < 2) -> phải bị bỏ qua, không ghi đè cache
     session.apply_search_results(1, 999, vec![stale_log], true);
-    assert_eq!(session.view.viewport.total_matched, 10);
-    assert!(session.view.viewport.cached_logs.is_empty());
+    assert_eq!(session.view.main_tab().total_matched(), 10);
+    assert!(session.view.main_tab().stream.cached_logs.is_empty());
 
     // 2. Event hợp lệ (query_id 2 == 2) -> được áp dụng ngay trong O(1)
     let fresh_log = LogEvent::new(
@@ -151,9 +151,12 @@ async fn test_apply_search_results_stale_generation_discarded() {
         HashMap::new(),
     );
     session.apply_search_results(2, 42, vec![fresh_log], true);
-    assert_eq!(session.view.viewport.total_matched, 42);
-    assert_eq!(session.view.viewport.cached_logs.len(), 1);
-    assert_eq!(session.view.viewport.cached_logs[0].message, "fresh log");
+    assert_eq!(session.view.main_tab().total_matched(), 42);
+    assert_eq!(session.view.main_tab().stream.cached_logs.len(), 1);
+    assert_eq!(
+        session.view.main_tab().stream.cached_logs[0].message,
+        "fresh log"
+    );
 }
 
 #[tokio::test]
@@ -187,10 +190,18 @@ async fn test_app_event_drain_pipeline() {
         app.apply_event(event);
     }
 
-    assert_eq!(app.active_session().view.viewport.total_matched, 1);
-    assert_eq!(app.active_session().view.viewport.cached_logs.len(), 1);
+    assert_eq!(app.active_session().view.main_tab().total_matched(), 1);
     assert_eq!(
-        app.active_session().view.viewport.cached_logs[0].message,
+        app.active_session()
+            .view
+            .main_tab()
+            .stream
+            .cached_logs
+            .len(),
+        1
+    );
+    assert_eq!(
+        app.active_session().view.main_tab().stream.cached_logs[0].message,
         "pipeline event test"
     );
 }
@@ -222,8 +233,14 @@ async fn test_reducer_drops_out_of_order_query() {
     });
 
     // Kết quả của query 2 phải bị Reducer drop thẳng tay, không làm bẩn state
-    assert_eq!(app.active_session().view.viewport.total_matched, 0);
-    assert!(app.active_session().view.viewport.cached_logs.is_empty());
+    assert_eq!(app.active_session().view.main_tab().total_matched(), 0);
+    assert!(app
+        .active_session()
+        .view
+        .main_tab()
+        .stream
+        .cached_logs
+        .is_empty());
 
     // Worker của query 3 hoàn thành Pha 1 (đếm chưa xong trên Cold Disk)
     let valid_log = LogEvent::new(
@@ -240,11 +257,19 @@ async fn test_reducer_drops_out_of_order_query() {
         is_count_exact: false,
     });
 
-    assert_eq!(app.active_session().view.viewport.total_matched, 10);
-    assert!(!app.active_session().view.viewport.is_count_exact);
-    assert_eq!(app.active_session().view.viewport.cached_logs.len(), 1);
+    assert_eq!(app.active_session().view.main_tab().total_matched(), 10);
+    assert!(!app.active_session().view.main_tab().is_count_exact());
     assert_eq!(
-        app.active_session().view.viewport.cached_logs[0].message,
+        app.active_session()
+            .view
+            .main_tab()
+            .stream
+            .cached_logs
+            .len(),
+        1
+    );
+    assert_eq!(
+        app.active_session().view.main_tab().stream.cached_logs[0].message,
         "valid from query 3"
     );
 
@@ -254,16 +279,16 @@ async fn test_reducer_drops_out_of_order_query() {
         query_id: 2,
         total_matched: 999,
     });
-    assert_eq!(app.active_session().view.viewport.total_matched, 10);
-    assert!(!app.active_session().view.viewport.is_count_exact);
+    assert_eq!(app.active_session().view.main_tab().total_matched(), 10);
+    assert!(!app.active_session().view.main_tab().is_count_exact());
 
     app.apply_event(AppEvent::SearchCountUpdated {
         session_id,
         query_id: 3,
         total_matched: 142,
     });
-    assert_eq!(app.active_session().view.viewport.total_matched, 142);
-    assert!(app.active_session().view.viewport.is_count_exact);
+    assert_eq!(app.active_session().view.main_tab().total_matched(), 142);
+    assert!(app.active_session().view.main_tab().is_count_exact());
 }
 
 #[tokio::test]
@@ -288,17 +313,27 @@ async fn test_reducer_incremental_events() {
         total_processed: 100,
     });
 
-    assert_eq!(app.active_session().view.viewport.total_matched, 1);
-    assert_eq!(app.active_session().view.viewport.cached_logs.len(), 1);
+    assert_eq!(app.active_session().view.main_tab().total_matched(), 1);
     assert_eq!(
-        app.active_session().view.viewport.cached_logs[0].message,
+        app.active_session()
+            .view
+            .main_tab()
+            .stream
+            .cached_logs
+            .len(),
+        1
+    );
+    assert_eq!(
+        app.active_session().view.main_tab().stream.cached_logs[0].message,
         "incremental match"
     );
-    assert_eq!(app.active_session().view.viewport.last_processed_count, 100);
+    assert_eq!(
+        app.active_session().view.main_tab().last_processed_count(),
+        100
+    );
 
     // Mở unfiltered view và test IncrementalUnfilteredReady
-    app.active_session_mut().view.unfiltered.is_open = true;
-    app.active_session_mut().view.unfiltered.is_auto_scroll = true;
+    app.active_session_mut().view.open_raw_tab(None);
 
     let raw_log = LogEvent::new(
         "2026-08-20T10:10:05Z",
@@ -312,11 +347,9 @@ async fn test_reducer_incremental_events() {
         logs: vec![raw_log],
     });
 
-    assert_eq!(app.active_session().view.unfiltered.cached_logs.len(), 1);
-    assert_eq!(
-        app.active_session().view.unfiltered.cached_logs[0].message,
-        "raw log unfiltered"
-    );
+    let raw = app.active_session().view.raw_tab().unwrap();
+    assert_eq!(raw.stream.cached_logs.len(), 1);
+    assert_eq!(raw.stream.cached_logs[0].message, "raw log unfiltered");
 }
 
 #[tokio::test]
@@ -377,7 +410,15 @@ async fn test_phase0_drain_budget_guard() {
 
     // Frame đầu tiên chỉ được drain đúng 64 events để giữ 144 FPS
     assert_eq!(drained, 64);
-    assert_eq!(app.active_session().view.viewport.cached_logs.len(), 64);
+    assert_eq!(
+        app.active_session()
+            .view
+            .main_tab()
+            .stream
+            .cached_logs
+            .len(),
+        64
+    );
 
     // Các events còn lại vẫn nằm trong channel chờ frame tiếp theo
     let mut remaining = 0;
@@ -386,7 +427,15 @@ async fn test_phase0_drain_budget_guard() {
         remaining += 1;
     }
     assert_eq!(remaining, 36);
-    assert_eq!(app.active_session().view.viewport.cached_logs.len(), 100);
+    assert_eq!(
+        app.active_session()
+            .view
+            .main_tab()
+            .stream
+            .cached_logs
+            .len(),
+        100
+    );
 }
 
 #[tokio::test]
@@ -408,13 +457,21 @@ async fn test_udf_reverse_pagination_worker_and_reducer() {
     // Giả lập display_limit = 5 (lấy 5 bản ghi mới nhất ban đầu: index 15..19)
     app.active_session_mut().session.display_limit = 5;
     app.active_session_mut().trigger_full_search();
-    assert_eq!(app.active_session().view.viewport.cached_logs.len(), 5);
+    assert_eq!(
+        app.active_session()
+            .view
+            .main_tab()
+            .stream
+            .cached_logs
+            .len(),
+        5
+    );
 
     // 2. Dispatch AppAction::LoadOlderLogs(5) qua UDF Dispatcher
     app.dispatch_action(AppAction::LoadOlderLogs(5));
 
     // Cờ is_loading_older phải được bật ngay lập tức để chặn spam worker
-    assert!(app.active_session().view.viewport.is_loading_older);
+    assert!(app.active_session().view.main_tab().stream.is_loading_older);
 
     // 3. Đợi background worker xử lý và gửi AppEvent::ReversePaginationReady
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -426,22 +483,30 @@ async fn test_udf_reverse_pagination_worker_and_reducer() {
     app.apply_event(event);
 
     // Sau khi Reducer áp dụng: cached_logs tăng lên 10 bản ghi, is_loading_older = false
-    assert_eq!(app.active_session().view.viewport.cached_logs.len(), 10);
-    assert!(!app.active_session().view.viewport.is_loading_older);
+    assert_eq!(
+        app.active_session()
+            .view
+            .main_tab()
+            .stream
+            .cached_logs
+            .len(),
+        10
+    );
+    assert!(!app.active_session().view.main_tab().stream.is_loading_older);
 }
 
 #[tokio::test]
 async fn test_udf_unlatch_and_latch_actions() {
     let mut app = create_test_app();
-    assert!(app.active_session().view.viewport.is_auto_scroll);
+    assert!(app.active_session().view.main_tab().stream.is_auto_scroll);
 
     // 1. Dispatch Unlatch action -> is_auto_scroll = false
     app.dispatch_action(AppAction::Unlatch);
-    assert!(!app.active_session().view.viewport.is_auto_scroll);
+    assert!(!app.active_session().view.main_tab().stream.is_auto_scroll);
 
     // 2. Dispatch Latch action -> is_auto_scroll = true, needs_search = true
     app.dispatch_action(AppAction::Latch);
-    assert!(app.active_session().view.viewport.is_auto_scroll);
+    assert!(app.active_session().view.main_tab().stream.is_auto_scroll);
     assert!(app.active_session().view.search.needs_search);
 }
 
@@ -455,18 +520,25 @@ async fn test_pause_restart_populates_viewport_without_scrolling() {
 
     // 1. Chuyển sang Pause (Unlatch)
     app.dispatch_action(AppAction::Unlatch);
-    assert!(!app.active_session().view.viewport.is_auto_scroll);
+    assert!(!app.active_session().view.main_tab().stream.is_auto_scroll);
 
     // 2. Restart stream khi đang Pause: giữ nguyên trạng thái Pause
     app.active_session().session.engine.clear();
     app.active_session_mut().view.reset_stream_data();
-    assert!(!app.active_session().view.viewport.is_auto_scroll);
-    assert!(app.active_session().view.viewport.cached_logs.is_empty());
+    assert!(!app.active_session().view.main_tab().stream.is_auto_scroll);
+    assert!(app
+        .active_session()
+        .view
+        .main_tab()
+        .stream
+        .cached_logs
+        .is_empty());
 
     // Cũng kiểm tra tab Raw (live stream, target_id = None) ở trạng thái Pause sau Restart
-    app.active_session_mut().view.unfiltered.is_open = true;
-    app.active_session_mut().view.unfiltered.is_auto_scroll = false;
-    app.active_session_mut().view.unfiltered.target_id = None;
+    {
+        let raw = app.active_session_mut().view.open_raw_tab(None);
+        raw.stream.is_auto_scroll = false;
+    }
 
     // 3. Log mới chảy vào khi chưa chạm display_limit -> hiển thị lên màn hình, KHÔNG auto-scroll
     for i in 0..3 {
@@ -488,10 +560,10 @@ async fn test_pause_restart_populates_viewport_without_scrolling() {
     }
 
     let s = app.active_session();
-    assert_eq!(s.view.viewport.cached_logs.len(), 3);
-    assert_eq!(s.view.viewport.total_matched, 3);
-    assert!(!s.view.viewport.is_auto_scroll);
-    assert_eq!(s.view.unfiltered.cached_logs.len(), 3);
+    assert_eq!(s.view.main_tab().stream.cached_logs.len(), 3);
+    assert_eq!(s.view.main_tab().total_matched(), 3);
+    assert!(!s.view.main_tab().stream.is_auto_scroll);
+    assert_eq!(s.view.raw_tab().unwrap().stream.cached_logs.len(), 3);
     assert!(app
         .active_session_mut()
         .consume_scroll_request(crate::state::ActiveTab::Filtered, 3)
@@ -515,9 +587,9 @@ async fn test_pause_restart_populates_viewport_without_scrolling() {
     }
 
     let s = app.active_session();
-    assert_eq!(s.view.viewport.cached_logs.len(), 4);
+    assert_eq!(s.view.main_tab().stream.cached_logs.len(), 4);
     assert_eq!(
-        s.view.viewport.cached_logs[0].message,
+        s.view.main_tab().stream.cached_logs[0].message,
         "[INFO] after restart 0"
     );
 }
@@ -531,16 +603,39 @@ async fn test_pause_raw_after_restart_shows_new_logs() {
 
     // 1. Giả lập đang ở tab Raw trạng thái Pause với target_id từ phiên trước ("View in Raw Log" hoặc chọn dòng)
     app.active_session_mut().open_unfiltered_stream(Some(99));
-    assert!(!app.active_session().view.unfiltered.is_auto_scroll);
-    assert_eq!(app.active_session().view.unfiltered.target_id, Some(99));
+    assert!(
+        !app.active_session()
+            .view
+            .raw_tab()
+            .unwrap()
+            .stream
+            .is_auto_scroll
+    );
+    assert_eq!(
+        app.active_session().view.raw_tab().unwrap().target_id(),
+        Some(99)
+    );
 
     // 2. Restart stream đúng theo flow của restart_current_source()
     app.active_session().session.engine.clear();
     app.active_session_mut().view.reset_stream_data();
     app.active_session_mut().view.search.mark_needs_search();
 
-    assert!(app.active_session().view.unfiltered.target_id.is_none());
-    assert!(!app.active_session().view.unfiltered.is_auto_scroll);
+    assert!(app
+        .active_session()
+        .view
+        .raw_tab()
+        .unwrap()
+        .target_id()
+        .is_none());
+    assert!(
+        !app.active_session()
+            .view
+            .raw_tab()
+            .unwrap()
+            .stream
+            .is_auto_scroll
+    );
 
     // 3. Log mới chảy vào trước lúc spawn_search/apply_search_results hoàn tất -> tab Raw vẫn phải nhận đủ log
     for i in 0..3 {
@@ -553,12 +648,34 @@ async fn test_pause_raw_after_restart_shows_new_logs() {
     tokio::time::sleep(std::time::Duration::from_millis(60)).await;
 
     app.active_session_mut().trigger_full_search();
-    assert_eq!(app.active_session().view.unfiltered.cached_logs.len(), 3);
     assert_eq!(
-        app.active_session().view.unfiltered.cached_logs[0].message,
+        app.active_session()
+            .view
+            .raw_tab()
+            .unwrap()
+            .stream
+            .cached_logs
+            .len(),
+        3
+    );
+    assert_eq!(
+        app.active_session()
+            .view
+            .raw_tab()
+            .unwrap()
+            .stream
+            .cached_logs[0]
+            .message,
         "[INFO] raw after restart 0"
     );
-    assert!(!app.active_session().view.unfiltered.is_auto_scroll);
+    assert!(
+        !app.active_session()
+            .view
+            .raw_tab()
+            .unwrap()
+            .stream
+            .is_auto_scroll
+    );
 
     // 4. Các log tiếp theo cũng tiếp tục hiển thị trên Raw khi chưa chạm RAW_STREAM_LIMIT
     for i in 3..5 {
@@ -576,5 +693,14 @@ async fn test_pause_raw_after_restart_shows_new_logs() {
             std::time::Instant::now() - std::time::Duration::from_secs(1);
         s.tick(std::time::Instant::now());
     }
-    assert_eq!(app.active_session().view.unfiltered.cached_logs.len(), 5);
+    assert_eq!(
+        app.active_session()
+            .view
+            .raw_tab()
+            .unwrap()
+            .stream
+            .cached_logs
+            .len(),
+        5
+    );
 }

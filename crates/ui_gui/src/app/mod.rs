@@ -407,9 +407,12 @@ impl UwuGuiApp {
         let active = self.workspaces.active_session_mut();
         let session_id = active.session.id;
         let query = active.view.search.query.clone();
-        let prev_processed = active.view.viewport.last_processed_count;
+        let prev_processed = active.view.main_tab().last_processed_count();
         let total_processed = active.session.engine.total_processed();
-        active.view.viewport.last_processed_count = total_processed;
+        active
+            .view
+            .main_tab_mut()
+            .set_last_processed_count(total_processed);
         active.view.search.last_search_time = std::time::Instant::now();
 
         let stream_filtered = active.should_stream_filtered();
@@ -550,8 +553,8 @@ impl UwuGuiApp {
         };
 
         let mut gui_session = GuiSession::new(initial_session);
-        if let Some(ws) = saved_ws {
-            gui_session.apply_workspace_view(ws);
+        if let Some(prefs) = store.get_viewer_prefs(&gui_session.viewer_key()) {
+            gui_session.apply_viewer_prefs(prefs);
         }
         if let Some(ref q) = cli.query {
             gui_session.view.search.query = q.clone();
@@ -620,6 +623,9 @@ impl UwuGuiApp {
                     {
                         let mut gui_session =
                             GuiSession::from_workspace(&ws, cli.capacity, cli.display_limit);
+                        if let Some(prefs) = store.get_viewer_prefs(&gui_session.viewer_key()) {
+                            gui_session.apply_viewer_prefs(prefs);
+                        }
                         gui_session.session.spawn_load_environment(&rt);
                         sessions.push(gui_session);
                     }
@@ -879,15 +885,15 @@ impl UwuGuiApp {
                 self.close_overlay(OverlayLayer::LaunchModal);
             }
             AppAction::OpenColumnsModal => {
-                self.active_session_mut().view.columns.open_modal();
+                self.active_session_mut().view.shared.columns.open_modal();
                 self.push_overlay(OverlayLayer::ColumnsModal);
             }
             AppAction::CloseColumnsModal => {
-                self.active_session_mut().view.columns.close_modal();
+                self.active_session_mut().view.shared.columns.close_modal();
                 self.close_overlay(OverlayLayer::ColumnsModal);
             }
             AppAction::ApplyColumnsModal => {
-                self.active_session_mut().view.columns.apply_modal();
+                self.active_session_mut().view.shared.columns.apply_modal();
                 self.close_overlay(OverlayLayer::ColumnsModal);
                 self.workspaces.save_current_workspace();
             }
@@ -1001,18 +1007,26 @@ impl UwuGuiApp {
 
                 // 2. Không bôi đen: copy toàn bộ dòng log đang pick (hoặc dòng visible đầu tiên)
                 let session = self.active_session();
-                let picked_event = session.view.inspector.selected_log.as_ref().or_else(|| {
-                    let row_idx = session.first_visible_row();
-                    session.active_logs().get(row_idx)
-                });
+                let picked_event =
+                    session
+                        .view
+                        .shared
+                        .inspector
+                        .selected_log
+                        .as_ref()
+                        .or_else(|| {
+                            let row_idx = session.first_visible_row();
+                            session.active_logs().get(row_idx)
+                        });
 
                 if let Some(event) = picked_event {
-                    let text =
-                        if session.view.inspector.is_beauty_payload && !event.fields.is_empty() {
-                            event.beauty_display()
-                        } else {
-                            event.raw_display()
-                        };
+                    let text = if session.view.shared.inspector.is_beauty_payload
+                        && !event.fields.is_empty()
+                    {
+                        event.beauty_display()
+                    } else {
+                        event.raw_display()
+                    };
 
                     let copy_id = egui::Id::new("copy_raw_flash");
                     let now = ctx.input(|i| i.time);
@@ -1065,7 +1079,7 @@ impl eframe::App for UwuGuiApp {
             } else {
                 let active = self.workspaces.active_session();
                 let new_logs_arrived = active.session.engine.total_processed()
-                    != active.view.viewport.last_processed_count
+                    != active.view.main_tab().last_processed_count()
                     && std::time::Instant::now()
                         .duration_since(active.view.search.last_search_time)
                         > Duration::from_millis(150);
@@ -1083,6 +1097,7 @@ impl eframe::App for UwuGuiApp {
                 .workspaces
                 .active_session_mut()
                 .view
+                .shared
                 .columns
                 .poll_pending_save()
         {

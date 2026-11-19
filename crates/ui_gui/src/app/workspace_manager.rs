@@ -1,7 +1,7 @@
 use crate::session::GuiSession;
 use std::time::Instant;
 use tokio::runtime::Handle;
-use uwu_core_workspace::{ContainerViewPrefs, Workspace, WorkspaceStore};
+use uwu_core_workspace::{Workspace, WorkspaceStore};
 
 /// Zed-style Sub-Manager chịu trách nhiệm quản lý Workspace sessions, state persistence và data fetching.
 pub struct WorkspaceManager {
@@ -95,8 +95,8 @@ impl WorkspaceManager {
                 return;
             }
             if let Some(prev) = self.sessions.get_mut(self.active_index) {
-                prev.view.columns.clear_header_drag();
-                let _ = prev.view.columns.take_dirty_for_save();
+                prev.view.shared.columns.clear_header_drag();
+                let _ = prev.view.shared.columns.take_dirty_for_save();
                 Self::persist_session_into_store(&mut self.store, prev);
             }
             self.active_index = index;
@@ -111,7 +111,7 @@ impl WorkspaceManager {
                 .collect();
             let _ = self.store.save();
             let active = self.active_session_mut();
-            let needs_initial_search = active.view.viewport.last_processed_count == 0
+            let needs_initial_search = active.view.main_tab().last_processed_count() == 0
                 && active.session.engine.total_processed() > 0;
             let query_pending = active.view.search.query != active.view.search.last_query;
             if needs_initial_search || query_pending {
@@ -130,6 +130,13 @@ impl WorkspaceManager {
             (500_000, 5_000)
         };
         let mut gui_session = GuiSession::from_workspace(ws, cap, limit);
+        if let Some(prefs) = self
+            .store
+            .get_viewer_prefs(&gui_session.viewer_key())
+            .cloned()
+        {
+            gui_session.apply_viewer_prefs(&prefs);
+        }
         gui_session.session.spawn_load_environment(rt);
         self.sessions.push(gui_session);
         self.active_index = self.sessions.len() - 1;
@@ -208,16 +215,12 @@ impl WorkspaceManager {
             return false;
         }
 
-        let saved_prefs = self.store.get_container_view_prefs(&ws.location).cloned();
         if let Some(prev) = self.sessions.get_mut(self.active_index) {
-            prev.view.columns.clear_header_drag();
-            let _ = prev.view.columns.take_dirty_for_save();
+            prev.view.shared.columns.clear_header_drag();
+            let _ = prev.view.shared.columns.take_dirty_for_save();
             Self::persist_session_into_store(&mut self.store, prev);
         }
         self.push_new_session(ws, rt);
-        if let Some(prefs) = saved_prefs {
-            self.active_session_mut().apply_container_view_prefs(&prefs);
-        }
         self.auto_start_container_log_if_needed(rt);
         true
     }
@@ -230,8 +233,8 @@ impl WorkspaceManager {
 
         let mut removed = self.sessions.remove(index);
         removed.session.stop_source();
-        removed.view.columns.clear_header_drag();
-        let _ = removed.view.columns.take_dirty_for_save();
+        removed.view.shared.columns.clear_header_drag();
+        let _ = removed.view.shared.columns.take_dirty_for_save();
         Self::persist_session_into_store(&mut self.store, &mut removed);
 
         if self.sessions.is_empty() {
@@ -278,45 +281,23 @@ impl WorkspaceManager {
         self.switch_session(new_idx);
     }
 
-    /// Lưu trạng thái workspace hiện tại vào file lưu trữ cấu hình
-    fn gui_session_to_workspace(gui_session: &GuiSession) -> Workspace {
-        let mut ws = gui_session.session.to_workspace();
-        ws.last_query = gui_session.view.search.query.clone();
-        ws.filter_history = gui_session.view.search.history.entries.clone();
-        ws.columns = gui_session.view.columns.to_saved_columns();
-        ws.inspector_width_ratio = Some(gui_session.view.inspector.width_ratio);
-        ws
-    }
-
-    fn gui_session_to_container_prefs(gui_session: &GuiSession) -> ContainerViewPrefs {
-        ContainerViewPrefs {
-            last_query: gui_session.view.search.query.clone(),
-            filter_history: gui_session.view.search.history.entries.clone(),
-            columns: gui_session.view.columns.to_saved_columns(),
-            inspector_width_ratio: Some(gui_session.view.inspector.width_ratio),
-        }
-    }
-
+    /// Lưu trạng thái viewer (một đường duy nhất cho cả project thường và container phụ)
+    /// và cập nhật danh sách project gốc (`recent_workspaces`) nếu không phải container phụ.
     fn persist_session_into_store(store: &mut WorkspaceStore, gui_session: &mut GuiSession) {
         if gui_session.session.name.trim().is_empty() {
             gui_session.session.name = "Workspace".to_string();
         }
         gui_session.session.sync_location();
 
-        if gui_session.session.is_following_container_logs() {
-            store.upsert_container_view_prefs(
-                &gui_session.session.location,
-                Self::gui_session_to_container_prefs(gui_session),
-            );
-            if store
+        store.upsert_viewer_prefs(gui_session.viewer_key(), gui_session.to_viewer_prefs());
+
+        let is_project_root = !gui_session.session.is_following_container_logs()
+            || store
                 .recent_workspaces
                 .iter()
-                .any(|w| w.id == gui_session.session.id)
-            {
-                store.add_or_update(Self::gui_session_to_workspace(gui_session));
-            }
-        } else {
-            store.add_or_update(Self::gui_session_to_workspace(gui_session));
+                .any(|w| w.id == gui_session.session.id);
+        if is_project_root {
+            store.add_or_update(gui_session.session.to_workspace());
         }
     }
 
@@ -379,8 +360,14 @@ impl WorkspaceManager {
         gui_session.session.apply_workspace(ws);
         gui_session.has_auto_started_source = false;
         gui_session.user_stopped_source = false;
-        gui_session.view.viewport.latch();
-        gui_session.apply_workspace_view(ws);
+        gui_session.view.main_tab_mut().stream.latch();
+        if let Some(prefs) = self
+            .store
+            .get_viewer_prefs(&gui_session.viewer_key())
+            .cloned()
+        {
+            gui_session.apply_viewer_prefs(&prefs);
+        }
         gui_session.session.spawn_load_environment(rt);
         self.save_current_workspace();
         self.auto_start_container_log_if_needed(rt);

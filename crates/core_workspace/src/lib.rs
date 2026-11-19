@@ -160,20 +160,35 @@ pub fn sanitize_project_name(name: &str, location: &WorkspaceLocation) -> String
     }
 }
 
-/// Trạng thái hiển thị đã lưu cho từng tab container phụ (`docker logs -f`) mà không làm trùng `recent_workspaces`.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
-pub struct ContainerViewPrefs {
+fn default_inspector_width_ratio() -> f32 {
+    0.35
+}
+
+/// Cấu hình hiển thị thống nhất lưu theo `ViewerKey` cho mọi nguồn log (project thường & container).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ViewerPrefs {
     #[serde(default)]
-    pub last_query: String,
+    pub main_query: String,
     #[serde(default)]
     pub filter_history: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub columns: Vec<SavedColumnConfig>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub inspector_width_ratio: Option<f32>,
+    #[serde(default = "default_inspector_width_ratio")]
+    pub inspector_width_ratio: f32,
 }
 
-/// Cấu hình bố cục cột đã lưu cho từng Workspace trong `workspaces.json`.
+impl Default for ViewerPrefs {
+    fn default() -> Self {
+        Self {
+            main_query: String::new(),
+            filter_history: Vec::new(),
+            columns: Vec::new(),
+            inspector_width_ratio: default_inspector_width_ratio(),
+        }
+    }
+}
+
+/// Cấu hình bố cục cột đã lưu cho từng viewer trong `workspaces.json`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SavedColumnConfig {
     pub name: String,
@@ -191,15 +206,9 @@ pub struct Workspace {
     pub source_type: SourceType,
     pub command_str: String,
     pub file_path: String,
-    pub last_query: String,
-    pub filter_history: Vec<String>,
     pub last_opened: DateTime<Utc>,
     #[serde(default)]
     pub env_vars: HashMap<String, String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub columns: Vec<SavedColumnConfig>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub inspector_width_ratio: Option<f32>,
 }
 
 impl Workspace {
@@ -216,13 +225,14 @@ impl Workspace {
             source_type,
             command_str: String::new(),
             file_path: String::new(),
-            last_query: String::new(),
-            filter_history: Vec::new(),
             last_opened: Utc::now(),
             env_vars: HashMap::new(),
-            columns: Vec::new(),
-            inspector_width_ratio: None,
         }
+    }
+
+    /// Khóa định danh viewer chuẩn hóa của workspace này.
+    pub fn viewer_key(&self) -> String {
+        WorkspaceStore::viewer_key(&self.location, self.source_type, &self.file_path)
     }
 
     /// Icon đại diện cho loại workspace (Remote, File, hoặc Process)
@@ -304,49 +314,86 @@ pub struct WorkspaceStore {
     #[serde(default)]
     pub open_workspace_ids: Vec<Uuid>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub container_view_prefs: HashMap<String, ContainerViewPrefs>,
+    pub viewers: HashMap<String, ViewerPrefs>,
     #[serde(skip)]
     storage_path: Option<PathBuf>,
 }
 
 impl WorkspaceStore {
-    /// Tạo khóa định danh ổn định cho từng tab container trong project Docker.
-    pub fn container_prefs_key(location: &WorkspaceLocation) -> Option<String> {
-        match location {
-            WorkspaceLocation::Remote(RemoteConnectionOptions::Docker(d))
-                if !d.container_name.trim().is_empty() =>
-            {
-                let scope = d
-                    .compose_project
+    /// Tạo khóa định danh chuẩn hóa (`ViewerKey`) cho mọi nguồn log:
+    /// - Local:  `local:<dir>` hoặc `local:<dir>#file:<file>`
+    /// - SSH:    `ssh:<user@><host>:<port><dir>[#file:<file>]`
+    /// - WSL:    `wsl:<distro>:<dir>[#file:<file>]`
+    /// - Docker: `docker:<host_folder_or_compose_or_workdir>/<service_or_container>[#file:<file>]`
+    pub fn viewer_key(
+        location: &WorkspaceLocation,
+        source_type: SourceType,
+        file_path: &str,
+    ) -> String {
+        let base = match location {
+            WorkspaceLocation::Local { working_dir } => {
+                format!("local:{}", normalize_workdir(working_dir))
+            }
+            WorkspaceLocation::Remote(RemoteConnectionOptions::Ssh(ssh)) => {
+                let host = ssh.host.trim().to_ascii_lowercase();
+                let port = ssh.port.unwrap_or(22);
+                let dir = normalize_workdir(&ssh.working_dir);
+                match ssh
+                    .username
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    Some(user) => format!("ssh:{user}@{host}:{port}{dir}"),
+                    None => format!("ssh:{host}:{port}{dir}"),
+                }
+            }
+            WorkspaceLocation::Remote(RemoteConnectionOptions::Wsl(wsl)) => {
+                let distro = wsl.distro.trim().to_ascii_lowercase();
+                let dir = normalize_workdir(&wsl.working_dir);
+                format!("wsl:{distro}:{dir}")
+            }
+            WorkspaceLocation::Remote(RemoteConnectionOptions::Docker(d)) => {
+                let root = d
+                    .local_folder
+                    .as_deref()
+                    .map(normalize_workdir)
+                    .filter(|s| !s.is_empty())
+                    .or_else(|| {
+                        d.compose_project
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                            .map(str::to_ascii_lowercase)
+                    })
+                    .unwrap_or_else(|| normalize_workdir(&d.working_dir));
+                let target = d
+                    .compose_service
                     .as_deref()
                     .map(str::trim)
                     .filter(|s| !s.is_empty())
                     .map(str::to_ascii_lowercase)
-                    .unwrap_or_else(|| normalize_workdir(&d.working_dir));
-                Some(format!(
-                    "{scope}::{}",
-                    d.container_name.trim().to_ascii_lowercase()
-                ))
+                    .unwrap_or_else(|| d.container_name.trim().to_ascii_lowercase());
+                format!("docker:{root}/{target}")
             }
-            _ => None,
+        };
+
+        if source_type == SourceType::File && !file_path.trim().is_empty() {
+            format!("{base}#file:{}", normalize_workdir(file_path))
+        } else {
+            base
         }
     }
 
-    pub fn upsert_container_view_prefs(
-        &mut self,
-        location: &WorkspaceLocation,
-        prefs: ContainerViewPrefs,
-    ) {
-        if let Some(key) = Self::container_prefs_key(location) {
-            self.container_view_prefs.insert(key, prefs);
+    pub fn upsert_viewer_prefs(&mut self, key: impl Into<String>, prefs: ViewerPrefs) {
+        let key = key.into();
+        if !key.is_empty() {
+            self.viewers.insert(key, prefs);
         }
     }
 
-    pub fn get_container_view_prefs(
-        &self,
-        location: &WorkspaceLocation,
-    ) -> Option<&ContainerViewPrefs> {
-        Self::container_prefs_key(location).and_then(|key| self.container_view_prefs.get(&key))
+    pub fn get_viewer_prefs(&self, key: &str) -> Option<&ViewerPrefs> {
+        self.viewers.get(key)
     }
     /// Lấy đường dẫn lưu file cấu hình workspaces.json mặc định
     pub fn get_storage_path() -> PathBuf {
@@ -1152,18 +1199,103 @@ mod tests {
         assert_eq!(deserialized_wsl.location.icon(), IconName::Linux);
         assert_eq!(deserialized_wsl.location.working_dir(), "/home/user");
 
-        // Khi `columns` rỗng sẽ không serialize dư thừa và JSON cũ thiếu `columns` vẫn đọc bình thường
-        assert!(!json.contains("\"columns\""));
-        let mut ws_with_cols = ws;
-        ws_with_cols.columns.push(SavedColumnConfig {
-            name: "aaa".to_string(),
-            visible: true,
-            width: 220.0,
-            default_role: None,
-        });
-        let cols_json = serde_json::to_string(&ws_with_cols).unwrap();
-        let back: Workspace = serde_json::from_str(&cols_json).unwrap();
-        assert_eq!(back.columns, ws_with_cols.columns);
+        // WorkspaceStore::viewers lưu ViewerPrefs thống nhất theo ViewerKey
+        let mut store = WorkspaceStore::default();
+        let prefs = ViewerPrefs {
+            main_query: "level:error".to_string(),
+            filter_history: vec!["level:error".to_string()],
+            columns: vec![SavedColumnConfig {
+                name: "aaa".to_string(),
+                visible: true,
+                width: 220.0,
+                default_role: None,
+            }],
+            inspector_width_ratio: 0.42,
+        };
+        let key = ws.viewer_key();
+        store.upsert_viewer_prefs(key.clone(), prefs.clone());
+        let store_json = serde_json::to_string(&store).unwrap();
+        let store_back: WorkspaceStore = serde_json::from_str(&store_json).unwrap();
+        assert_eq!(store_back.get_viewer_prefs(&key), Some(&prefs));
+    }
+
+    #[test]
+    fn test_viewer_key_formats_and_isolation() {
+        let local_proc = WorkspaceStore::viewer_key(
+            &WorkspaceLocation::local("/home/me/proj/"),
+            SourceType::Process,
+            "",
+        );
+        assert_eq!(local_proc, "local:/home/me/proj");
+
+        let local_file_a = WorkspaceStore::viewer_key(
+            &WorkspaceLocation::local("/home/me/proj"),
+            SourceType::File,
+            "/var/log/a.log",
+        );
+        let local_file_b = WorkspaceStore::viewer_key(
+            &WorkspaceLocation::local("/home/me/proj"),
+            SourceType::File,
+            "/var/log/b.log",
+        );
+        assert_eq!(local_file_a, "local:/home/me/proj#file:/var/log/a.log");
+        assert_ne!(local_file_a, local_file_b);
+
+        let ssh_a = WorkspaceStore::viewer_key(
+            &WorkspaceLocation::remote(
+                SshConnectionOptions::new("srv-a.example.com", "/srv/proj").with_username("dev"),
+            ),
+            SourceType::Process,
+            "",
+        );
+        let ssh_b = WorkspaceStore::viewer_key(
+            &WorkspaceLocation::remote(
+                SshConnectionOptions::new("srv-b.example.com", "/srv/proj").with_username("dev"),
+            ),
+            SourceType::Process,
+            "",
+        );
+        assert_eq!(ssh_a, "ssh:dev@srv-a.example.com:22/srv/proj");
+        assert_ne!(ssh_a, ssh_b);
+
+        let wsl_key = WorkspaceStore::viewer_key(
+            &WorkspaceLocation::remote(WslConnectionOptions::new("Ubuntu", "/home/me/proj")),
+            SourceType::Process,
+            "",
+        );
+        assert_eq!(wsl_key, "wsl:ubuntu:/home/me/proj");
+
+        // Docker: ưu tiên local_folder + compose_service -> container tạo lại (-2) vẫn khớp key cũ
+        let docker_db_1 = WorkspaceStore::viewer_key(
+            &WorkspaceLocation::remote(
+                DockerConnectionOptions::new("proj-db-1", "/workspaces/app")
+                    .with_local_folder("/home/me/proj-a")
+                    .with_compose_service("db"),
+            ),
+            SourceType::Process,
+            "",
+        );
+        let docker_db_2 = WorkspaceStore::viewer_key(
+            &WorkspaceLocation::remote(
+                DockerConnectionOptions::new("proj-db-2", "/workspaces/app")
+                    .with_local_folder("/home/me/proj-a")
+                    .with_compose_service("db"),
+            ),
+            SourceType::Process,
+            "",
+        );
+        let docker_other_proj = WorkspaceStore::viewer_key(
+            &WorkspaceLocation::remote(
+                DockerConnectionOptions::new("proj-db-1", "/workspaces/app")
+                    .with_local_folder("/home/me/proj-b")
+                    .with_compose_service("db"),
+            ),
+            SourceType::Process,
+            "",
+        );
+        assert_eq!(docker_db_1, "docker:/home/me/proj-a/db");
+        assert_eq!(docker_db_1, docker_db_2);
+        assert_ne!(docker_db_1, docker_other_proj);
     }
 
     #[tokio::test]

@@ -14,7 +14,7 @@ pub fn render_toolbar(
     let theme = ui.app_theme();
 
     // Table Columns & Ordering Modal Button
-    let col_variant = if session.view.columns.is_modal_open {
+    let col_variant = if session.view.shared.columns.is_modal_open {
         crate::components::ui::ButtonVariant::Selected
     } else {
         crate::components::ui::ButtonVariant::Default
@@ -22,7 +22,7 @@ pub fn render_toolbar(
     if crate::components::ui::IconButton::new(IconName::TableColumns)
         .size(24.0)
         .variant(col_variant)
-        .selected(session.view.columns.is_modal_open)
+        .selected(session.view.shared.columns.is_modal_open)
         .tooltip("Configure visible columns and adjust their display order (Alt+C)")
         .show(ui)
         .clicked()
@@ -71,23 +71,20 @@ pub fn render_toolbar(
     ui.add_space(4.0);
 
     // Latch / Live / Paused State Toggle Button
-    let (is_live, toggle_tooltip) = match session.view.active_tab {
-        ActiveTab::Filtered => (
-            session.view.viewport.is_auto_scroll,
-            if session.view.viewport.is_auto_scroll {
-                "Main Stream: LIVE (Following tail)\n• Click to pause (Unlatch)\n• Scroll up or select a log to unlatch"
-            } else {
-                "Main Stream: PAUSED (View frozen)\n• Click to live stream & scroll to bottom"
-            },
-        ),
-        ActiveTab::Unfiltered => (
-            session.view.unfiltered.is_auto_scroll,
-            if session.view.unfiltered.is_auto_scroll {
-                "Raw Stream: LIVE (Following real-time stream)\n• Click to pause / freeze snapshot"
-            } else {
-                "Raw Stream: PAUSED (Snapshot frozen)\n• Click to follow live real-time stream"
-            },
-        ),
+    let is_live = session.view.stream(session.view.active_tab).is_auto_scroll;
+    let toggle_tooltip = match (session.view.active_tab, is_live) {
+        (ActiveTab::Filtered, true) => {
+            "Main Stream: LIVE (Following tail)\n• Click to pause (Unlatch)\n• Scroll up or select a log to unlatch"
+        }
+        (ActiveTab::Filtered, false) => {
+            "Main Stream: PAUSED (View frozen)\n• Click to live stream & scroll to bottom"
+        }
+        (ActiveTab::Unfiltered, true) => {
+            "Raw Stream: LIVE (Following real-time stream)\n• Click to pause / freeze snapshot"
+        }
+        (ActiveTab::Unfiltered, false) => {
+            "Raw Stream: PAUSED (Snapshot frozen)\n• Click to follow live real-time stream"
+        }
     };
 
     let (latch_icon, latch_text, latch_bg, latch_fg) = if is_live {

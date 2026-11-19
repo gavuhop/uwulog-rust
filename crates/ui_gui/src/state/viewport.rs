@@ -1,4 +1,3 @@
-use std::ops::{Deref, DerefMut};
 use uwu_core_schema::LogEvent;
 
 pub const RAW_STREAM_LIMIT: usize = 500;
@@ -8,24 +7,6 @@ pub enum ActiveTab {
     #[default]
     Filtered,
     Unfiltered,
-}
-
-macro_rules! impl_deref_stream {
-    ($ty:ty) => {
-        impl Deref for $ty {
-            type Target = LogStreamView;
-            #[inline]
-            fn deref(&self) -> &Self::Target {
-                &self.stream
-            }
-        }
-        impl DerefMut for $ty {
-            #[inline]
-            fn deref_mut(&mut self) -> &mut Self::Target {
-                &mut self.stream
-            }
-        }
-    };
 }
 
 /// Yêu cầu cuộn bảng một lần ở frame tiếp theo (thay thế nhiều cờ boolean rời rạc).
@@ -160,49 +141,148 @@ impl Default for LogStreamView {
     }
 }
 
-/// Trạng thái hiển thị luồng log chính (Filtered)
-pub struct ViewportState {
+/// Chế độ lọc/nguồn dữ liệu riêng của từng `LogTab` (Main hoặc Raw).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TabFilter {
+    Filtered {
+        total_matched: usize,
+        is_count_exact: bool,
+        last_processed_count: u64,
+    },
+    Unfiltered {
+        target_id: Option<u64>,
+    },
+}
+
+/// Thực thể tab hiển thị log thống nhất dùng chung cho cả tab Main (`Filtered`) và Raw (`Unfiltered`).
+#[derive(Clone, Debug)]
+pub struct LogTab {
+    pub kind: ActiveTab,
+    pub filter: TabFilter,
     pub stream: LogStreamView,
-    pub total_matched: usize,
-    pub is_count_exact: bool,
-    pub last_processed_count: u64,
+    pub hscroll_offset: f32,
+    pub vscroll_offset: f32,
 }
 
-impl_deref_stream!(ViewportState);
-
-impl Default for ViewportState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ViewportState {
-    pub fn new() -> Self {
+impl LogTab {
+    pub fn new_filtered() -> Self {
         Self {
+            kind: ActiveTab::Filtered,
+            filter: TabFilter::Filtered {
+                total_matched: 0,
+                is_count_exact: true,
+                last_processed_count: 0,
+            },
             stream: LogStreamView::new(true),
-            total_matched: 0,
-            is_count_exact: true,
-            last_processed_count: 0,
+            hscroll_offset: 0.0,
+            vscroll_offset: 0.0,
         }
     }
-}
 
-/// Trạng thái bổ sung cho tab Raw/Unfiltered (giữ lại ngữ cảnh "View in Raw Log" song song với tab Main).
-#[derive(Clone, Debug)]
-pub struct UnfilteredViewState {
-    pub stream: LogStreamView,
-    pub is_open: bool,
-    pub target_id: Option<u64>,
-}
-
-impl_deref_stream!(UnfilteredViewState);
-
-impl Default for UnfilteredViewState {
-    fn default() -> Self {
+    pub fn new_unfiltered(target_id: Option<u64>) -> Self {
         Self {
-            stream: LogStreamView::new(false),
-            is_open: false,
-            target_id: None,
+            kind: ActiveTab::Unfiltered,
+            filter: TabFilter::Unfiltered { target_id },
+            stream: LogStreamView::new(target_id.is_none()),
+            hscroll_offset: 0.0,
+            vscroll_offset: 0.0,
+        }
+    }
+
+    #[inline]
+    pub fn total_matched(&self) -> usize {
+        match self.filter {
+            TabFilter::Filtered { total_matched, .. } => total_matched,
+            TabFilter::Unfiltered { .. } => self.stream.cached_logs.len(),
+        }
+    }
+
+    #[inline]
+    pub fn is_count_exact(&self) -> bool {
+        match self.filter {
+            TabFilter::Filtered { is_count_exact, .. } => is_count_exact,
+            TabFilter::Unfiltered { .. } => true,
+        }
+    }
+
+    #[inline]
+    pub fn last_processed_count(&self) -> u64 {
+        match self.filter {
+            TabFilter::Filtered {
+                last_processed_count,
+                ..
+            } => last_processed_count,
+            TabFilter::Unfiltered { .. } => 0,
+        }
+    }
+
+    #[inline]
+    pub fn set_last_processed_count(&mut self, count: u64) {
+        if let TabFilter::Filtered {
+            ref mut last_processed_count,
+            ..
+        } = self.filter
+        {
+            *last_processed_count = count;
+        }
+    }
+
+    #[inline]
+    pub fn set_search_counts(&mut self, matched: usize, exact: bool) {
+        if let TabFilter::Filtered {
+            ref mut total_matched,
+            ref mut is_count_exact,
+            ..
+        } = self.filter
+        {
+            *total_matched = matched;
+            *is_count_exact = exact;
+        }
+    }
+
+    #[inline]
+    pub fn add_matched(&mut self, delta: usize) {
+        if let TabFilter::Filtered {
+            ref mut total_matched,
+            ..
+        } = self.filter
+        {
+            *total_matched += delta;
+        }
+    }
+
+    #[inline]
+    pub fn target_id(&self) -> Option<u64> {
+        match self.filter {
+            TabFilter::Unfiltered { target_id } => target_id,
+            TabFilter::Filtered { .. } => None,
+        }
+    }
+
+    #[inline]
+    pub fn set_target_id(&mut self, id: Option<u64>) {
+        if let TabFilter::Unfiltered { ref mut target_id } = self.filter {
+            *target_id = id;
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.stream.reset();
+        self.hscroll_offset = 0.0;
+        self.vscroll_offset = 0.0;
+        match self.filter {
+            TabFilter::Filtered {
+                ref mut total_matched,
+                ref mut is_count_exact,
+                ref mut last_processed_count,
+            } => {
+                *total_matched = 0;
+                *is_count_exact = true;
+                *last_processed_count = 0;
+            }
+            TabFilter::Unfiltered { ref mut target_id } => {
+                *target_id = None;
+            }
         }
     }
 }

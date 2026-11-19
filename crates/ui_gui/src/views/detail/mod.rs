@@ -21,7 +21,7 @@ pub fn render_detail(
     let theme = ui.app_theme();
     let mut action_to_dispatch: Option<AppAction> = None;
 
-    let Some(event) = session.inspector.selected_log.clone() else {
+    let Some(event) = session.view.shared.inspector.selected_log.clone() else {
         return;
     };
     let is_highlighted = session.is_row_highlighted(&event.id);
@@ -108,7 +108,7 @@ pub fn render_detail(
             // Metadata Card
             render_card(ui, "Metadata", |ui| {
                 let mut ctx = ActionContext {
-                    highlighted_terms: &session.inspector.highlighted_terms,
+                    highlighted_terms: &session.view.shared.inspector.highlighted_terms,
                     has_any_highlights,
                     is_filtering,
                     is_unfiltered_tab,
@@ -138,7 +138,7 @@ pub fn render_detail(
                 let msg_color = log_color;
 
                 let mut ctx = ActionContext {
-                    highlighted_terms: &session.inspector.highlighted_terms,
+                    highlighted_terms: &session.view.shared.inspector.highlighted_terms,
                     has_any_highlights,
                     is_filtering,
                     is_unfiltered_tab,
@@ -203,7 +203,7 @@ pub fn render_detail(
             if !custom_fields.is_empty() {
                 render_card(ui, "Parsed Fields", |ui| {
                     let mut ctx = ActionContext {
-                        highlighted_terms: &session.inspector.highlighted_terms,
+                        highlighted_terms: &session.view.shared.inspector.highlighted_terms,
                         has_any_highlights,
                         is_filtering,
                         is_unfiltered_tab,
@@ -228,14 +228,14 @@ pub fn render_detail(
             render_card(ui, "Raw Payload", |ui| {
                 let is_json = !event.fields.is_empty();
                 if !is_json {
-                    session.inspector.is_beauty_payload = false;
+                    session.view.shared.inspector.is_beauty_payload = false;
                 }
-                let is_beauty = session.inspector.is_beauty_payload;
+                let is_beauty = session.view.shared.inspector.is_beauty_payload;
 
                 ui.horizontal(|ui| {
                     // 1. Nút "Raw"
                     if TabButton::new("Raw", !is_beauty).show(ui).clicked() {
-                        session.inspector.is_beauty_payload = false;
+                        session.view.shared.inspector.is_beauty_payload = false;
                     }
 
                     ui.add_space(4.0);
@@ -246,7 +246,7 @@ pub fn render_detail(
                         .show(ui)
                         .clicked()
                     {
-                        session.inspector.is_beauty_payload = true;
+                        session.view.shared.inspector.is_beauty_payload = true;
                     }
 
                     ui.add_space(8.0);
@@ -286,7 +286,7 @@ pub fn render_detail(
                 ui.add_space(4.0);
 
                 let mut ctx = ActionContext {
-                    highlighted_terms: &session.inspector.highlighted_terms,
+                    highlighted_terms: &session.view.shared.inspector.highlighted_terms,
                     has_any_highlights,
                     is_filtering,
                     is_unfiltered_tab,

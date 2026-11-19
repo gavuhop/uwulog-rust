@@ -17,14 +17,16 @@ pub fn render_log_counter(ui: &mut egui::Ui, session: &GuiSession) {
     };
 
     let (count_text, count_color, count_tooltip) = if is_filtering {
-        let total_matched = session.view.viewport.total_matched;
-        let cached_len = session.view.viewport.cached_logs.len();
-        let total_label = if session.view.viewport.is_count_exact {
+        let main = session.view.main_tab();
+        let total_matched = main.total_matched();
+        let cached_len = main.stream.cached_logs.len();
+        let is_exact = main.is_count_exact();
+        let total_label = if is_exact {
             theme::format_number(total_matched)
         } else {
             format!("{}+", theme::format_number(total_matched))
         };
-        let text = if total_matched > cached_len || !session.view.viewport.is_count_exact {
+        let text = if total_matched > cached_len || !is_exact {
             format!("{}/{}", theme::format_number(cached_len), total_label)
         } else {
             total_label.clone()

@@ -3,7 +3,7 @@ use crate::state::{ActiveTab, GuiViewState, ScrollCommand, RAW_STREAM_LIMIT};
 use eframe::egui;
 use std::time::{Duration, Instant};
 use uwu_core_schema::LogEvent;
-use uwu_core_workspace::{ContainerViewPrefs, Workspace, WorkspaceSession};
+use uwu_core_workspace::{ViewerPrefs, Workspace, WorkspaceSession};
 
 /// Trích xuất nhẹ (Copy) trạng thái stream hiển thị cho bảng log
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,46 +38,35 @@ impl GuiSession {
 
     pub fn from_workspace(ws: &Workspace, capacity: usize, display_limit: usize) -> Self {
         let session = WorkspaceSession::from_workspace(ws, capacity, display_limit);
-        let mut gui_session = Self::new(session);
-        gui_session.apply_workspace_view(ws);
-        gui_session
+        Self::new(session)
     }
 
-    /// Khôi phục trạng thái giao diện (query, lịch sử tìm kiếm, bố cục cột, inspector) từ `Workspace`.
-    pub fn apply_workspace_view(&mut self, ws: &Workspace) {
-        self.apply_view_fields(
-            &ws.last_query,
-            &ws.filter_history,
-            &ws.columns,
-            ws.inspector_width_ratio,
-        );
+    /// Khóa định danh viewer chuẩn hóa của session này.
+    #[inline]
+    pub fn viewer_key(&self) -> String {
+        self.session.viewer_key()
     }
 
-    /// Khôi phục trạng thái giao diện đã lưu cho tab container phụ.
-    pub fn apply_container_view_prefs(&mut self, prefs: &ContainerViewPrefs) {
-        self.apply_view_fields(
-            &prefs.last_query,
-            &prefs.filter_history,
-            &prefs.columns,
-            prefs.inspector_width_ratio,
-        );
-    }
-
-    fn apply_view_fields(
-        &mut self,
-        last_query: &str,
-        filter_history: &[String],
-        columns: &[uwu_core_workspace::SavedColumnConfig],
-        inspector_width_ratio: Option<f32>,
-    ) {
-        self.view.search.query = last_query.to_string();
-        self.view.search.history.entries = filter_history.to_vec();
-        if self.view.search.history.entries.is_empty() && !last_query.trim().is_empty() {
-            self.view.search.history.record(last_query);
+    /// Khôi phục trạng thái hiển thị (query, lịch sử lọc, bố cục cột, độ rộng Inspector) từ `ViewerPrefs`.
+    pub fn apply_viewer_prefs(&mut self, prefs: &ViewerPrefs) {
+        self.view.search.query = prefs.main_query.clone();
+        self.view.search.history.entries = prefs.filter_history.clone();
+        if self.view.search.history.entries.is_empty() && !prefs.main_query.trim().is_empty() {
+            self.view.search.history.record(&prefs.main_query);
         }
-        self.view.columns.restore_from_saved(columns);
-        if let Some(ratio) = inspector_width_ratio.filter(|r| (0.15..=0.85).contains(r)) {
-            self.view.inspector.width_ratio = ratio;
+        self.view.shared.columns.restore_from_saved(&prefs.columns);
+        if (0.15..=0.85).contains(&prefs.inspector_width_ratio) {
+            self.view.shared.inspector.width_ratio = prefs.inspector_width_ratio;
+        }
+    }
+
+    /// Xuất trạng thái hiển thị hiện tại thành `ViewerPrefs` để lưu xuống `WorkspaceStore::viewers`.
+    pub fn to_viewer_prefs(&self) -> ViewerPrefs {
+        ViewerPrefs {
+            main_query: self.view.search.query.clone(),
+            filter_history: self.view.search.history.entries.clone(),
+            columns: self.view.shared.columns.to_saved_columns(),
+            inspector_width_ratio: self.view.shared.inspector.width_ratio,
         }
     }
 
@@ -105,10 +94,9 @@ impl GuiSession {
         let q = self.view.search.query.clone();
         self.view.search.history.try_debounced_record(&q, now);
 
-        let new_logs_arrived = total_processed != self.view.viewport.last_processed_count
+        let prev_processed = self.view.main_tab().last_processed_count();
+        let new_logs_arrived = total_processed != prev_processed
             && now.duration_since(self.view.search.last_search_time) > Duration::from_millis(150);
-
-        let prev_processed = self.view.viewport.last_processed_count;
 
         if self.should_stream_filtered() && new_logs_arrived && !query_changed {
             let (new_matched_count, new_matching_logs) = self
@@ -125,7 +113,9 @@ impl GuiSession {
 
         if new_logs_arrived {
             self.sync_engine_schema_if_changed();
-            self.view.viewport.last_processed_count = total_processed;
+            self.view
+                .main_tab_mut()
+                .set_last_processed_count(total_processed);
             self.view.search.last_search_time = now;
         }
     }
@@ -151,21 +141,23 @@ impl GuiSession {
             return;
         }
 
-        self.view.viewport.total_matched = total_matched;
-        self.view.viewport.is_count_exact = is_count_exact;
         self.sync_discovered_fields(&logs);
-        self.view.viewport.cached_logs = logs;
-        self.view.viewport.reached_oldest = false;
-        if matches!(
-            self.view.viewport.pending_scroll,
-            Some(ScrollCommand::MaintainOffset(_))
-        ) {
-            self.view.viewport.pending_scroll = None;
+        let prev_processed = self.view.main_tab().last_processed_count();
+        let new_processed = self.session.engine.total_processed();
+        {
+            let main = self.view.main_tab_mut();
+            main.set_search_counts(total_matched, is_count_exact);
+            main.stream.cached_logs = logs;
+            main.stream.reached_oldest = false;
+            if matches!(
+                main.stream.pending_scroll,
+                Some(ScrollCommand::MaintainOffset(_))
+            ) {
+                main.stream.pending_scroll = None;
+            }
+            main.set_last_processed_count(new_processed);
         }
         self.view.search.last_query = self.view.search.query.clone();
-        let prev_processed = self.view.viewport.last_processed_count;
-        let new_processed = self.session.engine.total_processed();
-        self.view.viewport.last_processed_count = new_processed;
         self.view.search.last_search_time = Instant::now();
         if self.should_stream_unfiltered() && new_processed > prev_processed {
             let (_count, new_logs) = self.session.engine.filter_incremental("", prev_processed);
@@ -178,24 +170,25 @@ impl GuiSession {
         if query_id < self.view.search.active_query_id {
             return;
         }
-        self.view.viewport.total_matched = total_matched;
-        self.view.viewport.is_count_exact = true;
+        self.view
+            .main_tab_mut()
+            .set_search_counts(total_matched, true);
     }
 
     /// Cho phép append log mới vào bảng Filtered khi đang Live hoặc chưa chạm trần `display_limit`
     #[inline]
     pub fn should_stream_filtered(&self) -> bool {
-        self.view.viewport.is_auto_scroll
-            || self.view.viewport.cached_logs.len() < self.session.display_limit
+        let main = self.view.main_tab();
+        main.stream.is_auto_scroll || main.stream.cached_logs.len() < self.session.display_limit
     }
 
     /// Cho phép append log mới vào tab Unfiltered khi đang mở live-raw (không phải snapshot `target_id`) và đang Live hoặc chưa chạm trần `RAW_STREAM_LIMIT`
     #[inline]
     pub fn should_stream_unfiltered(&self) -> bool {
-        self.view.unfiltered.is_open
-            && (self.view.unfiltered.is_auto_scroll
-                || (self.view.unfiltered.target_id.is_none()
-                    && self.view.unfiltered.cached_logs.len() < RAW_STREAM_LIMIT))
+        self.view.raw_tab().is_some_and(|raw| {
+            raw.stream.is_auto_scroll
+                || (raw.target_id().is_none() && raw.stream.cached_logs.len() < RAW_STREAM_LIMIT)
+        })
     }
 
     /// Cập nhật log tăng dần từ background worker cho Filtered stream
@@ -207,24 +200,23 @@ impl GuiSession {
     ) {
         if matched > 0 && self.should_stream_filtered() {
             self.sync_discovered_fields(&logs);
-            let is_auto_scroll = self.view.viewport.is_auto_scroll;
-            let added = self
-                .view
-                .viewport
-                .stream
-                .append_logs(logs, self.session.display_limit);
-            self.view.viewport.total_matched += if is_auto_scroll { matched } else { added };
+            let limit = self.session.display_limit;
+            let main = self.view.main_tab_mut();
+            let is_auto_scroll = main.stream.is_auto_scroll;
+            let added = main.stream.append_logs(logs, limit);
+            main.add_matched(if is_auto_scroll { matched } else { added });
         }
-        self.view.viewport.last_processed_count = total_processed;
+        self.view
+            .main_tab_mut()
+            .set_last_processed_count(total_processed);
     }
 
     /// Cập nhật log tăng dần từ background worker cho Unfiltered stream
     pub fn apply_incremental_unfiltered(&mut self, logs: Vec<LogEvent>) {
         if self.should_stream_unfiltered() {
-            self.view
-                .unfiltered
-                .stream
-                .append_logs(logs, RAW_STREAM_LIMIT);
+            if let Some(raw) = self.view.raw_tab_mut() {
+                raw.stream.append_logs(logs, RAW_STREAM_LIMIT);
+            }
         }
     }
 
@@ -249,17 +241,17 @@ impl GuiSession {
     }
 
     pub fn latch(&mut self) {
-        if self.view.viewport.latch() {
+        if self.view.main_tab_mut().stream.latch() {
             self.trigger_full_search();
         }
     }
 
     pub fn unlatch(&mut self) {
-        self.view.viewport.unlatch();
+        self.view.main_tab_mut().stream.unlatch();
     }
 
     pub fn toggle_latch(&mut self) {
-        if self.view.viewport.toggle_latch() {
+        if self.view.main_tab_mut().stream.toggle_latch() {
             self.view.search.mark_needs_search();
         }
     }
@@ -296,32 +288,32 @@ impl GuiSession {
     }
 
     pub fn sync_discovered_fields(&mut self, logs: &[LogEvent]) {
-        self.view.columns.sync_discovered_keys(logs);
+        self.view.shared.columns.sync_discovered_keys(logs);
         self.sync_engine_schema_if_changed();
     }
 
     pub fn toggle_row_highlight(&mut self, id: u64) {
-        self.view.inspector.toggle_row_highlight(id);
+        self.view.shared.inspector.toggle_row_highlight(id);
     }
 
     pub fn is_row_highlighted(&self, id: &u64) -> bool {
-        self.view.inspector.is_row_highlighted(id)
+        self.view.shared.inspector.is_row_highlighted(id)
     }
 
     pub fn toggle_term_highlight(&mut self, term: &str) {
-        self.view.inspector.toggle_term_highlight(term);
+        self.view.shared.inspector.toggle_term_highlight(term);
     }
 
     pub fn is_term_highlighted(&self, term: &str) -> bool {
-        self.view.inspector.is_term_highlighted(term)
+        self.view.shared.inspector.is_term_highlighted(term)
     }
 
     pub fn has_any_highlights(&self) -> bool {
-        self.view.inspector.has_any_highlights()
+        self.view.shared.inspector.has_any_highlights()
     }
 
     pub fn clear_all_highlights(&mut self) {
-        self.view.inspector.clear_all_highlights();
+        self.view.shared.inspector.clear_all_highlights();
     }
 
     pub fn apply_filter_term(&mut self, term: &str) {
@@ -339,25 +331,26 @@ impl GuiSession {
     }
 
     pub fn open_unfiltered_stream(&mut self, target_id: Option<u64>) {
-        self.view.viewport.selected_log = self.view.inspector.selected_log.clone();
-        self.view.unfiltered.is_open = true;
-        self.view.unfiltered.target_id = target_id;
-        self.view.unfiltered.is_auto_scroll = target_id.is_none();
+        self.view.main_tab_mut().stream.selected_log =
+            self.view.shared.inspector.selected_log.clone();
+        self.view.open_raw_tab(target_id);
         self.refresh_unfiltered_snapshot();
         self.view.active_tab = ActiveTab::Unfiltered;
 
         if let Some(id) = target_id {
             let target_event = self
                 .view
-                .unfiltered
-                .cached_logs
-                .iter()
-                .find(|e| e.id == id)
-                .cloned();
-            self.view.unfiltered.selected_log = target_event.clone();
-            self.view.inspector.selected_log = target_event;
+                .raw_tab()
+                .and_then(|raw| raw.stream.cached_logs.iter().find(|e| e.id == id).cloned());
+            if let Some(raw) = self.view.raw_tab_mut() {
+                raw.stream.selected_log = target_event.clone();
+            }
+            self.view.shared.inspector.selected_log = target_event;
         } else {
-            self.view.inspector.selected_log = self.view.unfiltered.selected_log.clone();
+            self.view.shared.inspector.selected_log = self
+                .view
+                .raw_tab()
+                .and_then(|raw| raw.stream.selected_log.clone());
         }
     }
 
@@ -425,7 +418,9 @@ impl GuiSession {
             ActiveTab::Filtered => self.view.search.mark_needs_search(),
             ActiveTab::Unfiltered => {
                 self.refresh_unfiltered_snapshot();
-                self.view.unfiltered.pending_scroll = Some(ScrollCommand::Bottom);
+                if let Some(raw) = self.view.raw_tab_mut() {
+                    raw.stream.pending_scroll = Some(ScrollCommand::Bottom);
+                }
             }
         }
     }
@@ -455,7 +450,7 @@ impl GuiSession {
     pub fn set_selected_log(&mut self, log: Option<LogEvent>) {
         let active = self.view.active_tab;
         self.view.stream_mut(active).selected_log = log.clone();
-        self.view.inspector.selected_log = log;
+        self.view.shared.inspector.selected_log = log;
     }
 
     /// Chuyển đổi giữa tab Filtered (Main) và Unfiltered (Raw), lưu nhớ và khôi phục dòng đang chọn
@@ -464,9 +459,12 @@ impl GuiSession {
             return;
         }
         let prev_tab = self.view.active_tab;
-        self.view.stream_mut(prev_tab).selected_log = self.view.inspector.selected_log.clone();
+        let current_selected = self.view.shared.inspector.selected_log.clone();
+        if let Some(prev) = self.view.tab_mut(prev_tab) {
+            prev.stream.selected_log = current_selected;
+        }
         self.view.active_tab = next_tab;
-        self.view.inspector.selected_log = self.view.stream(next_tab).selected_log.clone();
+        self.view.shared.inspector.selected_log = self.view.stream(next_tab).selected_log.clone();
     }
 
     /// Di chuyển lựa chọn dòng log (khi đã pick dòng) hoặc cuộn bảng với bước nhảy tuỳ ý
@@ -476,7 +474,14 @@ impl GuiSession {
             return;
         }
 
-        if let Some(selected_id) = self.view.inspector.selected_log.as_ref().map(|l| l.id) {
+        if let Some(selected_id) = self
+            .view
+            .shared
+            .inspector
+            .selected_log
+            .as_ref()
+            .map(|l| l.id)
+        {
             // 1. Khi đang pick/chọn một dòng log: phím lên/xuống/page chuyển dòng tương ứng
             let logs = self.active_logs();
             let curr = logs.iter().position(|e| e.id == selected_id).unwrap_or(0);
@@ -511,7 +516,7 @@ impl GuiSession {
 
     /// Di chuyển lựa chọn dòng log (khi đã pick dòng) hoặc cuộn bảng (khi chưa chọn dòng nào)
     pub fn navigate_row(&mut self, is_up: bool) {
-        let step = if self.view.inspector.selected_log.is_some() {
+        let step = if self.view.shared.inspector.selected_log.is_some() {
             1
         } else {
             4
@@ -546,7 +551,7 @@ impl GuiSession {
         if row_count == 0 {
             return;
         }
-        if self.view.inspector.selected_log.is_some() {
+        if self.view.shared.inspector.selected_log.is_some() {
             let logs = self.active_logs();
             self.set_selected_log(Some(logs[0].clone()));
         }
@@ -561,7 +566,7 @@ impl GuiSession {
             return;
         }
         let target_idx = row_count - 1;
-        if self.view.inspector.selected_log.is_some() {
+        if self.view.shared.inspector.selected_log.is_some() {
             let logs = self.active_logs();
             self.set_selected_log(Some(logs[target_idx].clone()));
         }
@@ -582,37 +587,36 @@ impl GuiSession {
     }
 
     pub fn refresh_unfiltered_snapshot(&mut self) {
-        self.view.unfiltered.reached_oldest = false;
+        let target_id = self.view.raw_tab().and_then(|r| r.target_id());
         let (target_idx, unfiltered) = self
             .session
             .engine
-            .get_unfiltered_events(self.view.unfiltered.target_id, RAW_STREAM_LIMIT);
-        self.view.unfiltered.cached_logs = unfiltered;
-        self.view.unfiltered.pending_scroll =
-            target_idx.map(|idx| ScrollCommand::Row(idx, Some(egui::Align::Center)));
+            .get_unfiltered_events(target_id, RAW_STREAM_LIMIT);
+        if let Some(raw) = self.view.raw_tab_mut() {
+            raw.stream.reached_oldest = false;
+            raw.stream.cached_logs = unfiltered;
+            raw.stream.pending_scroll =
+                target_idx.map(|idx| ScrollCommand::Row(idx, Some(egui::Align::Center)));
+        }
     }
 
     pub fn close_unfiltered_stream(&mut self) {
-        self.view.unfiltered.is_open = false;
-        self.view.unfiltered.target_id = None;
-        self.view.unfiltered.cached_logs.clear();
-        self.view.unfiltered.pending_scroll = None;
         self.switch_tab(ActiveTab::Filtered);
+        self.view.close_raw_tab();
     }
 
     pub fn focus_in_main_and_clear_filter(&mut self) {
-        if let Some(target_id) = self.view.unfiltered.target_id {
-            if let Some(target_event) = self
-                .view
-                .unfiltered
+        let target_event = self.view.raw_tab().and_then(|raw| {
+            let target_id = raw.target_id()?;
+            raw.stream
                 .cached_logs
                 .iter()
                 .find(|e| e.id == target_id)
                 .cloned()
-            {
-                self.view.viewport.selected_log = Some(target_event.clone());
-                self.view.inspector.selected_log = Some(target_event);
-            }
+        });
+        if let Some(target_event) = target_event {
+            self.view.main_tab_mut().stream.selected_log = Some(target_event.clone());
+            self.view.shared.inspector.selected_log = Some(target_event);
         }
         self.view.search.clear();
         self.close_unfiltered_stream();
@@ -666,7 +670,7 @@ impl GuiSession {
                     if self.view.search.query.trim().is_empty() {
                         return false;
                     }
-                    if !self.view.unfiltered.is_open {
+                    if !self.view.has_raw_tab() {
                         self.open_unfiltered_stream(None);
                     }
                 }
@@ -681,7 +685,7 @@ impl GuiSession {
                     ActiveTab::Filtered => ActiveTab::Unfiltered,
                     ActiveTab::Unfiltered => ActiveTab::Filtered,
                 };
-                if next == ActiveTab::Unfiltered && !self.view.unfiltered.is_open {
+                if next == ActiveTab::Unfiltered && !self.view.has_raw_tab() {
                     self.open_unfiltered_stream(None);
                 }
                 self.switch_tab(next);
@@ -749,7 +753,13 @@ impl GuiSession {
                 if self.view.search.query.trim().is_empty() {
                     return false;
                 }
-                let target_id = self.view.inspector.selected_log.as_ref().map(|l| l.id);
+                let target_id = self
+                    .view
+                    .shared
+                    .inspector
+                    .selected_log
+                    .as_ref()
+                    .map(|l| l.id);
                 self.open_unfiltered_stream(target_id);
                 true
             }

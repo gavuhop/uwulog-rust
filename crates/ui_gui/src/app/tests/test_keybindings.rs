@@ -1045,7 +1045,7 @@ fn test_default_shortcuts_run_command_filter_columns_and_rerun() {
         uwu_core_schema::LogFields::default(),
     )
     .with_id(42);
-    app.active_session_mut().view.inspector.selected_log = Some(mock_event);
+    app.active_session_mut().view.shared.inspector.selected_log = Some(mock_event);
 
     // 8.1 Khi chưa có filter: Alt+V không được đổi sang Raw View
     app.active_session_mut().view.search.clear();
@@ -1095,7 +1095,7 @@ fn test_default_shortcuts_run_command_filter_columns_and_rerun() {
         "Alt+V khi có filter phải mở Raw View (Unfiltered)"
     );
     assert_eq!(
-        app.active_session().view.unfiltered.target_id,
+        app.active_session().view.raw_tab().unwrap().target_id(),
         Some(42),
         "Alt+V phải định vị đúng target_id của dòng log đã chọn trong raw stream"
     );
@@ -1138,10 +1138,14 @@ fn test_arrow_keys_row_navigation_and_scroll() {
             .with_id(100 + i)
         })
         .collect();
-    app.active_session_mut().view.viewport.cached_logs = events.clone();
+    app.active_session_mut()
+        .view
+        .main_tab_mut()
+        .stream
+        .cached_logs = events.clone();
 
     // --- Trường hợp 1: Đã chọn 1 dòng log -> Phím lên / xuống đổi dòng được chọn ---
-    app.active_session_mut().view.inspector.selected_log = Some(events[1].clone()); // Đang chọn dòng 1
+    app.active_session_mut().view.shared.inspector.selected_log = Some(events[1].clone()); // Đang chọn dòng 1
 
     // Bấm ArrowDown
     let mut input_down = RawInput::default();
@@ -1164,6 +1168,7 @@ fn test_arrow_keys_row_navigation_and_scroll() {
     assert_eq!(
         app.active_session()
             .view
+            .shared
             .inspector
             .selected_log
             .as_ref()
@@ -1193,6 +1198,7 @@ fn test_arrow_keys_row_navigation_and_scroll() {
     assert_eq!(
         app.active_session()
             .view
+            .shared
             .inspector
             .selected_log
             .as_ref()
@@ -1202,8 +1208,12 @@ fn test_arrow_keys_row_navigation_and_scroll() {
     );
 
     // --- Trường hợp 2: Không focus/chọn dòng nào -> Phím lên / xuống cuộn bảng ---
-    app.active_session_mut().view.inspector.selected_log = None;
-    app.active_session_mut().view.viewport.first_visible_row = Some(1);
+    app.active_session_mut().view.shared.inspector.selected_log = None;
+    app.active_session_mut()
+        .view
+        .main_tab_mut()
+        .stream
+        .first_visible_row = Some(1);
 
     // Bấm ArrowDown khi không có log được chọn
     let mut input_down = RawInput::default();
@@ -1224,11 +1234,16 @@ fn test_arrow_keys_row_navigation_and_scroll() {
     out.textures_delta.clear();
 
     assert!(
-        app.active_session().view.inspector.selected_log.is_none(),
+        app.active_session()
+            .view
+            .shared
+            .inspector
+            .selected_log
+            .is_none(),
         "Khi không có dòng nào được chọn, ArrowDown không được tự ý chọn dòng"
     );
     assert_eq!(
-        app.active_session().view.viewport.pending_scroll,
+        app.active_session().view.main_tab().stream.pending_scroll,
         Some(crate::state::ScrollCommand::Row(
             4,
             Some(eframe::egui::Align::Min)
@@ -1293,16 +1308,25 @@ fn test_excel_like_navigation_and_copy_shortcuts() {
             .with_id(200 + i)
         })
         .collect();
-    app.active_session_mut().view.viewport.cached_logs = events.clone();
+    app.active_session_mut()
+        .view
+        .main_tab_mut()
+        .stream
+        .cached_logs = events.clone();
 
     // --- Kiểm tra 1: Sao chép Ctrl+C theo trạng thái Beauty / Raw ---
-    app.active_session_mut().view.inspector.selected_log = Some(events[0].clone());
+    app.active_session_mut().view.shared.inspector.selected_log = Some(events[0].clone());
 
     // 1.1 Chế độ Raw: Ctrl+C sao chép raw string
-    app.active_session_mut().view.inspector.is_beauty_payload = false;
+    app.active_session_mut()
+        .view
+        .shared
+        .inspector
+        .is_beauty_payload = false;
     let raw_payload = app
         .active_session()
         .view
+        .shared
         .inspector
         .formatted_payload_for_copy()
         .unwrap();
@@ -1330,10 +1354,15 @@ fn test_excel_like_navigation_and_copy_shortcuts() {
     out.textures_delta.clear();
 
     // 1.2 Chế độ Beauty: Ctrl+C sao chép formatted indented JSON
-    app.active_session_mut().view.inspector.is_beauty_payload = true;
+    app.active_session_mut()
+        .view
+        .shared
+        .inspector
+        .is_beauty_payload = true;
     let beauty_payload = app
         .active_session()
         .view
+        .shared
         .inspector
         .formatted_payload_for_copy()
         .unwrap();
@@ -1343,7 +1372,7 @@ fn test_excel_like_navigation_and_copy_shortcuts() {
     );
 
     // 1.3 Kiểm tra Ctrl+C sao chép chính xác dòng đang pick (kể cả qua egui-winit Event::Copy)
-    app.active_session_mut().view.inspector.selected_log = Some(events[3].clone());
+    app.active_session_mut().view.shared.inspector.selected_log = Some(events[3].clone());
     let mut input_event_copy = RawInput::default();
     input_event_copy.events.push(eframe::egui::Event::Copy);
     let mut out = ctx.run_ui(input_event_copy, |ui| {
@@ -1397,8 +1426,12 @@ fn test_excel_like_navigation_and_copy_shortcuts() {
     ctx.data_mut(|d| d.remove_temp::<String>(dummy_id));
 
     // --- Kiểm tra 2: PageUp / PageDown nhảy 20 dòng nhưng vẫn GIỮ NGUYÊN dòng đang chọn ---
-    app.active_session_mut().view.inspector.selected_log = Some(events[5].clone()); // Dòng 5
-    app.active_session_mut().view.viewport.first_visible_row = Some(5);
+    app.active_session_mut().view.shared.inspector.selected_log = Some(events[5].clone()); // Dòng 5
+    app.active_session_mut()
+        .view
+        .main_tab_mut()
+        .stream
+        .first_visible_row = Some(5);
 
     // Bấm PageDown -> cuộn bảng xuống dòng 25 (5 + 20), nhưng dòng pick vẫn là dòng 5 (id 205)
     let mut input_pagedown = RawInput::default();
@@ -1421,6 +1454,7 @@ fn test_excel_like_navigation_and_copy_shortcuts() {
     assert_eq!(
         app.active_session()
             .view
+            .shared
             .inspector
             .selected_log
             .as_ref()
@@ -1429,7 +1463,7 @@ fn test_excel_like_navigation_and_copy_shortcuts() {
         "PageDown vẫn phải giữ nguyên dòng 5 (id 205) đang chọn"
     );
     assert_eq!(
-        app.active_session().view.viewport.pending_scroll,
+        app.active_session().view.main_tab().stream.pending_scroll,
         Some(crate::state::ScrollCommand::Row(
             25,
             Some(eframe::egui::Align::Min)
@@ -1438,7 +1472,11 @@ fn test_excel_like_navigation_and_copy_shortcuts() {
     );
 
     // Cập nhật first_visible_row lên dòng 25
-    app.active_session_mut().view.viewport.first_visible_row = Some(25);
+    app.active_session_mut()
+        .view
+        .main_tab_mut()
+        .stream
+        .first_visible_row = Some(25);
 
     // Bấm PageUp -> cuộn bảng ngược lại dòng 5 (25 - 20), vẫn giữ nguyên dòng pick 5 (id 205)
     let mut input_pageup = RawInput::default();
@@ -1461,6 +1499,7 @@ fn test_excel_like_navigation_and_copy_shortcuts() {
     assert_eq!(
         app.active_session()
             .view
+            .shared
             .inspector
             .selected_log
             .as_ref()
@@ -1469,7 +1508,7 @@ fn test_excel_like_navigation_and_copy_shortcuts() {
         "PageUp vẫn phải giữ nguyên dòng 5 (id 205) đang chọn"
     );
     assert_eq!(
-        app.active_session().view.viewport.pending_scroll,
+        app.active_session().view.main_tab().stream.pending_scroll,
         Some(crate::state::ScrollCommand::Row(
             5,
             Some(eframe::egui::Align::Min)
@@ -1498,6 +1537,7 @@ fn test_excel_like_navigation_and_copy_shortcuts() {
     assert_eq!(
         app.active_session()
             .view
+            .shared
             .inspector
             .selected_log
             .as_ref()
@@ -1506,13 +1546,17 @@ fn test_excel_like_navigation_and_copy_shortcuts() {
         "Ctrl+ArrowDown phải nhảy tới dòng cuối cùng (dòng 49, id 249)"
     );
     assert!(
-        app.active_session().view.viewport.is_auto_scroll,
+        app.active_session().view.main_tab().stream.is_auto_scroll,
         "Nhảy tới cuối bảng phải tự động bật follow mode (latch)"
     );
 
     // Bấm phím End đứng một mình -> nhảy tới dòng cuối cùng và bật Latch
-    app.active_session_mut().view.inspector.selected_log = Some(events[20].clone());
-    app.active_session_mut().view.viewport.is_auto_scroll = false;
+    app.active_session_mut().view.shared.inspector.selected_log = Some(events[20].clone());
+    app.active_session_mut()
+        .view
+        .main_tab_mut()
+        .stream
+        .is_auto_scroll = false;
     let mut input_end = RawInput::default();
     input_end.events.push(eframe::egui::Event::Key {
         key: Key::End,
@@ -1533,6 +1577,7 @@ fn test_excel_like_navigation_and_copy_shortcuts() {
     assert_eq!(
         app.active_session()
             .view
+            .shared
             .inspector
             .selected_log
             .as_ref()
@@ -1541,7 +1586,7 @@ fn test_excel_like_navigation_and_copy_shortcuts() {
         "Phím End phải nhảy tới dòng cuối cùng (dòng 49, id 249)"
     );
     assert!(
-        app.active_session().view.viewport.is_auto_scroll,
+        app.active_session().view.main_tab().stream.is_auto_scroll,
         "Phím End phải tự động kích hoạt Latch (Auto-scroll)"
     );
 
@@ -1566,6 +1611,7 @@ fn test_excel_like_navigation_and_copy_shortcuts() {
     assert_eq!(
         app.active_session()
             .view
+            .shared
             .inspector
             .selected_log
             .as_ref()
@@ -1575,7 +1621,7 @@ fn test_excel_like_navigation_and_copy_shortcuts() {
     );
 
     // Bấm phím Home đứng một mình -> nhảy về dòng đầu tiên
-    app.active_session_mut().view.inspector.selected_log = Some(events[20].clone());
+    app.active_session_mut().view.shared.inspector.selected_log = Some(events[20].clone());
     let mut input_home = RawInput::default();
     input_home.events.push(eframe::egui::Event::Key {
         key: Key::Home,
@@ -1596,6 +1642,7 @@ fn test_excel_like_navigation_and_copy_shortcuts() {
     assert_eq!(
         app.active_session()
             .view
+            .shared
             .inspector
             .selected_log
             .as_ref()
@@ -1822,7 +1869,7 @@ async fn test_tab_switching_prevented_without_filter() {
         app.active_session().view.active_tab,
         crate::state::ActiveTab::Filtered
     );
-    assert!(!app.active_session().view.unfiltered.is_open);
+    assert!(!app.active_session().view.has_raw_tab());
 
     // 4. Khi đang ở Unfiltered mà bấm ViewRawContext (Alt+V) -> chuyển ngược về Filtered (Main)
     app.active_session_mut().view.search.query = "error".to_string();
