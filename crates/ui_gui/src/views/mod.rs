@@ -1,9 +1,9 @@
-mod collision_toast;
 pub mod detail;
 pub mod header;
 pub mod modals;
 pub mod remote_servers;
 pub mod table;
+pub mod toasts;
 pub mod welcome;
 
 pub use detail::render_detail;
@@ -363,20 +363,29 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
         &mut dispatch,
     );
 
-    // Popup gợi ý độc lập: Open in Dev Container (chỉ hiện khi dự án local có .devcontainer + container đang chạy)
-    let dc_toast_visible =
-        header::devcontainer::render_devcontainer_suggest_popup(ctx, active_session, &mut dispatch);
-
-    // Popup cảnh báo va chạm key JSON ở góc phải dưới (tự xếp chồng phía trên Dev Container toast nếu cùng hiển thị)
-    collision_toast::render_field_collision_toast(
-        ctx,
-        active_session,
-        dc_toast_visible,
-        &mut dispatch,
-    );
-
-    // Popup thông báo khi bộ đệm log trong RAM vượt quá giới hạn đã cấu hình
-    header::toolbar::render_buffer_overflow_popup(ctx, active_session);
+    // Ngăn xếp toast góc phải dưới thống nhất (cũ trên, mới dưới — không bao giờ chồng đè)
+    let mut toast_items = Vec::new();
+    if let Some(toast) = toasts::build_field_collision_toast(active_session) {
+        toast_items.push(toast);
+    }
+    if let Some(toast) = toasts::build_buffer_overflow_toast(active_session) {
+        toast_items.push(toast);
+    }
+    if let Some(toast) = header::devcontainer::poll_devcontainer_suggest_toast(ctx, active_session)
+    {
+        toast_items.push(toast);
+    }
+    for dismissed in toasts::render_toast_stack(ctx, &toast_items, &mut dispatch) {
+        match dismissed {
+            toasts::ToastDismiss::Action(action) => dispatch(*action),
+            toasts::ToastDismiss::BufferOverflow => {
+                active_session.view.buffer_overflow_dismissed = true;
+            }
+            toasts::ToastDismiss::DevContainerSuggest(dir_key) => {
+                header::devcontainer::dismiss_devcontainer_suggest(ctx, &dir_key);
+            }
+        }
+    }
 
     // Window Resize Border Handles (Hỗ trợ kéo dãn / thu nhỏ 4 góc và 4 cạnh cửa sổ)
     header::render_window_resize_borders(ctx);

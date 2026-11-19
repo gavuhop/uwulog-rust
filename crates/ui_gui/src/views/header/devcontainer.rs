@@ -1,10 +1,11 @@
 use crate::actions::AppAction;
-use crate::components::ui::{AppButton, ButtonVariant, IconButton, IconName};
+use crate::components::ui::{AppButton, ButtonVariant, IconName};
 use crate::overlay::{OverlayLayer, OverlayStack};
 use crate::session::GuiSession;
 use crate::theme::ActiveTheme;
 use crate::views::modals::{render_project_row, ProjectRowAction, ProjectRowConfig};
-use eframe::egui::{self, Align2, CornerRadius, Order, Rect, Stroke};
+use crate::views::toasts::{ToastAction, ToastDismiss, ToastItem, ToastTone};
+use eframe::egui::{self, CornerRadius, Order, Rect, Stroke};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::mpsc::Receiver;
@@ -49,26 +50,32 @@ struct LocalDevContainerProbeCache {
     dismissed_paths: HashSet<String>,
 }
 
-/// Popup gợi ý độc lập (góc dưới phải theo chuẩn Zed `dev_container_suggest`)
-/// chỉ xuất hiện khi dự án local đang mở có file `.devcontainer` VÀ Dev Container của nó đang chạy.
-pub fn render_devcontainer_suggest_popup(
+/// Đánh dấu đã ẩn toast gợi ý Dev Container cho đường dẫn local tương ứng.
+pub fn dismiss_devcontainer_suggest(ctx: &egui::Context, dir_key: &str) {
+    let cache_id = egui::Id::new("local_devcontainer_probe_cache");
+    let mut cache: LocalDevContainerProbeCache =
+        ctx.data(|d| d.get_temp(cache_id)).unwrap_or_default();
+    cache.dismissed_paths.insert(dir_key.to_string());
+    ctx.data_mut(|d| d.insert_temp(cache_id, cache));
+}
+
+/// Thăm dò nền và trả về toast gợi ý "Open in Dev Container" (nếu dự án local hiện tại có
+/// file `.devcontainer` VÀ Dev Container của nó đang chạy).
+pub fn poll_devcontainer_suggest_toast(
     ctx: &egui::Context,
     session: &GuiSession,
-    dispatch: &mut impl FnMut(AppAction),
-) -> bool {
+) -> Option<ToastItem> {
     let WorkspaceLocation::Local { ref working_dir } = session.session.location else {
-        return false;
+        return None;
     };
     let dir_trimmed = working_dir.trim();
     if dir_trimmed.is_empty() {
-        return false;
+        return None;
     }
 
     // Kiểm tra nhanh syscall stat: chỉ probe Docker khi thư mục thực sự có `.devcontainer`
     let local_path = Path::new(dir_trimmed);
-    if find_devcontainer_config(local_path).is_none() {
-        return false;
-    }
+    find_devcontainer_config(local_path)?;
 
     let cache_id = egui::Id::new("local_devcontainer_probe_cache");
     let mut cache: LocalDevContainerProbeCache =
@@ -76,7 +83,7 @@ pub fn render_devcontainer_suggest_popup(
 
     let key = dir_trimmed.to_string();
     if cache.dismissed_paths.contains(&key) {
-        return false;
+        return None;
     }
 
     let now = Instant::now();
@@ -127,107 +134,44 @@ pub fn render_devcontainer_suggest_popup(
     }
 
     let detected = cache.entries.get(&key).and_then(|e| e.result.clone());
-    let Some(opened) = detected else {
-        ctx.data_mut(|d| d.insert_temp(cache_id, cache));
-        return false;
-    };
-
-    let theme = ctx.app_theme();
-    let mut open_clicked = false;
-    let mut dismiss_clicked = false;
-
-    egui::Area::new(egui::Id::new("devcontainer_suggest_toast"))
-        .order(Order::Foreground)
-        .anchor(Align2::RIGHT_BOTTOM, egui::vec2(-16.0, -16.0))
-        .show(ctx, |ui| {
-            let frame = egui::Frame::default()
-                .fill(theme.surfaces.mantle)
-                .stroke(Stroke::new(1.0, theme.borders.border))
-                .corner_radius(CornerRadius::same(8))
-                .inner_margin(egui::Margin::symmetric(12, 10))
-                .shadow(egui::epaint::Shadow {
-                    offset: [0, 6],
-                    blur: 20,
-                    spread: 0,
-                    color: egui::Color32::from_black_alpha(55),
-                });
-
-            frame.show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    let (icon_r, _) =
-                        ui.allocate_exact_size(egui::vec2(15.0, 15.0), egui::Sense::hover());
-                    IconName::Box.paint(ui.painter(), icon_r, theme.status.success);
-                    ui.add_space(6.0);
-
-                    ui.vertical(|ui| {
-                        ui.label(
-                            egui::RichText::new("Container running")
-                                .size(12.0)
-                                .strong()
-                                .color(theme.text.primary),
-                        );
-                        ui.label(
-                            egui::RichText::new(opened.info.short_label())
-                                .size(11.0)
-                                .color(theme.text.muted),
-                        );
-                    });
-
-                    ui.add_space(10.0);
-
-                    if AppButton::new()
-                        .label("Open in Dev Container")
-                        .small()
-                        .variant(ButtonVariant::Success)
-                        .show(ui)
-                        .clicked()
-                    {
-                        open_clicked = true;
-                    }
-
-                    if IconButton::new(IconName::Close)
-                        .size(22.0)
-                        .tooltip("Dismiss")
-                        .show(ui)
-                        .clicked()
-                    {
-                        dismiss_clicked = true;
-                    }
-                });
-            });
-        });
-
-    if dismiss_clicked {
-        cache.dismissed_paths.insert(key);
-    }
     ctx.data_mut(|d| d.insert_temp(cache_id, cache));
+    let opened = detected?;
 
-    if open_clicked {
-        let mut opts = DockerConnectionOptions::new(&opened.info.name, &opened.workspace_folder)
-            .with_container_id(&opened.info.id)
-            .with_devcontainer(true);
-        if let Some(ref user) = opened.remote_user {
-            opts = opts.with_remote_user(user);
-        }
-        if let Some(ref folder) = opened.info.local_folder {
-            opts = opts.with_local_folder(folder);
-        }
-        if let Some(ref project) = opened.info.compose_project {
-            opts = opts.with_compose_project(project);
-        }
-        if let Some(ref service) = opened.info.compose_service {
-            opts = opts.with_compose_service(service);
-        }
-
-        let ws_name = uwu_core_workspace::extract_project_name(&opened.workspace_folder);
-        let ws = Workspace::new(
-            ws_name,
-            WorkspaceLocation::remote(opts),
-            SourceType::Process,
-        );
-        dispatch(AppAction::OpenWorkspace(ws));
+    let mut opts = DockerConnectionOptions::new(&opened.info.name, &opened.workspace_folder)
+        .with_container_id(&opened.info.id)
+        .with_devcontainer(true);
+    if let Some(ref user) = opened.remote_user {
+        opts = opts.with_remote_user(user);
     }
-    true
+    if let Some(ref folder) = opened.info.local_folder {
+        opts = opts.with_local_folder(folder);
+    }
+    if let Some(ref project) = opened.info.compose_project {
+        opts = opts.with_compose_project(project);
+    }
+    if let Some(ref service) = opened.info.compose_service {
+        opts = opts.with_compose_service(service);
+    }
+
+    let ws_name = uwu_core_workspace::extract_project_name(&opened.workspace_folder);
+    let ws = Workspace::new(
+        ws_name,
+        WorkspaceLocation::remote(opts),
+        SourceType::Process,
+    );
+
+    Some(ToastItem {
+        icon: IconName::Box,
+        tone: ToastTone::Success,
+        title: "Container running".to_string(),
+        subtitle: opened.info.short_label().to_string(),
+        action: Some(ToastAction {
+            label: "Open in Dev Container".to_string(),
+            variant: ButtonVariant::Success,
+            action: AppAction::OpenWorkspace(ws),
+        }),
+        dismiss: ToastDismiss::DevContainerSuggest(key),
+    })
 }
 
 /// Hiển thị nút container (đặt sau tên dự án trên Header) cho biết đang xem container nào
