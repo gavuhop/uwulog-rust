@@ -58,3 +58,33 @@ Inspect `crates/ui_gui/src/app/mod.rs` and `actions.rs` via `./.agents/scripts/h
   ./.agents/scripts/harness.sh test-tier 3    # core_workspace & core_keymap
   ./.agents/scripts/harness.sh test-tier 4    # uwu-ui-gui headless suite
   ```
+
+---
+
+## 6. Notifications, Toasts & Error Feedback
+
+### Mandatory Decision Rule (Ask Developer First)
+Before implementing any new notification, warning, or error message in `ui_gui`, **ask the developer** which display mode they want and recommend one based on context:
+1. **Option A — Bottom-Right Toast** *(recommended for async, background, or global workspace notices unrelated to a specific modal/input)*
+2. **Option B — Inline Error Banner** *(recommended for immediate failures tied to a specific action, form, picker, or modal, e.g. trying to enter a Dev Container without `.devcontainer` config)*
+
+### Form A: Bottom-Right Stacked Toast
+References: [collision_toast.rs](../../../crates/ui_gui/src/views/collision_toast.rs), [devcontainer.rs](../../../crates/ui_gui/src/views/header/devcontainer.rs), [toolbar.rs](../../../crates/ui_gui/src/views/header/toolbar.rs), [views/mod.rs](../../../crates/ui_gui/src/views/mod.rs).
+
+- **Stacking Order (Bottom-Newest)**: Render at `Order::Foreground`, `Align2::RIGHT_BOTTOM`, `x = -16.0`, base `y = -16.0`. **The newest / highest-priority toast sits at the bottom (`-16.0`), pushing older visible toasts upward** (e.g. step `-68.0` / `-84.0` depending on toast height; track visible stack height or boolean visibility flags in `views/mod.rs` so toasts never overlap).
+- **Frame & Tokens**:
+  - `fill(theme.surfaces.mantle)`
+  - `stroke(Stroke::new(1.0, accent_or_border))` (`theme.status.error`, `theme.status.warning`, or `theme.borders.border`)
+  - `corner_radius(CornerRadius::same(8))`, `inner_margin(Margin::symmetric(12, 10))`
+  - `Shadow { offset: [0, 6], blur: 20, spread: 0, color: Color32::from_black_alpha(55) }`
+- **Content Layout**: `ui.horizontal`: `15x15` `IconName` (colored with matching status token) -> `ui.vertical` (`12.0` strong `theme.text.primary` title + `11.0` `theme.text.muted` detail) -> optional action `AppButton` + `IconButton::new(IconName::Close).size(22.0)`.
+
+### Form B: Inline Context Error Banner
+References: [devcontainer_picker.rs](../../../crates/ui_gui/src/views/remote_servers/devcontainer_picker.rs#L199-L223), [ssh_picker.rs](../../../crates/ui_gui/src/views/remote_servers/ssh_picker.rs#L84-L100).
+
+- **Placement**: Render directly inside the active modal, picker, or section where the error occurred (not as a floating toast).
+- **Frame & Tokens**:
+  - `fill(theme.status.error.gamma_multiply(0.15))`
+  - `stroke(Stroke::new(1.0, theme.status.error))`
+  - `corner_radius(CornerRadius::same(6))`, `inner_margin(Margin::symmetric(10, 8))`
+- **Content Layout**: `ui.horizontal`: `14x14` `IconName::AlertTriangle` (`theme.status.error`) + `4px` gap + wrapped `egui::Label` (`RichText::new(err_msg).size(11.5).color(theme.status.error)`).

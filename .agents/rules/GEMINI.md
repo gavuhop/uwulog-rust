@@ -31,6 +31,7 @@ Dependencies flow strictly top-down (`Tier 4 -> Tier 3 -> Tier 2 -> Tier 1 -> Ti
 7. **Expr Parity**: Any `Expr` variant in `core_filter/src/parser.rs` MUST be implemented identically in both `core_filter/src/evaluator.rs` and `core_engine/src/arrow_storage/compiler.rs`.
 8. **Git**: Conventional Commits (`<type>(<scope>): <subject>`).
 9. **Pre-Release Clean Code (No Unnecessary Fallbacks)**: The project is pre-release. Never add speculative backward-compatibility shims, legacy data migrations, or silent fallbacks for missing/old metadata unless explicitly requested.
+10. **Notifications & Error Placement (Ask First)**: Never guess where to render a new notification or error in `ui_gui`. Before implementing, ask the developer and recommend between: (a) **Bottom-Right Toast** (async/global/background notices, anchored `Align2::RIGHT_BOTTOM` at `(-16.0, -16.0)` with newest toast at the bottom pushing older visible toasts upward), or (b) **Inline Error Banner** (action/form-scoped errors directly inside the failing view/modal, like `devcontainer_picker.rs`). Follow exact styling & stacking templates in `.agents/skills/uwu-gui-component-dev/SKILL.md`.
 
 ## 4. Core System Flows
 
