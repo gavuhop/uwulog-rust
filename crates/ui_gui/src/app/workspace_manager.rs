@@ -164,7 +164,7 @@ impl WorkspaceManager {
         if let Some(pos) = self.sessions.iter().position(|s| {
             s.session.id == ws.id
                 || s.session.location.is_same(&ws.location)
-                || crate::views::is_same_docker_project(&s.session.location, &ws.location)
+                || s.session.location.is_same_docker_project(&ws.location)
         }) {
             self.switch_session(pos);
             self.auto_start_container_log_if_needed(rt);

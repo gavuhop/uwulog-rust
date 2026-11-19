@@ -8,23 +8,23 @@ use uwu_core_schema::{RawLogEntry, RawPayload};
 async fn test_latch_toggle() {
     let mut app = create_test_app();
     let session = app.active_session_mut();
-    assert!(session.main_tab().stream.is_auto_scroll);
+    assert!(session.view.main_tab().stream.is_auto_scroll);
 
     session.unlatch();
-    assert!(!session.main_tab().stream.is_auto_scroll);
+    assert!(!session.view.main_tab().stream.is_auto_scroll);
 
     session.latch();
-    assert!(session.main_tab().stream.is_auto_scroll);
+    assert!(session.view.main_tab().stream.is_auto_scroll);
     assert_eq!(
-        session.main_tab().stream.pending_scroll,
+        session.view.main_tab().stream.pending_scroll,
         Some(crate::state::ScrollCommand::Bottom)
     );
 
     session.toggle_latch();
-    assert!(!session.main_tab().stream.is_auto_scroll);
+    assert!(!session.view.main_tab().stream.is_auto_scroll);
 
     session.toggle_latch();
-    assert!(session.main_tab().stream.is_auto_scroll);
+    assert!(session.view.main_tab().stream.is_auto_scroll);
 }
 
 #[tokio::test]
@@ -67,13 +67,13 @@ async fn test_unlatch_unfiltered_idempotency() {
     let mut app = create_test_app();
     let session = app.active_session_mut();
     session.open_unfiltered_stream(None);
-    assert!(session.raw_tab().unwrap().stream.is_auto_scroll);
+    assert!(session.view.raw_tab().unwrap().stream.is_auto_scroll);
 
-    session.raw_tab_mut().unwrap().stream.unlatch();
-    assert!(!session.raw_tab().unwrap().stream.is_auto_scroll);
+    session.view.raw_tab_mut().unwrap().stream.unlatch();
+    assert!(!session.view.raw_tab().unwrap().stream.is_auto_scroll);
 
-    session.raw_tab_mut().unwrap().stream.unlatch();
-    assert!(!session.raw_tab().unwrap().stream.is_auto_scroll);
+    session.view.raw_tab_mut().unwrap().stream.unlatch();
+    assert!(!session.view.raw_tab().unwrap().stream.is_auto_scroll);
 }
 
 #[tokio::test]
@@ -91,13 +91,24 @@ async fn test_repeated_unlatch_idempotency_preserves_pause_state() {
     app.tick();
 
     app.active_session_mut().unlatch();
-    assert!(!app.active_session().main_tab().stream.is_auto_scroll);
-    let cached_len = app.active_session().main_tab().stream.cached_logs.len();
+    assert!(!app.active_session().view.main_tab().stream.is_auto_scroll);
+    let cached_len = app
+        .active_session()
+        .view
+        .main_tab()
+        .stream
+        .cached_logs
+        .len();
 
     app.active_session_mut().unlatch();
-    assert!(!app.active_session().main_tab().stream.is_auto_scroll);
+    assert!(!app.active_session().view.main_tab().stream.is_auto_scroll);
     assert_eq!(
-        app.active_session().main_tab().stream.cached_logs.len(),
+        app.active_session()
+            .view
+            .main_tab()
+            .stream
+            .cached_logs
+            .len(),
         cached_len
     );
 }
@@ -112,6 +123,7 @@ async fn test_app_action_highlights() {
     app.dispatch_action(AppAction::ToggleTermHighlight("error".to_string()));
     assert!(app
         .active_session()
+        .view
         .shared
         .inspector
         .highlighted_terms
@@ -121,6 +133,7 @@ async fn test_app_action_highlights() {
     assert!(!app.active_session().is_row_highlighted(&100));
     assert!(app
         .active_session()
+        .view
         .shared
         .inspector
         .highlighted_terms
@@ -132,21 +145,22 @@ async fn test_app_action_latch_and_unfiltered() {
     let mut app = create_test_app();
 
     // Latch toggle
-    assert!(app.active_session().main_tab().stream.is_auto_scroll);
+    assert!(app.active_session().view.main_tab().stream.is_auto_scroll);
     app.dispatch_action(AppAction::ToggleLatch);
-    assert!(!app.active_session().main_tab().stream.is_auto_scroll);
+    assert!(!app.active_session().view.main_tab().stream.is_auto_scroll);
     app.dispatch_action(AppAction::ToggleLatch);
-    assert!(app.active_session().main_tab().stream.is_auto_scroll);
+    assert!(app.active_session().view.main_tab().stream.is_auto_scroll);
 
     // Open & close unfiltered stream (yêu cầu có filter trước khi mở Unfiltered)
     app.active_session_mut().view.search.query = "level:error".to_string();
     app.dispatch_action(AppAction::OpenUnfilteredStream(Some(42)));
-    assert!(app.active_session().has_raw_tab());
-    assert_eq!(app.active_session().active_tab, ActiveTab::Unfiltered);
+    assert!(app.active_session().view.has_raw_tab());
+    assert_eq!(app.active_session().view.active_tab, ActiveTab::Unfiltered);
 
     // Unfiltered live toggle (dùng chung ToggleLatch)
     assert!(
         !app.active_session()
+            .view
             .raw_tab()
             .unwrap()
             .stream
@@ -155,6 +169,7 @@ async fn test_app_action_latch_and_unfiltered() {
     app.dispatch_action(AppAction::ToggleLatch);
     assert!(
         app.active_session()
+            .view
             .raw_tab()
             .unwrap()
             .stream
@@ -164,12 +179,12 @@ async fn test_app_action_latch_and_unfiltered() {
     app.dispatch_action(AppAction::RefreshUnfilteredSnapshot);
 
     app.dispatch_action(AppAction::FocusInMainAndClearFilter);
-    assert!(!app.active_session().has_raw_tab());
-    assert_eq!(app.active_session().active_tab, ActiveTab::Filtered);
+    assert!(!app.active_session().view.has_raw_tab());
+    assert_eq!(app.active_session().view.active_tab, ActiveTab::Filtered);
 
     app.active_session_mut().view.search.query = "level:error".to_string();
     app.dispatch_action(AppAction::OpenUnfilteredStream(None));
-    assert!(app.active_session().has_raw_tab());
+    assert!(app.active_session().view.has_raw_tab());
     app.dispatch_action(AppAction::CloseUnfilteredStream);
-    assert!(!app.active_session().has_raw_tab());
+    assert!(!app.active_session().view.has_raw_tab());
 }

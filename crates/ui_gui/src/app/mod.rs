@@ -617,9 +617,9 @@ impl UwuGuiApp {
             for id in open_ids {
                 if let Some(ws) = store.recent_workspaces.iter().find(|w| w.id == id).cloned() {
                     if ws.is_valid_to_open()
-                        && !sessions.iter().any(|s| {
-                            crate::views::is_same_docker_project(&s.session.location, &ws.location)
-                        })
+                        && !sessions
+                            .iter()
+                            .any(|s| s.session.location.is_same_docker_project(&ws.location))
                     {
                         let mut gui_session =
                             GuiSession::from_workspace(&ws, cli.capacity, cli.display_limit);
@@ -804,10 +804,7 @@ impl UwuGuiApp {
                                 .iter()
                                 .enumerate()
                                 .filter(|(_, s)| {
-                                    crate::views::is_same_docker_project(
-                                        &s.session.location,
-                                        &target_loc,
-                                    )
+                                    s.session.location.is_same_docker_project(&target_loc)
                                 })
                                 .map(|(i, _)| i)
                                 .rev()

@@ -829,17 +829,3 @@ impl GuiSession {
         }
     }
 }
-
-impl std::ops::Deref for GuiSession {
-    type Target = GuiViewState;
-
-    fn deref(&self) -> &Self::Target {
-        &self.view
-    }
-}
-
-impl std::ops::DerefMut for GuiSession {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.view
-    }
-}

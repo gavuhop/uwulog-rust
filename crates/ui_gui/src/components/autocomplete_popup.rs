@@ -6,22 +6,26 @@ use eframe::egui::{self, Color32, CornerRadius, FontId, Pos2, Rect};
 
 /// Render Autocomplete Dropdown Popup ngay dưới ô tìm kiếm
 pub fn render_autocomplete_popup(ctx: &egui::Context, session: &mut GuiSession, input_rect: Rect) {
-    if !session.search.autocomplete.is_open || session.search.autocomplete.suggestions.is_empty() {
+    if !session.view.search.autocomplete.is_open
+        || session.view.search.autocomplete.suggestions.is_empty()
+    {
         return;
     }
 
     let mut item_to_apply = None;
     let prev_selected_idx: Option<usize> =
         ctx.data(|d| d.get_temp(egui::Id::new("ac_last_selected")));
-    let selection_changed = prev_selected_idx != Some(session.search.autocomplete.selected_index);
+    let selection_changed =
+        prev_selected_idx != Some(session.view.search.autocomplete.selected_index);
     ctx.data_mut(|d| {
         d.insert_temp(
             egui::Id::new("ac_last_selected"),
-            session.search.autocomplete.selected_index,
+            session.view.search.autocomplete.selected_index,
         )
     });
 
     let is_syntax = session
+        .view
         .search
         .autocomplete
         .suggestions
@@ -31,7 +35,7 @@ pub fn render_autocomplete_popup(ctx: &egui::Context, session: &mut GuiSession, 
     // Vẽ Floating Dropdown Panel (cách đáy filter box một khoảng thông thoáng để không bị đè viền)
     let dropdown_pos = Pos2::new(input_rect.min.x, input_rect.max.y + 8.0);
     let dropdown_width = input_rect.width();
-    let count = session.search.autocomplete.suggestions.len();
+    let count = session.view.search.autocomplete.suggestions.len();
     let approx_height = if is_syntax {
         (count as f32 * 28.0) + 16.0
     } else {
@@ -48,8 +52,15 @@ pub fn render_autocomplete_popup(ctx: &egui::Context, session: &mut GuiSession, 
             let mut hovered_index = None;
 
             let mut render_list = |ui: &mut egui::Ui| {
-                for (idx, item) in session.search.autocomplete.suggestions.iter().enumerate() {
-                    let is_selected = idx == session.search.autocomplete.selected_index;
+                for (idx, item) in session
+                    .view
+                    .search
+                    .autocomplete
+                    .suggestions
+                    .iter()
+                    .enumerate()
+                {
+                    let is_selected = idx == session.view.search.autocomplete.selected_index;
 
                     let desired_size = egui::vec2(ui.available_width(), 26.0);
                     let (rect, resp) = ui.allocate_exact_size(desired_size, egui::Sense::click());
@@ -122,7 +133,7 @@ pub fn render_autocomplete_popup(ctx: &egui::Context, session: &mut GuiSession, 
 
             if let Some(hover_idx) = hovered_index {
                 if ctx.input(|i| i.pointer.is_moving()) {
-                    session.search.autocomplete.selected_index = hover_idx;
+                    session.view.search.autocomplete.selected_index = hover_idx;
                     ctx.data_mut(|d| {
                         d.insert_temp(egui::Id::new("ac_last_selected"), hover_idx);
                     });
@@ -131,7 +142,7 @@ pub fn render_autocomplete_popup(ctx: &egui::Context, session: &mut GuiSession, 
         });
 
     if resp.closed {
-        session.search.autocomplete.is_open = false;
+        session.view.search.autocomplete.is_open = false;
     }
 
     let popup_rect = Rect::from_min_size(dropdown_pos, egui::vec2(dropdown_width, approx_height));
@@ -144,7 +155,7 @@ pub fn render_autocomplete_popup(ctx: &egui::Context, session: &mut GuiSession, 
     }
 
     if let Some(item) = item_to_apply {
-        session.search.apply_autocomplete_suggestion(&item);
+        session.view.search.apply_autocomplete_suggestion(&item);
         ctx.request_repaint();
     }
 }

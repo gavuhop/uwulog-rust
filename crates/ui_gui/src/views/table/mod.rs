@@ -40,7 +40,7 @@ fn render_log_table_scoped(
     tab: ActiveTab,
     dispatch: &mut impl FnMut(AppAction),
 ) {
-    let row_count = session.stream(tab).cached_logs.len();
+    let row_count = session.view.stream(tab).cached_logs.len();
     let scroll_target = session.consume_scroll_request(tab, row_count);
     let stream = session.stream_summary(tab);
     let text_height = crate::theme::TABLE_FONT_SIZE;
@@ -88,6 +88,7 @@ fn render_log_table_scoped(
 
     let default_ts = "2026-08-21 23:29:07";
     let sample_ts = session
+        .view
         .stream(tab)
         .cached_logs
         .first()
@@ -244,9 +245,9 @@ fn render_log_table_scoped(
                         last_row_visible = true;
                     }
 
-                    if let Some(event) = session.stream(tab).cached_logs.get(row_index) {
+                    if let Some(event) = session.view.stream(tab).cached_logs.get(row_index) {
                         let is_target = target_id.is_some_and(|id| id == event.id);
-                        let tab_selected = session.stream(tab).selected_log.as_ref();
+                        let tab_selected = session.view.stream(tab).selected_log.as_ref();
                         let is_selected =
                             is_target || tab_selected.is_some_and(|s| s.id == event.id);
 

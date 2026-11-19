@@ -32,24 +32,27 @@ async fn test_filter_and_exclude_term() {
     let session = app.active_session_mut();
 
     session.apply_filter_term("level:error");
-    assert_eq!(session.search.query, "level:error");
+    assert_eq!(session.view.search.query, "level:error");
 
     session.apply_filter_term("tag:Auth");
-    assert_eq!(session.search.query, "level:error tag:Auth");
+    assert_eq!(session.view.search.query, "level:error tag:Auth");
 
     session.exclude_filter_term("healthcheck");
-    assert_eq!(session.search.query, "level:error tag:Auth -healthcheck");
+    assert_eq!(
+        session.view.search.query,
+        "level:error tag:Auth -healthcheck"
+    );
 
     session.exclude_filter_term("-already_negated");
     assert_eq!(
-        session.search.query,
+        session.view.search.query,
         "level:error tag:Auth -healthcheck -already_negated"
     );
 
     // Verify filter terms applied via context menu are recorded to history
-    assert!(!session.search.history.entries.is_empty());
+    assert!(!session.view.search.history.entries.is_empty());
     assert_eq!(
-        session.search.history.entries[0],
+        session.view.search.history.entries[0],
         "level:error tag:Auth -healthcheck -already_negated"
     );
 }
@@ -66,9 +69,9 @@ async fn test_apply_autocomplete_suggestion() {
         example_syntax: "level:".to_string(),
         insert_text: "level:".to_string(),
     };
-    session.search.autocomplete.active_token_range = (0, 0);
-    session.search.apply_autocomplete_suggestion(&item_key);
-    assert_eq!(session.search.query, "level:");
+    session.view.search.autocomplete.active_token_range = (0, 0);
+    session.view.search.apply_autocomplete_suggestion(&item_key);
+    assert_eq!(session.view.search.query, "level:");
 
     let item_val = SuggestionItem {
         kind: SuggestionKind::OperatorOrValue,
@@ -77,16 +80,16 @@ async fn test_apply_autocomplete_suggestion() {
         example_syntax: "error".to_string(),
         insert_text: "error".to_string(),
     };
-    session.search.autocomplete.active_token_range = (6, 6);
-    session.search.apply_autocomplete_suggestion(&item_val);
-    assert_eq!(session.search.query, "level:error");
-    assert!(!session.search.autocomplete.is_open);
+    session.view.search.autocomplete.active_token_range = (6, 6);
+    session.view.search.apply_autocomplete_suggestion(&item_val);
+    assert_eq!(session.view.search.query, "level:error");
+    assert!(!session.view.search.autocomplete.is_open);
 }
 
 #[tokio::test]
 async fn test_get_available_log_fields_inference() {
     let app = create_test_app();
-    let fields = app.active_session().search.get_available_fields();
+    let fields = app.active_session().view.search.get_available_fields();
     assert!(!fields.is_empty());
     assert!(fields.iter().any(|(k, _)| k == "level"));
     assert!(fields.iter().any(|(k, _)| k == "timestamp"));
@@ -104,7 +107,7 @@ async fn test_sync_discovered_fields_replaces_aliases() {
 
     let session = app.active_session_mut();
     session.sync_discovered_fields(&[log]);
-    let fields = session.search.get_available_fields();
+    let fields = session.view.search.get_available_fields();
     assert!(fields.iter().any(|(k, _)| k == "level"));
 }
 
@@ -113,13 +116,16 @@ async fn test_app_action_query_filter_and_clear() {
     let mut app = create_test_app();
 
     app.dispatch_action(AppAction::ApplyFilterTerm("level:error".to_string()));
-    assert_eq!(app.active_session().search.query, "level:error");
+    assert_eq!(app.active_session().view.search.query, "level:error");
 
     app.dispatch_action(AppAction::ExcludeFilterTerm("user_id:42".to_string()));
-    assert_eq!(app.active_session().search.query, "level:error -user_id:42");
+    assert_eq!(
+        app.active_session().view.search.query,
+        "level:error -user_id:42"
+    );
 
     app.dispatch_action(AppAction::ClearQuery);
-    assert!(app.active_session().search.query.is_empty());
+    assert!(app.active_session().view.search.query.is_empty());
 }
 
 #[tokio::test]

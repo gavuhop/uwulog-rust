@@ -57,44 +57,41 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                     uwu_core_workspace::RemoteConnectionOptions::Docker(_)
                 )
             ) {
-                let rep_ix = if active_loc
-                    .is_some_and(|al| is_same_docker_project(&s.session.location, al))
-                {
-                    active_index
-                } else {
-                    app.workspaces
-                        .sessions
-                        .iter()
-                        .enumerate()
-                        .find(|(_, other)| {
-                            !other.session.is_following_container_logs()
-                                && is_same_docker_project(
-                                    &s.session.location,
-                                    &other.session.location,
-                                )
-                        })
-                        .or_else(|| {
-                            app.workspaces
-                                .sessions
-                                .iter()
-                                .enumerate()
-                                .find(|(_, other)| {
-                                    is_same_docker_project(
-                                        &s.session.location,
-                                        &other.session.location,
-                                    )
-                                })
-                        })
-                        .map(|(j, _)| j)
-                        .unwrap_or(ix)
-                };
+                let rep_ix =
+                    if active_loc.is_some_and(|al| s.session.location.is_same_docker_project(al)) {
+                        active_index
+                    } else {
+                        app.workspaces
+                            .sessions
+                            .iter()
+                            .enumerate()
+                            .find(|(_, other)| {
+                                !other.session.is_following_container_logs()
+                                    && s.session
+                                        .location
+                                        .is_same_docker_project(&other.session.location)
+                            })
+                            .or_else(|| {
+                                app.workspaces
+                                    .sessions
+                                    .iter()
+                                    .enumerate()
+                                    .find(|(_, other)| {
+                                        s.session
+                                            .location
+                                            .is_same_docker_project(&other.session.location)
+                                    })
+                            })
+                            .map(|(j, _)| j)
+                            .unwrap_or(ix)
+                    };
                 if ix != rep_ix {
                     continue;
                 }
             }
 
             let is_active = ix == active_index
-                || active_loc.is_some_and(|al| is_same_docker_project(&s.session.location, al));
+                || active_loc.is_some_and(|al| s.session.location.is_same_docker_project(al));
 
             let icon = s.session.icon();
             list.push(modals::ProjectPickerSessionInfo {
@@ -127,7 +124,7 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                         else {
                             return None;
                         };
-                        if !is_same_docker_project(&s.session.location, active_l) {
+                        if !s.session.location.is_same_docker_project(active_l) {
                             return None;
                         }
                         let container_name = d.container_name.clone();
@@ -388,47 +385,4 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     for action in pending_actions {
         app.dispatch_action(action);
     }
-}
-
-pub(crate) fn is_same_docker_project(
-    a: &uwu_core_workspace::WorkspaceLocation,
-    b: &uwu_core_workspace::WorkspaceLocation,
-) -> bool {
-    let (
-        uwu_core_workspace::WorkspaceLocation::Remote(
-            uwu_core_workspace::RemoteConnectionOptions::Docker(da),
-        ),
-        uwu_core_workspace::WorkspaceLocation::Remote(
-            uwu_core_workspace::RemoteConnectionOptions::Docker(db),
-        ),
-    ) = (a, b)
-    else {
-        return false;
-    };
-
-    let compose_a = da.compose_project.as_deref().filter(|s| !s.is_empty());
-    let compose_b = db.compose_project.as_deref().filter(|s| !s.is_empty());
-    if let (Some(p1), Some(p2)) = (compose_a, compose_b) {
-        return p1 == p2;
-    }
-
-    let same_folder = da
-        .local_folder
-        .as_deref()
-        .zip(db.local_folder.as_deref())
-        .is_some_and(|(f1, f2)| !f1.is_empty() && f1.eq_ignore_ascii_case(f2));
-    if same_folder {
-        return true;
-    }
-
-    if compose_a.is_some() || compose_b.is_some() {
-        let dir_a = uwu_core_workspace::normalize_workdir(&da.working_dir);
-        let dir_b = uwu_core_workspace::normalize_workdir(&db.working_dir);
-        if !dir_a.is_empty() && dir_a == dir_b {
-            return true;
-        }
-        return false;
-    }
-
-    da.container_name.eq_ignore_ascii_case(&db.container_name)
 }

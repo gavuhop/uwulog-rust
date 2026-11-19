@@ -1,10 +1,8 @@
 pub mod environment;
-pub mod manager;
 pub mod remote;
 pub mod session;
 
 pub use environment::{load_workspace_environment, parse_dot_env, EnvLoadStatus};
-pub use manager::MultiWorkspaceManager;
 pub use remote::{
     DockerConnection, DockerConnectionOptions, RemoteConnectionOptions, RemoteProject,
     ServerConnection, SshConnection, SshConnectionOptions, WslConnection, WslConnectionOptions,
@@ -127,6 +125,40 @@ impl WorkspaceLocation {
             (WorkspaceLocation::Remote(r1), WorkspaceLocation::Remote(r2)) => r1.is_same(r2),
             _ => false,
         }
+    }
+
+    /// Kiểm tra hai `WorkspaceLocation` Docker có thuộc cùng một dự án/compose (Dev Container) hay không.
+    pub fn is_same_docker_project(&self, other: &Self) -> bool {
+        let (
+            WorkspaceLocation::Remote(RemoteConnectionOptions::Docker(da)),
+            WorkspaceLocation::Remote(RemoteConnectionOptions::Docker(db)),
+        ) = (self, other)
+        else {
+            return false;
+        };
+
+        let compose_a = da.compose_project.as_deref().filter(|s| !s.is_empty());
+        let compose_b = db.compose_project.as_deref().filter(|s| !s.is_empty());
+        if let (Some(p1), Some(p2)) = (compose_a, compose_b) {
+            return p1 == p2;
+        }
+
+        let same_folder = da
+            .local_folder
+            .as_deref()
+            .zip(db.local_folder.as_deref())
+            .is_some_and(|(f1, f2)| !f1.is_empty() && f1.eq_ignore_ascii_case(f2));
+        if same_folder {
+            return true;
+        }
+
+        if compose_a.is_some() || compose_b.is_some() {
+            let dir_a = normalize_workdir(&da.working_dir);
+            let dir_b = normalize_workdir(&db.working_dir);
+            return !dir_a.is_empty() && dir_a == dir_b;
+        }
+
+        da.container_name.eq_ignore_ascii_case(&db.container_name)
     }
 }
 
@@ -1125,50 +1157,30 @@ mod tests {
         assert!(store.find_by_workdir("D:/Other/Path").is_none());
     }
 
-    #[tokio::test]
-    async fn test_multi_workspace_manager_lifecycle() {
-        let store = WorkspaceStore::default();
-        let session1 = WorkspaceSession::new_default(100, 50);
-        let id1 = session1.id;
-        let mut mgr = MultiWorkspaceManager::new(session1, store);
-
-        assert_eq!(mgr.sessions.len(), 1);
-        assert_eq!(mgr.active_index, 0);
-        assert_eq!(mgr.active_session().id, id1);
-
-        // Add second session
-        let ws2 = Workspace::new(
-            "test-service-2",
-            WorkspaceLocation::local("D:\\test\\service2"),
-            SourceType::Process,
+    #[test]
+    fn test_is_same_docker_project() {
+        let app = WorkspaceLocation::remote(
+            DockerConnectionOptions::new("proj-app-1", "/workspaces/p")
+                .with_compose_project("proj_devc")
+                .with_local_folder("/home/me/proj"),
         );
-        let rt = tokio::runtime::Handle::current();
-        let idx2 = mgr.open_or_switch_workspace(&ws2, 100, 50, &rt, false);
-        assert_eq!(idx2, 1);
-        assert_eq!(mgr.sessions.len(), 2);
-        assert_eq!(mgr.active_index, 1);
-        assert_eq!(mgr.active_session().name, "test-service-2");
-
-        // Switching between sessions
-        mgr.switch_session(0);
-        assert_eq!(mgr.active_index, 0);
-        assert_eq!(mgr.active_session().id, id1);
-
-        // Cycle sessions
-        mgr.cycle_session(true);
-        assert_eq!(mgr.active_index, 1);
-        mgr.cycle_session(false);
-        assert_eq!(mgr.active_index, 0);
-
-        // Close session 0
-        mgr.close_session(0, 100, 50);
-        assert_eq!(mgr.sessions.len(), 1);
-        assert_eq!(mgr.active_session().name, "test-service-2");
-
-        // Close last remaining session -> should auto-generate clean default session
-        mgr.close_session(0, 100, 50);
-        assert_eq!(mgr.sessions.len(), 1);
-        assert_eq!(mgr.active_index, 0);
+        let db = WorkspaceLocation::remote(
+            DockerConnectionOptions::new("proj-db-1", "/workspaces/p")
+                .with_compose_project("proj_devc"),
+        );
+        let other = WorkspaceLocation::remote(
+            DockerConnectionOptions::new("other-app-1", "/workspaces/o")
+                .with_compose_project("other_devc")
+                .with_local_folder("/home/me/other"),
+        );
+        let same_folder = WorkspaceLocation::remote(
+            DockerConnectionOptions::new("proj-minio-1", "/data")
+                .with_local_folder("/home/me/proj"),
+        );
+        assert!(app.is_same_docker_project(&db));
+        assert!(app.is_same_docker_project(&same_folder));
+        assert!(!app.is_same_docker_project(&other));
+        assert!(!app.is_same_docker_project(&WorkspaceLocation::local("/home/me/proj")));
     }
 
     #[test]

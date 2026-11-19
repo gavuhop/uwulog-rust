@@ -426,9 +426,10 @@ pub fn render_project_picker_popup(
                     if !ws_dir.is_empty() && open_dirs.contains(&ws_dir) {
                         continue;
                     }
-                    if filtered_recent.iter().any(|existing| {
-                        crate::views::is_same_docker_project(&existing.location, &ws.location)
-                    }) {
+                    if filtered_recent
+                        .iter()
+                        .any(|existing| existing.location.is_same_docker_project(&ws.location))
+                    {
                         continue;
                     }
 

@@ -7,17 +7,17 @@ use uwu_core_schema::{RawLogEntry, RawPayload};
 async fn test_unfiltered_stream_open_close_and_focus() {
     let mut app = create_test_app();
     let session = app.active_session_mut();
-    assert_eq!(session.active_tab, ActiveTab::Filtered);
+    assert_eq!(session.view.active_tab, ActiveTab::Filtered);
 
     session.open_unfiltered_stream(Some(12345));
-    assert_eq!(session.active_tab, ActiveTab::Unfiltered);
-    assert!(session.has_raw_tab());
-    assert_eq!(session.raw_tab().unwrap().target_id(), Some(12345));
-    assert!(!session.raw_tab().unwrap().stream.is_auto_scroll);
+    assert_eq!(session.view.active_tab, ActiveTab::Unfiltered);
+    assert!(session.view.has_raw_tab());
+    assert_eq!(session.view.raw_tab().unwrap().target_id(), Some(12345));
+    assert!(!session.view.raw_tab().unwrap().stream.is_auto_scroll);
 
     session.close_unfiltered_stream();
-    assert_eq!(session.active_tab, ActiveTab::Filtered);
-    assert!(!session.has_raw_tab());
+    assert_eq!(session.view.active_tab, ActiveTab::Filtered);
+    assert!(!session.view.has_raw_tab());
 }
 
 #[tokio::test]
@@ -35,12 +35,21 @@ async fn test_unfiltered_live_tick_sync_both_branches() {
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
     app.active_session_mut().trigger_full_search();
-    assert_eq!(app.active_session().main_tab().stream.cached_logs.len(), 5);
+    assert_eq!(
+        app.active_session()
+            .view
+            .main_tab()
+            .stream
+            .cached_logs
+            .len(),
+        5
+    );
 
     // 2. Open unfiltered stream in LIVE mode
     app.active_session_mut().open_unfiltered_stream(None);
     assert!(
         app.active_session()
+            .view
             .raw_tab()
             .unwrap()
             .stream
@@ -48,6 +57,7 @@ async fn test_unfiltered_live_tick_sync_both_branches() {
     );
     assert_eq!(
         app.active_session()
+            .view
             .raw_tab()
             .unwrap()
             .stream
@@ -66,13 +76,23 @@ async fn test_unfiltered_live_tick_sync_both_branches() {
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
     // Force last_search_time backward to satisfy 150ms debounce in tick()
-    app.active_session_mut().search.last_search_time = Instant::now() - Duration::from_millis(200);
+    app.active_session_mut().view.search.last_search_time =
+        Instant::now() - Duration::from_millis(200);
     app.tick();
 
     // Both filtered and unfiltered live buffers must have received all 10 logs
-    assert_eq!(app.active_session().main_tab().stream.cached_logs.len(), 10);
     assert_eq!(
         app.active_session()
+            .view
+            .main_tab()
+            .stream
+            .cached_logs
+            .len(),
+        10
+    );
+    assert_eq!(
+        app.active_session()
+            .view
             .raw_tab()
             .unwrap()
             .stream
@@ -98,6 +118,7 @@ async fn test_unfiltered_frozen_snapshot_no_drift() {
     app.active_session_mut().open_unfiltered_stream(Some(2));
     assert!(
         !app.active_session()
+            .view
             .raw_tab()
             .unwrap()
             .stream
@@ -105,6 +126,7 @@ async fn test_unfiltered_frozen_snapshot_no_drift() {
     );
     let initial_count = app
         .active_session()
+        .view
         .raw_tab()
         .unwrap()
         .stream
@@ -120,6 +142,7 @@ async fn test_unfiltered_frozen_snapshot_no_drift() {
     app.tick();
     assert_eq!(
         app.active_session()
+            .view
             .raw_tab()
             .unwrap()
             .stream
@@ -135,7 +158,7 @@ async fn test_close_unfiltered_stream_frees_ram() {
     let session = app.active_session_mut();
     session.open_unfiltered_stream(None);
     session.close_unfiltered_stream();
-    assert!(!session.has_raw_tab());
+    assert!(!session.view.has_raw_tab());
 }
 
 #[tokio::test]
@@ -165,6 +188,7 @@ async fn test_switch_tab_preserves_picked_row_and_inspector() {
     )));
     assert_eq!(
         app.active_session()
+            .view
             .shared
             .inspector
             .selected_log
@@ -174,6 +198,7 @@ async fn test_switch_tab_preserves_picked_row_and_inspector() {
     );
     assert_eq!(
         app.active_session()
+            .view
             .main_tab()
             .stream
             .selected_log
@@ -184,9 +209,15 @@ async fn test_switch_tab_preserves_picked_row_and_inspector() {
 
     // 2. Chuyển sang Raw (Unfiltered)
     app.dispatch_action(crate::actions::AppAction::SwitchTab(ActiveTab::Unfiltered));
-    assert_eq!(app.active_session().active_tab, ActiveTab::Unfiltered);
+    assert_eq!(app.active_session().view.active_tab, ActiveTab::Unfiltered);
     // Tab Raw chưa pick dòng nào -> inspector chưa có dòng nào
-    assert!(app.active_session().shared.inspector.selected_log.is_none());
+    assert!(app
+        .active_session()
+        .view
+        .shared
+        .inspector
+        .selected_log
+        .is_none());
 
     // 3. Ở Raw, pick dòng event_raw
     app.dispatch_action(crate::actions::AppAction::SelectLog(Some(
@@ -194,6 +225,7 @@ async fn test_switch_tab_preserves_picked_row_and_inspector() {
     )));
     assert_eq!(
         app.active_session()
+            .view
             .shared
             .inspector
             .selected_log
@@ -203,6 +235,7 @@ async fn test_switch_tab_preserves_picked_row_and_inspector() {
     );
     assert_eq!(
         app.active_session()
+            .view
             .raw_tab()
             .unwrap()
             .stream
@@ -214,10 +247,11 @@ async fn test_switch_tab_preserves_picked_row_and_inspector() {
 
     // 4. Chuyển ngược về Main (Filtered)
     app.dispatch_action(crate::actions::AppAction::SwitchTab(ActiveTab::Filtered));
-    assert_eq!(app.active_session().active_tab, ActiveTab::Filtered);
+    assert_eq!(app.active_session().view.active_tab, ActiveTab::Filtered);
     // Inspector tự động khôi phục đúng dòng đang pick của tab Main (event_main)!
     assert_eq!(
         app.active_session()
+            .view
             .shared
             .inspector
             .selected_log
@@ -228,10 +262,11 @@ async fn test_switch_tab_preserves_picked_row_and_inspector() {
 
     // 5. Chuyển lại sang Raw (Unfiltered)
     app.dispatch_action(crate::actions::AppAction::SwitchTab(ActiveTab::Unfiltered));
-    assert_eq!(app.active_session().active_tab, ActiveTab::Unfiltered);
+    assert_eq!(app.active_session().view.active_tab, ActiveTab::Unfiltered);
     // Inspector tự động khôi phục đúng dòng đang pick của tab Raw (event_raw)!
     assert_eq!(
         app.active_session()
+            .view
             .shared
             .inspector
             .selected_log

@@ -20,69 +20,109 @@ async fn test_reverse_pagination_loads_older_logs() {
     app.active_session_mut().session.display_limit = 10;
     app.active_session_mut().trigger_full_search();
 
-    assert_eq!(app.active_session().main_tab().stream.cached_logs.len(), 10);
     assert_eq!(
-        app.active_session().main_tab().stream.cached_logs[0].message,
+        app.active_session()
+            .view
+            .main_tab()
+            .stream
+            .cached_logs
+            .len(),
+        10
+    );
+    assert_eq!(
+        app.active_session().view.main_tab().stream.cached_logs[0].message,
         "[INFO] Message index 15"
     );
     assert_eq!(
-        app.active_session().main_tab().stream.cached_logs[9].message,
+        app.active_session().view.main_tab().stream.cached_logs[9].message,
         "[INFO] Message index 24"
     );
-    assert!(!app.active_session().main_tab().stream.reached_oldest);
+    assert!(!app.active_session().view.main_tab().stream.reached_oldest);
 
     // 2. Cuộn lên đỉnh -> gọi load_more_older_logs(10)
     app.active_session_mut().load_more_older_logs(10);
 
     // Bây giờ cached_logs phải có 20 bản ghi (index 05..24)
-    assert_eq!(app.active_session().main_tab().stream.cached_logs.len(), 20);
     assert_eq!(
-        app.active_session().main_tab().stream.cached_logs[0].message,
+        app.active_session()
+            .view
+            .main_tab()
+            .stream
+            .cached_logs
+            .len(),
+        20
+    );
+    assert_eq!(
+        app.active_session().view.main_tab().stream.cached_logs[0].message,
         "[INFO] Message index 05"
     );
     assert_eq!(
-        app.active_session().main_tab().stream.cached_logs[9].message,
+        app.active_session().view.main_tab().stream.cached_logs[9].message,
         "[INFO] Message index 14"
     );
     assert_eq!(
-        app.active_session().main_tab().stream.cached_logs[19].message,
+        app.active_session().view.main_tab().stream.cached_logs[19].message,
         "[INFO] Message index 24"
     );
     // Vị trí scroll duy trì phải bằng số log vừa nạp thêm (10)
     assert_eq!(
-        app.active_session().main_tab().stream.pending_scroll,
+        app.active_session().view.main_tab().stream.pending_scroll,
         Some(crate::state::ScrollCommand::MaintainOffset(10))
     );
-    assert!(!app.active_session().main_tab().stream.reached_oldest);
+    assert!(!app.active_session().view.main_tab().stream.reached_oldest);
 
     // 3. Cuộn tiếp lên đỉnh -> nạp nốt 10 log cũ nhất (chỉ còn 5 bản ghi 00..04)
     app.active_session_mut().load_more_older_logs(10);
-    assert_eq!(app.active_session().main_tab().stream.cached_logs.len(), 25);
     assert_eq!(
-        app.active_session().main_tab().stream.cached_logs[0].message,
+        app.active_session()
+            .view
+            .main_tab()
+            .stream
+            .cached_logs
+            .len(),
+        25
+    );
+    assert_eq!(
+        app.active_session().view.main_tab().stream.cached_logs[0].message,
         "[INFO] Message index 00"
     );
     assert_eq!(
-        app.active_session().main_tab().stream.cached_logs[4].message,
+        app.active_session().view.main_tab().stream.cached_logs[4].message,
         "[INFO] Message index 04"
     );
     assert_eq!(
-        app.active_session().main_tab().stream.pending_scroll,
+        app.active_session().view.main_tab().stream.pending_scroll,
         Some(crate::state::ScrollCommand::MaintainOffset(5))
     );
     // Vì nạp được 5 < 10 (hết sạch log trong engine), reached_oldest phải bật thành true
-    assert!(app.active_session().main_tab().stream.reached_oldest);
+    assert!(app.active_session().view.main_tab().stream.reached_oldest);
 
     // 4. Lần gọi tiếp theo khi reached_oldest = true không làm thay đổi cached_logs
     app.active_session_mut().load_more_older_logs(10);
-    assert_eq!(app.active_session().main_tab().stream.cached_logs.len(), 25);
+    assert_eq!(
+        app.active_session()
+            .view
+            .main_tab()
+            .stream
+            .cached_logs
+            .len(),
+        25
+    );
 
     // 5. Bật lại Latch -> trigger_full_search -> reset reached_oldest
     app.active_session_mut().latch();
-    assert!(!app.active_session().main_tab().stream.reached_oldest);
-    assert_eq!(app.active_session().main_tab().stream.cached_logs.len(), 10);
+    assert!(!app.active_session().view.main_tab().stream.reached_oldest);
     assert_eq!(
-        app.active_session().main_tab().stream.cached_logs[0].message,
+        app.active_session()
+            .view
+            .main_tab()
+            .stream
+            .cached_logs
+            .len(),
+        10
+    );
+    assert_eq!(
+        app.active_session().view.main_tab().stream.cached_logs[0].message,
         "[INFO] Message index 15"
     );
 }
@@ -109,34 +149,50 @@ async fn test_reverse_pagination_with_filter() {
     app.active_session_mut().session.display_limit = 5;
     app.active_session_mut().trigger_full_search();
 
-    assert_eq!(app.active_session().main_tab().stream.cached_logs.len(), 5);
+    assert_eq!(
+        app.active_session()
+            .view
+            .main_tab()
+            .stream
+            .cached_logs
+            .len(),
+        5
+    );
     // 5 log mới nhất là 10, 12, 14, 16, 18
     assert_eq!(
-        app.active_session().main_tab().stream.cached_logs[0].message,
+        app.active_session().view.main_tab().stream.cached_logs[0].message,
         "[ERROR] Index 10"
     );
     assert_eq!(
-        app.active_session().main_tab().stream.cached_logs[4].message,
+        app.active_session().view.main_tab().stream.cached_logs[4].message,
         "[ERROR] Index 18"
     );
 
     // Nạp thêm 5 logs cũ hơn
     app.active_session_mut().load_more_older_logs(5);
-    assert_eq!(app.active_session().main_tab().stream.cached_logs.len(), 10);
     assert_eq!(
-        app.active_session().main_tab().stream.cached_logs[0].message,
+        app.active_session()
+            .view
+            .main_tab()
+            .stream
+            .cached_logs
+            .len(),
+        10
+    );
+    assert_eq!(
+        app.active_session().view.main_tab().stream.cached_logs[0].message,
         "[ERROR] Index 00"
     );
     assert_eq!(
-        app.active_session().main_tab().stream.cached_logs[4].message,
+        app.active_session().view.main_tab().stream.cached_logs[4].message,
         "[ERROR] Index 08"
     );
     assert_eq!(
-        app.active_session().main_tab().stream.cached_logs[9].message,
+        app.active_session().view.main_tab().stream.cached_logs[9].message,
         "[ERROR] Index 18"
     );
     assert_eq!(
-        app.active_session().main_tab().stream.pending_scroll,
+        app.active_session().view.main_tab().stream.pending_scroll,
         Some(crate::state::ScrollCommand::MaintainOffset(5))
     );
 }
@@ -170,6 +226,7 @@ async fn test_reverse_pagination_unfiltered_stream() {
         .cached_logs = all_logs[10..15].to_vec();
     assert_eq!(
         app.active_session()
+            .view
             .raw_tab()
             .unwrap()
             .stream
@@ -180,7 +237,7 @@ async fn test_reverse_pagination_unfiltered_stream() {
 
     // Tải thêm 5 logs cũ hơn
     app.active_session_mut().load_more_older_unfiltered(5);
-    let raw = app.active_session().raw_tab().unwrap();
+    let raw = app.active_session().view.raw_tab().unwrap();
     assert_eq!(raw.stream.cached_logs.len(), 10);
     assert_eq!(raw.stream.cached_logs[0].message, "[INFO] Raw line 05");
     assert_eq!(

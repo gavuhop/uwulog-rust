@@ -13,7 +13,7 @@ async fn test_multi_project_switch_and_close() {
     assert_eq!(app.workspaces.sessions.len(), 1);
     assert_eq!(app.workspaces.active_index, 0);
 
-    app.active_session_mut().search.query = "level:error".to_string();
+    app.active_session_mut().view.search.query = "level:error".to_string();
 
     let ws2 = Workspace::new(
         "Project B",
@@ -25,25 +25,25 @@ async fn test_multi_project_switch_and_close() {
     assert_eq!(app.workspaces.sessions.len(), 2);
     assert_eq!(app.workspaces.active_index, 1);
     assert_eq!(app.active_session().session.name, "Project B");
-    assert_eq!(app.active_session().search.query, "");
+    assert_eq!(app.active_session().view.search.query, "");
 
-    app.active_session_mut().search.query = "tag:Audio".to_string();
+    app.active_session_mut().view.search.query = "tag:Audio".to_string();
 
     app.switch_session(0);
     assert_eq!(app.workspaces.active_index, 0);
     assert_eq!(app.active_session().session.name, "Test Project");
-    assert_eq!(app.active_session().search.query, "level:error");
+    assert_eq!(app.active_session().view.search.query, "level:error");
 
     app.switch_session(1);
     assert_eq!(app.workspaces.active_index, 1);
     assert_eq!(app.active_session().session.name, "Project B");
-    assert_eq!(app.active_session().search.query, "tag:Audio");
+    assert_eq!(app.active_session().view.search.query, "tag:Audio");
 
     app.close_session(1);
     assert_eq!(app.workspaces.sessions.len(), 1);
     assert_eq!(app.workspaces.active_index, 0);
     assert_eq!(app.active_session().session.name, "Test Project");
-    assert_eq!(app.active_session().search.query, "level:error");
+    assert_eq!(app.active_session().view.search.query, "level:error");
 }
 
 #[tokio::test]

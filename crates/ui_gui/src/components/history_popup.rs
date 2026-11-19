@@ -9,13 +9,13 @@ pub fn render_history_popup(
     input_rect: Rect,
     trigger_rect: Rect,
 ) {
-    if !session.search.history.is_open {
+    if !session.view.search.history.is_open {
         return;
     }
 
     let popup_pos = Pos2::new(input_rect.min.x, input_rect.max.y + 8.0);
     let popup_width = input_rect.width();
-    let entry_count = session.search.history.entries.len().max(1);
+    let entry_count = session.view.search.history.entries.len().max(1);
     let approx_height = (entry_count as f32 * 28.0) + 48.0;
 
     let mut selected_history_item = None;
@@ -45,7 +45,7 @@ pub fn render_history_popup(
                 );
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if !session.search.history.entries.is_empty() {
+                    if !session.view.search.history.entries.is_empty() {
                         let clear_btn = AppButton::new()
                             .label("Clear")
                             .small()
@@ -62,7 +62,7 @@ pub fn render_history_popup(
             ui.separator();
             ui.add_space(4.0);
 
-            if session.search.history.entries.is_empty() {
+            if session.view.search.history.entries.is_empty() {
                 ui.horizontal(|ui| {
                     ui.add_space(4.0);
                     ui.label(
@@ -74,7 +74,7 @@ pub fn render_history_popup(
                 });
                 ui.add_space(2.0);
             } else {
-                for hist_query in &session.search.history.entries {
+                for hist_query in &session.view.search.history.entries {
                     let desired_size = egui::vec2(ui.available_width(), 26.0);
                     let (rect, resp) = ui.allocate_exact_size(desired_size, egui::Sense::click());
 
@@ -122,7 +122,7 @@ pub fn render_history_popup(
         });
 
     if resp.closed {
-        session.search.history.is_open = false;
+        session.view.search.history.is_open = false;
     }
 
     let popup_rect = Rect::from_min_size(popup_pos, egui::vec2(popup_width, approx_height));
@@ -135,17 +135,21 @@ pub fn render_history_popup(
     }
 
     if clear_all_clicked {
-        session.search.history.entries.clear();
-        session.search.history.pending_record = false;
+        session.view.search.history.entries.clear();
+        session.view.search.history.pending_record = false;
         ctx.request_repaint();
     }
 
     if let Some(chosen_query) = selected_history_item {
-        session.search.query = chosen_query.clone();
-        session.search.history.apply_history_item(&chosen_query);
-        session.search.autocomplete.is_open = false;
-        session.search.autocomplete.suggestions.clear();
-        session.search.autocomplete.just_applied = true;
+        session.view.search.query = chosen_query.clone();
+        session
+            .view
+            .search
+            .history
+            .apply_history_item(&chosen_query);
+        session.view.search.autocomplete.is_open = false;
+        session.view.search.autocomplete.suggestions.clear();
+        session.view.search.autocomplete.just_applied = true;
         ctx.request_repaint();
     }
 }
