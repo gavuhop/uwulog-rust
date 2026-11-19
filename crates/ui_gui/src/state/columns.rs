@@ -668,7 +668,7 @@ mod tests {
     fn test_sync_discovered_keys_deduplicates_semantic_aliases() {
         let mut state = ColumnState::default();
 
-        // Log 1 có đồng thời cả "level" và "lv" -> chỉ giữ 1 cột Level duy nhất ("level")
+        // Log 1 có đồng thời cả "level" và "lv" -> chỉ giữ 1 cột Level duy nhất (không tạo 2 cột)
         let mut fields1 = HashMap::new();
         fields1.insert("level".to_string(), serde_json::json!("INFO"));
         fields1.insert("lv".to_string(), serde_json::json!("info"));
@@ -690,7 +690,34 @@ mod tests {
         state.sync_discovered_keys(&[log2]);
 
         let names: Vec<&str> = state.columns.iter().map(|c| c.name.as_str()).collect();
-        assert_eq!(names, ["timestamp", "level", "message"]);
+        assert_eq!(names.len(), 3);
+        assert_eq!(names[0], "timestamp");
+        assert_eq!(
+            uwu_core_schema::StandardField::from_alias(names[1]),
+            Some(uwu_core_schema::StandardField::Level)
+        );
+        assert_eq!(names[2], "message");
+
+        // Chiều thuận: "level" tới trước rồi "lv" tới sau -> chỉ giữ ["timestamp", "level", "message"]
+        let mut canon_first = ColumnState::default();
+        canon_first.sync_discovered_keys(&[LogEvent::new(
+            "2026-08-20T10:00:00Z",
+            LogColor::Green,
+            "hi",
+            HashMap::from([("level".to_string(), serde_json::json!("INFO"))]),
+        )]);
+        canon_first.sync_discovered_keys(&[LogEvent::new(
+            "2026-08-20T10:00:01Z",
+            LogColor::Yellow,
+            "hi2",
+            HashMap::from([("lv".to_string(), serde_json::json!("WARN"))]),
+        )]);
+        let canon_names: Vec<&str> = canon_first
+            .columns
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect();
+        assert_eq!(canon_names, ["timestamp", "level", "message"]);
 
         // Chiều ngược lại: "lv" tới trước -> đổi tên "level" thành "lv"; khi "level" tới sau không tạo cột trùng
         let mut reverse_state = ColumnState::default();
