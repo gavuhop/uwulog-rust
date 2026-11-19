@@ -315,11 +315,9 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                         if is_any_overlay_open
                             && matches!(
                                 action,
-                                crate::actions::AppAction::Session(
-                                    crate::actions::SessionAction::Unlatch
-                                        | crate::actions::SessionAction::Latch
-                                        | crate::actions::SessionAction::SelectLog(_)
-                                )
+                                crate::actions::AppAction::Unlatch
+                                    | crate::actions::AppAction::Latch
+                                    | crate::actions::AppAction::SelectLog(_)
                             )
                         {
                             return;

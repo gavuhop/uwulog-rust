@@ -2,7 +2,7 @@
 
 pub use uwu_core_keymap::*;
 
-use crate::actions::{AppAction, OverlayAction, SessionAction, WorkspaceAction};
+use crate::actions::AppAction;
 
 /// Extension trait ánh xạ `KeyAction` sang `AppAction` của tầng GUI logic.
 pub trait KeyActionExt {
@@ -12,42 +12,38 @@ pub trait KeyActionExt {
 impl KeyActionExt for KeyAction {
     fn to_app_action(&self) -> Option<AppAction> {
         match self {
-            Self::Dismiss => Some(OverlayAction::DismissTopLayer.into()),
+            Self::Dismiss => Some(AppAction::DismissTopLayer),
             Self::Quit => Some(AppAction::QuitApp),
             // Zoom được xử lý trực tiếp trên egui::Context trong app/keybindings.rs
             Self::ZoomIn | Self::ZoomOut | Self::ResetZoom => None,
-            Self::ToggleProjectPicker => Some(OverlayAction::ToggleProjectPicker.into()),
-            Self::PreviousSession => Some(WorkspaceAction::CycleSession(false).into()),
-            Self::NextSession => Some(WorkspaceAction::CycleSession(true).into()),
-            Self::ToggleRemoteServers => Some(OverlayAction::ToggleRemoteServers.into()),
-            Self::OpenLaunchModal => Some(OverlayAction::OpenLaunch.into()),
-            Self::OpenColumnsModal => Some(OverlayAction::OpenColumns.into()),
-            Self::OpenKeymapModal => Some(OverlayAction::OpenKeymap.into()),
-            Self::RestartSource => Some(SessionAction::RestartSource.into()),
-            Self::ToggleLatch => Some(SessionAction::ToggleLatch.into()),
-            Self::ToggleStreamView => Some(SessionAction::ToggleStreamView.into()),
-            Self::SelectMainView => {
-                Some(SessionAction::SwitchTab(crate::state::ActiveTab::Filtered).into())
-            }
-            Self::SelectRawView => {
-                Some(SessionAction::SwitchTab(crate::state::ActiveTab::Unfiltered).into())
-            }
-            Self::ViewRawContext => Some(SessionAction::ViewRawContext.into()),
-            Self::FocusFilter => Some(SessionAction::FocusSearch.into()),
-            Self::ToggleSearchHistory => Some(SessionAction::ToggleSearchHistory.into()),
-            Self::CommitSearch => Some(SessionAction::CommitSearch.into()),
-            Self::ClearSearch => Some(SessionAction::ClearQuery.into()),
-            Self::SelectNext => Some(SessionAction::AutocompleteNext.into()),
-            Self::SelectPrev => Some(SessionAction::AutocompletePrev.into()),
-            Self::ConfirmSelection => Some(SessionAction::AutocompleteConfirm.into()),
-            Self::ScrollLeft => Some(SessionAction::ScrollTableLeft.into()),
-            Self::ScrollRight => Some(SessionAction::ScrollTableRight.into()),
-            Self::ScrollToLeft => Some(SessionAction::ScrollTableLeftMost.into()),
-            Self::PageUp => Some(SessionAction::PageUp.into()),
-            Self::PageDown => Some(SessionAction::PageDown.into()),
-            Self::ScrollToTop => Some(SessionAction::ScrollToTop.into()),
-            Self::ScrollToBottom => Some(SessionAction::ScrollToBottom.into()),
-            Self::CopySelection => Some(SessionAction::CopySelectedLog.into()),
+            Self::ToggleProjectPicker => Some(AppAction::ToggleProjectPicker),
+            Self::PreviousSession => Some(AppAction::CycleSession(false)),
+            Self::NextSession => Some(AppAction::CycleSession(true)),
+            Self::ToggleRemoteServers => Some(AppAction::ToggleRemoteServersModal),
+            Self::OpenLaunchModal => Some(AppAction::OpenLaunchModal),
+            Self::OpenColumnsModal => Some(AppAction::OpenColumnsModal),
+            Self::OpenKeymapModal => Some(AppAction::OpenKeymapModal),
+            Self::RestartSource => Some(AppAction::RestartSource),
+            Self::ToggleLatch => Some(AppAction::ToggleLatch),
+            Self::ToggleStreamView => Some(AppAction::ToggleStreamView),
+            Self::SelectMainView => Some(AppAction::SwitchTab(crate::state::ActiveTab::Filtered)),
+            Self::SelectRawView => Some(AppAction::SwitchTab(crate::state::ActiveTab::Unfiltered)),
+            Self::ViewRawContext => Some(AppAction::ViewRawContext),
+            Self::FocusFilter => Some(AppAction::FocusSearch),
+            Self::ToggleSearchHistory => Some(AppAction::ToggleSearchHistory),
+            Self::CommitSearch => Some(AppAction::CommitSearch),
+            Self::ClearSearch => Some(AppAction::ClearQuery),
+            Self::SelectNext => Some(AppAction::AutocompleteNext),
+            Self::SelectPrev => Some(AppAction::AutocompletePrev),
+            Self::ConfirmSelection => Some(AppAction::AutocompleteConfirm),
+            Self::ScrollLeft => Some(AppAction::ScrollTableLeft),
+            Self::ScrollRight => Some(AppAction::ScrollTableRight),
+            Self::ScrollToLeft => Some(AppAction::ScrollTableLeftMost),
+            Self::PageUp => Some(AppAction::PageUp),
+            Self::PageDown => Some(AppAction::PageDown),
+            Self::ScrollToTop => Some(AppAction::ScrollToTop),
+            Self::ScrollToBottom => Some(AppAction::ScrollToBottom),
+            Self::CopySelection => Some(AppAction::CopySelectedLog),
             Self::Back | Self::TabComplete | Self::Unbind => None,
         }
     }

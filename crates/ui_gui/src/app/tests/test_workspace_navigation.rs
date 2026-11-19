@@ -1,5 +1,5 @@
 use super::test_helpers::create_test_app;
-use crate::actions::{AppAction, OverlayAction, SessionAction, WorkspaceAction};
+use crate::actions::AppAction;
 use crate::app::WorkspaceManager;
 use crate::overlay::{OverlayLayer, RemoteModalPlacement};
 use crate::session::GuiSession;
@@ -141,11 +141,11 @@ async fn test_app_action_project_picker() {
     let mut app = create_test_app();
 
     assert!(!app.is_overlay_open(OverlayLayer::ProjectPicker));
-    app.dispatch_action(OverlayAction::ToggleProjectPicker.into());
+    app.dispatch_action(AppAction::ToggleProjectPicker);
     assert!(app.is_overlay_open(OverlayLayer::ProjectPicker));
 
     app.overlays.project_search_query = "search_test".to_string();
-    app.dispatch_action(OverlayAction::CloseProjectPicker.into());
+    app.dispatch_action(AppAction::CloseProjectPicker);
     assert!(!app.is_overlay_open(OverlayLayer::ProjectPicker));
     assert!(app.overlays.project_search_query.is_empty());
 }
@@ -157,11 +157,11 @@ async fn test_app_action_remote_servers_modal() {
     assert!(!app.is_overlay_open(OverlayLayer::RemoteServersModal));
 
     // Mở Project Picker trước
-    app.dispatch_action(OverlayAction::ToggleProjectPicker.into());
+    app.dispatch_action(AppAction::ToggleProjectPicker);
     assert!(app.is_overlay_open(OverlayLayer::ProjectPicker));
 
     // Mở Remote Servers modal -> tự động đóng Project Picker và mở RemoteServersModal
-    app.dispatch_action(OverlayAction::OpenRemoteServers.into());
+    app.dispatch_action(AppAction::OpenRemoteServersModal);
     assert!(!app.is_overlay_open(OverlayLayer::ProjectPicker));
     assert!(app.is_overlay_open(OverlayLayer::RemoteServersModal));
     assert_eq!(
@@ -170,11 +170,11 @@ async fn test_app_action_remote_servers_modal() {
     );
 
     // Đóng Remote Servers modal
-    app.dispatch_action(OverlayAction::CloseRemoteServers.into());
+    app.dispatch_action(AppAction::CloseRemoteServersModal);
     assert!(!app.is_overlay_open(OverlayLayer::RemoteServersModal));
 
     // Mở Remote Servers modal từ Server Picker trên header -> placement là TopLeft
-    app.dispatch_action(OverlayAction::ToggleRemoteServers.into());
+    app.dispatch_action(AppAction::ToggleRemoteServersModal);
     assert!(app.is_overlay_open(OverlayLayer::RemoteServersModal));
     assert_eq!(app.overlays.remote_placement, RemoteModalPlacement::TopLeft);
 }
@@ -219,10 +219,7 @@ async fn test_remote_servers_modal_escape_back_navigation() {
             &mut store,
             None,
             &mut |action| {
-                if matches!(
-                    action,
-                    AppAction::Overlay(OverlayAction::CloseRemoteServers)
-                ) {
+                if matches!(action, AppAction::CloseRemoteServersModal) {
                     closed_dispatched = true;
                 }
             },
@@ -266,10 +263,7 @@ async fn test_remote_servers_modal_escape_back_navigation() {
             &mut store,
             None,
             &mut |action| {
-                if matches!(
-                    action,
-                    AppAction::Overlay(OverlayAction::CloseRemoteServers)
-                ) {
+                if matches!(action, AppAction::CloseRemoteServersModal) {
                     closed_dispatched = true;
                 }
             },
@@ -312,10 +306,7 @@ async fn test_remote_servers_modal_escape_back_navigation() {
             &mut store,
             None,
             &mut |action| {
-                if matches!(
-                    action,
-                    AppAction::Overlay(OverlayAction::CloseRemoteServers)
-                ) {
+                if matches!(action, AppAction::CloseRemoteServersModal) {
                     closed_dispatched = true;
                 }
             },
@@ -349,10 +340,7 @@ async fn test_remote_servers_modal_escape_back_navigation() {
             &mut store,
             None,
             &mut |action| {
-                if matches!(
-                    action,
-                    AppAction::Overlay(OverlayAction::CloseRemoteServers)
-                ) {
+                if matches!(action, AppAction::CloseRemoteServersModal) {
                     closed_dispatched = true;
                 }
             },
@@ -461,7 +449,7 @@ async fn test_workspace_persists_and_restores_columns_only_on_matching_keys() {
             c.width = 240.0;
         }
     }
-    app.dispatch_action(OverlayAction::ApplyColumns.into());
+    app.dispatch_action(AppAction::ApplyColumnsModal);
     app.on_exit();
 
     // Đọc lại từ JSON trên đĩa -> mở WorkspaceSession mới và nạp ViewerPrefs theo ViewerKey
@@ -763,7 +751,7 @@ async fn test_open_normal_workspace_does_not_auto_run_while_container_log_tab_st
         SourceType::File,
     );
     file_ws.file_path = log_file.to_string_lossy().to_string();
-    app.dispatch_action(WorkspaceAction::Open(Box::new(file_ws)).into());
+    app.dispatch_action(AppAction::OpenWorkspace(Box::new(file_ws)));
 
     assert!(!app.active_session().has_auto_started_source);
     assert!(!app.active_session().session.is_source_running);
@@ -780,7 +768,7 @@ async fn test_open_normal_workspace_does_not_auto_run_while_container_log_tab_st
         ),
         SourceType::Process,
     );
-    app.dispatch_action(WorkspaceAction::Open(Box::new(app_container_ws)).into());
+    app.dispatch_action(AppAction::OpenWorkspace(Box::new(app_container_ws)));
 
     assert!(!app.active_session().session.is_following_container_logs());
     assert!(!app.active_session().has_auto_started_source);
@@ -799,7 +787,9 @@ async fn test_open_normal_workspace_does_not_auto_run_while_container_log_tab_st
         ),
         SourceType::Process,
     );
-    app.dispatch_action(WorkspaceAction::OpenContainerLog(Box::new(svc_container_ws)).into());
+    app.dispatch_action(AppAction::OpenContainerLogSession(Box::new(
+        svc_container_ws,
+    )));
 
     assert!(app.active_session().session.is_following_container_logs());
     assert!(app.active_session().has_auto_started_source);
@@ -819,12 +809,12 @@ async fn test_open_normal_workspace_does_not_auto_run_while_container_log_tab_st
 
     // 4. Nếu user bấm Stop thủ công rồi chuyển tab qua lại -> không tự khởi chạy đè
     let svc_idx = app.workspaces.active_index;
-    app.dispatch_action(SessionAction::StopSource.into());
+    app.dispatch_action(AppAction::StopSource);
     assert!(app.active_session().user_stopped_source);
     assert!(!app.active_session().session.is_source_running);
 
-    app.dispatch_action(WorkspaceAction::SwitchSession(svc_idx - 1).into());
-    app.dispatch_action(WorkspaceAction::SwitchSession(svc_idx).into());
+    app.dispatch_action(AppAction::SwitchSession(svc_idx - 1));
+    app.dispatch_action(AppAction::SwitchSession(svc_idx));
     assert!(!app.active_session().session.is_source_running);
 
     let _ = std::fs::remove_file(&log_file);
@@ -847,7 +837,7 @@ async fn test_devcontainer_tab_switching_and_reopen_preserves_state() {
         ),
         SourceType::Process,
     );
-    app.dispatch_action(WorkspaceAction::Open(Box::new(app_ws)).into());
+    app.dispatch_action(AppAction::OpenWorkspace(Box::new(app_ws)));
     let app_idx = app.workspaces.active_index;
 
     let make_db_ws = || {
@@ -862,7 +852,7 @@ async fn test_devcontainer_tab_switching_and_reopen_preserves_state() {
             SourceType::Process,
         )
     };
-    app.dispatch_action(WorkspaceAction::OpenContainerLog(Box::new(make_db_ws())).into());
+    app.dispatch_action(AppAction::OpenContainerLogSession(Box::new(make_db_ws())));
 
     let db_idx = app.workspaces.active_index;
     assert_ne!(app_idx, db_idx);
@@ -888,7 +878,7 @@ async fn test_devcontainer_tab_switching_and_reopen_preserves_state() {
     }
 
     // Chuyển sang `app`, chỉnh trạng thái riêng trên `app`
-    app.dispatch_action(WorkspaceAction::SwitchSession(app_idx).into());
+    app.dispatch_action(AppAction::SwitchSession(app_idx));
     {
         let main_app = app.active_session_mut();
         main_app
@@ -913,7 +903,7 @@ async fn test_devcontainer_tab_switching_and_reopen_preserves_state() {
     }
 
     // Đổi qua lại giữa `db` và `app`: cả hai phải giữ nguyên độ rộng cột, query, inspector, cache
-    app.dispatch_action(WorkspaceAction::SwitchSession(db_idx).into());
+    app.dispatch_action(AppAction::SwitchSession(db_idx));
     assert!(
         (app.active_session().view.shared.columns.columns[0].width - 185.0).abs() < 0.1,
         "db timestamp width lost"
@@ -932,7 +922,7 @@ async fn test_devcontainer_tab_switching_and_reopen_preserves_state() {
         1
     );
 
-    app.dispatch_action(WorkspaceAction::SwitchSession(app_idx).into());
+    app.dispatch_action(AppAction::SwitchSession(app_idx));
     assert!(
         (app.active_session().view.shared.columns.columns[0].width - 245.0).abs() < 0.1,
         "app timestamp width lost"
@@ -953,7 +943,7 @@ async fn test_devcontainer_tab_switching_and_reopen_preserves_state() {
 
     // Đóng tab `db`, reload store từ đĩa (mô phỏng tắt app mở lại) và mở lại `db`:
     // không tạo duplicate trong `recent_workspaces`, đồng thời khôi phục toàn bộ view state của `db`.
-    app.dispatch_action(WorkspaceAction::CloseSession(db_idx).into());
+    app.dispatch_action(AppAction::CloseSession(db_idx));
     let docker_recent_count = app
         .workspaces
         .store
@@ -964,7 +954,7 @@ async fn test_devcontainer_tab_switching_and_reopen_preserves_state() {
     assert_eq!(docker_recent_count, 1);
 
     app.workspaces.store = WorkspaceStore::load_from_path(&storage_path);
-    app.dispatch_action(WorkspaceAction::OpenContainerLog(Box::new(make_db_ws())).into());
+    app.dispatch_action(AppAction::OpenContainerLogSession(Box::new(make_db_ws())));
     assert!(
         (app.active_session().view.shared.columns.columns[0].width - 185.0).abs() < 0.1,
         "reopened db tab should restore saved timestamp width"
@@ -972,7 +962,7 @@ async fn test_devcontainer_tab_switching_and_reopen_preserves_state() {
     assert_eq!(app.active_session().view.search.query, "db_slow");
     assert!((app.active_session().view.shared.inspector.width_ratio - 0.28).abs() < 0.01);
 
-    app.dispatch_action(WorkspaceAction::CloseSession(db_idx).into());
-    app.dispatch_action(WorkspaceAction::CloseSession(app_idx).into());
+    app.dispatch_action(AppAction::CloseSession(db_idx));
+    app.dispatch_action(AppAction::CloseSession(app_idx));
     let _ = std::fs::remove_file(&storage_path);
 }

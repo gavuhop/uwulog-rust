@@ -1,5 +1,5 @@
 use super::test_helpers::create_test_app;
-use crate::actions::{AppAction, OverlayAction, SessionAction, WorkspaceAction};
+use crate::actions::AppAction;
 use crate::keymap::{KeyAction, KeyActionExt, KeyContext, KeymapConfigFile};
 use crate::overlay::OverlayLayer;
 use eframe::egui::{Key, Modifiers, RawInput};
@@ -13,19 +13,19 @@ fn test_keymap_integration_actions() {
     // 1. Kiểm tra ánh xạ mặc định từ KeyAction sang AppAction
     assert!(matches!(
         KeyAction::Dismiss.to_app_action(),
-        Some(AppAction::Overlay(OverlayAction::DismissTopLayer))
+        Some(AppAction::DismissTopLayer)
     ));
     assert!(matches!(
         KeyAction::ToggleProjectPicker.to_app_action(),
-        Some(AppAction::Overlay(OverlayAction::ToggleProjectPicker))
+        Some(AppAction::ToggleProjectPicker)
     ));
     assert!(matches!(
         KeyAction::PreviousSession.to_app_action(),
-        Some(AppAction::Workspace(WorkspaceAction::CycleSession(false)))
+        Some(AppAction::CycleSession(false))
     ));
     assert!(matches!(
         KeyAction::NextSession.to_app_action(),
-        Some(AppAction::Workspace(WorkspaceAction::CycleSession(true)))
+        Some(AppAction::CycleSession(true))
     ));
 
     // 2. Mở Project Picker modal
@@ -34,7 +34,7 @@ fn test_keymap_integration_actions() {
     assert_eq!(app.current_key_context(), KeyContext::Modal);
 
     // 3. Dispatch action DismissTopLayer đóng modal
-    app.dispatch_action(OverlayAction::DismissTopLayer.into());
+    app.dispatch_action(AppAction::DismissTopLayer);
     assert!(!app.is_overlay_open(OverlayLayer::ProjectPicker));
     assert_eq!(app.current_key_context(), KeyContext::Global);
 }
@@ -172,7 +172,7 @@ fn test_keymap_modal_open_close_and_apply() {
     let mut app = create_test_app();
 
     // 1. Mở Keymap Modal qua AppAction
-    app.dispatch_action(OverlayAction::OpenKeymap.into());
+    app.dispatch_action(AppAction::OpenKeymapModal);
     assert!(app.is_overlay_open(OverlayLayer::KeymapModal));
     assert_eq!(app.current_key_context(), KeyContext::Modal);
     assert!(app.overlays.keymap_modal_state.is_some());
@@ -185,7 +185,7 @@ fn test_keymap_modal_open_close_and_apply() {
     }
 
     // 3. Đóng bằng CloseKeymapModal (Cancel) -> keymap thực tế chưa bị đổi
-    app.dispatch_action(OverlayAction::CloseKeymap.into());
+    app.dispatch_action(AppAction::CloseKeymapModal);
     assert!(!app.is_overlay_open(OverlayLayer::KeymapModal));
     assert!(app.overlays.keymap_modal_state.is_none());
     assert_ne!(
@@ -196,7 +196,7 @@ fn test_keymap_modal_open_close_and_apply() {
     );
 
     // 4. Mở lại và ApplyKeymapModal
-    app.dispatch_action(OverlayAction::OpenKeymap.into());
+    app.dispatch_action(AppAction::OpenKeymapModal);
     let mut draft = app
         .overlays
         .keymap_modal_state
@@ -205,7 +205,7 @@ fn test_keymap_modal_open_close_and_apply() {
         .draft
         .clone();
     draft.bind("ctrl-shift-z", KeyAction::ResetZoom, KeyContext::Global);
-    app.dispatch_action(OverlayAction::ApplyKeymap(Box::new(draft)).into());
+    app.dispatch_action(AppAction::ApplyKeymapModal(Box::new(draft)));
 
     // 5. Kiểm tra phím mới đã có hiệu lực trên app.keymap
     assert!(!app.is_overlay_open(OverlayLayer::KeymapModal));
@@ -217,9 +217,9 @@ fn test_keymap_modal_open_close_and_apply() {
     );
 
     // 6. Mở lại và test DismissTopLayer
-    app.dispatch_action(OverlayAction::OpenKeymap.into());
+    app.dispatch_action(AppAction::OpenKeymapModal);
     assert!(app.is_overlay_open(OverlayLayer::KeymapModal));
-    app.dispatch_action(OverlayAction::DismissTopLayer.into());
+    app.dispatch_action(AppAction::DismissTopLayer);
     assert!(!app.is_overlay_open(OverlayLayer::KeymapModal));
 }
 
@@ -231,7 +231,7 @@ fn test_keymap_modal_record_key_search() {
     let ctx = eframe::egui::Context::default();
 
     // 1. Mở Keymap Modal
-    app.dispatch_action(OverlayAction::OpenKeymap.into());
+    app.dispatch_action(AppAction::OpenKeymapModal);
     assert!(app.is_overlay_open(OverlayLayer::KeymapModal));
 
     // 2. Kích hoạt search_recording (tương tự như khi bấm nút ⌨)
@@ -270,7 +270,7 @@ fn test_keymap_modal_record_key_search_escape_cancels() {
     let mut app = create_test_app();
     let ctx = eframe::egui::Context::default();
 
-    app.dispatch_action(OverlayAction::OpenKeymap.into());
+    app.dispatch_action(AppAction::OpenKeymapModal);
     app.overlays
         .keymap_modal_state
         .as_mut()
@@ -304,7 +304,7 @@ fn test_key_customizer_popup_recording_and_escape() {
     let ctx = eframe::egui::Context::default();
 
     // 1. Mở Keymap modal
-    app.dispatch_action(OverlayAction::OpenKeymap.into());
+    app.dispatch_action(AppAction::OpenKeymapModal);
     assert!(app.is_overlay_open(OverlayLayer::KeymapModal));
 
     // 2. Kích hoạt chỉnh sửa một action trong popup
@@ -396,7 +396,7 @@ fn test_key_customizer_context_selection_and_save() {
     let ctx = eframe::egui::Context::default();
 
     // 1. Mở Keymap modal
-    app.dispatch_action(OverlayAction::OpenKeymap.into());
+    app.dispatch_action(AppAction::OpenKeymapModal);
     assert!(app.is_overlay_open(OverlayLayer::KeymapModal));
 
     // 2. Kích hoạt chỉnh sửa: gán pending keystroke và đổi context từ Global sang Table
@@ -499,7 +499,7 @@ fn test_key_customizer_context_typing_and_ctrl_space_autocomplete() {
     let ctx = eframe::egui::Context::default();
 
     // 1. Mở Keymap modal
-    app.dispatch_action(OverlayAction::OpenKeymap.into());
+    app.dispatch_action(AppAction::OpenKeymapModal);
     assert!(app.is_overlay_open(OverlayLayer::KeymapModal));
 
     // 2. Kích hoạt chỉnh sửa một action
@@ -601,7 +601,7 @@ fn test_key_customizer_context_syntax_validation_and_feedback() {
     let ctx = eframe::egui::Context::default();
 
     // 1. Mở Keymap modal
-    app.dispatch_action(OverlayAction::OpenKeymap.into());
+    app.dispatch_action(AppAction::OpenKeymapModal);
     let target_action = uwu_core_keymap::KeyAction::ToggleProjectPicker;
     let target_context = uwu_core_keymap::KeyContext::Global;
     {
@@ -826,7 +826,7 @@ fn test_default_shortcuts_run_command_filter_columns_and_rerun() {
         let mut dispatched = Vec::new();
         app.handle_keybindings(ui.ctx(), &mut |act| dispatched.push(act));
         for a in dispatched {
-            if matches!(a, AppAction::Session(SessionAction::RestartSource)) {
+            if matches!(a, AppAction::RestartSource) {
                 restart_dispatched = true;
             }
         }
@@ -854,7 +854,7 @@ fn test_default_shortcuts_run_command_filter_columns_and_rerun() {
         let mut dispatched = Vec::new();
         app.handle_keybindings(ui.ctx(), &mut |act| dispatched.push(act));
         for a in dispatched {
-            if matches!(a, AppAction::Session(SessionAction::RestartSource)) {
+            if matches!(a, AppAction::RestartSource) {
                 f5_restart_dispatched = true;
             }
         }
@@ -1828,25 +1828,25 @@ async fn test_tab_switching_prevented_without_filter() {
     );
 
     // 1. Khi chưa có filter: các action chuyển sang Unfiltered đều bị chặn
-    app.dispatch_action(SessionAction::SwitchTab(crate::state::ActiveTab::Unfiltered).into());
+    app.dispatch_action(AppAction::SwitchTab(crate::state::ActiveTab::Unfiltered));
     assert_eq!(
         app.active_session().view.active_tab,
         crate::state::ActiveTab::Filtered
     );
 
-    app.dispatch_action(SessionAction::ToggleStreamView.into());
+    app.dispatch_action(AppAction::ToggleStreamView);
     assert_eq!(
         app.active_session().view.active_tab,
         crate::state::ActiveTab::Filtered
     );
 
-    app.dispatch_action(SessionAction::ViewRawContext.into());
+    app.dispatch_action(AppAction::ViewRawContext);
     assert_eq!(
         app.active_session().view.active_tab,
         crate::state::ActiveTab::Filtered
     );
 
-    app.dispatch_action(SessionAction::OpenUnfilteredStream(None).into());
+    app.dispatch_action(AppAction::OpenUnfilteredStream(None));
     assert_eq!(
         app.active_session().view.active_tab,
         crate::state::ActiveTab::Filtered
@@ -1855,26 +1855,26 @@ async fn test_tab_switching_prevented_without_filter() {
     // 2. Khi đã có filter: các action chuyển sang Unfiltered hoạt động bình thường
     app.active_session_mut().view.search.query = "error".to_string();
 
-    app.dispatch_action(SessionAction::SwitchTab(crate::state::ActiveTab::Unfiltered).into());
+    app.dispatch_action(AppAction::SwitchTab(crate::state::ActiveTab::Unfiltered));
     assert_eq!(
         app.active_session().view.active_tab,
         crate::state::ActiveTab::Unfiltered
     );
 
-    app.dispatch_action(SessionAction::SwitchTab(crate::state::ActiveTab::Filtered).into());
+    app.dispatch_action(AppAction::SwitchTab(crate::state::ActiveTab::Filtered));
     assert_eq!(
         app.active_session().view.active_tab,
         crate::state::ActiveTab::Filtered
     );
 
-    app.dispatch_action(SessionAction::ToggleStreamView.into());
+    app.dispatch_action(AppAction::ToggleStreamView);
     assert_eq!(
         app.active_session().view.active_tab,
         crate::state::ActiveTab::Unfiltered
     );
 
     // 3. Khi đang ở Unfiltered mà ClearQuery -> tự động đóng Unfiltered và quay về Filtered
-    app.dispatch_action(SessionAction::ClearQuery.into());
+    app.dispatch_action(AppAction::ClearQuery);
     assert_eq!(
         app.active_session().view.active_tab,
         crate::state::ActiveTab::Filtered
@@ -1883,12 +1883,12 @@ async fn test_tab_switching_prevented_without_filter() {
 
     // 4. Khi đang ở Unfiltered mà bấm ViewRawContext (Alt+V) -> chuyển ngược về Filtered (Main)
     app.active_session_mut().view.search.query = "error".to_string();
-    app.dispatch_action(SessionAction::SwitchTab(crate::state::ActiveTab::Unfiltered).into());
+    app.dispatch_action(AppAction::SwitchTab(crate::state::ActiveTab::Unfiltered));
     assert_eq!(
         app.active_session().view.active_tab,
         crate::state::ActiveTab::Unfiltered
     );
-    app.dispatch_action(SessionAction::ViewRawContext.into());
+    app.dispatch_action(AppAction::ViewRawContext);
     assert_eq!(
         app.active_session().view.active_tab,
         crate::state::ActiveTab::Filtered

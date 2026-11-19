@@ -1,5 +1,5 @@
 use super::render_key_customizer_popup;
-use crate::actions::{AppAction, OverlayAction};
+use crate::actions::AppAction;
 use crate::app::overlay_manager::KeymapModalState;
 use crate::components::ui::{
     AppButton, ButtonVariant, IconButton, IconName, ModalContainer, TextInput,
@@ -599,14 +599,14 @@ pub fn render_keymap_modal(
     }
 
     if should_apply {
-        action_to_dispatch = Some(OverlayAction::ApplyKeymap(Box::new(state.draft.clone())).into());
+        action_to_dispatch = Some(AppAction::ApplyKeymapModal(Box::new(state.draft.clone())));
     } else if should_reset_defaults {
         state.draft.clear();
         state.draft.register_defaults();
     }
 
     if resp.closed && !should_apply && state.customizer.is_none() {
-        action_to_dispatch = Some(OverlayAction::CloseKeymap.into());
+        action_to_dispatch = Some(AppAction::CloseKeymapModal);
     }
 
     if let Some(action) = action_to_dispatch {

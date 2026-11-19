@@ -1,4 +1,4 @@
-use crate::actions::{AppAction, OverlayAction};
+use crate::actions::AppAction;
 use crate::components::{render_card, AppButton, ButtonVariant, ModalContainer, TextInput};
 use crate::keymap::{KeyAction, KeyContext, KeymapManager};
 use crate::theme::ActiveTheme;
@@ -263,7 +263,7 @@ pub fn render_launch_modal(
                         || keymap.consume_input(ui, KeyContext::Modal)
                             == Some(KeyAction::ConfirmSelection)
                     {
-                        action_to_dispatch = Some(OverlayAction::ApplyLaunch.into());
+                        action_to_dispatch = Some(AppAction::ApplyLaunchModal);
                     }
 
                     ui.add_space(8.0);
@@ -281,7 +281,7 @@ pub fn render_launch_modal(
         );
 
     if resp.closed {
-        action_to_dispatch = Some(OverlayAction::CloseLaunch.into());
+        action_to_dispatch = Some(AppAction::CloseLaunchModal);
     }
 
     if let Some(action) = action_to_dispatch {

@@ -1,4 +1,5 @@
 use super::test_helpers::create_test_app;
+use crate::actions::AppAction;
 use crate::state::{SearchState, SuggestionItem, SuggestionKind};
 use std::collections::HashMap;
 use uwu_core_schema::{LogColor, LogEvent};
@@ -112,19 +113,18 @@ async fn test_sync_discovered_fields_replaces_aliases() {
 
 #[tokio::test]
 async fn test_app_action_query_filter_and_clear() {
-    use crate::actions::SessionAction;
     let mut app = create_test_app();
 
-    app.dispatch_action(SessionAction::ApplyFilterTerm("level:error".to_string()).into());
+    app.dispatch_action(AppAction::ApplyFilterTerm("level:error".to_string()));
     assert_eq!(app.active_session().view.search.query, "level:error");
 
-    app.dispatch_action(SessionAction::ExcludeFilterTerm("user_id:42".to_string()).into());
+    app.dispatch_action(AppAction::ExcludeFilterTerm("user_id:42".to_string()));
     assert_eq!(
         app.active_session().view.search.query,
         "level:error -user_id:42"
     );
 
-    app.dispatch_action(SessionAction::ClearQuery.into());
+    app.dispatch_action(AppAction::ClearQuery);
     assert!(app.active_session().view.search.query.is_empty());
 }
 
@@ -473,8 +473,8 @@ async fn test_udf_reverse_pagination_worker_and_reducer() {
         5
     );
 
-    // 2. Dispatch SessionAction::LoadOlderLogs(5) qua UDF Dispatcher
-    app.dispatch_action(crate::actions::SessionAction::LoadOlderLogs(5).into());
+    // 2. Dispatch AppAction::LoadOlderLogs(5) qua UDF Dispatcher
+    app.dispatch_action(AppAction::LoadOlderLogs(5));
 
     // Cờ is_loading_older phải được bật ngay lập tức để chặn spam worker
     assert!(app.active_session().view.main_tab().stream.is_loading_older);
@@ -507,11 +507,11 @@ async fn test_udf_unlatch_and_latch_actions() {
     assert!(app.active_session().view.main_tab().stream.is_auto_scroll);
 
     // 1. Dispatch Unlatch action -> is_auto_scroll = false
-    app.dispatch_action(crate::actions::SessionAction::Unlatch.into());
+    app.dispatch_action(AppAction::Unlatch);
     assert!(!app.active_session().view.main_tab().stream.is_auto_scroll);
 
     // 2. Dispatch Latch action -> is_auto_scroll = true, needs_search = true
-    app.dispatch_action(crate::actions::SessionAction::Latch.into());
+    app.dispatch_action(AppAction::Latch);
     assert!(app.active_session().view.main_tab().stream.is_auto_scroll);
     assert!(app.active_session().view.search.needs_search);
 }
@@ -525,7 +525,7 @@ async fn test_pause_restart_populates_viewport_without_scrolling() {
     let tx = app.active_session().session.engine.get_channel();
 
     // 1. Chuyển sang Pause (Unlatch)
-    app.dispatch_action(crate::actions::SessionAction::Unlatch.into());
+    app.dispatch_action(AppAction::Unlatch);
     assert!(!app.active_session().view.main_tab().stream.is_auto_scroll);
 
     // 2. Restart stream khi đang Pause: giữ nguyên trạng thái Pause

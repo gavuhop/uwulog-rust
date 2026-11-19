@@ -1,4 +1,4 @@
-use crate::actions::{AppAction, SessionAction};
+use crate::actions::AppAction;
 use crate::components::ui::{AppButton, ButtonVariant, IconButton, IconName};
 use crate::session::GuiSession;
 use crate::theme::ActiveTheme;
@@ -70,7 +70,7 @@ pub fn build_field_collision_toast(session: &GuiSession) -> Option<ToastItem> {
         title: "JSON key path collision".to_string(),
         subtitle: format_collision_summary(&visible),
         action: None,
-        dismiss: ToastDismiss::Action(Box::new(SessionAction::DismissFieldWarnings.into())),
+        dismiss: ToastDismiss::Action(Box::new(AppAction::DismissFieldWarnings)),
     })
 }
 
@@ -244,7 +244,7 @@ mod tests {
                 title: "JSON key path collision".to_string(),
                 subtitle: "Key 'a.b' conflicts with nested path (2 logs)".to_string(),
                 action: None,
-                dismiss: ToastDismiss::Action(Box::new(SessionAction::DismissFieldWarnings.into())),
+                dismiss: ToastDismiss::Action(Box::new(AppAction::DismissFieldWarnings)),
             },
             ToastItem {
                 icon: IconName::AlertTriangle,
@@ -263,7 +263,7 @@ mod tests {
                 action: Some(ToastAction {
                     label: "Open in Dev Container".to_string(),
                     variant: ButtonVariant::Success,
-                    action: SessionAction::DismissFieldWarnings.into(),
+                    action: AppAction::DismissFieldWarnings,
                 }),
                 dismiss: ToastDismiss::DevContainerSuggest("/tmp/app".to_string()),
             },

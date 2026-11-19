@@ -1,4 +1,4 @@
-use crate::actions::{AppAction, OverlayAction};
+use crate::actions::AppAction;
 use crate::components::render_card;
 use crate::keymap::{KeyAction, KeyContext, KeymapManager};
 use crate::state::{ColumnModalDraft, ColumnState};
@@ -459,7 +459,7 @@ pub fn render_columns_modal(
                     || keymap.consume_input(ui, KeyContext::Modal)
                         == Some(KeyAction::ConfirmSelection)
                 {
-                    action_to_dispatch = Some(OverlayAction::ApplyColumns.into());
+                    action_to_dispatch = Some(AppAction::ApplyColumnsModal);
                 }
 
                 ui.add_space(6.0);
@@ -480,7 +480,7 @@ pub fn render_columns_modal(
     }
 
     if resp.closed {
-        action_to_dispatch = Some(OverlayAction::CloseColumns.into());
+        action_to_dispatch = Some(AppAction::CloseColumnsModal);
     }
 
     if let Some(action) = action_to_dispatch {

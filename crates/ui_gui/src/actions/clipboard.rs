@@ -1,4 +1,4 @@
-use super::{AppAction, SessionAction};
+use super::AppAction;
 use crate::state::SearchState;
 use std::collections::HashSet;
 
@@ -126,7 +126,7 @@ pub fn render_filter_actions_menu(
             Some(f) => SearchState::format_field_term(f, text),
             None => SearchState::format_selection_term(text),
         };
-        *ctx.action = Some(AppAction::Session(SessionAction::ApplyFilterTerm(term)));
+        *ctx.action = Some(AppAction::ApplyFilterTerm(term));
         ui.close();
     }
 
@@ -135,7 +135,7 @@ pub fn render_filter_actions_menu(
             Some(f) => SearchState::format_field_term(f, text),
             None => SearchState::format_selection_term(text),
         };
-        *ctx.action = Some(AppAction::Session(SessionAction::ExcludeFilterTerm(term)));
+        *ctx.action = Some(AppAction::ExcludeFilterTerm(term));
         ui.close();
     }
 
@@ -147,9 +147,7 @@ pub fn render_filter_actions_menu(
         format!("Highlight \"{}\"", display_text)
     };
     if ui.button(hl_text).clicked() {
-        *ctx.action = Some(AppAction::Session(SessionAction::ToggleTermHighlight(
-            text.to_string(),
-        )));
+        *ctx.action = Some(AppAction::ToggleTermHighlight(text.to_string()));
         ui.close();
     }
 }

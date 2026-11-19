@@ -3,7 +3,7 @@ pub mod cell;
 pub mod context_menu;
 pub mod header;
 
-use crate::actions::{ActionContext, AppAction, SessionAction};
+use crate::actions::{ActionContext, AppAction};
 use crate::session::GuiSession;
 use crate::state::{ActiveTab, ColumnItem};
 use crate::theme;
@@ -163,7 +163,7 @@ fn render_log_table_scoped(
             current_v_offset = (current_v_offset + autoscroll.scroll_delta.y).max(0.0);
             vstate_changed = true;
             if autoscroll.scroll_delta.y < 0.0 {
-                dispatch(SessionAction::Unlatch.into());
+                dispatch(AppAction::Unlatch);
             }
         }
     }
@@ -298,7 +298,7 @@ fn render_log_table_scoped(
     // khi mới có vài dòng nằm gọn trong khung nhìn, lăn chuột lên không được ngắt Live.
     let has_vertical_overflow = content_h > viewport_h + 1.0 || v_offset > 0.5;
     if pointer_over_table && scroll_delta_y > 0.0 && !is_shift_down && has_vertical_overflow {
-        dispatch(SessionAction::Unlatch.into());
+        dispatch(AppAction::Unlatch);
     }
 
     if let Some(action) = action_to_dispatch {
@@ -316,8 +316,8 @@ fn render_log_table_scoped(
     }
 
     if let Some(event) = newly_selected_event {
-        dispatch(SessionAction::SelectLog(Some(Box::new(event))).into());
-        dispatch(SessionAction::Unlatch.into());
+        dispatch(AppAction::SelectLog(Some(Box::new(event))));
+        dispatch(AppAction::Unlatch);
     }
 
     // Nếu người dùng cuộn/kéo thanh cuộn rời khỏi dòng cuối
@@ -326,7 +326,7 @@ fn render_log_table_scoped(
         && row_count > 0
         && !last_row_visible
     {
-        dispatch(SessionAction::Unlatch.into());
+        dispatch(AppAction::Unlatch);
     }
 
     // Reverse pagination / Infinite scroll up:
@@ -339,7 +339,7 @@ fn render_log_table_scoped(
         && !stream.reached_oldest
         && !stream.is_loading_older
     {
-        dispatch(SessionAction::LoadOlderLogs(1000).into());
+        dispatch(AppAction::LoadOlderLogs(1000));
     }
 
     if last_row_visible
@@ -347,7 +347,7 @@ fn render_log_table_scoped(
             || (autoscroll.is_active && autoscroll.scroll_delta.y > 0.0))
         && !is_shift_down
     {
-        dispatch(SessionAction::Latch.into());
+        dispatch(AppAction::Latch);
     }
 }
 
@@ -460,7 +460,7 @@ mod tests {
         assert!(
             !actions.iter().any(|a| matches!(
                 a,
-                AppAction::Session(SessionAction::Unlatch | SessionAction::SelectLog(_))
+                AppAction::Unlatch | AppAction::SelectLog(_)
             )),
             "expected foreground popup click/scroll not to unlatch or select background table row, got: {actions:?}"
         );
@@ -509,9 +509,7 @@ mod tests {
         out4.textures_delta.clear();
 
         assert!(
-            actions
-                .iter()
-                .any(|a| matches!(a, AppAction::Session(SessionAction::Unlatch))),
+            actions.iter().any(|a| matches!(a, AppAction::Unlatch)),
             "expected scrolling up over uncovered table to dispatch Unlatch, got: {actions:?}"
         );
     }
@@ -570,7 +568,7 @@ mod tests {
         assert!(
             !actions
                 .iter()
-                .any(|a| matches!(a, AppAction::Session(SessionAction::Unlatch))),
+                .any(|a| matches!(a, AppAction::Unlatch)),
             "expected scrolling up with only 5 rows (no overflow) not to dispatch Unlatch, got: {actions:?}"
         );
     }

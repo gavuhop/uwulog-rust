@@ -1,4 +1,4 @@
-use crate::actions::{AppAction, OverlayAction};
+use crate::actions::AppAction;
 use crate::overlay::{OverlayLayer, OverlayStack};
 use crate::theme::ActiveTheme;
 use eframe::egui::{self, Color32, CornerRadius, Id, Order, Pos2, Rect, Stroke};
@@ -53,7 +53,7 @@ pub fn render_main_menu_popup(
 
             if !on_trigger && !on_main_menu && !on_submenu && !fallback_on_menu {
                 restore_preview_theme(ctx);
-                dispatch(OverlayAction::CloseMainMenu.into());
+                dispatch(AppAction::CloseMainMenu);
                 return;
             }
         }
@@ -121,7 +121,7 @@ pub fn render_main_menu_popup(
                     let about_resp =
                         render_menu_item(ui, "About uwulog", theme.text.primary, false, None);
                     if about_resp.clicked() {
-                        action_to_dispatch = Some(OverlayAction::OpenAbout.into());
+                        action_to_dispatch = Some(AppAction::OpenAboutModal);
                     }
                     if about_resp.hovered() {
                         overlay_stack.close(OverlayLayer::ThemeSubmenu);
@@ -132,7 +132,7 @@ pub fn render_main_menu_popup(
                     let keymap_resp =
                         render_menu_item(ui, "Keyboard Shortcuts", theme.text.primary, false, None);
                     if keymap_resp.clicked() {
-                        action_to_dispatch = Some(OverlayAction::OpenKeymap.into());
+                        action_to_dispatch = Some(AppAction::OpenKeymapModal);
                     }
                     if keymap_resp.hovered() {
                         overlay_stack.close(OverlayLayer::ThemeSubmenu);

@@ -1,4 +1,4 @@
-use crate::actions::{AppAction, OverlayAction, WorkspaceAction};
+use crate::actions::AppAction;
 use crate::components::ui::IconName;
 use crate::theme::ActiveTheme;
 use crate::views::remote_servers::create_server_workspace;
@@ -312,23 +312,17 @@ pub fn render_project_picker_popup(
 
                             match action {
                                 ProjectRowAction::Select => {
-                                    action_to_dispatch = Some(
-                                        WorkspaceAction::SwitchSession(session.session_index)
-                                            .into(),
-                                    );
+                                    action_to_dispatch =
+                                        Some(AppAction::SwitchSession(session.session_index));
                                 }
                                 ProjectRowAction::OpenInNewWindow => {
-                                    action_to_dispatch = Some(
-                                        WorkspaceAction::OpenSessionInNewWindow(
-                                            session.session_index,
-                                        )
-                                        .into(),
-                                    );
+                                    action_to_dispatch = Some(AppAction::OpenSessionInNewWindow(
+                                        session.session_index,
+                                    ));
                                 }
                                 ProjectRowAction::Close => {
-                                    action_to_dispatch = Some(
-                                        WorkspaceAction::CloseSession(session.session_index).into(),
-                                    );
+                                    action_to_dispatch =
+                                        Some(AppAction::CloseSession(session.session_index));
                                 }
                                 ProjectRowAction::None => {}
                             }
@@ -453,19 +447,18 @@ pub fn render_project_picker_popup(
 
                                 match action {
                                     ProjectRowAction::Select => {
-                                        action_to_dispatch = Some(
-                                            WorkspaceAction::Open(Box::new(ws.clone())).into(),
-                                        );
+                                        action_to_dispatch =
+                                            Some(AppAction::OpenWorkspace(Box::new(ws.clone())));
                                     }
                                     ProjectRowAction::OpenInNewWindow => {
-                                        action_to_dispatch = Some(
-                                            WorkspaceAction::OpenInNewWindow(Box::new(ws.clone()))
-                                                .into(),
-                                        );
+                                        action_to_dispatch =
+                                            Some(AppAction::OpenWorkspaceInNewWindow(Box::new(
+                                                ws.clone(),
+                                            )));
                                     }
                                     ProjectRowAction::Close => {
                                         action_to_dispatch =
-                                            Some(WorkspaceAction::Delete(ws.id).into());
+                                            Some(AppAction::DeleteWorkspace(ws.id));
                                     }
                                     ProjectRowAction::None => {}
                                 }
@@ -504,7 +497,7 @@ pub fn render_project_picker_popup(
             });
 
     if resp.closed {
-        dispatch(OverlayAction::CloseProjectPicker.into());
+        dispatch(AppAction::CloseProjectPicker);
     }
 
     if let Some(act) = action_to_dispatch {
@@ -512,7 +505,7 @@ pub fn render_project_picker_popup(
     }
 
     if open_local_folder_clicked {
-        dispatch(OverlayAction::CloseProjectPicker.into());
+        dispatch(AppAction::CloseProjectPicker);
         if let Some(folder) = rfd::FileDialog::new().pick_folder() {
             let path_str = uwu_core_workspace::clean_path(&folder.to_string_lossy());
             let _ = std::env::set_current_dir(&folder);
@@ -523,11 +516,11 @@ pub fn render_project_picker_popup(
                 WorkspaceLocation::local(path_str),
                 SourceType::Process,
             );
-            dispatch(WorkspaceAction::Open(Box::new(ws)).into());
+            dispatch(AppAction::OpenWorkspace(Box::new(ws)));
         }
     }
 
     if open_remote_folder_clicked {
-        dispatch(OverlayAction::OpenRemoteServers.into());
+        dispatch(AppAction::OpenRemoteServersModal);
     }
 }

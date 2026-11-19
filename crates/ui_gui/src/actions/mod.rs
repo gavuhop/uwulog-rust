@@ -10,52 +10,27 @@ use crate::state::ActiveTab;
 use uwu_core_schema::LogEvent;
 use uwu_core_workspace::Workspace;
 
-/// Nhóm hành động cấp Workspace & Session Lifecycle.
+/// Unified Action enum for high-level application & session state mutations
 #[derive(Debug, Clone)]
-pub enum WorkspaceAction {
+pub enum AppAction {
     SwitchSession(usize),
     CloseSession(usize),
     CycleSession(bool),
-    Open(Box<Workspace>),
-    OpenContainerLog(Box<Workspace>),
-    OpenInNewWindow(Box<Workspace>),
+    OpenWorkspace(Box<Workspace>),
+    OpenContainerLogSession(Box<Workspace>),
+    OpenWorkspaceInNewWindow(Box<Workspace>),
     OpenSessionInNewWindow(usize),
-    Load(Box<Workspace>),
-    Delete(uuid::Uuid),
-}
-
-/// Nhóm hành động quản lý Overlay, Modal và Floating Picker.
-#[derive(Debug, Clone)]
-pub enum OverlayAction {
-    OpenLaunch,
-    CloseLaunch,
-    ApplyLaunch,
-    OpenColumns,
-    CloseColumns,
-    ApplyColumns,
-    ToggleProjectPicker,
-    CloseProjectPicker,
-    OpenRemoteServers,
-    CloseRemoteServers,
-    ToggleRemoteServers,
-    ToggleSourceSwitcher,
-    CloseSourceSwitcher,
-    ToggleMainMenu,
-    CloseMainMenu,
-    OpenAbout,
-    CloseAbout,
-    OpenKeymap,
-    CloseKeymap,
-    ApplyKeymap(Box<uwu_core_keymap::KeymapManager>),
-    DismissTopLayer,
-}
-
-/// Nhóm hành động tác động trực tiếp lên Session / Viewer đang hoạt động.
-#[derive(Debug, Clone)]
-pub enum SessionAction {
+    LoadWorkspace(Box<Workspace>),
+    DeleteWorkspace(uuid::Uuid),
     StartSource,
     StopSource,
     RestartSource,
+    OpenLaunchModal,
+    CloseLaunchModal,
+    ApplyLaunchModal,
+    OpenColumnsModal,
+    CloseColumnsModal,
+    ApplyColumnsModal,
     SelectLog(Option<Box<LogEvent>>),
     NavigateUp,
     NavigateDown,
@@ -66,22 +41,24 @@ pub enum SessionAction {
     PageDown,
     ScrollToTop,
     ScrollToBottom,
-    FocusSearch,
     CopySelectedLog,
     SwitchTab(ActiveTab),
     ToggleStreamView,
+
+    // Search Query & Filtering
+    FocusSearch,
     ToggleSearchHistory,
     ApplyFilterTerm(String),
     ExcludeFilterTerm(String),
     ClearQuery,
-    CommitSearch,
-    AutocompleteNext,
-    AutocompletePrev,
-    AutocompleteConfirm,
+
+    // Highlights
     ToggleRowHighlight(u64),
     ToggleTermHighlight(String),
     ClearAllHighlights,
     DismissFieldWarnings,
+
+    // Stream & Latch Controls
     ToggleLatch,
     Unlatch,
     Latch,
@@ -91,37 +68,39 @@ pub enum SessionAction {
     CloseUnfilteredStream,
     FocusInMainAndClearFilter,
     LoadOlderLogs(usize),
-}
 
-/// Unified Action enum phân nhóm rạch ròi giữa Workspace, Overlay, Session và Global.
-#[derive(Debug, Clone)]
-pub enum AppAction {
-    Workspace(WorkspaceAction),
-    Overlay(OverlayAction),
-    Session(SessionAction),
+    // Project Picker
+    ToggleProjectPicker,
+    CloseProjectPicker,
+
+    // Remote Servers (WSL / SSH / Dev Container)
+    OpenRemoteServersModal,
+    CloseRemoteServersModal,
+    ToggleRemoteServersModal,
+
+    // Log Source / Container Switcher
+    ToggleSourceSwitcher,
+    CloseSourceSwitcher,
+
+    // Main Menu & About
+    ToggleMainMenu,
+    CloseMainMenu,
+    OpenAboutModal,
+    CloseAboutModal,
+    OpenKeymapModal,
+    CloseKeymapModal,
+    ApplyKeymapModal(Box<uwu_core_keymap::KeymapManager>),
     SwitchTheme(String),
     QuitApp,
-}
 
-impl From<WorkspaceAction> for AppAction {
-    #[inline]
-    fn from(action: WorkspaceAction) -> Self {
-        Self::Workspace(action)
-    }
-}
+    // Global Dismiss / Stack Pop
+    DismissTopLayer,
 
-impl From<OverlayAction> for AppAction {
-    #[inline]
-    fn from(action: OverlayAction) -> Self {
-        Self::Overlay(action)
-    }
-}
-
-impl From<SessionAction> for AppAction {
-    #[inline]
-    fn from(action: SessionAction) -> Self {
-        Self::Session(action)
-    }
+    // Autocomplete & Search Navigation
+    CommitSearch,
+    AutocompleteNext,
+    AutocompletePrev,
+    AutocompleteConfirm,
 }
 
 /// Luồng sự kiện bất đồng bộ gửi từ Background Workers về UI Thread (Worker -> UI Pipeline)

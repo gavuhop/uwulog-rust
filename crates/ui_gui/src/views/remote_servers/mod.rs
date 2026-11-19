@@ -18,7 +18,7 @@ pub use ssh_picker::{render_ssh_picker_subview, SshInteractiveSession};
 pub use types::*;
 pub use wsl_picker::render_wsl_picker_subview;
 
-use crate::actions::{AppAction, OverlayAction, WorkspaceAction};
+use crate::actions::AppAction;
 use crate::app::overlay_manager::RemoteServersOverlayState;
 use crate::keymap::KeymapManager;
 use crate::overlay::RemoteModalPlacement;
@@ -105,7 +105,7 @@ pub fn render_remote_servers_modal(
             if !overlay_state.modal.back() {
                 // Không còn màn hình nào trong history để back -> Đóng modal
                 overlay_state.reset();
-                dispatch(OverlayAction::CloseRemoteServers.into());
+                dispatch(AppAction::CloseRemoteServersModal);
                 return;
             }
             return;
@@ -116,14 +116,14 @@ pub fn render_remote_servers_modal(
     // Xử lý mở workspace đã chọn
     if let Some(ws) = selected_workspace {
         overlay_state.reset();
-        dispatch(OverlayAction::CloseRemoteServers.into());
-        dispatch(WorkspaceAction::Open(Box::new(ws)).into());
+        dispatch(AppAction::CloseRemoteServersModal);
+        dispatch(AppAction::OpenWorkspace(Box::new(ws)));
         return;
     }
 
     if closed {
         overlay_state.reset();
-        dispatch(OverlayAction::CloseRemoteServers.into());
+        dispatch(AppAction::CloseRemoteServersModal);
     }
 }
 

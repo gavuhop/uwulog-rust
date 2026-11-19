@@ -1,5 +1,4 @@
 use super::{ActiveTab, AppAction, AppEvent, OverlayLayer, RemoteModalPlacement, UwuGuiApp};
-use crate::actions::{OverlayAction, SessionAction, WorkspaceAction};
 use eframe::egui;
 use std::sync::Arc;
 
@@ -150,15 +149,8 @@ impl UwuGuiApp {
                 self.close_main_menu();
                 self.should_quit = true;
             }
-            AppAction::Overlay(overlay) => self.dispatch_overlay_action(overlay),
-            AppAction::Workspace(ws_action) => self.dispatch_workspace_action(ws_action),
-            AppAction::Session(session_action) => self.dispatch_session_action(session_action),
-        }
-    }
-
-    fn dispatch_overlay_action(&mut self, action: OverlayAction) {
-        match action {
-            OverlayAction::OpenLaunch => {
+            // Overlays / Modals / Global UI stack
+            AppAction::OpenLaunchModal => {
                 if !self.workspaces.has_active_session() {
                     return;
                 }
@@ -166,11 +158,11 @@ impl UwuGuiApp {
                     Some(self.active_session().session.source_config.clone());
                 self.push_overlay(OverlayLayer::LaunchModal);
             }
-            OverlayAction::CloseLaunch => {
+            AppAction::CloseLaunchModal => {
                 self.close_overlay(OverlayLayer::LaunchModal);
                 self.overlays.launch_modal_draft = None;
             }
-            OverlayAction::ApplyLaunch => {
+            AppAction::ApplyLaunchModal => {
                 if !self.workspaces.has_active_session() {
                     self.close_overlay(OverlayLayer::LaunchModal);
                     self.overlays.launch_modal_draft = None;
@@ -190,20 +182,20 @@ impl UwuGuiApp {
                 }
                 self.close_overlay(OverlayLayer::LaunchModal);
             }
-            OverlayAction::OpenColumns => {
+            AppAction::OpenColumnsModal => {
                 if !self.workspaces.has_active_session() {
                     return;
                 }
                 self.active_session_mut().view.shared.columns.open_modal();
                 self.push_overlay(OverlayLayer::ColumnsModal);
             }
-            OverlayAction::CloseColumns => {
+            AppAction::CloseColumnsModal => {
                 if self.workspaces.has_active_session() {
                     self.active_session_mut().view.shared.columns.close_modal();
                 }
                 self.close_overlay(OverlayLayer::ColumnsModal);
             }
-            OverlayAction::ApplyColumns => {
+            AppAction::ApplyColumnsModal => {
                 if !self.workspaces.has_active_session() {
                     self.close_overlay(OverlayLayer::ColumnsModal);
                     return;
@@ -212,7 +204,7 @@ impl UwuGuiApp {
                 self.close_overlay(OverlayLayer::ColumnsModal);
                 self.workspaces.save_current_workspace();
             }
-            OverlayAction::ToggleProjectPicker => {
+            AppAction::ToggleProjectPicker => {
                 if self.is_overlay_open(OverlayLayer::ProjectPicker) {
                     self.close_project_picker();
                 } else {
@@ -220,16 +212,16 @@ impl UwuGuiApp {
                     self.push_overlay(OverlayLayer::ProjectPicker);
                 }
             }
-            OverlayAction::CloseProjectPicker => self.close_project_picker(),
-            OverlayAction::OpenRemoteServers => {
+            AppAction::CloseProjectPicker => self.close_project_picker(),
+            AppAction::OpenRemoteServersModal => {
                 self.close_project_picker();
                 self.overlays.remote_placement = RemoteModalPlacement::TopCenter;
                 self.push_overlay(OverlayLayer::RemoteServersModal);
             }
-            OverlayAction::CloseRemoteServers => {
+            AppAction::CloseRemoteServersModal => {
                 self.close_overlay(OverlayLayer::RemoteServersModal);
             }
-            OverlayAction::ToggleRemoteServers => {
+            AppAction::ToggleRemoteServersModal => {
                 if self.is_overlay_open(OverlayLayer::RemoteServersModal) {
                     self.close_overlay(OverlayLayer::RemoteServersModal);
                 } else {
@@ -239,7 +231,7 @@ impl UwuGuiApp {
                     self.push_overlay(OverlayLayer::RemoteServersModal);
                 }
             }
-            OverlayAction::ToggleSourceSwitcher => {
+            AppAction::ToggleSourceSwitcher => {
                 if !self.workspaces.has_active_session() {
                     return;
                 }
@@ -252,54 +244,51 @@ impl UwuGuiApp {
                     self.push_overlay(OverlayLayer::SourceSwitcher);
                 }
             }
-            OverlayAction::CloseSourceSwitcher => {
+            AppAction::CloseSourceSwitcher => {
                 self.close_overlay(OverlayLayer::SourceSwitcher);
             }
-            OverlayAction::ToggleMainMenu => {
+            AppAction::ToggleMainMenu => {
                 if self.is_overlay_open(OverlayLayer::MainMenu) {
                     self.close_main_menu();
                 } else {
                     self.push_overlay(OverlayLayer::MainMenu);
                 }
             }
-            OverlayAction::CloseMainMenu => self.close_main_menu(),
-            OverlayAction::OpenAbout => {
+            AppAction::CloseMainMenu => self.close_main_menu(),
+            AppAction::OpenAboutModal => {
                 self.close_main_menu();
                 self.push_overlay(OverlayLayer::AboutModal);
             }
-            OverlayAction::CloseAbout => {
+            AppAction::CloseAboutModal => {
                 self.close_overlay(OverlayLayer::AboutModal);
             }
-            OverlayAction::OpenKeymap => {
+            AppAction::OpenKeymapModal => {
                 self.close_main_menu();
                 self.overlays.keymap_modal_state = Some(
                     crate::app::overlay_manager::KeymapModalState::new(&self.keymap),
                 );
                 self.push_overlay(OverlayLayer::KeymapModal);
             }
-            OverlayAction::CloseKeymap => {
+            AppAction::CloseKeymapModal => {
                 self.close_overlay(OverlayLayer::KeymapModal);
                 self.overlays.keymap_modal_state = None;
             }
-            OverlayAction::ApplyKeymap(new_keymap) => {
+            AppAction::ApplyKeymapModal(new_keymap) => {
                 self.keymap = *new_keymap;
                 let _ = crate::keymap::save_user_keymap(&self.keymap, None);
                 self.close_overlay(OverlayLayer::KeymapModal);
                 self.overlays.keymap_modal_state = None;
             }
-            OverlayAction::DismissTopLayer => {
+            AppAction::DismissTopLayer => {
                 self.dismiss_top_layer();
             }
-        }
-    }
 
-    fn dispatch_workspace_action(&mut self, action: WorkspaceAction) {
-        match action {
-            WorkspaceAction::Open(ws) => {
+            // Workspace & Session lifecycle (allowed even without an active session)
+            AppAction::OpenWorkspace(ws) => {
                 self.open_or_switch_workspace(&ws);
                 self.close_project_picker();
             }
-            WorkspaceAction::OpenInNewWindow(ws) => {
+            AppAction::OpenWorkspaceInNewWindow(ws) => {
                 self.open_workspace_in_new_window(&ws);
                 if let Some(pos) =
                     self.workspaces.sessions.iter().position(|s| {
@@ -310,15 +299,18 @@ impl UwuGuiApp {
                 }
                 self.close_project_picker();
             }
-            WorkspaceAction::Delete(id) => {
+            AppAction::DeleteWorkspace(id) => {
                 self.workspaces.store.remove(id);
             }
+
+            // Everything below requires an active session
             _ if !self.workspaces.has_active_session() => {}
-            WorkspaceAction::SwitchSession(idx) => {
+
+            AppAction::SwitchSession(idx) => {
                 self.switch_session(idx);
                 self.close_project_picker();
             }
-            WorkspaceAction::CloseSession(idx) => {
+            AppAction::CloseSession(idx) => {
                 if self.is_overlay_open(OverlayLayer::ProjectPicker) {
                     if let Some(target_loc) = self
                         .workspaces
@@ -352,47 +344,32 @@ impl UwuGuiApp {
                 }
                 self.close_session(idx);
             }
-            WorkspaceAction::CycleSession(forward) => self.cycle_project(forward),
-            WorkspaceAction::OpenContainerLog(ws) => {
+            AppAction::CycleSession(forward) => self.cycle_project(forward),
+            AppAction::OpenContainerLogSession(ws) => {
                 self.workspaces.open_container_log_session(&ws, &self.rt);
                 self.close_overlay(OverlayLayer::SourceSwitcher);
             }
-            WorkspaceAction::OpenSessionInNewWindow(idx) => {
+            AppAction::OpenSessionInNewWindow(idx) => {
                 if let Some(session) = self.workspaces.sessions.get(idx) {
                     let ws = session.session.to_workspace();
-                    self.dispatch_workspace_action(WorkspaceAction::OpenInNewWindow(Box::new(ws)));
+                    self.dispatch_action(AppAction::OpenWorkspaceInNewWindow(Box::new(ws)));
                 }
             }
-            WorkspaceAction::Load(ws) => {
+            AppAction::LoadWorkspace(ws) => {
                 self.load_workspace(&ws);
                 if self.overlays.launch_modal_draft.is_some() {
                     self.overlays.launch_modal_draft =
                         Some(self.active_session().session.source_config.clone());
                 }
             }
-        }
-    }
-
-    fn dispatch_session_action(&mut self, action: SessionAction) {
-        if !self.workspaces.has_active_session() {
-            return;
-        }
-
-        if let SessionAction::LoadOlderLogs(page_size) = action {
-            let is_unfiltered = self.active_session().view.active_tab == ActiveTab::Unfiltered;
-            self.spawn_reverse_pagination(is_unfiltered, page_size);
-            return;
-        }
-
-        if self.workspaces.active_session_mut().handle_action(&action) {
-            return;
-        }
-
-        match action {
-            SessionAction::StartSource => self.start_configured_source(),
-            SessionAction::StopSource => self.stop_current_source(),
-            SessionAction::RestartSource => self.restart_current_source(),
-            SessionAction::FocusSearch => {
+            AppAction::LoadOlderLogs(page_size) => {
+                let is_unfiltered = self.active_session().view.active_tab == ActiveTab::Unfiltered;
+                self.spawn_reverse_pagination(is_unfiltered, page_size);
+            }
+            AppAction::StartSource => self.start_configured_source(),
+            AppAction::StopSource => self.stop_current_source(),
+            AppAction::RestartSource => self.restart_current_source(),
+            AppAction::FocusSearch => {
                 self.active_session_mut().view.search.focus_requested = true;
                 let search_id = crate::views::header::search_bar::search_input_id(
                     self.active_session().session.id,
@@ -402,52 +379,56 @@ impl UwuGuiApp {
                     ctx.request_repaint();
                 }
             }
-            SessionAction::CopySelectedLog => {
-                let Some(ctx) = self.egui_ctx.clone() else {
-                    return;
+            AppAction::CopySelectedLog => {
+                self.copy_selected_log_to_clipboard();
+            }
+            other => {
+                self.workspaces.active_session_mut().handle_action(&other);
+            }
+        }
+    }
+
+    fn copy_selected_log_to_clipboard(&self) {
+        let Some(ctx) = self.egui_ctx.clone() else {
+            return;
+        };
+
+        // 1. Ưu tiên cao nhất: nếu người dùng đang bôi đen text -> copy đoạn bôi đen
+        if let Some(selected_text) = crate::actions::active_text_selection(&ctx) {
+            let copy_id = egui::Id::new("copy_raw_flash");
+            let now = ctx.input(|i| i.time);
+            ctx.data_mut(|d| d.insert_temp(copy_id, now));
+            crate::actions::copy_to_clipboard(&ctx, &selected_text);
+            ctx.request_repaint();
+            return;
+        }
+
+        // 2. Không bôi đen: copy toàn bộ dòng log đang pick (hoặc dòng visible đầu tiên)
+        let session = self.active_session();
+        let picked_event = session
+            .view
+            .shared
+            .inspector
+            .selected_log
+            .as_ref()
+            .or_else(|| {
+                let row_idx = session.first_visible_row();
+                session.active_logs().get(row_idx)
+            });
+
+        if let Some(event) = picked_event {
+            let text =
+                if session.view.shared.inspector.is_beauty_payload && !event.fields.is_empty() {
+                    event.beauty_display()
+                } else {
+                    event.raw_display()
                 };
 
-                // 1. Ưu tiên cao nhất: nếu người dùng đang bôi đen text -> copy đoạn bôi đen
-                if let Some(selected_text) = crate::actions::active_text_selection(&ctx) {
-                    let copy_id = egui::Id::new("copy_raw_flash");
-                    let now = ctx.input(|i| i.time);
-                    ctx.data_mut(|d| d.insert_temp(copy_id, now));
-                    crate::actions::copy_to_clipboard(&ctx, &selected_text);
-                    ctx.request_repaint();
-                    return;
-                }
-
-                // 2. Không bôi đen: copy toàn bộ dòng log đang pick (hoặc dòng visible đầu tiên)
-                let session = self.active_session();
-                let picked_event =
-                    session
-                        .view
-                        .shared
-                        .inspector
-                        .selected_log
-                        .as_ref()
-                        .or_else(|| {
-                            let row_idx = session.first_visible_row();
-                            session.active_logs().get(row_idx)
-                        });
-
-                if let Some(event) = picked_event {
-                    let text = if session.view.shared.inspector.is_beauty_payload
-                        && !event.fields.is_empty()
-                    {
-                        event.beauty_display()
-                    } else {
-                        event.raw_display()
-                    };
-
-                    let copy_id = egui::Id::new("copy_raw_flash");
-                    let now = ctx.input(|i| i.time);
-                    ctx.data_mut(|d| d.insert_temp(copy_id, now));
-                    crate::actions::copy_to_clipboard(&ctx, &text);
-                    ctx.request_repaint();
-                }
-            }
-            _ => {}
+            let copy_id = egui::Id::new("copy_raw_flash");
+            let now = ctx.input(|i| i.time);
+            ctx.data_mut(|d| d.insert_temp(copy_id, now));
+            crate::actions::copy_to_clipboard(&ctx, &text);
+            ctx.request_repaint();
         }
     }
 }

@@ -1,5 +1,5 @@
 use super::test_helpers::create_test_app;
-use crate::actions::{OverlayAction, SessionAction, WorkspaceAction};
+use crate::actions::AppAction;
 use crate::overlay::OverlayLayer;
 use crate::state::ActiveTab;
 use std::collections::HashMap;
@@ -13,7 +13,7 @@ async fn test_zed_style_draft_isolation_and_cancel() {
     app.active_session_mut().session.source_config.command_str = "cargo run".to_string();
 
     // Open launch modal creates draft from live session
-    app.dispatch_action(OverlayAction::OpenLaunch.into());
+    app.dispatch_action(AppAction::OpenLaunchModal);
     assert!(app.is_overlay_open(OverlayLayer::LaunchModal));
     assert!(app.overlays.launch_modal_draft.is_some());
 
@@ -35,7 +35,7 @@ async fn test_zed_style_draft_isolation_and_cancel() {
     assert_eq!(app.active_session().session.source_config.file_path, "");
 
     // User cancels modal
-    app.dispatch_action(OverlayAction::CloseLaunch.into());
+    app.dispatch_action(AppAction::CloseLaunchModal);
     assert!(!app.is_overlay_open(OverlayLayer::LaunchModal));
     assert!(app.overlays.launch_modal_draft.is_none());
 
@@ -57,7 +57,7 @@ async fn test_zed_style_draft_apply() {
     app.active_session_mut().session.source_config.command_str = "cargo run".to_string();
 
     // Open modal
-    app.dispatch_action(OverlayAction::OpenLaunch.into());
+    app.dispatch_action(AppAction::OpenLaunchModal);
     if let Some(ref mut draft) = app.overlays.launch_modal_draft {
         draft.source_type = SourceType::File;
         draft.file_path = "C:\\logs\\app.log".to_string();
@@ -65,7 +65,7 @@ async fn test_zed_style_draft_apply() {
     }
 
     // Apply
-    app.dispatch_action(OverlayAction::ApplyLaunch.into());
+    app.dispatch_action(AppAction::ApplyLaunchModal);
     assert!(!app.is_overlay_open(OverlayLayer::LaunchModal));
     assert!(app.overlays.launch_modal_draft.is_none());
 
@@ -95,28 +95,28 @@ async fn test_zed_style_app_action_dispatch() {
         SourceType::Process,
     );
 
-    app.dispatch_action(WorkspaceAction::Open(Box::new(ws1)).into());
+    app.dispatch_action(AppAction::OpenWorkspace(Box::new(ws1)));
     assert_eq!(app.workspaces.sessions.len(), 2);
     assert_eq!(app.workspaces.active_index, 1);
 
-    app.dispatch_action(WorkspaceAction::Open(Box::new(ws2)).into());
+    app.dispatch_action(AppAction::OpenWorkspace(Box::new(ws2)));
     assert_eq!(app.workspaces.sessions.len(), 3);
     assert_eq!(app.workspaces.active_index, 2);
 
     // Cycle backwards
-    app.dispatch_action(WorkspaceAction::CycleSession(false).into());
+    app.dispatch_action(AppAction::CycleSession(false));
     assert_eq!(app.workspaces.active_index, 1);
 
     // Cycle forwards
-    app.dispatch_action(WorkspaceAction::CycleSession(true).into());
+    app.dispatch_action(AppAction::CycleSession(true));
     assert_eq!(app.workspaces.active_index, 2);
 
     // Switch directly
-    app.dispatch_action(WorkspaceAction::SwitchSession(0).into());
+    app.dispatch_action(AppAction::SwitchSession(0));
     assert_eq!(app.workspaces.active_index, 0);
 
     // Close session
-    app.dispatch_action(WorkspaceAction::CloseSession(1).into());
+    app.dispatch_action(AppAction::CloseSession(1));
     assert_eq!(app.workspaces.sessions.len(), 2);
 }
 
@@ -126,7 +126,7 @@ async fn test_app_action_columns_modal_flow() {
     let initial_cols = app.active_session().view.shared.columns.columns.clone();
 
     // 1. Open columns modal
-    app.dispatch_action(OverlayAction::OpenColumns.into());
+    app.dispatch_action(AppAction::OpenColumnsModal);
     assert!(app.is_overlay_open(OverlayLayer::ColumnsModal));
     assert!(app.active_session().view.shared.columns.draft.is_some());
 
@@ -143,7 +143,7 @@ async fn test_app_action_columns_modal_flow() {
     assert!(app.active_session().view.shared.columns.columns[0].visible);
 
     // 3. Cancel / Close modal
-    app.dispatch_action(OverlayAction::CloseColumns.into());
+    app.dispatch_action(AppAction::CloseColumnsModal);
     assert!(!app.is_overlay_open(OverlayLayer::ColumnsModal));
     assert!(app.active_session().view.shared.columns.draft.is_none());
     assert_eq!(
@@ -152,11 +152,11 @@ async fn test_app_action_columns_modal_flow() {
     );
 
     // 4. Open again, modify and Apply
-    app.dispatch_action(OverlayAction::OpenColumns.into());
+    app.dispatch_action(AppAction::OpenColumnsModal);
     if let Some(ref mut draft) = app.active_session_mut().view.shared.columns.draft {
         draft.columns[0].visible = false;
     }
-    app.dispatch_action(OverlayAction::ApplyColumns.into());
+    app.dispatch_action(AppAction::ApplyColumnsModal);
     assert!(!app.is_overlay_open(OverlayLayer::ColumnsModal));
     assert!(!app.active_session().view.shared.columns.columns[0].visible);
 }
@@ -166,7 +166,7 @@ async fn test_columns_all_hidden_safe_and_reset() {
     let mut app = create_test_app();
 
     // 1. Open modal and hide ALL columns
-    app.dispatch_action(OverlayAction::OpenColumns.into());
+    app.dispatch_action(AppAction::OpenColumnsModal);
     if let Some(ref mut draft) = app.active_session_mut().view.shared.columns.draft {
         for col in draft.columns.iter_mut() {
             col.visible = false;
@@ -185,7 +185,7 @@ async fn test_columns_all_hidden_safe_and_reset() {
         .all(|c| !c.visible));
 
     // 2. Apply all hidden columns
-    app.dispatch_action(OverlayAction::ApplyColumns.into());
+    app.dispatch_action(AppAction::ApplyColumnsModal);
     assert!(!app.is_overlay_open(OverlayLayer::ColumnsModal));
     assert!(app
         .active_session()
@@ -225,7 +225,7 @@ async fn test_app_action_select_log_and_switch_tab() {
         std::collections::HashMap::new(),
     );
 
-    app.dispatch_action(SessionAction::SelectLog(Some(Box::new(event.clone()))).into());
+    app.dispatch_action(AppAction::SelectLog(Some(Box::new(event.clone()))));
     assert!(app
         .active_session()
         .view
@@ -245,7 +245,7 @@ async fn test_app_action_select_log_and_switch_tab() {
         "test message"
     );
 
-    app.dispatch_action(SessionAction::SelectLog(None).into());
+    app.dispatch_action(AppAction::SelectLog(None));
     assert!(app
         .active_session()
         .view
@@ -255,15 +255,15 @@ async fn test_app_action_select_log_and_switch_tab() {
         .is_none());
 
     // Không có filter -> không thể đổi sang tab Unfiltered
-    app.dispatch_action(SessionAction::SwitchTab(ActiveTab::Unfiltered).into());
+    app.dispatch_action(AppAction::SwitchTab(ActiveTab::Unfiltered));
     assert_eq!(app.active_session().view.active_tab, ActiveTab::Filtered);
 
     // Có filter -> đổi tab bình thường
     app.active_session_mut().view.search.query = "error".to_string();
-    app.dispatch_action(SessionAction::SwitchTab(ActiveTab::Unfiltered).into());
+    app.dispatch_action(AppAction::SwitchTab(ActiveTab::Unfiltered));
     assert_eq!(app.active_session().view.active_tab, ActiveTab::Unfiltered);
 
-    app.dispatch_action(SessionAction::SwitchTab(ActiveTab::Filtered).into());
+    app.dispatch_action(AppAction::SwitchTab(ActiveTab::Filtered));
     assert_eq!(app.active_session().view.active_tab, ActiveTab::Filtered);
 }
 
@@ -304,22 +304,22 @@ async fn test_app_action_dismiss_top_layer() {
 
     // Popping order verification:
     // Pop 1: Project picker
-    app.dispatch_action(OverlayAction::DismissTopLayer.into());
+    app.dispatch_action(AppAction::DismissTopLayer);
     assert!(!app.is_overlay_open(OverlayLayer::ProjectPicker));
     assert!(app.is_overlay_open(OverlayLayer::ColumnsModal));
 
     // Pop 2: Columns modal
-    app.dispatch_action(OverlayAction::DismissTopLayer.into());
+    app.dispatch_action(AppAction::DismissTopLayer);
     assert!(!app.is_overlay_open(OverlayLayer::ColumnsModal));
     assert!(app.is_overlay_open(OverlayLayer::LaunchModal));
 
     // Pop 3: Launch modal
-    app.dispatch_action(OverlayAction::DismissTopLayer.into());
+    app.dispatch_action(AppAction::DismissTopLayer);
     assert!(!app.is_overlay_open(OverlayLayer::LaunchModal));
     assert_eq!(app.active_session().view.active_tab, ActiveTab::Unfiltered);
 
     // Pop 4: Unfiltered stream tab
-    app.dispatch_action(OverlayAction::DismissTopLayer.into());
+    app.dispatch_action(AppAction::DismissTopLayer);
     assert_eq!(app.active_session().view.active_tab, ActiveTab::Filtered);
     assert!(app
         .active_session()
@@ -330,7 +330,7 @@ async fn test_app_action_dismiss_top_layer() {
         .is_some());
 
     // Pop 5: Selected log inspector
-    app.dispatch_action(OverlayAction::DismissTopLayer.into());
+    app.dispatch_action(AppAction::DismissTopLayer);
     assert!(app
         .active_session()
         .view
@@ -357,7 +357,7 @@ async fn test_open_workspace_and_session_in_new_window() {
     app.push_overlay(OverlayLayer::ProjectPicker);
     assert!(app.is_overlay_open(OverlayLayer::ProjectPicker));
 
-    app.dispatch_action(WorkspaceAction::OpenInNewWindow(Box::new(ws)).into());
+    app.dispatch_action(AppAction::OpenWorkspaceInNewWindow(Box::new(ws)));
     assert!(!app.is_overlay_open(OverlayLayer::ProjectPicker));
     assert!(app
         .workspaces
@@ -369,7 +369,7 @@ async fn test_open_workspace_and_session_in_new_window() {
     // Dispatch OpenSessionInNewWindow should close the session from This Window in current window
     app.push_overlay(OverlayLayer::ProjectPicker);
     assert_eq!(app.workspaces.sessions.len(), 1);
-    app.dispatch_action(WorkspaceAction::OpenSessionInNewWindow(0).into());
+    app.dispatch_action(AppAction::OpenSessionInNewWindow(0));
     assert!(!app.is_overlay_open(OverlayLayer::ProjectPicker));
     assert_eq!(app.workspaces.sessions.len(), 0);
     assert!(!app.workspaces.has_active_session());
@@ -396,7 +396,7 @@ async fn test_field_collision_warnings_sync_and_dismiss() {
     );
 
     // Dismiss hides current key
-    app.dispatch_action(SessionAction::DismissFieldWarnings.into());
+    app.dispatch_action(AppAction::DismissFieldWarnings);
     assert!(app
         .active_session()
         .view

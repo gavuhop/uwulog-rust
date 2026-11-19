@@ -1,4 +1,4 @@
-use crate::actions::{AppAction, OverlayAction};
+use crate::actions::AppAction;
 use crate::components::ui::{AppButton, ModalContainer};
 use crate::keymap::{KeyAction, KeyContext, KeymapManager};
 use crate::theme::ActiveTheme;
@@ -60,6 +60,6 @@ pub fn render_about_modal(
         );
 
     if resp.closed {
-        dispatch(OverlayAction::CloseAbout.into());
+        dispatch(AppAction::CloseAboutModal);
     }
 }
