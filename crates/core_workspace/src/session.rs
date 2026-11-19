@@ -54,8 +54,6 @@ pub struct WorkspaceSession {
     pub location: WorkspaceLocation,
     pub source_config: SourceConfig,
     pub engine: Arc<SystemEngine>,
-    pub capacity: usize,
-    pub display_limit: usize,
 
     pub is_source_running: bool,
     pub source_task: Option<tokio::task::JoinHandle<()>>,
@@ -69,6 +67,16 @@ pub struct WorkspaceSession {
 }
 
 impl WorkspaceSession {
+    #[inline]
+    pub fn capacity(&self) -> usize {
+        self.source_config.capacity
+    }
+
+    #[inline]
+    pub fn display_limit(&self) -> usize {
+        self.source_config.display_limit
+    }
+
     pub fn new(
         name: impl Into<String>,
         location: WorkspaceLocation,
@@ -83,9 +91,10 @@ impl WorkspaceSession {
         location: WorkspaceLocation,
         source_config: SourceConfig,
     ) -> Self {
-        let capacity = source_config.capacity;
-        let display_limit = source_config.display_limit;
-        let engine = Arc::new(SystemEngine::new_with_session_id(capacity, id));
+        let engine = Arc::new(SystemEngine::new_with_session_id(
+            source_config.capacity,
+            id,
+        ));
         let (env_watch_tx, env_watch_rx) = watch::channel(None);
         let name = crate::sanitize_project_name(&name.into(), &location);
 
@@ -95,8 +104,6 @@ impl WorkspaceSession {
             location,
             source_config,
             engine,
-            capacity,
-            display_limit,
             is_source_running: false,
             source_task: None,
             kill_signal: None,
@@ -265,220 +272,168 @@ impl WorkspaceSession {
             }
         }
 
-        match config.source_type {
-            SourceType::Process => {
-                if !config.command_str.trim().is_empty() {
-                    match &self.location {
-                        WorkspaceLocation::Remote(RemoteConnectionOptions::Wsl(wsl_opts)) => {
-                            let distro = wsl_opts.distro.clone();
-                            let target_mode = WslTargetMode::Command(config.command_str.clone());
-                            let workdir = if !wsl_opts.working_dir.trim().is_empty() {
-                                Some(wsl_opts.working_dir.clone())
-                            } else if !config.working_dir.trim().is_empty() {
-                                Some(config.working_dir.clone())
-                            } else {
-                                None
-                            };
-                            let tx = source_tx.clone();
-                            rt.spawn(async move {
-                                let _ = WslSource::new_with_dir(distro, target_mode, workdir)
-                                    .start_stream(tx)
-                                    .await;
-                            });
-                            self.is_source_running = true;
-                        }
-                        WorkspaceLocation::Remote(RemoteConnectionOptions::Ssh(ssh_opts)) => {
-                            let mut transport = ssh_opts.to_transport();
-                            if !config.working_dir.trim().is_empty() {
-                                transport = transport.with_working_dir(&config.working_dir);
-                            }
-                            Self::spawn_remote_stream(
-                                rt,
-                                Box::new(transport),
-                                RemoteLogSourceSpec::Command(config.command_str.clone()),
-                                source_tx.clone(),
-                                "SSH",
-                            );
-                            self.is_source_running = true;
-                        }
-                        WorkspaceLocation::Remote(RemoteConnectionOptions::Docker(docker_opts)) => {
-                            let mut transport = docker_opts.to_transport();
-                            if !config.working_dir.trim().is_empty() {
-                                transport = transport.with_working_dir(&config.working_dir);
-                            }
-                            Self::spawn_remote_stream(
-                                rt,
-                                Box::new(transport),
-                                RemoteLogSourceSpec::Command(config.command_str.clone()),
-                                source_tx.clone(),
-                                "DOCKER",
-                            );
-                            self.is_source_running = true;
-                        }
-                        WorkspaceLocation::Local { .. } => {
-                            let cmd_parts: Vec<&str> =
-                                config.command_str.split_whitespace().collect();
-                            if !cmd_parts.is_empty() {
-                                let prog = cmd_parts[0].to_string();
-                                let proc_args: Vec<String> =
-                                    cmd_parts[1..].iter().map(|s| s.to_string()).collect();
+        let target_spec = match config.source_type {
+            SourceType::Process if !config.command_str.trim().is_empty() => Some((
+                WslTargetMode::Command(config.command_str.clone()),
+                RemoteLogSourceSpec::Command(config.command_str.clone()),
+            )),
+            SourceType::File if !config.file_path.trim().is_empty() => Some((
+                WslTargetMode::File(config.file_path.clone()),
+                RemoteLogSourceSpec::File(config.file_path.clone()),
+            )),
+            _ => None,
+        };
 
-                                let workdir = if !config.working_dir.trim().is_empty() {
-                                    Some(config.working_dir.clone())
-                                } else if !self.location.working_dir().trim().is_empty() {
-                                    Some(self.location.working_dir().to_string())
-                                } else {
-                                    std::env::current_dir()
-                                        .ok()
-                                        .map(|p| p.to_string_lossy().to_string())
-                                };
-
-                                let mut watch_rx = self.env_watch_rx.clone();
-                                let current_envs = self.env_vars.clone();
-                                let tx = source_tx.clone();
-                                rt.spawn(async move {
-                                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                                    let envs = if !current_envs.is_empty() {
-                                        if let Some(latest) = watch_rx.borrow().as_ref() {
-                                            latest.clone()
-                                        } else {
-                                            current_envs
-                                        }
-                                    } else {
-                                        let wait_res = tokio::time::timeout(
-                                            std::time::Duration::from_millis(500),
-                                            async {
-                                                while watch_rx.borrow().is_none() {
-                                                    if watch_rx.changed().await.is_err() {
-                                                        break;
-                                                    }
-                                                }
-                                                watch_rx.borrow().clone()
-                                            },
-                                        )
-                                        .await;
-
-                                        wait_res.ok().flatten().unwrap_or_default()
-                                    };
-
-                                    let mut proc_src =
-                                        ProcessSource::new_with_dir(prog, proc_args, workdir);
-                                    if !envs.is_empty() {
-                                        proc_src = proc_src.with_envs(envs);
-                                    }
-                                    let _ = proc_src.start_stream(tx).await;
-                                });
-                                self.is_source_running = true;
-                            }
-                        }
-                    }
+        if let Some((wsl_mode, remote_spec)) = target_spec {
+            match &self.location {
+                WorkspaceLocation::Remote(RemoteConnectionOptions::Wsl(wsl_opts)) => {
+                    let distro = wsl_opts.distro.clone();
+                    let workdir = if !wsl_opts.working_dir.trim().is_empty() {
+                        Some(wsl_opts.working_dir.clone())
+                    } else if config.source_type == SourceType::Process
+                        && !config.working_dir.trim().is_empty()
+                    {
+                        Some(config.working_dir.clone())
+                    } else {
+                        None
+                    };
+                    let tx = source_tx.clone();
+                    rt.spawn(async move {
+                        let _ = WslSource::new_with_dir(distro, wsl_mode, workdir)
+                            .start_stream(tx)
+                            .await;
+                    });
+                    self.is_source_running = true;
                 }
-            }
-            SourceType::File => {
-                if !config.file_path.trim().is_empty() {
-                    match &self.location {
-                        WorkspaceLocation::Remote(RemoteConnectionOptions::Wsl(wsl_opts)) => {
-                            let distro = wsl_opts.distro.clone();
-                            let target_mode = WslTargetMode::File(config.file_path.clone());
-                            let workdir = if !wsl_opts.working_dir.trim().is_empty() {
-                                Some(wsl_opts.working_dir.clone())
-                            } else {
-                                None
-                            };
-                            let tx = source_tx.clone();
-                            rt.spawn(async move {
-                                let _ = WslSource::new_with_dir(distro, target_mode, workdir)
-                                    .start_stream(tx)
-                                    .await;
-                            });
-                            self.is_source_running = true;
-                        }
-                        WorkspaceLocation::Remote(RemoteConnectionOptions::Ssh(ssh_opts)) => {
-                            let mut transport = ssh_opts.to_transport();
-                            if !config.working_dir.trim().is_empty() {
-                                transport = transport.with_working_dir(&config.working_dir);
-                            }
-                            Self::spawn_remote_stream(
-                                rt,
-                                Box::new(transport),
-                                RemoteLogSourceSpec::File(config.file_path.clone()),
-                                source_tx.clone(),
-                                "SSH",
-                            );
-                            self.is_source_running = true;
-                        }
-                        WorkspaceLocation::Remote(RemoteConnectionOptions::Docker(docker_opts)) => {
-                            let mut transport = docker_opts.to_transport();
-                            if !config.working_dir.trim().is_empty() {
-                                transport = transport.with_working_dir(&config.working_dir);
-                            }
-                            Self::spawn_remote_stream(
-                                rt,
-                                Box::new(transport),
-                                RemoteLogSourceSpec::File(config.file_path.clone()),
-                                source_tx.clone(),
-                                "DOCKER",
-                            );
-                            self.is_source_running = true;
-                        }
-                        WorkspaceLocation::Local { .. } => {
-                            let path = config.file_path.clone();
-                            let tx = source_tx.clone();
-                            rt.spawn(async move {
-                                let _ = FileSource::new(path).start_stream(tx).await;
-                            });
-                            self.is_source_running = true;
-                        }
+                WorkspaceLocation::Remote(RemoteConnectionOptions::Ssh(ssh_opts)) => {
+                    let mut transport = ssh_opts.to_transport();
+                    if !config.working_dir.trim().is_empty() {
+                        transport = transport.with_working_dir(&config.working_dir);
                     }
+                    Self::spawn_remote_stream(
+                        rt,
+                        Box::new(transport),
+                        remote_spec,
+                        source_tx.clone(),
+                        "SSH",
+                    );
+                    self.is_source_running = true;
                 }
+                WorkspaceLocation::Remote(RemoteConnectionOptions::Docker(docker_opts)) => {
+                    let mut transport = docker_opts.to_transport();
+                    if !config.working_dir.trim().is_empty() {
+                        transport = transport.with_working_dir(&config.working_dir);
+                    }
+                    Self::spawn_remote_stream(
+                        rt,
+                        Box::new(transport),
+                        remote_spec,
+                        source_tx.clone(),
+                        "DOCKER",
+                    );
+                    self.is_source_running = true;
+                }
+                WorkspaceLocation::Local { .. } => match config.source_type {
+                    SourceType::Process => self.spawn_local_process(rt, source_tx.clone()),
+                    SourceType::File => {
+                        let path = config.file_path.clone();
+                        let tx = source_tx.clone();
+                        rt.spawn(async move {
+                            let _ = FileSource::new(path).start_stream(tx).await;
+                        });
+                        self.is_source_running = true;
+                    }
+                },
             }
+            return;
         }
 
         // Hướng dẫn người dùng khi vừa mở Workspace SSH hoặc Dev Container mà chưa cấu hình File/Command
-        let is_unconfigured = match config.source_type {
-            SourceType::Process => config.command_str.trim().is_empty(),
-            SourceType::File => config.file_path.trim().is_empty(),
+        let ready_msg = match &self.location {
+            WorkspaceLocation::Remote(RemoteConnectionOptions::Ssh(ref ssh_opts)) => {
+                let target = ssh_opts.target_string();
+                let workdir = if !ssh_opts.working_dir.is_empty() {
+                    format!(" (directory: {})", ssh_opts.working_dir)
+                } else {
+                    String::new()
+                };
+                Some(format!(
+                    "[SSH READY] Connected to {}{}. Open Settings (⚙) on the toolbar to choose a log file or command to stream.",
+                    target, workdir
+                ))
+            }
+            WorkspaceLocation::Remote(RemoteConnectionOptions::Docker(ref docker_opts)) => {
+                let target = docker_opts.display_name();
+                let workdir = if !docker_opts.working_dir.is_empty() {
+                    format!(" (directory: {})", docker_opts.working_dir)
+                } else {
+                    String::new()
+                };
+                Some(format!(
+                    "[DEV CONTAINER READY] Connected to {}{}. Open Settings (⚙) on the toolbar to choose a log file or command to stream.",
+                    target, workdir
+                ))
+            }
+            _ => None,
         };
-        if is_unconfigured {
-            let ready_msg = match &self.location {
-                WorkspaceLocation::Remote(RemoteConnectionOptions::Ssh(ref ssh_opts)) => {
-                    let target = ssh_opts.target_string();
-                    let workdir = if !ssh_opts.working_dir.is_empty() {
-                        format!(" (directory: {})", ssh_opts.working_dir)
-                    } else {
-                        String::new()
-                    };
-                    Some(format!(
-                        "[SSH READY] Connected to {}{}. Open Settings (⚙) on the toolbar to choose a log file or command to stream.",
-                        target, workdir
-                    ))
-                }
-                WorkspaceLocation::Remote(RemoteConnectionOptions::Docker(ref docker_opts)) => {
-                    let target = docker_opts.display_name();
-                    let workdir = if !docker_opts.working_dir.is_empty() {
-                        format!(" (directory: {})", docker_opts.working_dir)
-                    } else {
-                        String::new()
-                    };
-                    Some(format!(
-                        "[DEV CONTAINER READY] Connected to {}{}. Open Settings (⚙) on the toolbar to choose a log file or command to stream.",
-                        target, workdir
-                    ))
-                }
-                _ => None,
+
+        if let Some(msg) = ready_msg {
+            let tx_info = source_tx.clone();
+            rt.spawn(async move {
+                let _ = tx_info
+                    .send(RawLogEntry {
+                        payload: RawPayload::Text(msg),
+                    })
+                    .await;
+            });
+        }
+    }
+
+    fn spawn_local_process(&mut self, rt: &Handle, source_tx: mpsc::Sender<RawLogEntry>) {
+        let config = &self.source_config;
+        let cmd_parts: Vec<&str> = config.command_str.split_whitespace().collect();
+        let Some(&prog) = cmd_parts.first() else {
+            return;
+        };
+        let prog = prog.to_string();
+        let proc_args: Vec<String> = cmd_parts[1..].iter().map(|s| s.to_string()).collect();
+
+        let workdir = if !config.working_dir.trim().is_empty() {
+            Some(config.working_dir.clone())
+        } else if !self.location.working_dir().trim().is_empty() {
+            Some(self.location.working_dir().to_string())
+        } else {
+            std::env::current_dir()
+                .ok()
+                .map(|p| p.to_string_lossy().to_string())
+        };
+
+        let mut watch_rx = self.env_watch_rx.clone();
+        let current_envs = self.env_vars.clone();
+        rt.spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            let envs = if !current_envs.is_empty() {
+                watch_rx.borrow().as_ref().cloned().unwrap_or(current_envs)
+            } else {
+                let wait_res = tokio::time::timeout(std::time::Duration::from_millis(500), async {
+                    while watch_rx.borrow().is_none() {
+                        if watch_rx.changed().await.is_err() {
+                            break;
+                        }
+                    }
+                    watch_rx.borrow().clone()
+                })
+                .await;
+                wait_res.ok().flatten().unwrap_or_default()
             };
 
-            if let Some(msg) = ready_msg {
-                let tx_info = source_tx.clone();
-                rt.spawn(async move {
-                    let _ = tx_info
-                        .send(RawLogEntry {
-                            payload: RawPayload::Text(msg),
-                        })
-                        .await;
-                });
+            let mut proc_src = ProcessSource::new_with_dir(prog, proc_args, workdir);
+            if !envs.is_empty() {
+                proc_src = proc_src.with_envs(envs);
             }
-        }
+            let _ = proc_src.start_stream(source_tx).await;
+        });
+        self.is_source_running = true;
     }
 
     fn spawn_remote_stream(
@@ -519,11 +474,10 @@ impl WorkspaceSession {
 
     pub fn restart_source(&mut self, rt: &Handle) {
         self.stop_source();
-        self.capacity = self.source_config.capacity;
-        self.display_limit = self.source_config.display_limit;
-        if self.capacity != self.engine.max_capacity() {
+        let cap = self.capacity();
+        if cap != self.engine.max_capacity() {
             self.engine.clear();
-            self.engine = Arc::new(SystemEngine::new_with_session_id(self.capacity, self.id));
+            self.engine = Arc::new(SystemEngine::new_with_session_id(cap, self.id));
         } else {
             self.engine.clear();
         }

@@ -381,8 +381,8 @@ async fn test_close_and_switch_session_behaviors() {
     assert_eq!(app.workspaces.sessions.len(), 2);
     assert_eq!(app.workspaces.active_index, 1);
     // Kiểm tra kế thừa capacity và display_limit từ active session
-    assert_eq!(app.active_session().session.source_config.capacity, 100);
-    assert_eq!(app.active_session().session.display_limit, 50);
+    assert_eq!(app.active_session().session.capacity(), 100);
+    assert_eq!(app.active_session().session.display_limit(), 50);
 
     app.open_or_switch_workspace(&ws2);
     assert_eq!(app.workspaces.sessions.len(), 3);

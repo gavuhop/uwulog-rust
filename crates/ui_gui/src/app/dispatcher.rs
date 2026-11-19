@@ -10,7 +10,7 @@ impl UwuGuiApp {
         let (query_id, cancel_token) = active.view.search.advance_query();
         let session_id = active.session.id;
         let query = active.view.search.query.clone();
-        let limit = active.session.display_limit;
+        let limit = active.session.display_limit();
         let engine = Arc::clone(&active.session.engine);
         let tx = self.event_tx.clone();
         let egui_ctx = self.egui_ctx.clone();

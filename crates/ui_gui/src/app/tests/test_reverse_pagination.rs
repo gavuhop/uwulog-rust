@@ -17,7 +17,7 @@ async fn test_reverse_pagination_loads_older_logs() {
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     // Giả lập display_limit nhỏ (10 bản ghi mới nhất ban đầu)
-    app.active_session_mut().session.display_limit = 10;
+    app.active_session_mut().session.source_config.display_limit = 10;
     app.active_session_mut().trigger_full_search();
 
     assert_eq!(
@@ -146,7 +146,7 @@ async fn test_reverse_pagination_with_filter() {
 
     // Filter ERROR (chỉ có các chỉ số chẵn: 0, 2, 4, 6, 8, 10, 12, 14, 16, 18 = 10 logs)
     app.active_session_mut().view.search.query = "level:error".to_string();
-    app.active_session_mut().session.display_limit = 5;
+    app.active_session_mut().session.source_config.display_limit = 5;
     app.active_session_mut().trigger_full_search();
 
     assert_eq!(

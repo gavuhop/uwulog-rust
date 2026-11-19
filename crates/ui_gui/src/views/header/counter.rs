@@ -34,7 +34,7 @@ pub fn render_log_counter(ui: &mut egui::Ui, session: &GuiSession) {
         let tooltip = format!(
             "Filter Query: \"{query}\" ({status})\n• Total Matched: {total_label}\n• Displayed: {} (Limit: {})",
             theme::format_number(cached_len),
-            theme::format_number(session.session.display_limit),
+            theme::format_number(session.session.display_limit()),
         );
         (text, theme.text.accent, tooltip)
     } else {

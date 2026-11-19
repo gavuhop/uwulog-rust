@@ -124,7 +124,7 @@ impl GuiSession {
         let (matched, logs) = self
             .session
             .engine
-            .search_with_count(&self.view.search.query, self.session.display_limit);
+            .search_with_count(&self.view.search.query, self.session.display_limit());
         self.apply_search_results(self.view.search.active_query_id, matched, logs, true);
     }
 
@@ -179,7 +179,7 @@ impl GuiSession {
     #[inline]
     pub fn should_stream_filtered(&self) -> bool {
         let main = self.view.main_tab();
-        main.stream.is_auto_scroll || main.stream.cached_logs.len() < self.session.display_limit
+        main.stream.is_auto_scroll || main.stream.cached_logs.len() < self.session.display_limit()
     }
 
     /// Cho phép append log mới vào tab Unfiltered khi đang mở live-raw (không phải snapshot `target_id`) và đang Live hoặc chưa chạm trần `RAW_STREAM_LIMIT`
@@ -200,7 +200,7 @@ impl GuiSession {
     ) {
         if matched > 0 && self.should_stream_filtered() {
             self.sync_discovered_fields(&logs);
-            let limit = self.session.display_limit;
+            let limit = self.session.display_limit();
             let main = self.view.main_tab_mut();
             let is_auto_scroll = main.stream.is_auto_scroll;
             let added = main.stream.append_logs(logs, limit);

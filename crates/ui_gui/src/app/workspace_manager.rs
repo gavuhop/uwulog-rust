@@ -122,10 +122,7 @@ impl WorkspaceManager {
 
     fn push_new_session(&mut self, ws: &Workspace, rt: &Handle) {
         let (cap, limit) = if let Some(active) = self.active_session_opt() {
-            (
-                active.session.source_config.capacity,
-                active.session.display_limit,
-            )
+            (active.session.capacity(), active.session.display_limit())
         } else {
             (500_000, 5_000)
         };

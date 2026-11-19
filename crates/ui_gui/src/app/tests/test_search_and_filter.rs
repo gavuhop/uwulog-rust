@@ -382,7 +382,7 @@ async fn test_phase0_drain_budget_guard() {
     use crate::actions::AppEvent;
 
     let mut app = create_test_app();
-    app.active_session_mut().session.display_limit = 200;
+    app.active_session_mut().session.source_config.display_limit = 200;
     let session_id = app.active_session().session.id;
 
     // Gửi 100 sự kiện vào channel
@@ -461,7 +461,7 @@ async fn test_udf_reverse_pagination_worker_and_reducer() {
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     // Giả lập display_limit = 5 (lấy 5 bản ghi mới nhất ban đầu: index 15..19)
-    app.active_session_mut().session.display_limit = 5;
+    app.active_session_mut().session.source_config.display_limit = 5;
     app.active_session_mut().trigger_full_search();
     assert_eq!(
         app.active_session()
@@ -521,7 +521,7 @@ async fn test_pause_restart_populates_viewport_without_scrolling() {
     use uwu_core_schema::{RawLogEntry, RawPayload};
 
     let mut app = create_test_app();
-    app.active_session_mut().session.display_limit = 4;
+    app.active_session_mut().session.source_config.display_limit = 4;
     let tx = app.active_session().session.engine.get_channel();
 
     // 1. Chuyển sang Pause (Unlatch)
