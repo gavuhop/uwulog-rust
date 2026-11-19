@@ -42,7 +42,7 @@ pub fn render_keymap_modal(
     let mut should_apply = false;
 
     // 1. Quản lý trạng thái bắt phím (Customizer popup hoặc Search box recording)
-    let is_recording_row = state.recording.is_some();
+    let is_recording_row = state.customizer.is_some();
     let is_recording_search = state.search_recording;
 
     if is_recording_row || is_recording_search {
@@ -89,25 +89,19 @@ pub fn render_keymap_modal(
             ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
             if is_recording_search {
                 state.search_recording = false;
-            } else if state.is_recording_keystroke {
-                state.is_recording_keystroke = false;
-            } else {
-                state.recording = None;
-                state.pending_keystroke = None;
-                state.is_recording_keystroke = false;
-                state.pending_context = KeyContext::Global;
-                state.conflict_warning = None;
+            } else if let Some(customizer) = &mut state.customizer {
+                if customizer.is_recording_keystroke {
+                    customizer.is_recording_keystroke = false;
+                } else {
+                    state.close_customizer();
+                }
             }
         } else if enter_pressed {
+            ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
             if is_recording_search {
-                ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
                 state.search_recording = false;
-            } else if state.is_recording_keystroke {
-                ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
-                state.is_recording_keystroke = false;
-            } else {
-                ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
-                state.is_recording_keystroke = true;
+            } else if let Some(customizer) = &mut state.customizer {
+                customizer.is_recording_keystroke = !customizer.is_recording_keystroke;
             }
         } else if let Some(ks) = captured {
             if is_recording_search {
@@ -117,13 +111,15 @@ pub fn render_keymap_modal(
                 // Điền phím vừa bấm vào ô tìm kiếm (Record Keys)
                 state.search_query = format_keystroke_zed(&ks);
                 state.search_recording = false;
-            } else if state.is_recording_keystroke {
-                if let Some(egui_key) = ks.key.to_egui() {
-                    ctx.input_mut(|i| i.consume_key(ks.to_egui_modifiers(), egui_key));
+            } else if let Some(customizer) = &mut state.customizer {
+                if customizer.is_recording_keystroke {
+                    if let Some(egui_key) = ks.key.to_egui() {
+                        ctx.input_mut(|i| i.consume_key(ks.to_egui_modifiers(), egui_key));
+                    }
+                    // Cập nhật phím mới vừa bấm và dừng record
+                    customizer.pending_keystroke = Some(ks);
+                    customizer.is_recording_keystroke = false;
                 }
-                // Cập nhật phím mới vừa bấm và dừng record
-                state.pending_keystroke = Some(ks);
-                state.is_recording_keystroke = false;
             }
         }
 
@@ -199,8 +195,7 @@ pub fn render_keymap_modal(
                         if state.search_recording {
                             state.search_query.clear();
                         }
-                        state.recording = None;
-                        state.pending_keystroke = None;
+                        state.close_customizer();
                     }
 
                     // Nút Open keymap.json (📄)
@@ -543,14 +538,7 @@ pub fn render_keymap_modal(
 
                 // Xử lý các thao tác phát sinh từ các hàng của bảng
                 if let Some((action, context, keystroke)) = row_action_edit {
-                    state.context_text = context.display_path().to_string();
-                    state.context_autocomplete_open = false;
-                    state.context_selected_index = 0;
-                    state.recording = Some((action, context.clone()));
-                    state.pending_keystroke = keystroke;
-                    state.pending_context = context;
-                    state.is_recording_keystroke = false;
-                    state.conflict_warning = None;
+                    state.open_customizer(action, context, keystroke);
                 }
                 if let Some((action, context)) = row_action_reset {
                     let def_keys = KeymapManager::new().keystrokes_for_action(&action, &context);
@@ -606,7 +594,7 @@ pub fn render_keymap_modal(
         );
 
     // 5. Popup tùy chỉnh phím tắt nổi ở giữa màn hình (chuẩn phong cách KeybindingEditorModal của Zed)
-    if state.recording.is_some() {
+    if state.customizer.is_some() {
         render_key_customizer_popup(ctx, &theme, state);
     }
 
@@ -615,10 +603,9 @@ pub fn render_keymap_modal(
     } else if should_reset_defaults {
         state.draft.clear();
         state.draft.register_defaults();
-        state.conflict_warning = None;
     }
 
-    if resp.closed && !should_apply && state.recording.is_none() {
+    if resp.closed && !should_apply && state.customizer.is_none() {
         action_to_dispatch = Some(AppAction::CloseKeymapModal);
     }
 

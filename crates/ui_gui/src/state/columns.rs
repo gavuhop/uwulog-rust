@@ -14,26 +14,37 @@ pub struct ColumnItem {
     pub width: f32,
 }
 
-#[derive(Clone, Debug)]
-pub struct ColumnState {
-    pub is_modal_open: bool,
+/// Trạng thái nháp & kéo thả cục bộ khi mở `ColumnsModal`.
+#[derive(Clone, Debug, Default)]
+pub struct ColumnModalDraft {
     pub filter_query: String,
     pub columns: Vec<ColumnItem>,
-    pub draft_columns: Option<Vec<ColumnItem>>,
     pub dragged_index: Option<usize>,
-    pub header_dragged_name: Option<String>,
-    pub header_dragged_width: Option<f32>,
-    pub header_drag_offset_x: Option<f32>,
+    pub animations: crate::animation::MoveAnimationManager,
+    pub did_reset: bool,
+}
+
+/// Trạng thái kéo thả trực tiếp tiêu đề cột trên bảng log.
+#[derive(Clone, Debug)]
+pub struct HeaderDragState {
+    pub name: String,
+    pub width: f32,
+    pub offset_x: Option<f32>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ColumnState {
+    pub columns: Vec<ColumnItem>,
+    pub draft: Option<ColumnModalDraft>,
+    pub header_drag: Option<HeaderDragState>,
     pub known_keys: HashSet<String>,
     pub seen_keys: HashSet<String>,
     pub table_animations: crate::animation::MoveAnimationManager,
-    pub modal_animations: crate::animation::MoveAnimationManager,
     pub layout_version: u64,
     default_slot_keys: [String; 3],
     saved_layout: Vec<SavedColumnConfig>,
     columns_dirty_for_save: bool,
     pending_save_frames: Option<u8>,
-    draft_did_reset: bool,
 }
 
 impl Default for ColumnState {
@@ -41,24 +52,17 @@ impl Default for ColumnState {
         let columns = Self::default_columns();
         let known_keys = columns.iter().map(|c| c.name.clone()).collect();
         Self {
-            is_modal_open: false,
-            filter_query: String::new(),
             columns,
-            draft_columns: None,
-            dragged_index: None,
-            header_dragged_name: None,
-            header_dragged_width: None,
-            header_drag_offset_x: None,
+            draft: None,
+            header_drag: None,
             known_keys,
             seen_keys: HashSet::new(),
             table_animations: crate::animation::MoveAnimationManager::default(),
-            modal_animations: crate::animation::MoveAnimationManager::default(),
             layout_version: 0,
             default_slot_keys: DEFAULT_ROLES.map(|(n, _)| n.to_string()),
             saved_layout: Vec::new(),
             columns_dirty_for_save: false,
             pending_save_frames: None,
-            draft_did_reset: false,
         }
     }
 }
@@ -72,41 +76,36 @@ fn reorder_vec(list: &mut Vec<ColumnItem>, from_idx: usize, to_idx: usize) {
 
 impl ColumnState {
     pub fn open_modal(&mut self) {
-        self.draft_columns = Some(self.columns.clone());
-        self.draft_did_reset = false;
-        self.is_modal_open = true;
+        self.draft = Some(ColumnModalDraft {
+            columns: self.columns.clone(),
+            ..Default::default()
+        });
     }
 
     pub fn close_modal(&mut self) {
-        self.is_modal_open = false;
-        self.draft_columns = None;
-        self.draft_did_reset = false;
-        self.clear_modal_drag();
+        self.draft = None;
     }
 
     pub fn apply_modal(&mut self) {
-        if let Some(draft) = self.draft_columns.take() {
-            self.columns = draft;
+        if let Some(draft) = self.draft.take() {
+            self.columns = draft.columns;
             self.known_keys = self.columns.iter().map(|c| c.name.clone()).collect();
-            if self.draft_did_reset {
+            if draft.did_reset {
                 self.saved_layout.clear();
             }
             self.layout_version = self.layout_version.wrapping_add(1);
             self.columns_dirty_for_save = true;
         }
-        self.draft_did_reset = false;
-        self.is_modal_open = false;
-        self.clear_modal_drag();
     }
 
     pub fn clear_modal_drag(&mut self) {
-        self.dragged_index = None;
+        if let Some(draft) = &mut self.draft {
+            draft.dragged_index = None;
+        }
     }
 
     pub fn clear_header_drag(&mut self) {
-        self.header_dragged_name = None;
-        self.header_dragged_width = None;
-        self.header_drag_offset_x = None;
+        self.header_drag = None;
     }
 
     pub fn default_columns() -> Vec<ColumnItem> {
@@ -184,13 +183,20 @@ impl ColumnState {
     }
 
     pub fn reset_draft_to_defaults(&mut self) {
-        let source = self.draft_columns.as_deref().unwrap_or(&self.columns);
-        self.draft_columns = Some(Self::reset_order_and_visibility(
-            source,
-            &self.default_slot_keys,
-        ));
-        self.draft_did_reset = true;
-        self.clear_modal_drag();
+        let default_slots = self.default_slot_keys.clone();
+        if let Some(draft) = &mut self.draft {
+            draft.columns = Self::reset_order_and_visibility(&draft.columns, &default_slots);
+            draft.did_reset = true;
+            draft.dragged_index = None;
+        } else {
+            let mut draft = ColumnModalDraft {
+                columns: Self::reset_order_and_visibility(&self.columns, &default_slots),
+                did_reset: true,
+                ..Default::default()
+            };
+            draft.dragged_index = None;
+            self.draft = Some(draft);
+        }
     }
 
     pub fn set_column_width(&mut self, name: &str, width: f32) {
@@ -351,8 +357,8 @@ impl ColumnState {
     }
 
     pub fn reorder_draft(&mut self, from_idx: usize, to_idx: usize) {
-        if let Some(draft) = &mut self.draft_columns {
-            reorder_vec(draft, from_idx, to_idx);
+        if let Some(draft) = &mut self.draft {
+            reorder_vec(&mut draft.columns, from_idx, to_idx);
         }
     }
 
@@ -515,12 +521,12 @@ mod tests {
         let mut state = ColumnState::default();
         let original_cols = state.columns.clone();
 
-        state.draft_columns = Some(state.columns.clone());
+        state.open_modal();
         state.reorder_draft(1, 0);
 
         assert_eq!(state.columns, original_cols);
 
-        state.columns = state.draft_columns.take().unwrap();
+        state.apply_modal();
         assert_eq!(state.columns[0].name, "level");
         assert_eq!(state.columns[1].name, "timestamp");
     }
@@ -530,11 +536,11 @@ mod tests {
         let mut state = ColumnState::default();
         let original_cols = state.columns.clone();
 
-        state.draft_columns = Some(state.columns.clone());
-        state.draft_columns.as_mut().unwrap()[0].visible = false;
+        state.open_modal();
+        state.draft.as_mut().unwrap().columns[0].visible = false;
         state.reorder_draft(2, 0);
 
-        state.draft_columns = None;
+        state.close_modal();
 
         assert_eq!(state.columns, original_cols);
         assert!(state.columns[0].visible);
@@ -553,16 +559,16 @@ mod tests {
         state.set_column_width("custom", 180.0);
 
         state.open_modal();
-        if let Some(ref mut draft) = state.draft_columns {
-            if let Some(c) = draft.iter_mut().find(|c| c.name == "custom") {
+        if let Some(ref mut draft) = state.draft {
+            if let Some(c) = draft.columns.iter_mut().find(|c| c.name == "custom") {
                 c.visible = true;
             }
         }
         state.reorder_draft(1, 0);
-        state.draft_columns.as_mut().unwrap()[2].visible = false;
+        state.draft.as_mut().unwrap().columns[2].visible = false;
 
         state.reset_draft_to_defaults();
-        let draft = state.draft_columns.as_ref().unwrap();
+        let draft = &state.draft.as_ref().unwrap().columns;
         // Reset thứ tự và visible về 3 cột mặc định (giữ alias "lvl" và giữ nguyên width đã chỉnh)
         assert_eq!(draft[0].name, "timestamp");
         assert!(draft[0].visible);

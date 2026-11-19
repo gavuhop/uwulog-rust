@@ -1,24 +1,25 @@
 use crate::actions::AppAction;
 use crate::components::render_card;
 use crate::keymap::{KeyAction, KeyContext, KeymapManager};
-use crate::state::ColumnState;
+use crate::state::{ColumnModalDraft, ColumnState};
 use crate::theme::ActiveTheme;
 use eframe::egui::{self, Color32, CornerRadius, FontId, Pos2, Rect, Stroke};
 
 pub fn render_columns_modal(
     ctx: &egui::Context,
+    is_open: bool,
     columns: &mut ColumnState,
     keymap: &KeymapManager,
     dispatch: &mut impl FnMut(AppAction),
 ) {
-    if !columns.is_modal_open {
+    if !is_open {
         return;
     }
 
     let theme = ctx.app_theme();
 
-    if columns.draft_columns.is_none() {
-        columns.draft_columns = Some(columns.columns.clone());
+    if columns.draft.is_none() {
+        columns.open_modal();
     }
 
     let mut action_to_dispatch: Option<AppAction> = None;
@@ -34,23 +35,27 @@ pub fn render_columns_modal(
     .show(
         ctx,
         |ui| {
+            let Some(draft) = columns.draft.as_mut() else {
+                return;
+            };
+
             // Filter search box
             ui.horizontal(|ui| {
                 let avail_w = ui.available_width();
-                let clear_btn_w = if columns.filter_query.is_empty() {
+                let clear_btn_w = if draft.filter_query.is_empty() {
                     0.0
                 } else {
                     28.0
                 };
                 let text_w = (avail_w - clear_btn_w - 6.0).max(100.0);
                 let search_id = egui::Id::new("columns_modal_filter_input");
-                crate::components::ui::TextInput::new(&mut columns.filter_query)
+                crate::components::ui::TextInput::new(&mut draft.filter_query)
                     .id(search_id)
                     .auto_focus(true)
                     .hint_text("Filter column keys...")
                     .width(text_w)
                     .show(ui);
-                if !columns.filter_query.is_empty()
+                if !draft.filter_query.is_empty()
                     && crate::components::ui::IconButton::new(
                         crate::components::ui::IconName::Close,
                     )
@@ -59,7 +64,7 @@ pub fn render_columns_modal(
                     .show(ui)
                     .clicked()
                 {
-                    columns.filter_query.clear();
+                    draft.filter_query.clear();
                 }
             });
 
@@ -67,38 +72,27 @@ pub fn render_columns_modal(
 
             // Columns Drag & Drop List Card
             render_card(ui, "Columns List (Drag to Reorder)", |ui| {
-                let filter_lower = columns.filter_query.trim().to_lowercase();
-                let total_cols = columns.draft_columns.as_ref().map_or(0, |c| c.len());
+                let filter_lower = draft.filter_query.trim().to_lowercase();
+                let total_cols = draft.columns.len();
 
                 // Identify matching columns and their visibility
-                let matching_indices: Vec<usize> = if let Some(draft) = &columns.draft_columns {
-                    draft
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, col)| {
-                            filter_lower.is_empty()
-                                || col.name.to_lowercase().contains(&filter_lower)
-                        })
-                        .map(|(i, _)| i)
-                        .collect()
-                } else {
-                    Vec::new()
-                };
+                let matching_indices: Vec<usize> = draft
+                    .columns
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, col)| {
+                        filter_lower.is_empty() || col.name.to_lowercase().contains(&filter_lower)
+                    })
+                    .map(|(i, _)| i)
+                    .collect();
 
                 let matching_count = matching_indices.len();
-                let visible_matching = if let Some(draft) = &columns.draft_columns {
-                    matching_indices
-                        .iter()
-                        .filter(|&&i| draft[i].visible)
-                        .count()
-                } else {
-                    0
-                };
+                let visible_matching = matching_indices
+                    .iter()
+                    .filter(|&&i| draft.columns[i].visible)
+                    .count();
 
-                let total_visible = columns
-                    .draft_columns
-                    .as_ref()
-                    .map_or(0, |draft| draft.iter().filter(|c| c.visible).count());
+                let total_visible = draft.columns.iter().filter(|c| c.visible).count();
 
                 let all_matching_visible = matching_count > 0 && visible_matching == matching_count;
                 let is_partial = !all_matching_visible && visible_matching > 0;
@@ -217,10 +211,8 @@ pub fn render_columns_modal(
 
                 if h_resp.clicked() {
                     let target_state = !all_matching_visible;
-                    if let Some(draft) = &mut columns.draft_columns {
-                        for &idx in &matching_indices {
-                            draft[idx].visible = target_state;
-                        }
+                    for &idx in &matching_indices {
+                        draft.columns[idx].visible = target_state;
                     }
                 }
 
@@ -237,7 +229,7 @@ pub fn render_columns_modal(
 
                 // Nếu nhả chuột: dọn dẹp drag state
                 if pointer_released {
-                    columns.clear_modal_drag();
+                    draft.dragged_index = None;
                 }
 
                 egui::ScrollArea::vertical()
@@ -255,10 +247,8 @@ pub fn render_columns_modal(
 
                         // Bước 1: Thu thập toạ độ base của từng dòng matching
                         for &idx in &matching_indices {
-                            let (col_name, col_visible) = {
-                                let item = &columns.draft_columns.as_ref().unwrap()[idx];
-                                (item.name.clone(), item.visible)
-                            };
+                            let item = &draft.columns[idx];
+                            let (col_name, col_visible) = (item.name.clone(), item.visible);
 
                             let desired_size = egui::vec2(ui.available_width(), item_h);
                             let (rect, resp) =
@@ -274,7 +264,7 @@ pub fn render_columns_modal(
 
                         // Kiểm tra và hoán đổi vị trí trực tiếp (Live Swap / Thay thế)
                         check_and_apply_modal_swap(
-                            columns,
+                            draft,
                             &matching_indices,
                             &row_rects,
                             pointer_pos,
@@ -285,11 +275,10 @@ pub fn render_columns_modal(
                         // Bước 2: Render từng dòng (áp dụng position interpolation animation)
                         for (idx, rect, col_name, col_visible) in row_rects {
                             let is_hovered = pointer_pos.is_some_and(|p| rect.contains(p))
-                                && columns.dragged_index.is_none();
+                                && draft.dragged_index.is_none();
 
-                            let is_dragged = columns.dragged_index == Some(idx);
-                            let draw_rect =
-                                columns.modal_animations.track_rect(&col_name, rect, now);
+                            let is_dragged = draft.dragged_index == Some(idx);
+                            let draw_rect = draft.animations.track_rect(&col_name, rect, now);
 
                             let bg_color = if is_dragged {
                                 theme.log.row_selected
@@ -435,17 +424,15 @@ pub fn render_columns_modal(
                         }
 
                         // Yêu cầu repaint liên tục khi đang có animation và dọn dẹp sau khi xong
-                        columns.modal_animations.update(ui.ctx(), now);
+                        draft.animations.update(ui.ctx(), now);
 
                         if let Some(idx) = new_drag_source {
-                            columns.dragged_index = Some(idx);
+                            draft.dragged_index = Some(idx);
                             ui.ctx().request_repaint();
                         }
 
                         if let Some((idx, new_vis)) = toggle_vis {
-                            if let Some(draft) = &mut columns.draft_columns {
-                                draft[idx].visible = new_vis;
-                            }
+                            draft.columns[idx].visible = new_vis;
                         }
                     });
             });
@@ -502,14 +489,14 @@ pub fn render_columns_modal(
 }
 
 /// Kiểm tra xem item đang kéo có đang di chuyển qua vị trí của item khác trong modal không.
-/// Nếu có, lập tức hoán đổi vị trí trực tiếp (Live Swap) trong `draft_columns`.
+/// Nếu có, lập tức hoán đổi vị trí trực tiếp (Live Swap) trong `draft.columns`.
 fn check_and_apply_modal_swap(
-    columns: &mut ColumnState,
+    draft: &mut ColumnModalDraft,
     matching_indices: &[usize],
     row_rects: &[(usize, Rect, String, bool)],
     pointer_pos: Option<egui::Pos2>,
 ) {
-    let (Some(drag_idx), Some(pointer)) = (columns.dragged_index, pointer_pos) else {
+    let (Some(drag_idx), Some(pointer)) = (draft.dragged_index, pointer_pos) else {
         return;
     };
 
@@ -524,10 +511,8 @@ fn check_and_apply_modal_swap(
         let next_rect = row_rects[from_match_pos + 1].1;
         if pointer.y > next_rect.min.y + threshold {
             let to_idx = matching_indices[from_match_pos + 1];
-            if let Some(draft) = &mut columns.draft_columns {
-                draft.swap(drag_idx, to_idx);
-                columns.dragged_index = Some(to_idx);
-            }
+            draft.columns.swap(drag_idx, to_idx);
+            draft.dragged_index = Some(to_idx);
             return;
         }
     }
@@ -537,10 +522,8 @@ fn check_and_apply_modal_swap(
         let prev_rect = row_rects[from_match_pos - 1].1;
         if pointer.y < prev_rect.max.y - threshold {
             let to_idx = matching_indices[from_match_pos - 1];
-            if let Some(draft) = &mut columns.draft_columns {
-                draft.swap(drag_idx, to_idx);
-                columns.dragged_index = Some(to_idx);
-            }
+            draft.columns.swap(drag_idx, to_idx);
+            draft.dragged_index = Some(to_idx);
         }
     }
 }

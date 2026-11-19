@@ -127,18 +127,12 @@ async fn test_app_action_columns_modal_flow() {
 
     // 1. Open columns modal
     app.dispatch_action(AppAction::OpenColumnsModal);
-    assert!(app.active_session().view.shared.columns.is_modal_open);
-    assert!(app
-        .active_session()
-        .view
-        .shared
-        .columns
-        .draft_columns
-        .is_some());
+    assert!(app.is_overlay_open(OverlayLayer::ColumnsModal));
+    assert!(app.active_session().view.shared.columns.draft.is_some());
 
     // 2. Modify draft
-    if let Some(ref mut draft) = app.active_session_mut().view.shared.columns.draft_columns {
-        draft[0].visible = false;
+    if let Some(ref mut draft) = app.active_session_mut().view.shared.columns.draft {
+        draft.columns[0].visible = false;
     }
 
     // Live columns should still be unchanged (Live vs Draft separation)
@@ -150,14 +144,8 @@ async fn test_app_action_columns_modal_flow() {
 
     // 3. Cancel / Close modal
     app.dispatch_action(AppAction::CloseColumnsModal);
-    assert!(!app.active_session().view.shared.columns.is_modal_open);
-    assert!(app
-        .active_session()
-        .view
-        .shared
-        .columns
-        .draft_columns
-        .is_none());
+    assert!(!app.is_overlay_open(OverlayLayer::ColumnsModal));
+    assert!(app.active_session().view.shared.columns.draft.is_none());
     assert_eq!(
         app.active_session().view.shared.columns.columns,
         initial_cols
@@ -165,11 +153,11 @@ async fn test_app_action_columns_modal_flow() {
 
     // 4. Open again, modify and Apply
     app.dispatch_action(AppAction::OpenColumnsModal);
-    if let Some(ref mut draft) = app.active_session_mut().view.shared.columns.draft_columns {
-        draft[0].visible = false;
+    if let Some(ref mut draft) = app.active_session_mut().view.shared.columns.draft {
+        draft.columns[0].visible = false;
     }
     app.dispatch_action(AppAction::ApplyColumnsModal);
-    assert!(!app.active_session().view.shared.columns.is_modal_open);
+    assert!(!app.is_overlay_open(OverlayLayer::ColumnsModal));
     assert!(!app.active_session().view.shared.columns.columns[0].visible);
 }
 
@@ -179,8 +167,8 @@ async fn test_columns_all_hidden_safe_and_reset() {
 
     // 1. Open modal and hide ALL columns
     app.dispatch_action(AppAction::OpenColumnsModal);
-    if let Some(ref mut draft) = app.active_session_mut().view.shared.columns.draft_columns {
-        for col in draft.iter_mut() {
+    if let Some(ref mut draft) = app.active_session_mut().view.shared.columns.draft {
+        for col in draft.columns.iter_mut() {
             col.visible = false;
         }
     }
@@ -189,15 +177,16 @@ async fn test_columns_all_hidden_safe_and_reset() {
         .view
         .shared
         .columns
-        .draft_columns
+        .draft
         .as_ref()
         .unwrap()
+        .columns
         .iter()
         .all(|c| !c.visible));
 
     // 2. Apply all hidden columns
     app.dispatch_action(AppAction::ApplyColumnsModal);
-    assert!(!app.active_session().view.shared.columns.is_modal_open);
+    assert!(!app.is_overlay_open(OverlayLayer::ColumnsModal));
     assert!(app
         .active_session()
         .view

@@ -11,9 +11,11 @@ pub fn render_key_customizer_popup(
     theme: &Theme,
     state: &mut KeymapModalState,
 ) {
-    let Some((ref action, context)) = state.recording.clone() else {
+    let Some(ref customizer_snapshot) = state.customizer else {
         return;
     };
+    let action = customizer_snapshot.action.clone();
+    let context = customizer_snapshot.original_context.clone();
 
     let screen_rect = ctx.viewport_rect();
 
@@ -32,13 +34,7 @@ pub fn render_key_customizer_popup(
         });
 
     if click_outside {
-        state.recording = None;
-        state.pending_keystroke = None;
-        state.is_recording_keystroke = false;
-        state.pending_context = KeyContext::Global;
-        state.context_text.clear();
-        state.context_autocomplete_open = false;
-        state.context_selected_index = 0;
+        state.close_customizer();
         return;
     }
 
@@ -46,7 +42,23 @@ pub fn render_key_customizer_popup(
     let mut filter_by_shortcut = None;
     let mut close_dialog = false;
     let mut save_dialog = false;
-    let is_rec = state.is_recording_keystroke;
+
+    let known_contexts: Vec<String> = {
+        let mut ctxs: Vec<String> = state
+            .draft
+            .active_contexts()
+            .into_iter()
+            .map(|c| c.display_path().to_string())
+            .collect();
+        ctxs.sort();
+        ctxs.dedup();
+        ctxs
+    };
+
+    let Some(customizer) = state.customizer.as_mut() else {
+        return;
+    };
+    let is_rec = customizer.is_recording_keystroke;
 
     egui::Area::new(egui::Id::new("key_customizer_dialog"))
         .order(egui::Order::Tooltip)
@@ -69,7 +81,7 @@ pub fn render_key_customizer_popup(
 
                     // 1. Header: Humanized Action Name & Description (Chuẩn Zed)
                     ui.label(
-                        egui::RichText::new(humanize_action_name(action))
+                        egui::RichText::new(humanize_action_name(&action))
                             .size(14.0)
                             .color(theme.text.primary),
                     );
@@ -120,7 +132,7 @@ pub fn render_key_customizer_popup(
                     // Text hiển thị ở giữa hộp
                     let (center_text, text_color) = if is_rec {
                         ("Recording keystroke...".to_string(), theme.text.accent)
-                    } else if let Some(ref ks) = state.pending_keystroke {
+                    } else if let Some(ref ks) = customizer.pending_keystroke {
                         (format_keystroke_zed(ks), theme.text.primary)
                     } else {
                         ("<none>".to_string(), theme.text.muted)
@@ -150,7 +162,7 @@ pub fn render_key_customizer_popup(
                     if record_btn_resp.clicked()
                         || (box_resp.clicked() && !record_btn_resp.hovered())
                     {
-                        state.is_recording_keystroke = !state.is_recording_keystroke;
+                        customizer.is_recording_keystroke = !customizer.is_recording_keystroke;
                     }
 
                     let btn_bg = if record_btn_resp.is_pointer_button_down_on() {
@@ -202,13 +214,14 @@ pub fn render_key_customizer_popup(
                     });
 
                     // Thông tin xung đột / bindings cùng phím (Chuẩn câu chữ của Zed)
-                    if let Some(ref ks) = state.pending_keystroke {
+                    if let Some(ref ks) = customizer.pending_keystroke {
                         let matching: Vec<_> = state
                             .draft
                             .bindings()
                             .iter()
                             .filter(|b| {
-                                b.keystroke == *ks && (&b.action != action || b.context != context)
+                                b.keystroke == *ks
+                                    && (b.action != action || b.context != context)
                             })
                             .collect();
 
@@ -277,17 +290,7 @@ pub fn render_key_customizer_popup(
                     });
                     ui.add_space(6.0);
 
-                    // Thu thập danh sách contexts đã biết (built-in + các context tùy biến hiện có trong keymap)
-                    let mut known_contexts: Vec<String> = state
-                        .draft
-                        .active_contexts()
-                        .into_iter()
-                        .map(|c| c.display_path().to_string())
-                        .collect();
-                    known_contexts.sort();
-                    known_contexts.dedup();
-
-                    let query = state.context_text.trim().to_lowercase();
+                    let query = customizer.context_text.trim().to_lowercase();
                     let candidates: Vec<&String> = if query.is_empty() {
                         known_contexts.iter().collect()
                     } else {
@@ -308,18 +311,22 @@ pub fn render_key_customizer_popup(
                         let text_w = (input_w - 30.0).max(120.0);
                         let edit_resp = ui.add_sized(
                             Vec2::new(text_w, input_h),
-                            egui::TextEdit::singleline(&mut state.context_text)
+                            egui::TextEdit::singleline(&mut customizer.context_text)
                                 .hint_text("e.g. Workspace > Table")
                                 .font(FontId::proportional(12.5))
                                 .margin(egui::Margin::symmetric(8, 6)),
                         );
 
                         if edit_resp.changed() {
-                            state.context_autocomplete_open = true;
-                            state.context_selected_index = 0;
+                            customizer.context_autocomplete_open = true;
+                            customizer.context_selected_index = 0;
                         }
 
-                        let chevron = if state.context_autocomplete_open { "▴" } else { "▾" };
+                        let chevron = if customizer.context_autocomplete_open {
+                            "▴"
+                        } else {
+                            "▾"
+                        };
                         let toggle_btn = ui.add_sized(
                             Vec2::new(24.0, input_h),
                             egui::Button::new(
@@ -335,7 +342,7 @@ pub fn render_key_customizer_popup(
                     });
 
                     // Kiểm tra cú pháp và ngữ cảnh tức thì (Real-time Context Validation)
-                    let trimmed_ctx = state.context_text.trim();
+                    let trimmed_ctx = customizer.context_text.trim();
                     let (syntax_valid, syntax_err, parsed_ctx) = if trimmed_ctx.is_empty() {
                         (true, None, KeyContext::Global)
                     } else {
@@ -389,11 +396,11 @@ pub fn render_key_customizer_popup(
                         i.consume_key(egui::Modifiers::CTRL, egui::Key::Space)
                     });
                     if ctrl_space || toggle_autocomplete {
-                        state.context_autocomplete_open = !state.context_autocomplete_open;
-                        state.context_selected_index = 0;
+                        customizer.context_autocomplete_open = !customizer.context_autocomplete_open;
+                        customizer.context_selected_index = 0;
                     }
 
-                    if state.context_autocomplete_open && !candidates.is_empty() {
+                    if customizer.context_autocomplete_open && !candidates.is_empty() {
                         let up = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp));
                         let down = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown));
                         let enter = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
@@ -401,24 +408,26 @@ pub fn render_key_customizer_popup(
                         let esc = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
 
                         if esc {
-                            state.context_autocomplete_open = false;
+                            customizer.context_autocomplete_open = false;
                         } else if down {
-                            state.context_selected_index = (state.context_selected_index + 1) % candidates.len();
+                            customizer.context_selected_index =
+                                (customizer.context_selected_index + 1) % candidates.len();
                         } else if up {
-                            state.context_selected_index = if state.context_selected_index == 0 {
-                                candidates.len().saturating_sub(1)
-                            } else {
-                                state.context_selected_index - 1
-                            };
+                            customizer.context_selected_index =
+                                if customizer.context_selected_index == 0 {
+                                    candidates.len().saturating_sub(1)
+                                } else {
+                                    customizer.context_selected_index - 1
+                                };
                         } else if enter || tab {
-                            if let Some(cand) = candidates.get(state.context_selected_index) {
+                            if let Some(cand) = candidates.get(customizer.context_selected_index) {
                                 select_candidate = Some((*cand).clone());
                             }
                         }
                     }
 
                     // Render popover gợi ý Autocomplete bên dưới ô nhập
-                    if state.context_autocomplete_open {
+                    if customizer.context_autocomplete_open {
                         ui.add_space(3.0);
                         egui::Frame::default()
                             .fill(theme.surfaces.surface1)
@@ -441,7 +450,8 @@ pub fn render_key_customizer_popup(
                                         .max_height(140.0)
                                         .show(ui, |ui| {
                                             for (idx, cand) in candidates.iter().enumerate() {
-                                                let is_selected = idx == state.context_selected_index;
+                                                let is_selected =
+                                                    idx == customizer.context_selected_index;
                                                 let text_color = if is_selected {
                                                     theme.text.accent
                                                 } else {
@@ -498,8 +508,8 @@ pub fn render_key_customizer_popup(
                     }
 
                     if let Some(chosen) = select_candidate {
-                        state.context_text = chosen;
-                        state.context_autocomplete_open = false;
+                        customizer.context_text = chosen;
+                        customizer.context_autocomplete_open = false;
                     }
 
                     ui.add_space(18.0);
@@ -544,7 +554,7 @@ pub fn render_key_customizer_popup(
         });
 
     if save_dialog {
-        let trimmed_ctx = state.context_text.trim();
+        let trimmed_ctx = customizer.context_text.trim();
         let target_ctx = if trimmed_ctx.is_empty() {
             KeyContext::Global
         } else {
@@ -552,11 +562,11 @@ pub fn render_key_customizer_popup(
                 .unwrap_or_else(|_| KeyContext::new(trimmed_ctx))
         };
 
-        if let Some(ks) = state.pending_keystroke {
+        if let Some(ks) = customizer.pending_keystroke {
             if target_ctx != context {
-                state.draft.remove_action_binding(action, &context);
+                state.draft.remove_action_binding(&action, &context);
             }
-            state.draft.bind_keystroke(ks, action.clone(), target_ctx);
+            state.draft.bind_keystroke(ks, action, target_ctx);
         }
         state.close_customizer();
     } else if close_dialog {

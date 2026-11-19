@@ -17,10 +17,6 @@ pub fn render_launch_modal(
         return;
     }
 
-    if draft.is_none() {
-        *draft = Some(current_config.clone());
-    }
-
     let mut action_to_dispatch: Option<AppAction> = None;
 
     let resp = ModalContainer::new("launch_modal_window", "Settings & Launch Parameters")
@@ -30,7 +26,7 @@ pub fn render_launch_modal(
             ctx,
             |ui| {
                 let theme = ui.app_theme();
-                let draft = draft.as_mut().unwrap();
+                let draft = draft.get_or_insert_with(|| current_config.clone());
 
                 // 1. System Engine Performance Card
                 render_card(ui, "System Engine Performance", |ui| {

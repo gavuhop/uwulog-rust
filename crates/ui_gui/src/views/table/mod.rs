@@ -305,22 +305,13 @@ fn render_log_table_scoped(
         dispatch(action);
     }
 
-    if let Some(ref dragged_name) = session.view.shared.columns.header_dragged_name {
+    if let Some(ref drag) = session.view.shared.columns.header_drag {
         if let Some(pos) = pointer_pos {
-            let width = session
-                .view
-                .shared
-                .columns
-                .header_dragged_width
-                .or_else(|| {
-                    visible_cols
-                        .iter()
-                        .find(|c| c.name == *dragged_name)
-                        .map(|c| c.width)
-                })
-                .unwrap_or(100.0);
-            let offset_x = session.view.shared.columns.header_drag_offset_x;
-            render_drag_ghost(ui, dragged_name, pos, width, offset_x);
+            let width = visible_cols
+                .iter()
+                .find(|c| c.name == drag.name)
+                .map_or(drag.width, |c| c.width);
+            render_drag_ghost(ui, &drag.name, pos, width, drag.offset_x);
         }
     }
 

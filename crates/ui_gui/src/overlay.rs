@@ -88,20 +88,6 @@ impl OverlayStack {
     }
 }
 
-impl std::ops::Deref for OverlayStack {
-    type Target = Vec<OverlayLayer>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.layers
-    }
-}
-
-impl std::ops::DerefMut for OverlayStack {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.layers
-    }
-}
-
 impl From<Vec<OverlayLayer>> for OverlayStack {
     fn from(layers: Vec<OverlayLayer>) -> Self {
         Self { layers }

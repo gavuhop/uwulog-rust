@@ -67,7 +67,7 @@ impl UwuGuiApp {
                 .overlays
                 .keymap_modal_state
                 .as_ref()
-                .is_some_and(|s| s.recording.is_some() || s.search_recording)
+                .is_some_and(|s| s.customizer.is_some() || s.search_recording)
         {
             return;
         }
@@ -113,7 +113,7 @@ impl UwuGuiApp {
                             }
                             Some(OverlayLayer::KeymapModal) => {
                                 if let Some(state) = &self.overlays.keymap_modal_state {
-                                    if state.recording.is_none() {
+                                    if state.customizer.is_none() {
                                         dispatch(AppAction::ApplyKeymapModal(Box::new(
                                             state.draft.clone(),
                                         )));

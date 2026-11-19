@@ -442,8 +442,8 @@ async fn test_workspace_persists_and_restores_columns_only_on_matching_keys() {
         ]),
     )]);
     app.active_session_mut().view.shared.columns.open_modal();
-    if let Some(ref mut draft) = app.active_session_mut().view.shared.columns.draft_columns {
-        if let Some(c) = draft.iter_mut().find(|c| c.name == "aaa") {
+    if let Some(ref mut draft) = app.active_session_mut().view.shared.columns.draft {
+        if let Some(c) = draft.columns.iter_mut().find(|c| c.name == "aaa") {
             c.visible = true;
             c.width = 240.0;
         }

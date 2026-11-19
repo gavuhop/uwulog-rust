@@ -312,9 +312,7 @@ fn test_key_customizer_popup_recording_and_escape() {
     let target_context = uwu_core_keymap::KeyContext::Global;
     {
         let state = app.overlays.keymap_modal_state.as_mut().unwrap();
-        state.recording = Some((target_action.clone(), target_context.clone()));
-        state.pending_context = target_context;
-        state.is_recording_keystroke = false;
+        state.open_customizer(target_action.clone(), target_context.clone(), None);
     }
 
     // 3. Nhấn phím Enter để bắt đầu Record Keystroke
@@ -335,8 +333,8 @@ fn test_key_customizer_popup_recording_and_escape() {
     // Kiểm tra đã vào chế độ record keystroke
     {
         let state = app.overlays.keymap_modal_state.as_ref().unwrap();
-        assert!(state.recording.is_some());
-        assert!(state.is_recording_keystroke);
+        assert!(state.customizer.is_some());
+        assert!(state.customizer.as_ref().unwrap().is_recording_keystroke);
     }
 
     // 4. Nhấn phím Escape: Chỉ hủy mode recording, không làm đóng dialog
@@ -357,10 +355,13 @@ fn test_key_customizer_popup_recording_and_escape() {
     {
         let state = app.overlays.keymap_modal_state.as_ref().unwrap();
         assert!(
-            state.recording.is_some(),
+            state.customizer.is_some(),
             "Dialog popup vẫn phải mở sau khi hủy record"
         );
-        assert!(!state.is_recording_keystroke, "Phải tắt chế độ record");
+        assert!(
+            !state.customizer.as_ref().unwrap().is_recording_keystroke,
+            "Phải tắt chế độ record"
+        );
     }
 
     // 5. Nhấn Escape lần nữa: Đóng dialog popup
@@ -381,7 +382,7 @@ fn test_key_customizer_popup_recording_and_escape() {
     {
         let state = app.overlays.keymap_modal_state.as_ref().unwrap();
         assert!(
-            state.recording.is_none(),
+            state.customizer.is_none(),
             "Dialog popup phải đóng khi nhấn Escape lúc không record"
         );
     }
@@ -412,11 +413,13 @@ fn test_key_customizer_context_selection_and_save() {
 
     {
         let state = app.overlays.keymap_modal_state.as_mut().unwrap();
-        state.recording = Some((target_action.clone(), original_context));
-        state.pending_keystroke = Some(custom_keystroke);
-        state.pending_context = new_context.clone();
-        state.context_text = new_context.display_path().to_string();
-        state.is_recording_keystroke = false;
+        state.open_customizer(
+            target_action.clone(),
+            original_context,
+            Some(custom_keystroke),
+        );
+        let cust = state.customizer.as_mut().unwrap();
+        cust.context_text = new_context.display_path().to_string();
     }
 
     // 3. Render UI để đảm bảo không panic và ComboBox hiển thị chính xác
@@ -427,8 +430,11 @@ fn test_key_customizer_context_selection_and_save() {
 
     {
         let state = app.overlays.keymap_modal_state.as_ref().unwrap();
-        assert_eq!(state.pending_context, new_context);
-        assert!(state.recording.is_some());
+        assert!(state.customizer.is_some());
+        assert_eq!(
+            state.customizer.as_ref().unwrap().context_text,
+            new_context.display_path()
+        );
     }
 
     // Kiểm tra rằng khi không có phím trùng (Ctrl+K là duy nhất), không có text conflict nào được render
@@ -456,7 +462,8 @@ fn test_key_customizer_context_selection_and_save() {
             uwu_core_keymap::KeyAction::OpenLaunchModal,
             uwu_core_keymap::KeyContext::Global,
         );
-        state.pending_keystroke = Some(uwu_core_keymap::Keystroke::alt(uwu_core_keymap::Key::P));
+        state.customizer.as_mut().unwrap().pending_keystroke =
+            Some(uwu_core_keymap::Keystroke::alt(uwu_core_keymap::Key::P));
     }
 
     let mut out_conflict = ctx.run_ui(RawInput::default(), |ui| {
@@ -508,12 +515,14 @@ fn test_key_customizer_context_typing_and_ctrl_space_autocomplete() {
 
     {
         let state = app.overlays.keymap_modal_state.as_mut().unwrap();
-        state.recording = Some((target_action.clone(), original_context.clone()));
-        state.pending_keystroke = Some(custom_keystroke);
-        state.pending_context = original_context;
-        state.context_text = "search".to_string();
-        state.context_autocomplete_open = true;
-        state.is_recording_keystroke = false;
+        state.open_customizer(
+            target_action.clone(),
+            original_context,
+            Some(custom_keystroke),
+        );
+        let cust = state.customizer.as_mut().unwrap();
+        cust.context_text = "search".to_string();
+        cust.context_autocomplete_open = true;
     }
 
     // 3. Render 2 frames để egui Area hoàn tất đo đạc và vẽ popover
@@ -529,9 +538,9 @@ fn test_key_customizer_context_typing_and_ctrl_space_autocomplete() {
     // Kiểm tra state vẫn mở
     {
         let state = app.overlays.keymap_modal_state.as_ref().unwrap();
-        assert!(state.recording.is_some());
+        let cust = state.customizer.as_ref().unwrap();
         assert!(
-            state.context_autocomplete_open,
+            cust.context_autocomplete_open,
             "context_autocomplete_open phải là true"
         );
     }
@@ -562,14 +571,17 @@ fn test_key_customizer_context_typing_and_ctrl_space_autocomplete() {
     // 4. Kiểm tra gõ ngữ cảnh tùy biến hoàn toàn (Custom Context) và lưu
     {
         let state = app.overlays.keymap_modal_state.as_mut().unwrap();
-        state.context_text = "Plugin > MyConsole".to_string();
-        state.context_autocomplete_open = false;
+        let cust = state.customizer.as_mut().unwrap();
+        cust.context_text = "Plugin > MyConsole".to_string();
+        cust.context_autocomplete_open = false;
     }
 
     // Giả lập lưu với custom context
     {
         let state = app.overlays.keymap_modal_state.as_mut().unwrap();
-        let target_ctx = uwu_core_keymap::KeyContext::parse(&state.context_text).unwrap();
+        let target_ctx =
+            uwu_core_keymap::KeyContext::parse(&state.customizer.as_ref().unwrap().context_text)
+                .unwrap();
         state
             .draft
             .bind_keystroke(custom_keystroke, target_action.clone(), target_ctx.clone());
@@ -594,11 +606,9 @@ fn test_key_customizer_context_syntax_validation_and_feedback() {
     let target_context = uwu_core_keymap::KeyContext::Global;
     {
         let state = app.overlays.keymap_modal_state.as_mut().unwrap();
-        state.recording = Some((target_action.clone(), target_context.clone()));
-        state.pending_context = target_context;
-        state.is_recording_keystroke = false;
+        state.open_customizer(target_action.clone(), target_context.clone(), None);
         // Nhập cú pháp sai: phân đoạn rỗng
-        state.context_text = "Workspace > > Table".to_string();
+        state.customizer.as_mut().unwrap().context_text = "Workspace > > Table".to_string();
     }
 
     fn collect_texts(shape: &eframe::egui::epaint::Shape, out: &mut Vec<String>) {
@@ -637,7 +647,7 @@ fn test_key_customizer_context_syntax_validation_and_feedback() {
     // 2. Nhập cú pháp hợp lệ nhưng là Context chưa có view nào sử dụng (Unknown Custom Context)
     {
         let state = app.overlays.keymap_modal_state.as_mut().unwrap();
-        state.context_text = "Workspace > NewExtensionTag".to_string();
+        state.customizer.as_mut().unwrap().context_text = "Workspace > NewExtensionTag".to_string();
     }
     let mut out3 = ctx.run_ui(RawInput::default(), |ui| {
         crate::views::render_ui(ui, &mut app);

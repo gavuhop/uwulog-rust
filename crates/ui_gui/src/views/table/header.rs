@@ -1,4 +1,4 @@
-use crate::state::{ColumnItem, ColumnState};
+use crate::state::{ColumnItem, ColumnState, HeaderDragState};
 use crate::theme::ActiveTheme;
 use eframe::egui::{self, CornerRadius, FontId, Pos2, Rect, Stroke};
 use std::time::Instant;
@@ -18,7 +18,7 @@ pub fn render_table_headers(
     col_offsets: &mut Vec<f32>,
 ) {
     col_offsets.clear();
-    let current_dragged = columns.header_dragged_name.clone();
+    let current_dragged = columns.header_drag.as_ref().map(|d| d.name.clone());
     let pointer_pos = ctx.input(|i| i.pointer.latest_pos());
     let now = Instant::now();
     let dragged_idx = current_dragged
@@ -37,18 +37,22 @@ pub fn render_table_headers(
             col_rects.push(rect);
 
             if resp.drag_started() {
-                columns.header_dragged_name = Some(col.name.clone());
-                columns.header_dragged_width = Some(rect.width());
                 let off_x = pointer_pos
                     .map(|p| p.x - rect.min.x)
                     .unwrap_or(rect.width() / 2.0);
-                columns.header_drag_offset_x = Some(off_x.clamp(0.0, rect.width()));
+                columns.header_drag = Some(HeaderDragState {
+                    name: col.name.clone(),
+                    width: rect.width(),
+                    offset_x: Some(off_x.clamp(0.0, rect.width())),
+                });
                 ctx.request_repaint();
             }
 
             // Đổi cursor icon: Grab khi hover, Grabbing khi đang drag
             if is_dragged {
-                columns.header_dragged_width = Some(rect.width());
+                if let Some(drag) = &mut columns.header_drag {
+                    drag.width = rect.width();
+                }
                 ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
             } else if resp.hovered() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
@@ -84,7 +88,7 @@ pub fn render_table_headers(
         .and_then(|(dragged, pos)| find_drop_target_idx(dragged, visible_cols, &col_rects, pos));
 
     // Cập nhật trạng thái đang kéo
-    if columns.header_dragged_name.is_some() {
+    if columns.header_drag.is_some() {
         ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
         // Repaint liên tục để phản hồi highlight và animation mượt mà
         ctx.request_repaint();
@@ -93,13 +97,12 @@ pub fn render_table_headers(
     // Khi người dùng THẢ CHUỘT (pointer released):
     // Dịch chuyển cột đang kéo tới vị trí cột đích
     if ctx.input(|i| i.pointer.any_released()) {
-        if let Some(dragged_name) = columns.header_dragged_name.take() {
+        if let Some(drag) = columns.header_drag.take() {
             if let Some(target_col) = drop_target_idx.and_then(|idx| visible_cols.get(idx)) {
-                columns.move_column(&dragged_name, &target_col.name);
+                columns.move_column(&drag.name, &target_col.name);
                 ctx.request_repaint();
             }
         }
-        columns.clear_header_drag();
         columns.schedule_save_after_drag();
     }
 
@@ -392,7 +395,11 @@ mod tests {
     #[test]
     fn test_shift_only_executed_on_release_both_directions() {
         let (mut columns, visible_cols, col_rects) = setup_test_columns();
-        columns.header_dragged_name = Some("timestamp".into());
+        columns.header_drag = Some(HeaderDragState {
+            name: "timestamp".into(),
+            width: 150.0,
+            offset_x: None,
+        });
 
         // Kéo "timestamp" (0) vào "extra" (3) -> trước khi nhả chuột thứ tự giữ nguyên
         let target = find_drop_target_idx(
@@ -408,8 +415,8 @@ mod tests {
         assert_eq!(names(&columns), ["timestamp", "level", "message", "extra"]);
 
         // Nhả chuột -> các cột bị ảnh hưởng ("level", "message", "extra") dịch sang trái
-        if let (Some(dragged), Some(idx)) = (columns.header_dragged_name.take(), target) {
-            columns.move_column(&dragged, &visible_cols[idx].name);
+        if let (Some(drag), Some(idx)) = (columns.header_drag.take(), target) {
+            columns.move_column(&drag.name, &visible_cols[idx].name);
         }
         assert_eq!(names(&columns), ["level", "message", "extra", "timestamp"]);
 

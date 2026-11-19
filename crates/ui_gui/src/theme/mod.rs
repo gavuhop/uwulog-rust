@@ -29,14 +29,24 @@ use std::sync::{Arc, LazyLock, RwLock};
 static THEME_REGISTRY: LazyLock<RwLock<ThemeRegistry>> =
     LazyLock::new(|| RwLock::new(ThemeRegistry::new()));
 
+#[inline]
+fn registry_read() -> std::sync::RwLockReadGuard<'static, ThemeRegistry> {
+    THEME_REGISTRY.read().unwrap_or_else(|e| e.into_inner())
+}
+
+#[inline]
+fn registry_write() -> std::sync::RwLockWriteGuard<'static, ThemeRegistry> {
+    THEME_REGISTRY.write().unwrap_or_else(|e| e.into_inner())
+}
+
 /// Lấy tham chiếu bất biến tới Theme đang được kích hoạt hiện tại
 pub fn active() -> Arc<Theme> {
-    THEME_REGISTRY.read().unwrap().active()
+    registry_read().active()
 }
 
 /// Chuyển đổi Theme đang hoạt động và cập nhật ngay lập tức egui Visuals cùng repaint
 pub fn set_active_theme(id: &str, ctx: &egui::Context) -> bool {
-    let mut reg = THEME_REGISTRY.write().unwrap();
+    let mut reg = registry_write();
     if reg.set_active(id) {
         let active_theme = reg.active();
         drop(reg);
@@ -50,32 +60,32 @@ pub fn set_active_theme(id: &str, ctx: &egui::Context) -> bool {
 
 /// Đăng ký theme mới vào global ThemeRegistry
 pub fn register_theme(theme: Theme) {
-    THEME_REGISTRY.write().unwrap().register(theme);
+    registry_write().register(theme);
 }
 
 /// Lấy danh sách toàn bộ theme có sẵn
 pub fn list_themes() -> Vec<Arc<Theme>> {
-    THEME_REGISTRY.read().unwrap().list()
+    registry_read().list()
 }
 
 /// Lấy theme theo ID từ registry nếu đã tồn tại
 pub fn get_theme(id: &str) -> Option<Arc<Theme>> {
-    THEME_REGISTRY.read().unwrap().get(id)
+    registry_read().get(id)
 }
 
 /// Lấy danh sách các preset có sẵn của hệ thống
 pub fn list_builtin_themes() -> Vec<Arc<Theme>> {
-    THEME_REGISTRY.read().unwrap().list_builtin()
+    registry_read().list_builtin()
 }
 
 /// Lấy danh sách các theme tùy biến nạp từ bên ngoài
 pub fn list_custom_themes() -> Vec<Arc<Theme>> {
-    THEME_REGISTRY.read().unwrap().list_custom()
+    registry_read().list_custom()
 }
 
 /// Kiểm tra xem theme ID có phải preset có sẵn hay không
 pub fn is_builtin_theme(id: &str) -> bool {
-    THEME_REGISTRY.read().unwrap().is_builtin(id)
+    registry_read().is_builtin(id)
 }
 
 /// Chuyển đổi mã màu LogColor sang Color32 dựa trên Theme đang kích hoạt

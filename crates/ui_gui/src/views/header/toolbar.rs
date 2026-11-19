@@ -9,12 +9,13 @@ use eframe::egui;
 pub fn render_toolbar(
     ui: &mut egui::Ui,
     session: &mut GuiSession,
+    is_columns_open: bool,
     dispatch: &mut impl FnMut(AppAction),
 ) {
     let theme = ui.app_theme();
 
     // Table Columns & Ordering Modal Button
-    let col_variant = if session.view.shared.columns.is_modal_open {
+    let col_variant = if is_columns_open {
         crate::components::ui::ButtonVariant::Selected
     } else {
         crate::components::ui::ButtonVariant::Default
@@ -22,7 +23,7 @@ pub fn render_toolbar(
     if crate::components::ui::IconButton::new(IconName::TableColumns)
         .size(24.0)
         .variant(col_variant)
-        .selected(session.view.shared.columns.is_modal_open)
+        .selected(is_columns_open)
         .tooltip("Configure visible columns and adjust their display order (Alt+C)")
         .show(ui)
         .clicked()

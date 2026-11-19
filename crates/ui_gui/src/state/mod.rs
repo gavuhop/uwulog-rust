@@ -10,7 +10,7 @@ pub use autocomplete::{
     classify_field, generate_suggestions, AutocompleteState, FieldType, SuggestionItem,
     SuggestionKind,
 };
-pub use columns::{ColumnItem, ColumnState};
+pub use columns::{ColumnItem, ColumnModalDraft, ColumnState, HeaderDragState};
 pub use history::SearchHistoryState;
 pub use inspector::InspectorState;
 pub use search::SearchState;

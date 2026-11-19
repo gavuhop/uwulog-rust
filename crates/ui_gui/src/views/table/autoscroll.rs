@@ -143,6 +143,8 @@ fn pick_autoscroll_cursor(speed_x: f32, speed_y: f32) -> CursorIcon {
 
 /// Vẽ tâm trực quan (Visual Center Anchor Indicator giống lướt web cao cấp)
 fn render_autoscroll_anchor(ui: &egui::Ui, origin: Pos2, curr_pos: Pos2, deadzone: f32) {
+    use crate::theme::ActiveTheme;
+    let theme = ui.app_theme();
     let painter = ui.ctx().layer_painter(egui::LayerId::new(
         egui::Order::Foreground,
         ui.make_persistent_id("autoscroll_anchor_layer"),
@@ -161,30 +163,30 @@ fn render_autoscroll_anchor(ui: &egui::Ui, origin: Pos2, curr_pos: Pos2, deadzon
     painter.circle_filled(origin, 17.5, Color32::from_black_alpha(35));
     painter.circle_filled(origin, 16.0, Color32::from_black_alpha(70));
 
-    // Vòng tròn nền kính tối mờ (Dark glass disc) với viền thanh mảnh
+    // Vòng tròn nền kính tối mờ (Dark glass disc) với viền thanh mảnh theo theme
     let border_color = if any_active {
-        Color32::from_rgba_unmultiplied(56, 189, 248, 90)
+        theme.text.accent.gamma_multiply(0.45)
     } else {
-        Color32::from_rgba_unmultiplied(255, 255, 255, 60)
+        theme.borders.border_subtle
     };
     painter.circle(
         origin,
         14.5,
-        Color32::from_rgba_unmultiplied(20, 24, 33, 230),
+        theme.surfaces.mantle.gamma_multiply(0.92),
         Stroke::new(1.2, border_color),
     );
 
     // Chấm tròn tâm
     let center_color = if any_active {
-        Color32::from_rgb(56, 189, 248)
+        theme.text.accent
     } else {
-        Color32::from_rgba_unmultiplied(225, 230, 240, 190)
+        theme.text.primary.gamma_multiply(0.75)
     };
     painter.circle_filled(origin, 2.0, center_color);
 
-    let active_color = Color32::from_rgb(56, 189, 248);
-    let normal_color = Color32::from_rgba_unmultiplied(200, 210, 225, 140);
-    let glow_color = Color32::from_rgba_unmultiplied(56, 189, 248, 45);
+    let active_color = theme.text.accent;
+    let normal_color = theme.text.muted.gamma_multiply(0.75);
+    let glow_color = theme.text.accent.gamma_multiply(0.18);
 
     // Mũi tên Lên (Up)
     if up_active {

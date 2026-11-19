@@ -38,21 +38,44 @@ pub struct OverlayManager {
     pub devcontainer_probe_cache: LocalDevContainerProbeCache,
 }
 
+/// Trạng thái hộp thoại tùy biến một phím tắt cụ thể (chỉ tồn tại khi đang sửa 1 binding).
+#[derive(Debug, Clone)]
+pub struct KeyCustomizerState {
+    pub action: uwu_core_keymap::KeyAction,
+    pub original_context: uwu_core_keymap::KeyContext,
+    pub pending_keystroke: Option<uwu_core_keymap::Keystroke>,
+    pub is_recording_keystroke: bool,
+    pub context_text: String,
+    pub context_autocomplete_open: bool,
+    pub context_selected_index: usize,
+}
+
+impl KeyCustomizerState {
+    pub fn new(
+        action: uwu_core_keymap::KeyAction,
+        context: uwu_core_keymap::KeyContext,
+        keystroke: Option<uwu_core_keymap::Keystroke>,
+    ) -> Self {
+        Self {
+            action,
+            pending_keystroke: keystroke,
+            is_recording_keystroke: false,
+            context_text: context.display_path().to_string(),
+            original_context: context,
+            context_autocomplete_open: false,
+            context_selected_index: 0,
+        }
+    }
+}
+
 /// Trạng thái nháp tương tác khi mở Modal quản lý Key Map
 #[derive(Debug, Clone)]
 pub struct KeymapModalState {
     pub draft: uwu_core_keymap::KeymapManager,
     pub search_query: String,
     pub selected_context: Option<uwu_core_keymap::KeyContext>,
-    pub recording: Option<(uwu_core_keymap::KeyAction, uwu_core_keymap::KeyContext)>,
-    pub pending_keystroke: Option<uwu_core_keymap::Keystroke>,
-    pub conflict_warning: Option<String>,
     pub search_recording: bool,
-    pub is_recording_keystroke: bool,
-    pub pending_context: uwu_core_keymap::KeyContext,
-    pub context_text: String,
-    pub context_autocomplete_open: bool,
-    pub context_selected_index: usize,
+    pub customizer: Option<KeyCustomizerState>,
 }
 
 impl KeymapModalState {
@@ -61,27 +84,24 @@ impl KeymapModalState {
             draft: current_manager.clone(),
             search_query: String::new(),
             selected_context: None,
-            recording: None,
-            pending_keystroke: None,
-            conflict_warning: None,
             search_recording: false,
-            is_recording_keystroke: false,
-            pending_context: uwu_core_keymap::KeyContext::Global,
-            context_text: String::new(),
-            context_autocomplete_open: false,
-            context_selected_index: 0,
+            customizer: None,
         }
     }
 
-    /// Đóng và đặt lại toàn bộ trạng thái hộp thoại tùy biến phím tắt (Key Customizer).
+    /// Mở hộp thoại tùy biến phím tắt cho một `(action, context)`.
+    pub fn open_customizer(
+        &mut self,
+        action: uwu_core_keymap::KeyAction,
+        context: uwu_core_keymap::KeyContext,
+        keystroke: Option<uwu_core_keymap::Keystroke>,
+    ) {
+        self.customizer = Some(KeyCustomizerState::new(action, context, keystroke));
+    }
+
+    /// Đóng hộp thoại tùy biến phím tắt (Key Customizer).
     pub fn close_customizer(&mut self) {
-        self.recording = None;
-        self.pending_keystroke = None;
-        self.is_recording_keystroke = false;
-        self.pending_context = uwu_core_keymap::KeyContext::Global;
-        self.context_text.clear();
-        self.context_autocomplete_open = false;
-        self.context_selected_index = 0;
+        self.customizer = None;
     }
 }
 

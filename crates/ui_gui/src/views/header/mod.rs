@@ -257,7 +257,8 @@ pub fn render_header(
                 }
 
                 // Các nút công cụ: Columns modal, Settings, Stop/Restart, Snapshot, Latch, Log counter
-                render_toolbar(ui, session, dispatch);
+                let is_columns_open = cx.overlay_stack.is_open(OverlayLayer::ColumnsModal);
+                render_toolbar(ui, session, is_columns_open, dispatch);
 
                 ui.add_space(2.0);
 

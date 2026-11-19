@@ -35,6 +35,7 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     app.handle_keybindings(ctx, &mut dispatch);
 
     let is_launch_open = app.is_overlay_open(crate::overlay::OverlayLayer::LaunchModal);
+    let is_columns_open = app.is_overlay_open(crate::overlay::OverlayLayer::ColumnsModal);
     let is_about_open = app.is_overlay_open(crate::overlay::OverlayLayer::AboutModal);
     let is_keymap_open = app.is_overlay_open(crate::overlay::OverlayLayer::KeymapModal);
     let is_remote_open = app.is_overlay_open(crate::overlay::OverlayLayer::RemoteServersModal);
@@ -340,6 +341,7 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     // Modal Dialog: Table Columns & Ordering
     modals::render_columns_modal(
         ctx,
+        is_columns_open,
         &mut active_session.view.shared.columns,
         &app.keymap,
         &mut dispatch,
