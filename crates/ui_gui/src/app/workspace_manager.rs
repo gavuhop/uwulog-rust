@@ -94,6 +94,9 @@ impl WorkspaceManager {
             if self.active_index == index {
                 return;
             }
+            if let Some(prev) = self.sessions.get_mut(self.active_index) {
+                prev.view.columns.clear_header_drag();
+            }
             self.active_index = index;
             if !self.sessions[index].session.is_following_container_logs() {
                 self.store.active_workspace_id = Some(self.sessions[index].session.id);
@@ -105,7 +108,13 @@ impl WorkspaceManager {
                 .map(|s| s.session.id)
                 .collect();
             let _ = self.store.save();
-            self.active_session_mut().view.search.mark_needs_search();
+            let active = self.active_session_mut();
+            let needs_initial_search = active.view.viewport.last_processed_count == 0
+                && active.session.engine.total_processed() > 0;
+            let query_pending = active.view.search.query != active.view.search.last_query;
+            if needs_initial_search || query_pending {
+                active.view.search.mark_needs_search();
+            }
         }
     }
 

@@ -147,7 +147,7 @@ pub fn render_detail(
 
                 render_text_box(
                     ui,
-                    Id::new("detail_inspector_msg_box"),
+                    ui.make_persistent_id("detail_inspector_msg_box"),
                     &event.message,
                     msg_color,
                     3,
@@ -301,7 +301,7 @@ pub fn render_detail(
 
                 render_text_box(
                     ui,
-                    Id::new("detail_inspector_raw_box"),
+                    ui.make_persistent_id("detail_inspector_raw_box"),
                     &display_str,
                     theme.text.primary,
                     if is_beauty { 10 } else { 4 },

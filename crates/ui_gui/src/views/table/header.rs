@@ -154,7 +154,7 @@ fn render_header_cell(
     let is_drop_target = drop_edge.is_some();
 
     let drop_t = ui.ctx().animate_bool_with_time(
-        egui::Id::new(("header_col_drop", col_name)),
+        ui.make_persistent_id(("header_col_drop", col_name)),
         is_drop_target,
         0.08,
     );
@@ -256,7 +256,7 @@ fn render_header_cell(
     );
 
     // 6. Vạch dọc tô đậm ở mép chèn chính xác của cột đích (phải khi kéo sang phải, trái khi kéo sang trái)
-    let edge_id = egui::Id::new(("header_col_drop_edge", col_name));
+    let edge_id = ui.make_persistent_id(("header_col_drop_edge", col_name));
     let on_right = match drop_edge {
         Some(right) => {
             ui.ctx().data_mut(|d| d.insert_temp(edge_id, right));

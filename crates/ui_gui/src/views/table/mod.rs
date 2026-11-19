@@ -27,6 +27,19 @@ pub fn render_log_table(
     tab: ActiveTab,
     dispatch: &mut impl FnMut(AppAction),
 ) {
+    // Cô lập toàn bộ state bảng (độ rộng cột TableState, vị trí cuộn ngang/dọc, tab trước) theo từng session.id
+    // để không ghi đè lẫn nhau khi chuyển qua lại giữa các tab App / Container.
+    ui.push_id(session.session.id, |ui| {
+        render_log_table_scoped(ui, session, tab, dispatch);
+    });
+}
+
+fn render_log_table_scoped(
+    ui: &mut egui::Ui,
+    session: &mut GuiSession,
+    tab: ActiveTab,
+    dispatch: &mut impl FnMut(AppAction),
+) {
     let row_count = session.stream(tab).cached_logs.len();
     let scroll_target = session.consume_scroll_request(tab, row_count);
     let stream = session.stream_summary(tab);
@@ -58,9 +71,10 @@ pub fn render_log_table(
         return;
     }
 
-    // Dùng chung một table_salt giữa Main và Raw để chia sẻ trực tiếp một TableState (độ rộng cột);
-    // chỉ tách riêng trạng thái cuộn dọc/ngang theo từng tab khi chuyển tab.
+    // Dùng chung một table_salt giữa Main và Raw trong cùng session để chia sẻ TableState (độ rộng cột);
+    // vẫn cô lập giữa các session khác nhau bằng `session.session.id`.
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    session.session.id.hash(&mut hasher);
     session.columns.layout_version.hash(&mut hasher);
     for c in &visible_cols {
         c.name.hash(&mut hasher);
@@ -653,5 +667,92 @@ mod tests {
             .map(|c| c.width)
             .unwrap();
         assert!((moved_w - resized_w).abs() < 0.5);
+    }
+
+    #[test]
+    fn switching_between_sessions_isolates_column_widths_and_scroll_state() {
+        let mut app_session = make_session_with_logs(40);
+        let mut container_session = make_session_with_logs(40);
+        assert_ne!(app_session.session.id, container_session.session.id);
+
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 400.0));
+        let render_session = |session: &mut GuiSession, events: Vec<egui::Event>| {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::CentralPanel::default().show(ui, |ui| {
+                        render_log_table(ui, session, ActiveTab::Filtered, &mut |_| {});
+                    });
+                },
+            );
+            out.textures_delta.clear();
+        };
+
+        // 1. Render App tab và kéo rộng cột "timestamp" thêm +70px
+        render_session(&mut app_session, vec![]);
+        let initial_app_w = app_session.columns.columns[0].width;
+        let sep_x = 8.0 + initial_app_w + 4.0;
+        let drag_y = 20.0;
+
+        render_session(
+            &mut app_session,
+            vec![
+                egui::Event::PointerMoved(egui::pos2(sep_x, drag_y)),
+                egui::Event::PointerButton {
+                    pos: egui::pos2(sep_x, drag_y),
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        render_session(
+            &mut app_session,
+            vec![egui::Event::PointerMoved(egui::pos2(sep_x + 70.0, drag_y))],
+        );
+        render_session(
+            &mut app_session,
+            vec![egui::Event::PointerButton {
+                pos: egui::pos2(sep_x + 70.0, drag_y),
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        render_session(&mut app_session, vec![]);
+        let resized_app_w = app_session.columns.columns[0].width;
+        assert!(
+            resized_app_w > initial_app_w + 40.0,
+            "expected app timestamp width to grow from {initial_app_w}, got {resized_app_w}"
+        );
+
+        // 2. Chuyển sang tab Container (`db`) có cùng layout_version = 0 và cột mặc định:
+        //    không được dùng chung TableState với tab App.
+        let initial_container_w = container_session.columns.columns[0].width;
+        render_session(&mut container_session, vec![]);
+        render_session(&mut container_session, vec![]);
+        let after_container_w = container_session.columns.columns[0].width;
+        assert!(
+            (after_container_w - initial_container_w).abs() < 1.0,
+            "container tab should keep its own initial width ({initial_container_w}), got {after_container_w}"
+        );
+        assert!(
+            (after_container_w - resized_app_w).abs() > 20.0,
+            "container tab must not inherit app tab's resized width ({resized_app_w})"
+        );
+
+        // 3. Chuyển ngược về tab App: độ rộng cột đã kéo của App vẫn còn nguyên vẹn.
+        render_session(&mut app_session, vec![]);
+        render_session(&mut app_session, vec![]);
+        let app_w_after_switch_back = app_session.columns.columns[0].width;
+        assert!(
+            (app_w_after_switch_back - resized_app_w).abs() < 0.5,
+            "app tab width must stay {resized_app_w} after switching back, got {app_w_after_switch_back}"
+        );
     }
 }

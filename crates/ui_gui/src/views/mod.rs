@@ -243,7 +243,8 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
         .show(ui, |ui| {
             if active_session.view.inspector.is_open() {
                 let screen_width = ctx.viewport_rect().width();
-                let panel_id = egui::Id::new("detail_inspector_panel");
+                let panel_salt = ("detail_inspector_panel", active_session.session.id);
+                let panel_id = egui::Id::new(panel_salt);
 
                 // Nếu tỷ lệ chưa hợp lệ, đặt mặc định 35% chiều rộng màn hình
                 if !(0.15..=0.85).contains(&active_session.view.inspector.width_ratio) {
@@ -273,7 +274,7 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 let min_sidebar_width = 240.0_f32.min(screen_width * 0.4);
                 let max_sidebar_width = (screen_width * 0.75).max(min_sidebar_width + 100.0);
 
-                egui::Panel::right("detail_inspector_panel")
+                egui::Panel::right(panel_id)
                     .frame(
                         egui::Frame::default()
                             .fill(theme.surfaces.mantle)
@@ -291,7 +292,9 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                             active_session.view.inspector.width_ratio =
                                 (actual_width / screen_width).clamp(0.15, 0.75);
                         }
-                        detail::render_detail(ui, active_session, &mut dispatch);
+                        ui.push_id(active_session.session.id, |ui| {
+                            detail::render_detail(ui, active_session, &mut dispatch);
+                        });
                     });
             }
 

@@ -687,7 +687,11 @@ fn test_default_shortcuts_run_command_filter_columns_and_rerun() {
     });
     out.textures_delta.clear();
     assert!(
-        ctx.memory(|m| m.has_focus(egui::Id::new("search_query_input"))),
+        ctx.memory(
+            |m| m.has_focus(crate::views::header::search_bar::search_input_id(
+                app.active_session().session.id
+            ))
+        ),
         "Ctrl+F phải kích hoạt focus vào ô tìm kiếm/lọc"
     );
 
@@ -1233,7 +1237,8 @@ fn test_arrow_keys_row_navigation_and_scroll() {
     );
 
     // --- Trường hợp 3: Khi ô tìm kiếm nhận focus -> Arrow keys không bị Table nuốt ---
-    let search_id = eframe::egui::Id::new("search_query_input");
+    let search_id =
+        crate::views::header::search_bar::search_input_id(app.active_session().session.id);
     let input_focus = RawInput::default();
     let mut out = ctx.run_ui(input_focus, |ui| {
         ui.ctx().memory_mut(|m| m.request_focus(search_id));

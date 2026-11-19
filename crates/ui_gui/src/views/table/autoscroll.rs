@@ -1,4 +1,4 @@
-use eframe::egui::{self, Color32, CursorIcon, Id, PointerButton, Pos2, Rect, Stroke, Vec2};
+use eframe::egui::{self, Color32, CursorIcon, PointerButton, Pos2, Rect, Stroke, Vec2};
 
 /// Trạng thái lưu trữ của chế độ cuộn tự động chuột giữa phụ thuộc tâm (Web-style autoscroll)
 #[derive(Clone, Copy, Debug, Default)]
@@ -21,7 +21,7 @@ const DEADZONE: f32 = 10.0;
 /// - Thả nút khi đã kéo -> dừng cuộn (Press & Drag).
 /// - Click nhấp thả tại chỗ -> duy trì chế độ cuộn theo tâm cho tới khi click chuột hoặc bấm Esc (Click & Release).
 pub fn handle_middle_autoscroll(ui: &egui::Ui, table_rect: Rect) -> AutoScrollOutput {
-    let state_id = Id::new("table_middle_autoscroll_state");
+    let state_id = ui.make_persistent_id("table_middle_autoscroll_state");
     let mut state: Option<AutoScrollState> = ui.data(|d| d.get_temp(state_id));
 
     let middle_pressed = ui.input(|i| i.pointer.button_pressed(PointerButton::Middle));

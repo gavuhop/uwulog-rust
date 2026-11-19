@@ -4,6 +4,11 @@ use crate::state::generate_suggestions;
 use eframe::egui::{self, Id};
 use std::time::Instant;
 
+#[inline]
+pub(crate) fn search_input_id(session_id: uuid::Uuid) -> Id {
+    Id::new(("search_query_input", session_id))
+}
+
 pub fn render_search_bar(
     ui: &mut egui::Ui,
     session: &mut GuiSession,
@@ -20,7 +25,7 @@ pub fn render_search_bar(
     let available_w = ui.available_width();
     let search_box_width = (available_w - buttons_w).max(40.0);
 
-    let search_id = Id::new("search_query_input");
+    let search_id = search_input_id(session.session.id);
 
     // Xử lý yêu cầu focus từ phím tắt FocusSearch (Ctrl+F)
     if session.view.search.focus_requested {

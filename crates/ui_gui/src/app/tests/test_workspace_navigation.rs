@@ -800,3 +800,114 @@ async fn test_open_normal_workspace_does_not_auto_run_while_container_log_tab_st
 
     let _ = std::fs::remove_file(&log_file);
 }
+
+#[tokio::test]
+async fn test_devcontainer_tab_switching_and_reopen_preserves_state() {
+    let mut app = create_test_app();
+    let storage_path =
+        std::env::temp_dir().join(format!("uwu_test_devc_state_{}.json", uuid::Uuid::new_v4()));
+    app.workspaces.store.set_storage_path(&storage_path);
+
+    let app_ws = Workspace::new(
+        "psittacus",
+        WorkspaceLocation::remote(
+            uwu_core_workspace::DockerConnectionOptions::new("psittacus-app-1", "/workspaces/p")
+                .with_compose_project("psittacus_devcontainer")
+                .with_compose_service("app")
+                .with_devcontainer(true),
+        ),
+        SourceType::Process,
+    );
+    app.dispatch_action(AppAction::OpenWorkspace(app_ws));
+    let app_idx = app.workspaces.active_index;
+
+    let make_db_ws = || {
+        Workspace::new(
+            "psittacus",
+            WorkspaceLocation::remote(
+                uwu_core_workspace::DockerConnectionOptions::new("psittacus-db-1", "/workspaces/p")
+                    .with_compose_project("psittacus_devcontainer")
+                    .with_compose_service("db")
+                    .with_follow_container_logs(true),
+            ),
+            SourceType::Process,
+        )
+    };
+    app.dispatch_action(AppAction::OpenContainerLogSession(make_db_ws()));
+
+    let db_idx = app.workspaces.active_index;
+    assert_ne!(app_idx, db_idx);
+
+    // Chỉnh trạng thái riêng trên tab `db`: cột, query, inspector, unlatch
+    {
+        let db = app.active_session_mut();
+        db.view.columns.set_column_width("timestamp", 185.0);
+        db.view.columns.schedule_save_after_drag();
+        db.view.search.query = "db_slow".into();
+        db.view.search.last_query = "db_slow".into();
+        db.view.search.needs_search = false;
+        db.view.inspector.width_ratio = 0.28;
+        db.view.viewport.is_auto_scroll = false;
+        db.view.viewport.last_processed_count = 1;
+        db.view
+            .viewport
+            .cached_logs
+            .push(uwu_core_schema::LogEvent::new(
+                "12:00:00",
+                uwu_core_schema::LogColor::Default,
+                "db line",
+                uwu_core_schema::LogFields::default(),
+            ));
+    }
+
+    // Chuyển sang `app`, chỉnh trạng thái riêng trên `app`
+    app.dispatch_action(AppAction::SwitchSession(app_idx));
+    {
+        let main_app = app.active_session_mut();
+        main_app.view.columns.set_column_width("timestamp", 245.0);
+        main_app.view.columns.schedule_save_after_drag();
+        main_app.view.search.query = "level:error".into();
+        main_app.view.search.last_query = "level:error".into();
+        main_app.view.search.needs_search = false;
+        main_app.view.inspector.width_ratio = 0.42;
+        main_app.view.viewport.is_auto_scroll = false;
+        main_app.view.viewport.last_processed_count = 1;
+        main_app
+            .view
+            .viewport
+            .cached_logs
+            .push(uwu_core_schema::LogEvent::new(
+                "12:00:01",
+                uwu_core_schema::LogColor::Default,
+                "app line",
+                uwu_core_schema::LogFields::default(),
+            ));
+    }
+
+    // Đổi qua lại giữa `db` và `app`: cả hai phải giữ nguyên độ rộng cột, query, inspector, cache
+    app.dispatch_action(AppAction::SwitchSession(db_idx));
+    assert!(
+        (app.active_session().view.columns.columns[0].width - 185.0).abs() < 0.1,
+        "db timestamp width lost"
+    );
+    assert_eq!(app.active_session().view.search.query, "db_slow");
+    assert!((app.active_session().view.inspector.width_ratio - 0.28).abs() < 0.01);
+    assert!(!app.active_session().view.viewport.is_auto_scroll);
+    assert!(!app.active_session().view.search.needs_search);
+    assert_eq!(app.active_session().view.viewport.cached_logs.len(), 1);
+
+    app.dispatch_action(AppAction::SwitchSession(app_idx));
+    assert!(
+        (app.active_session().view.columns.columns[0].width - 245.0).abs() < 0.1,
+        "app timestamp width lost"
+    );
+    assert_eq!(app.active_session().view.search.query, "level:error");
+    assert!((app.active_session().view.inspector.width_ratio - 0.42).abs() < 0.01);
+    assert!(!app.active_session().view.viewport.is_auto_scroll);
+    assert!(!app.active_session().view.search.needs_search);
+    assert_eq!(app.active_session().view.viewport.cached_logs.len(), 1);
+
+    app.dispatch_action(AppAction::CloseSession(db_idx));
+    app.dispatch_action(AppAction::CloseSession(app_idx));
+    let _ = std::fs::remove_file(&storage_path);
+}

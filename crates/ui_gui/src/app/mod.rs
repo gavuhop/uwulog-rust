@@ -95,7 +95,11 @@ impl UwuGuiApp {
     pub fn resolve_active_key_context(&self, ctx: &egui::Context) -> crate::keymap::KeyContext {
         let base = self.current_key_context();
         if base == crate::keymap::KeyContext::Global {
-            if ctx.memory(|m| m.has_focus(egui::Id::new("search_query_input"))) {
+            let search_focused = self.active_session_opt().is_some_and(|active| {
+                let id = crate::views::header::search_bar::search_input_id(active.session.id);
+                ctx.memory(|m| m.has_focus(id))
+            });
+            if search_focused {
                 crate::keymap::KeyContext::SearchInput
             } else {
                 crate::keymap::KeyContext::Table
@@ -972,7 +976,9 @@ impl UwuGuiApp {
             }
             AppAction::FocusSearch => {
                 self.active_session_mut().view.search.focus_requested = true;
-                let search_id = egui::Id::new("search_query_input");
+                let search_id = crate::views::header::search_bar::search_input_id(
+                    self.active_session().session.id,
+                );
                 if let Some(ctx) = &self.egui_ctx {
                     ctx.memory_mut(|m| m.request_focus(search_id));
                     ctx.request_repaint();
