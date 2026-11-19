@@ -188,8 +188,6 @@ fn default_inspector_width_ratio() -> f32 {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ViewerPrefs {
     #[serde(default)]
-    pub main_query: String,
-    #[serde(default)]
     pub filter_history: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub columns: Vec<SavedColumnConfig>,
@@ -200,7 +198,6 @@ pub struct ViewerPrefs {
 impl Default for ViewerPrefs {
     fn default() -> Self {
         Self {
-            main_query: String::new(),
             filter_history: Vec::new(),
             columns: Vec::new(),
             inspector_width_ratio: default_inspector_width_ratio(),

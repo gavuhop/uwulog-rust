@@ -404,6 +404,11 @@ async fn test_on_exit_saves_current_workspace() {
     let mut app = create_test_app();
     app.workspaces.sessions[0].session.name = "ExitTestProj".to_string();
     app.workspaces.sessions[0].view.search.query = "error_query".to_string();
+    app.workspaces.sessions[0]
+        .view
+        .search
+        .history
+        .record("error_query");
 
     app.on_exit();
 
@@ -412,11 +417,25 @@ async fn test_on_exit_saves_current_workspace() {
         .store
         .recent_workspaces
         .iter()
-        .find(|w| w.name == "ExitTestProj");
+        .find(|w| w.name == "ExitTestProj")
+        .cloned();
     assert!(ws.is_some());
-    let key = ws.unwrap().viewer_key();
-    let prefs = app.workspaces.store.get_viewer_prefs(&key);
-    assert_eq!(prefs.map(|p| p.main_query.as_str()), Some("error_query"));
+    let ws = ws.unwrap();
+    let key = ws.viewer_key();
+    let prefs = app
+        .workspaces
+        .store
+        .get_viewer_prefs(&key)
+        .expect("saved viewer prefs must exist");
+    assert_eq!(prefs.filter_history, vec!["error_query"]);
+
+    // Mở lại session từ ViewerPrefs đã lưu -> KHÔNG dính lại filter cũ trong ô search
+    let mut reopened = GuiSession::from_workspace(&ws, 1000, 100);
+    reopened.view.search.query = "stale_query".to_string();
+    reopened.apply_viewer_prefs(prefs);
+    assert!(reopened.view.search.query.is_empty());
+    assert!(reopened.view.search.last_query.is_empty());
+    assert_eq!(reopened.view.search.history.entries, vec!["error_query"]);
 }
 
 #[tokio::test]
@@ -942,7 +961,7 @@ async fn test_devcontainer_tab_switching_and_reopen_preserves_state() {
     );
 
     // Đóng tab `db`, reload store từ đĩa (mô phỏng tắt app mở lại) và mở lại `db`:
-    // không tạo duplicate trong `recent_workspaces`, đồng thời khôi phục toàn bộ view state của `db`.
+    // không tạo duplicate trong `recent_workspaces`, khôi phục layout cột & inspector nhưng KHÔNG dính lại filter cũ.
     app.dispatch_action(AppAction::CloseSession(db_idx));
     let docker_recent_count = app
         .workspaces
@@ -959,7 +978,7 @@ async fn test_devcontainer_tab_switching_and_reopen_preserves_state() {
         (app.active_session().view.shared.columns.columns[0].width - 185.0).abs() < 0.1,
         "reopened db tab should restore saved timestamp width"
     );
-    assert_eq!(app.active_session().view.search.query, "db_slow");
+    assert_eq!(app.active_session().view.search.query, "");
     assert!((app.active_session().view.shared.inspector.width_ratio - 0.28).abs() < 0.01);
 
     app.dispatch_action(AppAction::CloseSession(db_idx));

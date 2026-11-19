@@ -47,13 +47,12 @@ impl GuiSession {
         self.session.viewer_key()
     }
 
-    /// Khôi phục trạng thái hiển thị (query, lịch sử lọc, bố cục cột, độ rộng Inspector) từ `ViewerPrefs`.
+    /// Khôi phục trạng thái hiển thị (lịch sử lọc, bố cục cột, độ rộng Inspector) từ `ViewerPrefs`.
+    /// Không khôi phục filter đang nhập dở để khi mở lại app/workspace không bị dính lại filter cũ.
     pub fn apply_viewer_prefs(&mut self, prefs: &ViewerPrefs) {
-        self.view.search.query = prefs.main_query.clone();
+        self.view.search.query.clear();
+        self.view.search.last_query.clear();
         self.view.search.history.entries = prefs.filter_history.clone();
-        if self.view.search.history.entries.is_empty() && !prefs.main_query.trim().is_empty() {
-            self.view.search.history.record(&prefs.main_query);
-        }
         self.view.shared.columns.restore_from_saved(&prefs.columns);
         if (0.15..=0.85).contains(&prefs.inspector_width_ratio) {
             self.view.shared.inspector.width_ratio = prefs.inspector_width_ratio;
@@ -63,7 +62,6 @@ impl GuiSession {
     /// Xuất trạng thái hiển thị hiện tại thành `ViewerPrefs` để lưu xuống `WorkspaceStore::viewers`.
     pub fn to_viewer_prefs(&self) -> ViewerPrefs {
         ViewerPrefs {
-            main_query: self.view.search.query.clone(),
             filter_history: self.view.search.history.entries.clone(),
             columns: self.view.shared.columns.to_saved_columns(),
             inspector_width_ratio: self.view.shared.inspector.width_ratio,

@@ -358,6 +358,8 @@ impl WorkspaceManager {
         gui_session.has_auto_started_source = false;
         gui_session.user_stopped_source = false;
         gui_session.view.main_tab_mut().stream.latch();
+        gui_session.view.search.clear();
+        gui_session.view.search.last_query.clear();
         if let Some(prefs) = self
             .store
             .get_viewer_prefs(&gui_session.viewer_key())

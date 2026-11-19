@@ -141,7 +141,6 @@ mod tests {
         // WorkspaceStore::viewers lưu ViewerPrefs thống nhất theo ViewerKey
         let mut store = WorkspaceStore::default();
         let prefs = ViewerPrefs {
-            main_query: "level:error".to_string(),
             filter_history: vec!["level:error".to_string()],
             columns: vec![SavedColumnConfig {
                 name: "aaa".to_string(),
