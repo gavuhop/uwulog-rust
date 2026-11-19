@@ -2,7 +2,7 @@ use crate::actions::{AppAction, SessionAction};
 use crate::components::ui::{AppButton, ButtonVariant, IconButton, IconName};
 use crate::session::GuiSession;
 use crate::theme::ActiveTheme;
-use eframe::egui::{self, Align, Align2, CornerRadius, Layout, Order, Stroke};
+use eframe::egui::{self, Align2, CornerRadius, Order, Stroke};
 
 /// Mức độ hiển thị màu icon & viền của toast.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,43 +105,49 @@ pub fn render_toast_stack(
     items: &[ToastItem],
     dispatch: &mut impl FnMut(AppAction),
 ) -> Vec<ToastDismiss> {
+    render_toast_stack_with_rects(ctx, items, dispatch).0
+}
+
+fn render_toast_stack_with_rects(
+    ctx: &egui::Context,
+    items: &[ToastItem],
+    dispatch: &mut impl FnMut(AppAction),
+) -> (Vec<ToastDismiss>, Vec<egui::Rect>) {
     if items.is_empty() {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     }
 
     let theme = ctx.app_theme();
     let mut dismissed = Vec::new();
+    let mut rects = Vec::with_capacity(items.len());
+    let mut bottom_offset = -16.0_f32;
 
-    egui::Area::new(egui::Id::new("app_toast_stack"))
-        .order(Order::Foreground)
-        .anchor(Align2::RIGHT_BOTTOM, egui::vec2(-16.0, -16.0))
-        .show(ctx, |ui| {
-            ui.with_layout(Layout::top_down(Align::Max), |ui| {
-                for (idx, item) in items.iter().enumerate() {
-                    if idx > 0 {
-                        ui.add_space(8.0);
-                    }
+    for (idx, item) in items.iter().enumerate().rev() {
+        let area_resp = egui::Area::new(egui::Id::new(("app_toast_item", idx, &item.title)))
+            .order(Order::Foreground)
+            .anchor(Align2::RIGHT_BOTTOM, egui::vec2(-16.0, bottom_offset))
+            .show(ctx, |ui| {
+                let (icon_color, border_color) = match item.tone {
+                    ToastTone::Neutral => (theme.text.muted, theme.borders.border),
+                    ToastTone::Success => (theme.status.success, theme.borders.border),
+                    ToastTone::Warning => (theme.status.warning, theme.status.warning),
+                    ToastTone::Error => (theme.status.error, theme.status.error),
+                };
 
-                    let (icon_color, border_color) = match item.tone {
-                        ToastTone::Neutral => (theme.text.muted, theme.borders.border),
-                        ToastTone::Success => (theme.status.success, theme.borders.border),
-                        ToastTone::Warning => (theme.status.warning, theme.status.warning),
-                        ToastTone::Error => (theme.status.error, theme.status.error),
-                    };
+                let frame = egui::Frame::default()
+                    .fill(theme.surfaces.mantle)
+                    .stroke(Stroke::new(1.0, border_color))
+                    .corner_radius(CornerRadius::same(8))
+                    .inner_margin(egui::Margin::symmetric(12, 10))
+                    .shadow(egui::epaint::Shadow {
+                        offset: [0, 6],
+                        blur: 20,
+                        spread: 0,
+                        color: egui::Color32::from_black_alpha(55),
+                    });
 
-                    let frame = egui::Frame::default()
-                        .fill(theme.surfaces.mantle)
-                        .stroke(Stroke::new(1.0, border_color))
-                        .corner_radius(CornerRadius::same(8))
-                        .inner_margin(egui::Margin::symmetric(12, 10))
-                        .shadow(egui::epaint::Shadow {
-                            offset: [0, 6],
-                            blur: 20,
-                            spread: 0,
-                            color: egui::Color32::from_black_alpha(55),
-                        });
-
-                    frame.show(ui, |ui| {
+                frame
+                    .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             let (icon_r, _) = ui
                                 .allocate_exact_size(egui::vec2(15.0, 15.0), egui::Sense::hover());
@@ -185,12 +191,16 @@ pub fn render_toast_stack(
                                 dismissed.push(item.dismiss.clone());
                             }
                         });
-                    });
-                }
+                    })
+                    .response
+                    .rect
             });
-        });
 
-    dismissed
+        rects.push(area_resp.inner);
+        bottom_offset -= area_resp.response.rect.height() + 8.0;
+    }
+
+    (dismissed, rects)
 }
 
 #[cfg(test)]
@@ -250,18 +260,61 @@ mod tests {
                 tone: ToastTone::Success,
                 title: "Container running".to_string(),
                 subtitle: "dev-container".to_string(),
-                action: None,
+                action: Some(ToastAction {
+                    label: "Open in Dev Container".to_string(),
+                    variant: ButtonVariant::Success,
+                    action: SessionAction::DismissFieldWarnings.into(),
+                }),
                 dismiss: ToastDismiss::DevContainerSuggest("/tmp/app".to_string()),
             },
         ];
 
         let mut actions = Vec::new();
-        let mut out = ctx.run_ui(raw_input, |ui| {
-            let dismissed = render_toast_stack(ui.ctx(), &items, &mut |a| actions.push(a));
-            assert!(dismissed.is_empty());
-        });
-        out.textures_delta.clear();
-        assert!(!out.shapes.is_empty());
+        for frame_idx in 0..2 {
+            let mut card_rects = Vec::new();
+            let mut out = ctx.run_ui(raw_input.clone(), |ui| {
+                let (dismissed, rects) =
+                    render_toast_stack_with_rects(ui.ctx(), &items, &mut |a| actions.push(a));
+                assert!(dismissed.is_empty());
+                card_rects = rects;
+            });
+            out.textures_delta.clear();
+            assert!(!out.shapes.is_empty());
+            assert_eq!(card_rects.len(), 3);
+            card_rects.sort_by(|a, b| a.min.y.total_cmp(&b.min.y));
+
+            for rect in &card_rects {
+                assert!(
+                    rect.width() > 150.0 && rect.width() < 550.0,
+                    "Toast card width out of compact bounds on frame {frame_idx}: {:?}",
+                    rect
+                );
+            }
+
+            // Frame đầu tiên egui đo kích thước Area; từ frame thứ 2 phải neo chính xác góc dưới-phải
+            if frame_idx >= 1 {
+                for rect in &card_rects {
+                    assert!(
+                        rect.min.x > 700.0 && (rect.max.x - 1264.0).abs() <= 1.5,
+                        "Toast card not anchored at bottom-right corner: {:?}",
+                        rect
+                    );
+                }
+                for pair in card_rects.windows(2) {
+                    assert!(
+                        pair[0].max.y < pair[1].min.y,
+                        "Toast cards overlapped vertically: {:?} vs {:?}",
+                        pair[0],
+                        pair[1]
+                    );
+                }
+                assert!(
+                    (card_rects[2].max.y - 784.0).abs() <= 1.5,
+                    "Newest toast should sit at bottom=-16px: {:?}",
+                    card_rects[2]
+                );
+            }
+        }
         assert!(actions.is_empty());
     }
 
