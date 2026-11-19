@@ -9,7 +9,7 @@ use super::helpers::{
     get_cached_or_read_directories, get_dir_and_suffix, join_unix_dir, join_unix_path,
     render_empty_state, step_selected_index, ListItemRow,
 };
-use super::types::{FolderPickerState, RemoteNavAction, RemoteServerKind};
+use super::types::{FolderPickerState, RemoteNavAction};
 
 /// Subview 3: Chọn Thư Mục Remote Chuẩn Zed (Bàn phím ưu tiên, Tab drill-down, Enter mở project)
 pub fn render_folder_picker_subview(
@@ -212,17 +212,7 @@ pub fn render_folder_picker_subview(
 
     // Thực thi mở thư mục được chọn
     if let Some(target_dir) = action_open_dir {
-        match &folder_state.server {
-            RemoteServerKind::Wsl(distro) => {
-                store.add_remote_project_to_server(distro, &target_dir);
-            }
-            RemoteServerKind::Ssh(conn) => {
-                store.add_remote_project_to_ssh_server(&conn.host, &target_dir);
-            }
-            RemoteServerKind::DevContainer(conn) => {
-                store.add_remote_project_to_docker_server(&conn.container_name, &target_dir);
-            }
-        }
+        store.add_remote_project(&folder_state.server, &target_dir);
         let ws = create_server_workspace(&folder_state.server, &target_dir);
         store.add_or_update(ws.clone());
         selected_workspace = Some(ws);

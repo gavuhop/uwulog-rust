@@ -135,6 +135,7 @@ pub fn render_remote_servers_modal(
 mod tests {
     use super::*;
     use crate::components::ui::IconName;
+    use uwu_core_workspace::ServerConnection;
 
     #[test]
     fn test_calculate_adaptive_scroll_height() {
@@ -198,10 +199,8 @@ mod tests {
     fn test_clear_dir_cache() {
         clear_dir_cache();
         // Caching and clearing
-        let entries = get_cached_or_read_directories(
-            &RemoteServerKind::Wsl("non_existent_distro".to_string()),
-            "/home",
-        );
+        let entries =
+            get_cached_or_read_directories(&ServerConnection::wsl("non_existent_distro"), "/home");
         assert!(entries.is_empty());
         clear_dir_cache();
     }
@@ -209,7 +208,7 @@ mod tests {
     #[test]
     fn test_folder_picker_state_focus_input() {
         let state = FolderPickerState::new(
-            RemoteServerKind::Wsl("Ubuntu".to_string()),
+            ServerConnection::wsl("Ubuntu"),
             "/home/truongviet/",
             vec![".claude".to_string(), ".config".to_string()],
         );
@@ -309,20 +308,20 @@ mod tests {
 
     #[test]
     fn test_remote_server_kind_display_and_icon() {
-        let wsl = RemoteServerKind::Wsl("Ubuntu-22.04".to_string());
+        let wsl = ServerConnection::wsl("Ubuntu-22.04");
         assert_eq!(wsl.display_name(), "Ubuntu-22.04");
         assert_eq!(wsl.icon(), IconName::Linux);
 
-        let ssh = RemoteServerKind::ssh_simple("prod-server");
+        let ssh = ServerConnection::ssh("prod-server");
         assert_eq!(ssh.display_name(), "prod-server");
         assert_eq!(ssh.icon(), IconName::Server);
 
-        let ssh_nick = RemoteServerKind::Ssh(
+        let ssh_nick = ServerConnection::Ssh(
             uwu_core_workspace::SshConnection::new("prod-server").with_nickname("Production Node"),
         );
         assert_eq!(ssh_nick.display_name(), "Production Node");
 
-        let dev_container = RemoteServerKind::dev_container("rust-env");
+        let dev_container = ServerConnection::docker("rust-env");
         assert_eq!(dev_container.display_name(), "rust-env");
         assert_eq!(dev_container.icon(), IconName::Box);
     }
@@ -330,7 +329,7 @@ mod tests {
     #[test]
     fn test_server_option_items_for_different_kinds() {
         // 1. WSL: Remove Distro (destructive) + Go Back
-        let wsl = RemoteServerKind::Wsl("Ubuntu".to_string());
+        let wsl = ServerConnection::wsl("Ubuntu");
         let wsl_opts = ServerOptionItem::list_for_server(&wsl);
         assert_eq!(wsl_opts.len(), 2);
         assert_eq!(wsl_opts[0].action, ServerOptionAction::RemoveServer);
@@ -341,7 +340,7 @@ mod tests {
         assert!(!wsl_opts[1].is_destructive);
 
         // 2. SSH: Edit Nickname + Copy Server Address + Remove Server + Go Back
-        let ssh = RemoteServerKind::ssh_simple("server1.example.com");
+        let ssh = ServerConnection::ssh("server1.example.com");
         let ssh_opts = ServerOptionItem::list_for_server(&ssh);
         assert_eq!(ssh_opts.len(), 4);
         assert_eq!(ssh_opts[0].action, ServerOptionAction::EditNickname);
@@ -360,7 +359,7 @@ mod tests {
         assert_eq!(ssh_opts[3].action, ServerOptionAction::GoBack);
 
         // 3. DevContainer: Copy Container Name + Remove Dev Container + Go Back
-        let dc = RemoteServerKind::dev_container("dc1");
+        let dc = ServerConnection::docker("dc1");
         let dc_opts = ServerOptionItem::list_for_server(&dc);
         assert_eq!(dc_opts.len(), 3);
         assert_eq!(
@@ -377,13 +376,12 @@ mod tests {
 
     #[test]
     fn test_server_options_keyboard_wrap_around() {
-        let options =
-            ServerOptionItem::list_for_server(&RemoteServerKind::Wsl("Ubuntu".to_string()));
+        let options = ServerOptionItem::list_for_server(&ServerConnection::wsl("Ubuntu"));
         let total_items = options.len();
         assert_eq!(total_items, 2);
 
         let mut state = ServerOptionsState {
-            server: RemoteServerKind::Wsl("Ubuntu".to_string()),
+            server: ServerConnection::wsl("Ubuntu"),
             selected_index: 0,
             copied_flash_time: None,
         };
@@ -437,7 +435,7 @@ mod tests {
 
         // 5. Bấm "Open Folder" sau đó mới vào FolderPicker
         let folder_picker_subview = RemoteSubView::FolderPicker(FolderPickerState::new(
-            RemoteServerKind::Wsl("Ubuntu".to_string()),
+            ServerConnection::wsl("Ubuntu"),
             "/home/user",
             vec![],
         ));
@@ -468,7 +466,7 @@ mod tests {
             assert_eq!(items_with_server.len(), 5);
             assert_eq!(
                 items_with_server[3].action,
-                ServerListAction::OpenFolder(RemoteServerKind::Wsl("Ubuntu".to_string()))
+                ServerListAction::OpenFolder(ServerConnection::wsl("Ubuntu"))
             );
             assert_eq!(
                 items_with_server[3].section_title,
@@ -476,7 +474,7 @@ mod tests {
             );
             assert_eq!(
                 items_with_server[4].action,
-                ServerListAction::ViewServerOptions(RemoteServerKind::Wsl("Ubuntu".to_string()))
+                ServerListAction::ViewServerOptions(ServerConnection::wsl("Ubuntu"))
             );
 
             // 3. Thêm project trực tiếp vào server Ubuntu -> xuất hiện mục project duyệt O(1)
@@ -486,7 +484,7 @@ mod tests {
             assert_eq!(
                 items_with_project[3].action,
                 ServerListAction::OpenServerPath {
-                    server: RemoteServerKind::Wsl("Ubuntu".to_string()),
+                    server: ServerConnection::wsl("Ubuntu"),
                     path: "/home/user/backend".to_string(),
                 }
             );
@@ -496,7 +494,7 @@ mod tests {
             assert_eq!(filtered.len(), 1);
             assert_eq!(
                 filtered[0].action,
-                ServerListAction::OpenFolder(RemoteServerKind::Wsl("Ubuntu".to_string()))
+                ServerListAction::OpenFolder(ServerConnection::wsl("Ubuntu"))
             );
         }
 
@@ -565,7 +563,7 @@ mod tests {
 
         // 2. Chuyển từ WslPicker -> FolderPicker
         let folder_subview = RemoteSubView::FolderPicker(FolderPickerState::new(
-            RemoteServerKind::Wsl("Ubuntu".to_string()),
+            ServerConnection::wsl("Ubuntu"),
             "/home",
             vec![],
         ));
@@ -673,9 +671,9 @@ mod tests {
         });
         assert!(ssh_project_item.is_some());
 
-        // Test FolderPicker with SSH ServerKind
+        // Test FolderPicker with SSH ServerConnection
         let folder_state = FolderPickerState::new(
-            RemoteServerKind::ssh_simple("staging-server"),
+            ServerConnection::ssh("staging-server"),
             "/var/log",
             vec!["nginx".to_string(), "redis".to_string()],
         );
@@ -910,7 +908,7 @@ mod tests {
         match success_event {
             SshInteractiveEvent::Connected(success) => {
                 let folder_state = FolderPickerState::new(
-                    RemoteServerKind::ssh_simple("validserver"),
+                    ServerConnection::ssh("validserver"),
                     success.initial_dir,
                     success.entries,
                 );
@@ -942,8 +940,8 @@ mod tests {
             .with_devcontainer(true);
         store.upsert_docker_connection(dc.clone());
 
-        let server_kind = RemoteServerKind::from_docker_connection(&dc);
-        let ws = create_server_workspace(&server_kind, "/workspaces/my-app");
+        let server = ServerConnection::Docker(dc);
+        let ws = create_server_workspace(&server, "/workspaces/my-app");
         assert_eq!(ws.name, "my-app");
         assert_eq!(ws.location.icon(), IconName::Box);
         assert_eq!(ws.location.working_dir(), "/workspaces/my-app");

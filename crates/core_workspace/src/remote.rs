@@ -224,6 +224,19 @@ impl WslConnection {
     pub fn remove_project(&mut self, path: &str) -> bool {
         self.projects.remove(&RemoteProject::new(path))
     }
+
+    pub fn display_name(&self) -> &str {
+        &self.distro
+    }
+
+    /// Chuyển đổi thành WslConnectionOptions kèm thư mục làm việc
+    pub fn to_options(&self, working_dir: impl Into<String>) -> WslConnectionOptions {
+        WslConnectionOptions {
+            distro: self.distro.clone(),
+            user: self.user.clone(),
+            working_dir: working_dir.into(),
+        }
+    }
 }
 
 /// Cấu hình kết nối SSH chứa danh sách project (chuẩn `SshConnection` của Zed)
@@ -874,6 +887,100 @@ pub enum ServerConnection {
     Wsl(WslConnection),
     Ssh(SshConnection),
     Docker(DockerConnection),
+}
+
+impl ServerConnection {
+    pub fn wsl(distro: impl Into<String>) -> Self {
+        Self::Wsl(WslConnection::new(distro))
+    }
+
+    pub fn ssh(host: impl Into<String>) -> Self {
+        Self::Ssh(SshConnection::new(host))
+    }
+
+    pub fn ssh_from_options(opts: &SshConnectionOptions) -> Self {
+        Self::Ssh(SshConnection::from(opts))
+    }
+
+    pub fn docker(container_name: impl Into<String>) -> Self {
+        Self::Docker(DockerConnection::new(container_name))
+    }
+
+    pub fn display_name(&self) -> &str {
+        match self {
+            Self::Wsl(c) => c.display_name(),
+            Self::Ssh(c) => c.display_name(),
+            Self::Docker(c) => c.display_name(),
+        }
+    }
+
+    pub fn title(&self) -> String {
+        match self {
+            Self::Wsl(c) => format!("WSL: {}", c.distro),
+            Self::Ssh(c) => format!("SSH: {}", c.display_name()),
+            Self::Docker(c) => format!("Dev Container: {}", c.display_name()),
+        }
+    }
+
+    pub fn icon(&self) -> uwu_icons::IconName {
+        match self {
+            Self::Wsl(_) => uwu_icons::IconName::Linux,
+            Self::Ssh(_) => uwu_icons::IconName::Server,
+            Self::Docker(_) => uwu_icons::IconName::Box,
+        }
+    }
+
+    pub fn projects(&self) -> &BTreeSet<RemoteProject> {
+        match self {
+            Self::Wsl(c) => &c.projects,
+            Self::Ssh(c) => &c.projects,
+            Self::Docker(c) => &c.projects,
+        }
+    }
+
+    pub fn to_options(&self, working_dir: impl Into<String>) -> RemoteConnectionOptions {
+        match self {
+            Self::Wsl(c) => c.to_options(working_dir).into(),
+            Self::Ssh(c) => c.to_options(working_dir).into(),
+            Self::Docker(c) => c.to_options(working_dir).into(),
+        }
+    }
+
+    pub fn list_remote_directories(&self, dir: &str) -> anyhow::Result<Vec<String>> {
+        match self {
+            Self::Wsl(c) => {
+                uwu_driver_transport::WslTransport::list_remote_directories(&c.distro, dir)
+            }
+            Self::Ssh(c) => uwu_driver_transport::SshTransport::list_remote_directories(
+                &c.host,
+                dir,
+                c.username.as_deref(),
+                c.port,
+                c.args.as_deref(),
+            ),
+            Self::Docker(c) => uwu_driver_transport::DockerTransport::list_remote_directories(
+                &c.container_name,
+                dir,
+                c.remote_user.as_deref(),
+            ),
+        }
+    }
+
+    pub fn resolve_home_dir(&self) -> String {
+        match self {
+            Self::Wsl(c) => uwu_driver_transport::WslTransport::resolve_home_dir(&c.distro),
+            Self::Ssh(c) => uwu_driver_transport::SshTransport::resolve_home_dir(
+                &c.host,
+                c.username.as_deref(),
+                c.port,
+                c.args.as_deref(),
+            ),
+            Self::Docker(c) => uwu_driver_transport::DockerTransport::resolve_default_workdir(
+                &c.container_name,
+                c.remote_user.as_deref(),
+            ),
+        }
+    }
 }
 
 impl From<WslConnection> for ServerConnection {

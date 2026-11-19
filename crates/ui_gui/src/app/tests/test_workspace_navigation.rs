@@ -184,8 +184,9 @@ async fn test_remote_servers_modal_escape_back_navigation() {
     use crate::app::overlay_manager::RemoteServersOverlayState;
     use crate::views::remote_servers::render_remote_servers_modal;
     use crate::views::remote_servers::types::{
-        FolderPickerState, RemoteModalState, RemoteServerKind, RemoteSubView, ServerOptionsState,
+        FolderPickerState, RemoteModalState, RemoteSubView, ServerOptionsState,
     };
+    use uwu_core_workspace::ServerConnection;
 
     let rt_handle = tokio::runtime::Handle::current();
     let ctx = egui::Context::default();
@@ -239,7 +240,7 @@ async fn test_remote_servers_modal_escape_back_navigation() {
     overlay_state
         .modal
         .navigate(RemoteSubView::FolderPicker(FolderPickerState::new(
-            RemoteServerKind::Wsl("Ubuntu".to_string()),
+            ServerConnection::wsl("Ubuntu"),
             "/home",
             vec![],
         )));
@@ -285,7 +286,7 @@ async fn test_remote_servers_modal_escape_back_navigation() {
     overlay_state
         .modal
         .navigate(RemoteSubView::ServerOptions(ServerOptionsState {
-            server: RemoteServerKind::Wsl("Ubuntu".to_string()),
+            server: ServerConnection::wsl("Ubuntu"),
             selected_index: 0,
             copied_flash_time: None,
         }));
@@ -527,7 +528,7 @@ async fn test_workspace_persists_and_restores_columns_only_on_matching_keys() {
 #[tokio::test]
 #[cfg(target_os = "windows")]
 async fn test_project_picker_and_server_list_consistency() {
-    use crate::views::remote_servers::RemoteServerKind;
+    use uwu_core_workspace::ServerConnection;
 
     let mut app = create_test_app();
 
@@ -547,7 +548,7 @@ async fn test_project_picker_and_server_list_consistency() {
 
     // 2. Mở project này qua open_or_switch_workspace (như khi chọn từ server list)
     let ws = crate::views::remote_servers::helpers::create_server_workspace(
-        &RemoteServerKind::Wsl("Ubuntu".to_string()),
+        &ServerConnection::wsl("Ubuntu"),
         "/home/user/backend",
     );
     app.open_or_switch_workspace(&ws);

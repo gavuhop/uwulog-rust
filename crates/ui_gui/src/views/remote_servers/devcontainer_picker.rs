@@ -4,13 +4,11 @@ use crate::theme::ActiveTheme;
 use eframe::egui;
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
-use uwu_core_workspace::{DockerConnection, Workspace, WorkspaceStore};
+use uwu_core_workspace::{DockerConnection, ServerConnection, Workspace, WorkspaceStore};
 use uwu_driver_transport::{DockerContainerInfo, DockerTransport};
 
 use super::helpers::create_server_workspace;
-use super::types::{
-    DevContainerPickerStage, DevContainerPickerState, RemoteNavAction, RemoteServerKind,
-};
+use super::types::{DevContainerPickerStage, DevContainerPickerState, RemoteNavAction};
 
 struct ContainerOpenSuccess {
     connection: DockerConnection,
@@ -139,13 +137,9 @@ pub fn render_devcontainer_picker_subview(
                 match res {
                     Ok(success) => {
                         store.upsert_docker_connection(success.connection.clone());
-                        let server_kind =
-                            RemoteServerKind::from_docker_connection(&success.connection);
-                        let ws = create_server_workspace(&server_kind, &success.workspace_folder);
-                        store.add_remote_project_to_docker_server(
-                            &success.connection.container_name,
-                            &success.workspace_folder,
-                        );
+                        let server = ServerConnection::Docker(success.connection.clone());
+                        let ws = create_server_workspace(&server, &success.workspace_folder);
+                        store.add_remote_project(&server, &success.workspace_folder);
                         store.add_or_update(ws.clone());
                         return (RemoteNavAction::None, Some(ws));
                     }

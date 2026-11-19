@@ -1,4 +1,3 @@
-use super::types::RemoteServerKind;
 use crate::components::ui::IconName;
 use crate::overlay::RemoteModalPlacement;
 use crate::theme::ActiveTheme;
@@ -6,10 +5,8 @@ use eframe::egui::{self, Align2, Color32, CornerRadius, Id, Order, Stroke};
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 use uwu_core_workspace::{
-    clean_path, extract_project_name, RemoteConnectionOptions, SourceType, Workspace,
-    WorkspaceLocation,
+    clean_path, extract_project_name, ServerConnection, SourceType, Workspace, WorkspaceLocation,
 };
-use uwu_driver_transport::{DockerTransport, SshTransport, WslTransport};
 
 /// Nối đường dẫn Unix (ví dụ: "/home/user" + "project" -> "/home/user/project")
 pub fn join_unix_path(base: &str, child: &str) -> String {
@@ -48,14 +45,9 @@ fn resolve_remote_dir_and_name(fallback_name: &str, target_dir: &str) -> (String
 }
 
 /// Khởi tạo workspace remote cho bất kỳ loại server nào (WSL, SSH, DevContainer)
-pub fn create_server_workspace(server: &RemoteServerKind, target_dir: &str) -> Workspace {
+pub fn create_server_workspace(server: &ServerConnection, target_dir: &str) -> Workspace {
     let (clean_dir, project_name) = resolve_remote_dir_and_name(server.display_name(), target_dir);
-
-    let location = match server {
-        RemoteServerKind::Wsl(distro) => RemoteConnectionOptions::parse(distro, clean_dir),
-        RemoteServerKind::Ssh(conn) => conn.to_options(clean_dir).into(),
-        RemoteServerKind::DevContainer(conn) => conn.to_options(clean_dir).into(),
-    };
+    let location = server.to_options(clean_dir);
 
     Workspace::new(
         project_name,
@@ -70,7 +62,7 @@ type DirCacheMap = HashMap<(String, String), Vec<String>>;
 static DIR_CACHE: LazyLock<Mutex<DirCacheMap>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Lấy danh sách thư mục từ xa cho bất kỳ loại server nào (có cache)
-pub fn get_cached_or_read_directories(server: &RemoteServerKind, dir: &str) -> Vec<String> {
+pub fn get_cached_or_read_directories(server: &ServerConnection, dir: &str) -> Vec<String> {
     let key = (server.display_name().to_string(), dir.to_string());
     if let Ok(cache) = DIR_CACHE.lock() {
         if let Some(entries) = cache.get(&key) {
@@ -78,25 +70,7 @@ pub fn get_cached_or_read_directories(server: &RemoteServerKind, dir: &str) -> V
         }
     }
 
-    let entries = match server {
-        RemoteServerKind::Wsl(distro) => {
-            WslTransport::list_remote_directories(distro, dir).unwrap_or_default()
-        }
-        RemoteServerKind::Ssh(conn) => SshTransport::list_remote_directories(
-            &conn.host,
-            dir,
-            conn.username.as_deref(),
-            conn.port,
-            conn.args.as_deref(),
-        )
-        .unwrap_or_default(),
-        RemoteServerKind::DevContainer(conn) => DockerTransport::list_remote_directories(
-            &conn.container_name,
-            dir,
-            conn.remote_user.as_deref(),
-        )
-        .unwrap_or_default(),
-    };
+    let entries = server.list_remote_directories(dir).unwrap_or_default();
 
     if let Ok(mut cache) = DIR_CACHE.lock() {
         cache.insert(key, entries.clone());
@@ -510,7 +484,7 @@ mod tests {
 
     #[test]
     fn test_create_server_workspace_and_view_helpers() {
-        let server_wsl = RemoteServerKind::Wsl("Ubuntu".to_string());
+        let server_wsl = ServerConnection::wsl("Ubuntu");
         let ws1 = create_server_workspace(&server_wsl, "/home/user/backend/");
         assert_eq!(ws1.name, "backend");
         assert_eq!(ws1.location.working_dir(), "/home/user/backend");
@@ -522,7 +496,7 @@ mod tests {
         assert_eq!(ws_root.server_name(), Some("Ubuntu"));
 
         // Test create_server_workspace for SSH
-        let server_ssh = RemoteServerKind::Ssh(
+        let server_ssh = ServerConnection::Ssh(
             uwu_core_workspace::SshConnection::new("192.168.1.100")
                 .with_user("deploy")
                 .with_port(2222)

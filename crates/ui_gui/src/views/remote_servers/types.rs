@@ -1,11 +1,11 @@
 use crate::components::ui::IconName;
 use std::time::Instant;
-use uwu_core_workspace::{DockerConnection, SshConnection, SshConnectionOptions};
+use uwu_core_workspace::ServerConnection;
 
 /// Trạng thái của hộp thoại chọn thư mục WSL/Remote
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FolderPickerState {
-    pub server: RemoteServerKind,
+    pub server: ServerConnection,
     pub path_query: String,
     pub current_dir: String,
     pub entries: Vec<String>,
@@ -15,7 +15,7 @@ pub struct FolderPickerState {
 
 impl FolderPickerState {
     pub fn new(
-        server: RemoteServerKind,
+        server: ServerConnection,
         initial_dir: impl Into<String>,
         entries: Vec<String>,
     ) -> Self {
@@ -116,68 +116,10 @@ impl DevContainerPickerState {
     }
 }
 
-/// Loại remote server được hỗ trợ trong uwulog (chuẩn Zed: WSL, SSH, DevContainer)
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RemoteServerKind {
-    Wsl(String),
-    Ssh(SshConnection),
-    DevContainer(DockerConnection),
-}
-
-impl RemoteServerKind {
-    pub fn display_name(&self) -> &str {
-        match self {
-            RemoteServerKind::Wsl(name) => name,
-            RemoteServerKind::Ssh(conn) => conn.display_name(),
-            RemoteServerKind::DevContainer(conn) => conn.display_name(),
-        }
-    }
-
-    pub fn icon(&self) -> IconName {
-        match self {
-            RemoteServerKind::Wsl(_) => IconName::Linux,
-            RemoteServerKind::Ssh(_) => IconName::Server,
-            RemoteServerKind::DevContainer(_) => IconName::Box,
-        }
-    }
-
-    pub fn from_ssh_connection(conn: &SshConnection) -> Self {
-        Self::Ssh(conn.clone())
-    }
-
-    pub fn from_ssh_options(opts: &SshConnectionOptions) -> Self {
-        Self::Ssh(SshConnection::from(opts))
-    }
-
-    pub fn ssh_simple(host: impl Into<String>) -> Self {
-        Self::Ssh(SshConnection::new(host))
-    }
-
-    pub fn from_docker_connection(conn: &DockerConnection) -> Self {
-        Self::DevContainer(conn.clone())
-    }
-
-    pub fn dev_container(container_name: impl Into<String>) -> Self {
-        Self::DevContainer(DockerConnection::new(container_name))
-    }
-}
-
-impl From<SshConnection> for RemoteServerKind {
-    fn from(conn: SshConnection) -> Self {
-        Self::Ssh(conn)
-    }
-}
-
-impl From<DockerConnection> for RemoteServerKind {
-    fn from(conn: DockerConnection) -> Self {
-        Self::DevContainer(conn)
-    }
-}
-
 /// Một mục hành động trong danh sách Server Options (chuẩn Zed: mở rộng dễ dàng cho SSH, Dev Container...)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ServerOptionAction {
-    /// Xóa server khỏi danh sách (bật native Windows dialog)
+    /// Xóa server khỏi danh sách (bật native dialog)
     RemoveServer,
     /// Đổi hoặc đặt nickname cho SSH
     EditNickname,
@@ -198,9 +140,9 @@ pub struct ServerOptionItem {
 
 impl ServerOptionItem {
     /// Sinh danh sách options theo loại server (chuẩn Zed: mở rộng cho SSH, Dev Container...)
-    pub fn list_for_server(server: &RemoteServerKind) -> Vec<Self> {
+    pub fn list_for_server(server: &ServerConnection) -> Vec<Self> {
         match server {
-            RemoteServerKind::Wsl(_) => vec![
+            ServerConnection::Wsl(_) => vec![
                 Self {
                     action: ServerOptionAction::RemoveServer,
                     icon: IconName::Trash,
@@ -216,7 +158,7 @@ impl ServerOptionItem {
                     is_destructive: false,
                 },
             ],
-            RemoteServerKind::Ssh(conn) => {
+            ServerConnection::Ssh(conn) => {
                 let nickname_label = if conn.nickname.is_some() {
                     "Edit Nickname"
                 } else {
@@ -254,7 +196,7 @@ impl ServerOptionItem {
                     },
                 ]
             }
-            RemoteServerKind::DevContainer(conn) => {
+            ServerConnection::Docker(conn) => {
                 let target = conn.container_name.clone();
                 vec![
                     Self {
@@ -286,7 +228,7 @@ impl ServerOptionItem {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerOptionsState {
-    pub server: RemoteServerKind,
+    pub server: ServerConnection,
     pub selected_index: usize,
     pub copied_flash_time: Option<Instant>,
 }

@@ -1,7 +1,7 @@
 use crate::actions::{AppAction, OverlayAction, WorkspaceAction};
 use crate::components::ui::IconName;
 use crate::theme::ActiveTheme;
-use crate::views::remote_servers::{create_server_workspace, RemoteServerKind};
+use crate::views::remote_servers::create_server_workspace;
 use eframe::egui::{self, Color32, CornerRadius, Rect};
 use std::collections::HashSet;
 use uwu_core_workspace::{SourceType, Workspace, WorkspaceLocation, WorkspaceStore};
@@ -353,63 +353,19 @@ pub fn render_project_picker_popup(
                     sessions.iter().map(|s| s.normalized_dir.clone()).collect();
 
                 let mut all_recent = store.recent_workspaces.clone();
-                // Duyệt các kết nối server (WSL, SSH, Container...) để tổng hợp đầy đủ remote projects
-                for conn in &store.wsl_connections {
-                    for proj in &conn.projects {
+                // Duyệt các kết nối server (WSL, SSH, Docker) để tổng hợp đầy đủ remote projects
+                for conn in store.all_remote_connections() {
+                    let server_name = conn.display_name();
+                    for proj in conn.projects() {
                         let clean = uwu_core_workspace::normalize_workdir(&proj.path);
                         let exists = all_recent.iter().any(|ws| {
-                            if let Some(remote) = ws.location.as_remote() {
-                                remote.display_name().eq_ignore_ascii_case(&conn.distro)
+                            ws.location.as_remote().is_some_and(|remote| {
+                                remote.display_name().eq_ignore_ascii_case(server_name)
                                     && ws.location.normalized_dir() == clean
-                            } else {
-                                false
-                            }
+                            })
                         });
                         if !exists {
-                            all_recent.push(create_server_workspace(
-                                &RemoteServerKind::Wsl(conn.distro.clone()),
-                                &proj.path,
-                            ));
-                        }
-                    }
-                }
-                for conn in &store.ssh_connections {
-                    for proj in &conn.projects {
-                        let clean = uwu_core_workspace::normalize_workdir(&proj.path);
-                        let exists = all_recent.iter().any(|ws| {
-                            if let Some(remote) = ws.location.as_remote() {
-                                remote.display_name().eq_ignore_ascii_case(&conn.host)
-                                    && ws.location.normalized_dir() == clean
-                            } else {
-                                false
-                            }
-                        });
-                        if !exists {
-                            all_recent.push(create_server_workspace(
-                                &RemoteServerKind::from_ssh_connection(conn),
-                                &proj.path,
-                            ));
-                        }
-                    }
-                }
-                for conn in &store.docker_connections {
-                    for proj in &conn.projects {
-                        let clean = uwu_core_workspace::normalize_workdir(&proj.path);
-                        let exists = all_recent.iter().any(|ws| {
-                            if let Some(remote) = ws.location.as_remote() {
-                                remote
-                                    .display_name()
-                                    .eq_ignore_ascii_case(&conn.container_name)
-                                    && ws.location.normalized_dir() == clean
-                            } else {
-                                false
-                            }
-                        });
-                        if !exists {
-                            all_recent.push(create_server_workspace(
-                                &RemoteServerKind::from_docker_connection(conn),
-                                &proj.path,
-                            ));
+                            all_recent.push(create_server_workspace(&conn, &proj.path));
                         }
                     }
                 }

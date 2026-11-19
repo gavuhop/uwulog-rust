@@ -5,15 +5,14 @@ use eframe::egui;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
-use uwu_core_workspace::{SshConnectionOptions, WorkspaceStore};
+use uwu_core_workspace::{ServerConnection, SshConnectionOptions, WorkspaceStore};
 use uwu_driver_transport::{SshInteractiveEvent, SshInteractivePromptType, SshTransport};
 
 use super::helpers::{
     anchor_cursor_to_end, calculate_adaptive_scroll_height, step_selected_index, ListItemRow,
 };
 use super::types::{
-    FolderPickerState, RemoteNavAction, RemoteServerKind, RemoteSubView, SshPickerStage,
-    SshPickerState,
+    FolderPickerState, RemoteNavAction, RemoteSubView, SshPickerStage, SshPickerState,
 };
 
 /// Trạng thái phiên tương tác kết nối SSH nền (chuẩn Zed Editor), được sở hữu bởi `OverlayManager`.
@@ -689,10 +688,10 @@ pub fn render_ssh_picker_subview(
                             }
                             let _ = store.save();
 
-                            let server_kind = RemoteServerKind::from_ssh_options(opts);
+                            let server = ServerConnection::ssh_from_options(opts);
 
                             let folder_state = FolderPickerState::new(
-                                server_kind,
+                                server,
                                 success.initial_dir,
                                 success.entries,
                             );

@@ -1,12 +1,10 @@
 use crate::keymap::{KeyAction, KeyContext, KeymapManager};
 use crate::theme::ActiveTheme;
 use eframe::egui;
-use uwu_core_workspace::WorkspaceStore;
+use uwu_core_workspace::{ServerConnection, WorkspaceStore};
 
 use super::helpers::{step_selected_index, ListItemRow};
-use super::types::{
-    RemoteNavAction, RemoteServerKind, ServerOptionAction, ServerOptionItem, ServerOptionsState,
-};
+use super::types::{RemoteNavAction, ServerOptionAction, ServerOptionItem, ServerOptionsState};
 
 /// Subview 4: Danh sách các Option của Server (chuẩn Zed: Remove Distro, Go Back, mở rộng SSH...)
 pub fn render_server_options_subview(
@@ -107,18 +105,15 @@ pub fn render_server_options_subview(
         match action {
             ServerOptionAction::RemoveServer => {
                 let (title, message) = match &options_state.server {
-                    RemoteServerKind::Wsl(distro) => (
+                    ServerConnection::Wsl(conn) => (
                         "Remove WSL Distro",
-                        format!("Remove WSL distro `{}`?", distro),
+                        format!("Remove WSL distro `{}`?", conn.distro),
                     ),
-                    RemoteServerKind::Ssh(conn) => {
-                        let name = conn.display_name();
-                        (
-                            "Remove SSH Server",
-                            format!("Remove SSH server `{}`?", name),
-                        )
-                    }
-                    RemoteServerKind::DevContainer(conn) => (
+                    ServerConnection::Ssh(conn) => (
+                        "Remove SSH Server",
+                        format!("Remove SSH server `{}`?", conn.display_name()),
+                    ),
+                    ServerConnection::Docker(conn) => (
                         "Remove Dev Container",
                         format!("Remove Dev Container `{}`?", conn.display_name()),
                     ),
@@ -132,17 +127,7 @@ pub fn render_server_options_subview(
                     .show();
 
                 if confirmed == rfd::MessageDialogResult::Yes {
-                    match &options_state.server {
-                        RemoteServerKind::Wsl(distro) => {
-                            store.remove_wsl_connection(distro);
-                        }
-                        RemoteServerKind::Ssh(conn) => {
-                            store.remove_ssh_connection(&conn.host);
-                        }
-                        RemoteServerKind::DevContainer(conn) => {
-                            store.remove_docker_connection(&conn.container_name);
-                        }
-                    }
+                    store.remove_server_connection(&options_state.server);
                     nav_action = RemoteNavAction::Back;
                 }
             }

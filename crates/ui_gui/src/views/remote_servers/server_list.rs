@@ -1,24 +1,19 @@
 use crate::components::ui::{IconName, TextInput};
 use crate::keymap::{KeyAction, KeyContext, KeymapManager};
 use eframe::egui;
-use std::collections::BTreeSet;
-#[cfg(target_os = "windows")]
-use uwu_core_workspace::WslConnection;
 use uwu_core_workspace::{
-    RemoteConnectionOptions, RemoteProject, SshConnection, Workspace, WorkspaceLocation,
+    RemoteConnectionOptions, RemoteProject, ServerConnection, Workspace, WorkspaceLocation,
     WorkspaceStore,
 };
-use uwu_driver_transport::{
-    load_system_and_user_ssh_hosts, DockerTransport, SshTransport, WslTransport,
-};
+use uwu_driver_transport::load_system_and_user_ssh_hosts;
 
 use super::helpers::{
     anchor_cursor_to_end, create_server_workspace, get_cached_or_read_directories,
     render_empty_state, render_section_title, step_selected_index, ListItemRow,
 };
 use super::types::{
-    DevContainerPickerState, FolderPickerState, RemoteNavAction, RemoteServerKind, RemoteSubView,
-    ServerOptionsState, SshPickerState,
+    DevContainerPickerState, FolderPickerState, RemoteNavAction, RemoteSubView, ServerOptionsState,
+    SshPickerState,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -28,11 +23,11 @@ pub enum ServerListAction {
     AddWslDistro,
     OpenWorkspace(Box<Workspace>),
     OpenServerPath {
-        server: RemoteServerKind,
+        server: ServerConnection,
         path: String,
     },
-    OpenFolder(RemoteServerKind),
-    ViewServerOptions(RemoteServerKind),
+    OpenFolder(ServerConnection),
+    ViewServerOptions(ServerConnection),
 }
 
 /// Một mục hiển thị trong Server List
@@ -83,13 +78,22 @@ pub fn collect_server_list_items(filter: &str, store: &WorkspaceStore) -> Vec<Se
     }
 
     // 2. Chỉ gom các kết nối Remote Server (WSL trên Windows và SSH); Dev Container không liệt kê ở đây
-    let connections: Vec<Connection> = {
-        let mut list = Vec::new();
-        #[cfg(target_os = "windows")]
-        list.extend(store.wsl_connections.iter().map(Connection::Wsl));
-        list.extend(store.ssh_connections.iter().map(Connection::Ssh));
-        list
-    };
+    let mut connections: Vec<ServerConnection> = Vec::new();
+    #[cfg(target_os = "windows")]
+    connections.extend(
+        store
+            .wsl_connections
+            .iter()
+            .cloned()
+            .map(ServerConnection::Wsl),
+    );
+    connections.extend(
+        store
+            .ssh_connections
+            .iter()
+            .cloned()
+            .map(ServerConnection::Ssh),
+    );
 
     for conn in &connections {
         append_connection_items(&mut items, &filter, conn);
@@ -98,67 +102,8 @@ pub fn collect_server_list_items(filter: &str, store: &WorkspaceStore) -> Vec<Se
     items
 }
 
-/// Đại diện bọc cho một kết nối Remote Server (WSL hoặc SSH)
-enum Connection<'a> {
-    #[cfg(target_os = "windows")]
-    Wsl(&'a WslConnection),
-    Ssh(&'a SshConnection),
-}
-
-impl<'a> Connection<'a> {
-    fn title(&self) -> String {
-        match self {
-            #[cfg(target_os = "windows")]
-            Self::Wsl(s) => format!("WSL: {}", s.distro),
-            Self::Ssh(s) => format!("SSH: {}", s.display_name()),
-        }
-    }
-
-    fn projects(&self) -> &'a BTreeSet<RemoteProject> {
-        match self {
-            #[cfg(target_os = "windows")]
-            Self::Wsl(s) => &s.projects,
-            Self::Ssh(s) => &s.projects,
-        }
-    }
-
-    fn project_action(&self, path: &str) -> ServerListAction {
-        match self {
-            #[cfg(target_os = "windows")]
-            Self::Wsl(s) => ServerListAction::OpenServerPath {
-                server: RemoteServerKind::Wsl(s.distro.clone()),
-                path: path.to_string(),
-            },
-            Self::Ssh(s) => ServerListAction::OpenServerPath {
-                server: RemoteServerKind::from_ssh_connection(s),
-                path: path.to_string(),
-            },
-        }
-    }
-
-    fn open_folder_action(&self) -> ServerListAction {
-        match self {
-            #[cfg(target_os = "windows")]
-            Self::Wsl(s) => ServerListAction::OpenFolder(RemoteServerKind::Wsl(s.distro.clone())),
-            Self::Ssh(s) => ServerListAction::OpenFolder(RemoteServerKind::from_ssh_connection(s)),
-        }
-    }
-
-    fn options_action(&self) -> ServerListAction {
-        match self {
-            #[cfg(target_os = "windows")]
-            Self::Wsl(s) => {
-                ServerListAction::ViewServerOptions(RemoteServerKind::Wsl(s.distro.clone()))
-            }
-            Self::Ssh(s) => {
-                ServerListAction::ViewServerOptions(RemoteServerKind::from_ssh_connection(s))
-            }
-        }
-    }
-}
-
 /// Helper trích xuất và hiển thị danh sách item cho một kết nối (WSL hoặc SSH)
-fn append_connection_items(items: &mut Vec<ServerListItem>, filter: &str, conn: &Connection) {
+fn append_connection_items(items: &mut Vec<ServerListItem>, filter: &str, conn: &ServerConnection) {
     let title = conn.title();
     let title_matches = !filter.is_empty() && title.to_lowercase().contains(filter);
     let open_folder_matches = filter.is_empty() || "open folder".contains(filter) || title_matches;
@@ -191,7 +136,10 @@ fn append_connection_items(items: &mut Vec<ServerListItem>, filter: &str, conn: 
             label: proj.path.clone(),
             tooltip: Some(format!("Open project in {}", title)),
             section_title: take_section(),
-            action: conn.project_action(&proj.path),
+            action: ServerListAction::OpenServerPath {
+                server: conn.clone(),
+                path: proj.path.clone(),
+            },
         });
     }
 
@@ -201,7 +149,7 @@ fn append_connection_items(items: &mut Vec<ServerListItem>, filter: &str, conn: 
             label: "Open Folder".to_string(),
             tooltip: Some(format!("Open a directory path in {}", title)),
             section_title: take_section(),
-            action: conn.open_folder_action(),
+            action: ServerListAction::OpenFolder(conn.clone()),
         });
     }
 
@@ -211,7 +159,7 @@ fn append_connection_items(items: &mut Vec<ServerListItem>, filter: &str, conn: 
             label: "View Server Options".to_string(),
             tooltip: Some("View server options".to_string()),
             section_title: take_section(),
-            action: conn.options_action(),
+            action: ServerListAction::ViewServerOptions(conn.clone()),
         });
     }
 }
@@ -357,21 +305,7 @@ pub fn render_remote_list_subview(
                 selected_workspace = Some(ws);
             }
             ServerListAction::OpenFolder(server) => {
-                let home = match &server {
-                    RemoteServerKind::Wsl(distro) => WslTransport::resolve_home_dir(distro),
-                    RemoteServerKind::Ssh(conn) => SshTransport::resolve_home_dir(
-                        &conn.host,
-                        conn.username.as_deref(),
-                        conn.port,
-                        conn.args.as_deref(),
-                    ),
-                    RemoteServerKind::DevContainer(conn) => {
-                        DockerTransport::resolve_default_workdir(
-                            &conn.container_name,
-                            conn.remote_user.as_deref(),
-                        )
-                    }
-                };
+                let home = server.resolve_home_dir();
                 let entries = get_cached_or_read_directories(&server, &home);
                 nav_action = RemoteNavAction::navigate(RemoteSubView::FolderPicker(
                     FolderPickerState::new(server, home, entries),

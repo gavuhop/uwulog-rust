@@ -1,6 +1,5 @@
 use crate::remote::{
-    DockerConnection, RemoteConnectionOptions, SshConnection, SshConnectionOptions, WslConnection,
-    WslConnectionOptions,
+    DockerConnection, RemoteConnectionOptions, ServerConnection, SshConnection, WslConnection,
 };
 use crate::session::SourceType;
 use crate::workspace::{
@@ -242,168 +241,135 @@ impl WorkspaceStore {
         let _ = self.save();
     }
 
+    /// Liệt kê toàn bộ kết nối remote đang lưu (WSL, SSH, Docker) dưới dạng enum thống nhất
+    pub fn all_remote_connections(&self) -> Vec<ServerConnection> {
+        let mut all = Vec::with_capacity(
+            self.wsl_connections.len() + self.ssh_connections.len() + self.docker_connections.len(),
+        );
+        all.extend(
+            self.wsl_connections
+                .iter()
+                .cloned()
+                .map(ServerConnection::Wsl),
+        );
+        all.extend(
+            self.ssh_connections
+                .iter()
+                .cloned()
+                .map(ServerConnection::Ssh),
+        );
+        all.extend(
+            self.docker_connections
+                .iter()
+                .cloned()
+                .map(ServerConnection::Docker),
+        );
+        all
+    }
+
+    /// Thêm project trực tiếp vào kết nối server tương ứng
+    pub fn add_remote_project(&mut self, server: &ServerConnection, path: impl Into<String>) {
+        match server {
+            ServerConnection::Wsl(c) => self.add_remote_project_to_server(&c.distro, path),
+            ServerConnection::Ssh(c) => self.add_remote_project_to_ssh_server(&c.host, path),
+            ServerConnection::Docker(c) => {
+                self.add_remote_project_to_docker_server(&c.container_name, path)
+            }
+        }
+    }
+
+    /// Xóa một kết nối server khỏi danh sách và xóa các workspace liên quan
+    pub fn remove_server_connection(&mut self, server: &ServerConnection) {
+        match server {
+            ServerConnection::Wsl(c) => self.remove_wsl_connection(&c.distro),
+            ServerConnection::Ssh(c) => self.remove_ssh_connection(&c.host),
+            ServerConnection::Docker(c) => self.remove_docker_connection(&c.container_name),
+        }
+    }
+
     /// Tìm kết nối WSL theo tên distro
     pub fn find_wsl_connection(&self, distro: &str) -> Option<&WslConnection> {
-        let trimmed = distro.trim();
-        self.wsl_connections
-            .iter()
-            .find(|c| c.distro.eq_ignore_ascii_case(trimmed))
+        find_record(&self.wsl_connections, distro)
     }
 
     /// Tìm kết nối WSL dạng mutable theo tên distro
     pub fn find_wsl_connection_mut(&mut self, distro: &str) -> Option<&mut WslConnection> {
-        let trimmed = distro.trim();
-        self.wsl_connections
-            .iter_mut()
-            .find(|c| c.distro.eq_ignore_ascii_case(trimmed))
+        find_record_mut(&mut self.wsl_connections, distro)
     }
 
     /// Đảm bảo một kết nối WSL distro tồn tại trong danh sách (tạo mới nếu chưa có)
     pub fn ensure_wsl_connection(&mut self, distro: impl Into<String>) -> &mut WslConnection {
         let d = distro.into();
-        let trimmed = d.trim().to_string();
-        if let Some(pos) = self
-            .wsl_connections
-            .iter()
-            .position(|c| c.distro.eq_ignore_ascii_case(&trimmed))
-        {
-            &mut self.wsl_connections[pos]
-        } else {
-            self.wsl_connections.push(WslConnection::new(&trimmed));
+        let (idx, created) = ensure_record_idx(&mut self.wsl_connections, &d);
+        if created {
             let _ = self.save();
-            let idx = self.wsl_connections.len() - 1;
-            &mut self.wsl_connections[idx]
         }
+        &mut self.wsl_connections[idx]
     }
 
     /// Xóa một kết nối WSL distro khỏi danh sách và xóa các workspace remote thuộc distro đó
     pub fn remove_wsl_connection(&mut self, distro: &str) {
-        let trimmed = distro.trim();
-        self.wsl_connections
-            .retain(|c| !c.distro.eq_ignore_ascii_case(trimmed));
-        self.recent_workspaces.retain(|ws| {
-            if let Some(remote) = ws.location.as_remote() {
-                !remote.display_name().eq_ignore_ascii_case(trimmed)
-            } else {
-                true
-            }
-        });
+        remove_record(
+            &mut self.wsl_connections,
+            &mut self.recent_workspaces,
+            distro,
+        );
         let _ = self.save();
     }
 
     /// Tìm kết nối SSH theo host hoặc nickname
     pub fn find_ssh_connection(&self, host: &str) -> Option<&SshConnection> {
-        let trimmed = host.trim();
-        self.ssh_connections.iter().find(|c| {
-            c.host.eq_ignore_ascii_case(trimmed)
-                || c.nickname
-                    .as_deref()
-                    .map(|n| n.eq_ignore_ascii_case(trimmed))
-                    .unwrap_or(false)
-        })
+        find_record(&self.ssh_connections, host)
     }
 
     /// Tìm kết nối SSH dạng mutable theo host hoặc nickname
     pub fn find_ssh_connection_mut(&mut self, host: &str) -> Option<&mut SshConnection> {
-        let trimmed = host.trim();
-        self.ssh_connections.iter_mut().find(|c| {
-            c.host.eq_ignore_ascii_case(trimmed)
-                || c.nickname
-                    .as_deref()
-                    .map(|n| n.eq_ignore_ascii_case(trimmed))
-                    .unwrap_or(false)
-        })
+        find_record_mut(&mut self.ssh_connections, host)
     }
 
     /// Đảm bảo một kết nối SSH tồn tại trong danh sách (tạo mới nếu chưa có)
     pub fn ensure_ssh_connection(&mut self, host: impl Into<String>) -> &mut SshConnection {
         let h = host.into();
-        let trimmed = h.trim().to_string();
-        if let Some(pos) = self.ssh_connections.iter().position(|c| {
-            c.host.eq_ignore_ascii_case(&trimmed)
-                || c.nickname
-                    .as_deref()
-                    .map(|n| n.eq_ignore_ascii_case(&trimmed))
-                    .unwrap_or(false)
-        }) {
-            &mut self.ssh_connections[pos]
-        } else {
-            self.ssh_connections.push(SshConnection::new(&trimmed));
+        let (idx, created) = ensure_record_idx(&mut self.ssh_connections, &h);
+        if created {
             let _ = self.save();
-            let idx = self.ssh_connections.len() - 1;
-            &mut self.ssh_connections[idx]
         }
+        &mut self.ssh_connections[idx]
     }
 
     /// Xóa một kết nối SSH khỏi danh sách và xóa các workspace remote thuộc server đó
     pub fn remove_ssh_connection(&mut self, host: &str) {
-        let trimmed = host.trim();
-        self.ssh_connections.retain(|c| {
-            !c.host.eq_ignore_ascii_case(trimmed)
-                && !c
-                    .nickname
-                    .as_deref()
-                    .map(|n| n.eq_ignore_ascii_case(trimmed))
-                    .unwrap_or(false)
-        });
-        self.recent_workspaces.retain(|ws| {
-            if let Some(remote) = ws.location.as_remote() {
-                !remote.display_name().eq_ignore_ascii_case(trimmed)
-            } else {
-                true
-            }
-        });
+        remove_record(&mut self.ssh_connections, &mut self.recent_workspaces, host);
         let _ = self.save();
     }
 
     /// Thêm project trực tiếp vào SSH server tương ứng
     pub fn add_remote_project_to_ssh_server(&mut self, host: &str, path: impl Into<String>) {
-        let server = self.ensure_ssh_connection(host);
-        if server.add_project(path) {
+        if add_project_to_record(&mut self.ssh_connections, host, path) {
             let _ = self.save();
         }
     }
 
     /// Xóa project trực tiếp khỏi SSH server tương ứng
     pub fn remove_remote_project_from_ssh_server(&mut self, host: &str, path: &str) {
-        if let Some(server) = self.find_ssh_connection_mut(host) {
-            if server.remove_project(path) {
-                let clean = normalize_workdir(path);
-                self.recent_workspaces.retain(|w| {
-                    if let Some(remote) = w.location.as_remote() {
-                        !(remote.display_name().eq_ignore_ascii_case(host)
-                            && w.location.normalized_dir() == clean)
-                    } else {
-                        true
-                    }
-                });
-                let _ = self.save();
-            }
+        if remove_project_from_record(
+            &mut self.ssh_connections,
+            &mut self.recent_workspaces,
+            host,
+            path,
+        ) {
+            let _ = self.save();
         }
     }
 
     /// Tìm kết nối Docker / Dev Container theo tên container hoặc ID
     pub fn find_docker_connection(&self, container: &str) -> Option<&DockerConnection> {
-        let trimmed = container.trim();
-        self.docker_connections.iter().find(|c| {
-            c.container_name.eq_ignore_ascii_case(trimmed)
-                || c.container_id
-                    .as_deref()
-                    .map(|id| id.eq_ignore_ascii_case(trimmed))
-                    .unwrap_or(false)
-        })
+        find_record(&self.docker_connections, container)
     }
 
     /// Tìm kết nối Docker / Dev Container dạng mutable theo tên container hoặc ID
     pub fn find_docker_connection_mut(&mut self, container: &str) -> Option<&mut DockerConnection> {
-        let trimmed = container.trim();
-        self.docker_connections.iter_mut().find(|c| {
-            c.container_name.eq_ignore_ascii_case(trimmed)
-                || c.container_id
-                    .as_deref()
-                    .map(|id| id.eq_ignore_ascii_case(trimmed))
-                    .unwrap_or(false)
-        })
+        find_record_mut(&mut self.docker_connections, container)
     }
 
     /// Đảm bảo một kết nối Docker / Dev Container tồn tại trong danh sách (tạo mới nếu chưa có)
@@ -412,22 +378,11 @@ impl WorkspaceStore {
         container: impl Into<String>,
     ) -> &mut DockerConnection {
         let name = container.into();
-        let trimmed = name.trim().to_string();
-        if let Some(pos) = self.docker_connections.iter().position(|c| {
-            c.container_name.eq_ignore_ascii_case(&trimmed)
-                || c.container_id
-                    .as_deref()
-                    .map(|id| id.eq_ignore_ascii_case(&trimmed))
-                    .unwrap_or(false)
-        }) {
-            &mut self.docker_connections[pos]
-        } else {
-            self.docker_connections
-                .push(DockerConnection::new(&trimmed));
+        let (idx, created) = ensure_record_idx(&mut self.docker_connections, &name);
+        if created {
             let _ = self.save();
-            let idx = self.docker_connections.len() - 1;
-            &mut self.docker_connections[idx]
         }
+        &mut self.docker_connections[idx]
     }
 
     /// Thêm mới hoặc cập nhật metadata cho một kết nối Docker / Dev Container
@@ -479,29 +434,11 @@ impl WorkspaceStore {
 
     /// Xóa một kết nối Docker / Dev Container khỏi danh sách và xóa các workspace thuộc container đó
     pub fn remove_docker_connection(&mut self, container: &str) {
-        let trimmed = container.trim();
-        self.docker_connections.retain(|c| {
-            !c.container_name.eq_ignore_ascii_case(trimmed)
-                && !c
-                    .container_id
-                    .as_deref()
-                    .map(|id| id.eq_ignore_ascii_case(trimmed))
-                    .unwrap_or(false)
-        });
-        self.recent_workspaces.retain(|ws| {
-            if let Some(WorkspaceLocation::Remote(RemoteConnectionOptions::Docker(ref d))) =
-                Some(&ws.location)
-            {
-                !d.container_name.eq_ignore_ascii_case(trimmed)
-                    && !d
-                        .container_id
-                        .as_deref()
-                        .map(|id| id.eq_ignore_ascii_case(trimmed))
-                        .unwrap_or(false)
-            } else {
-                true
-            }
-        });
+        remove_record(
+            &mut self.docker_connections,
+            &mut self.recent_workspaces,
+            container,
+        );
         let _ = self.save();
     }
 
@@ -511,66 +448,43 @@ impl WorkspaceStore {
         container: &str,
         path: impl Into<String>,
     ) {
-        let server = self.ensure_docker_connection(container);
-        if server.add_project(path) {
+        if add_project_to_record(&mut self.docker_connections, container, path) {
             let _ = self.save();
         }
     }
 
     /// Xóa project trực tiếp khỏi Docker container tương ứng
     pub fn remove_remote_project_from_docker_server(&mut self, container: &str, path: &str) {
-        if let Some(server) = self.find_docker_connection_mut(container) {
-            if server.remove_project(path) {
-                let clean = normalize_workdir(path);
-                self.recent_workspaces.retain(|w| {
-                    if let Some(remote) = w.location.as_remote() {
-                        !(remote.display_name().eq_ignore_ascii_case(container)
-                            && w.location.normalized_dir() == clean)
-                    } else {
-                        true
-                    }
-                });
-                let _ = self.save();
-            }
+        if remove_project_from_record(
+            &mut self.docker_connections,
+            &mut self.recent_workspaces,
+            container,
+            path,
+        ) {
+            let _ = self.save();
         }
     }
 
-    /// Thêm project trực tiếp vào server connection tương ứng (WSL, SSH, Container...)
+    /// Thêm project trực tiếp vào server connection tương ứng (WSL)
     pub fn add_remote_project_to_server(&mut self, server_name: &str, path: impl Into<String>) {
-        let server = self.ensure_wsl_connection(server_name);
-        if server.add_project(path) {
+        if add_project_to_record(&mut self.wsl_connections, server_name, path) {
             let _ = self.save();
         }
     }
 
     /// Xóa project trực tiếp khỏi server connection tương ứng (WSL, SSH, Container...)
     pub fn remove_remote_project_from_server(&mut self, server_name: &str, path: &str) {
-        let mut modified = false;
-        if let Some(server) = self.find_wsl_connection_mut(server_name) {
-            if server.remove_project(path) {
-                modified = true;
-            }
-        }
-        if let Some(server) = self.find_ssh_connection_mut(server_name) {
-            if server.remove_project(path) {
-                modified = true;
-            }
-        }
-        if let Some(server) = self.find_docker_connection_mut(server_name) {
-            if server.remove_project(path) {
-                modified = true;
-            }
-        }
+        let modified = self
+            .find_wsl_connection_mut(server_name)
+            .is_some_and(|s| s.remove_project(path))
+            | self
+                .find_ssh_connection_mut(server_name)
+                .is_some_and(|s| s.remove_project(path))
+            | self
+                .find_docker_connection_mut(server_name)
+                .is_some_and(|s| s.remove_project(path));
         if modified {
-            let clean = normalize_workdir(path);
-            self.recent_workspaces.retain(|w| {
-                if let Some(remote) = w.location.as_remote() {
-                    !(remote.display_name().eq_ignore_ascii_case(server_name)
-                        && w.location.normalized_dir() == clean)
-                } else {
-                    true
-                }
-            });
+            retain_without_remote_project(&mut self.recent_workspaces, server_name, path);
             let _ = self.save();
         }
     }
@@ -602,31 +516,15 @@ impl WorkspaceStore {
         }
     }
 
-    /// Đồng bộ các dự án remote giữa `wsl_connections`, `ssh_connections` và `recent_workspaces`
+    /// Đồng bộ các dự án remote giữa `wsl_connections`, `ssh_connections`, `docker_connections` và `recent_workspaces`
     pub fn sync_remote_projects(&mut self) {
         for conn in &self.wsl_connections {
-            for proj in &conn.projects {
-                let clean = normalize_workdir(&proj.path);
-                let exists = self.recent_workspaces.iter().any(|ws| {
-                    if let Some(remote) = ws.location.as_remote() {
-                        remote.display_name().eq_ignore_ascii_case(&conn.distro)
-                            && ws.location.normalized_dir() == clean
-                    } else {
-                        false
-                    }
-                });
-                if !exists {
-                    let ws = Workspace::new(
-                        extract_project_name(&proj.path),
-                        WorkspaceLocation::remote(WslConnectionOptions::new(
-                            &conn.distro,
-                            &proj.path,
-                        )),
-                        SourceType::Process,
-                    );
-                    self.recent_workspaces.push(ws);
-                }
-            }
+            sync_missing_remote_workspaces(
+                &mut self.recent_workspaces,
+                &conn.distro,
+                &conn.projects,
+                |path| conn.to_options(path).into(),
+            );
         }
 
         for conn in &self.ssh_connections {
@@ -659,40 +557,12 @@ impl WorkspaceStore {
                 }
             }
 
-            for proj in &conn.projects {
-                let clean = normalize_workdir(&proj.path);
-                let exists = self.recent_workspaces.iter().any(|ws| {
-                    if let Some(remote) = ws.location.as_remote() {
-                        remote
-                            .display_name()
-                            .eq_ignore_ascii_case(conn.display_name())
-                            && ws.location.normalized_dir() == clean
-                    } else {
-                        false
-                    }
-                });
-                if !exists {
-                    let mut opts = SshConnectionOptions::new(&conn.host, &proj.path);
-                    if let Some(ref u) = conn.username {
-                        opts = opts.with_user(u);
-                    }
-                    if let Some(p) = conn.port {
-                        opts = opts.with_port(p);
-                    }
-                    if let Some(ref nick) = conn.nickname {
-                        opts = opts.with_nickname(nick);
-                    }
-                    if let Some(ref args) = conn.args {
-                        opts.args = Some(args.clone());
-                    }
-                    let ws = Workspace::new(
-                        extract_project_name(&proj.path),
-                        WorkspaceLocation::remote(opts),
-                        SourceType::Process,
-                    );
-                    self.recent_workspaces.push(ws);
-                }
-            }
+            sync_missing_remote_workspaces(
+                &mut self.recent_workspaces,
+                conn.display_name(),
+                &conn.projects,
+                |path| conn.to_options(path).into(),
+            );
         }
 
         for conn in &self.docker_connections {
@@ -724,27 +594,191 @@ impl WorkspaceStore {
                 }
             }
 
-            for proj in &conn.projects {
-                let clean = normalize_workdir(&proj.path);
-                let exists = self.recent_workspaces.iter().any(|ws| {
-                    if let Some(remote) = ws.location.as_remote() {
-                        remote
-                            .display_name()
-                            .eq_ignore_ascii_case(&conn.container_name)
-                            && ws.location.normalized_dir() == clean
-                    } else {
-                        false
-                    }
-                });
-                if !exists {
-                    let ws = Workspace::new(
-                        extract_project_name(&proj.path),
-                        WorkspaceLocation::remote(conn.to_options(&proj.path)),
-                        SourceType::Process,
-                    );
-                    self.recent_workspaces.push(ws);
-                }
-            }
+            sync_missing_remote_workspaces(
+                &mut self.recent_workspaces,
+                &conn.container_name,
+                &conn.projects,
+                |path| conn.to_options(path).into(),
+            );
+        }
+    }
+}
+
+trait RemoteConnectionRecord {
+    fn matches_key(&self, key: &str) -> bool;
+    fn new_with_key(key: &str) -> Self;
+    fn add_project_path(&mut self, path: impl Into<String>) -> bool;
+    fn remove_project_path(&mut self, path: &str) -> bool;
+}
+
+impl RemoteConnectionRecord for WslConnection {
+    fn matches_key(&self, key: &str) -> bool {
+        self.distro.eq_ignore_ascii_case(key)
+    }
+
+    fn new_with_key(key: &str) -> Self {
+        Self::new(key)
+    }
+
+    fn add_project_path(&mut self, path: impl Into<String>) -> bool {
+        self.add_project(path)
+    }
+
+    fn remove_project_path(&mut self, path: &str) -> bool {
+        self.remove_project(path)
+    }
+}
+
+impl RemoteConnectionRecord for SshConnection {
+    fn matches_key(&self, key: &str) -> bool {
+        self.host.eq_ignore_ascii_case(key)
+            || self
+                .nickname
+                .as_deref()
+                .is_some_and(|n| n.eq_ignore_ascii_case(key))
+    }
+
+    fn new_with_key(key: &str) -> Self {
+        Self::new(key)
+    }
+
+    fn add_project_path(&mut self, path: impl Into<String>) -> bool {
+        self.add_project(path)
+    }
+
+    fn remove_project_path(&mut self, path: &str) -> bool {
+        self.remove_project(path)
+    }
+}
+
+impl RemoteConnectionRecord for DockerConnection {
+    fn matches_key(&self, key: &str) -> bool {
+        self.container_name.eq_ignore_ascii_case(key)
+            || self
+                .container_id
+                .as_deref()
+                .is_some_and(|id| id.eq_ignore_ascii_case(key))
+    }
+
+    fn new_with_key(key: &str) -> Self {
+        Self::new(key)
+    }
+
+    fn add_project_path(&mut self, path: impl Into<String>) -> bool {
+        self.add_project(path)
+    }
+
+    fn remove_project_path(&mut self, path: &str) -> bool {
+        self.remove_project(path)
+    }
+}
+
+fn find_record<'a, T: RemoteConnectionRecord>(list: &'a [T], key: &str) -> Option<&'a T> {
+    let trimmed = key.trim();
+    list.iter().find(|c| c.matches_key(trimmed))
+}
+
+fn find_record_mut<'a, T: RemoteConnectionRecord>(
+    list: &'a mut [T],
+    key: &str,
+) -> Option<&'a mut T> {
+    let trimmed = key.trim();
+    list.iter_mut().find(|c| c.matches_key(trimmed))
+}
+
+fn ensure_record_idx<T: RemoteConnectionRecord>(list: &mut Vec<T>, key: &str) -> (usize, bool) {
+    let trimmed = key.trim();
+    if let Some(pos) = list.iter().position(|c| c.matches_key(trimmed)) {
+        (pos, false)
+    } else {
+        list.push(T::new_with_key(trimmed));
+        (list.len() - 1, true)
+    }
+}
+
+fn remove_record<T: RemoteConnectionRecord>(
+    list: &mut Vec<T>,
+    recent: &mut Vec<Workspace>,
+    key: &str,
+) {
+    let trimmed = key.trim();
+    list.retain(|c| !c.matches_key(trimmed));
+    recent.retain(|ws| {
+        ws.location
+            .as_remote()
+            .is_none_or(|remote| !matches_removed_workspace(remote, trimmed))
+    });
+}
+
+fn matches_removed_workspace(remote: &RemoteConnectionOptions, key: &str) -> bool {
+    match remote {
+        RemoteConnectionOptions::Docker(d) => {
+            d.container_name.eq_ignore_ascii_case(key)
+                || d.container_id
+                    .as_deref()
+                    .is_some_and(|id| id.eq_ignore_ascii_case(key))
+        }
+        _ => remote.display_name().eq_ignore_ascii_case(key),
+    }
+}
+
+fn add_project_to_record<T: RemoteConnectionRecord>(
+    list: &mut Vec<T>,
+    key: &str,
+    path: impl Into<String>,
+) -> bool {
+    let (idx, created) = ensure_record_idx(list, key);
+    list[idx].add_project_path(path) || created
+}
+
+fn remove_project_from_record<T: RemoteConnectionRecord>(
+    list: &mut [T],
+    recent: &mut Vec<Workspace>,
+    key: &str,
+    path: &str,
+) -> bool {
+    if let Some(server) = find_record_mut(list, key) {
+        if server.remove_project_path(path) {
+            retain_without_remote_project(recent, key, path);
+            return true;
+        }
+    }
+    false
+}
+
+fn retain_without_remote_project(recent: &mut Vec<Workspace>, key: &str, path: &str) {
+    let clean = normalize_workdir(path);
+    recent.retain(|w| {
+        if let Some(remote) = w.location.as_remote() {
+            !(remote.display_name().eq_ignore_ascii_case(key)
+                && w.location.normalized_dir() == clean)
+        } else {
+            true
+        }
+    });
+}
+
+fn sync_missing_remote_workspaces(
+    recent: &mut Vec<Workspace>,
+    display_name: &str,
+    projects: &std::collections::BTreeSet<crate::remote::RemoteProject>,
+    make_options: impl Fn(&str) -> RemoteConnectionOptions,
+) {
+    for proj in projects {
+        let clean = normalize_workdir(&proj.path);
+        let exists = recent.iter().any(|ws| {
+            ws.location.as_remote().is_some_and(|remote| {
+                remote.display_name().eq_ignore_ascii_case(display_name)
+                    && ws.location.normalized_dir() == clean
+            })
+        });
+        if !exists {
+            let ws = Workspace::new(
+                extract_project_name(&proj.path),
+                WorkspaceLocation::remote(make_options(&proj.path)),
+                SourceType::Process,
+            );
+            recent.push(ws);
         }
     }
 }
