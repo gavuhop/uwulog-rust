@@ -136,7 +136,13 @@ impl ColumnState {
             });
         }
         for existing in source_cols {
-            if !default_slots.iter().any(|k| k == &existing.name) {
+            let existing_std = uwu_core_schema::StandardField::from_alias(&existing.name);
+            let covered_by_default = default_slots.iter().any(|k| {
+                k == &existing.name
+                    || existing_std
+                        .is_some_and(|sf| uwu_core_schema::StandardField::from_alias(k) == Some(sf))
+            });
+            if !covered_by_default {
                 new_cols.push(ColumnItem {
                     name: existing.name.clone(),
                     visible: false,
@@ -278,6 +284,8 @@ impl ColumnState {
                 .default_role
                 .as_deref()
                 .is_some_and(|r| active_roles.contains(r))
+                || uwu_core_schema::StandardField::from_alias(&cfg.name)
+                    .is_some_and(|sf| active_roles.contains(sf.canonical_name()))
                 || active_names.contains(&cfg.name);
             if !covered {
                 let idx = self.saved_rank(&cfg.name);
@@ -380,12 +388,18 @@ impl ColumnState {
                     .find(|(_, c)| c.name == *key)
                     .map(|(rank, c)| (rank, c.clone()));
 
-                // Nếu key là alias của trường mặc định và cột mặc định vẫn đang ở tên canonical
-                // (chưa từng thấy tên canonical trong log), chỉ đổi tên 1 lần duy nhất
+                // Mỗi StandardField (timestamp/level/message) chỉ ánh xạ vào 1 cột ngữ nghĩa duy nhất;
+                // không tạo thêm cột trùng khi đã có cột đại diện (vd: "lv" và "level").
                 if let Some(std_field) = uwu_core_schema::StandardField::from_alias(key) {
                     let canonical = std_field.canonical_name();
-                    if !self.seen_keys.contains(canonical) {
-                        if let Some(idx) = self.columns.iter().position(|c| c.name == canonical) {
+                    if let Some(idx) = self.columns.iter().position(|c| {
+                        uwu_core_schema::StandardField::from_alias(&c.name) == Some(std_field)
+                    }) {
+                        // Chỉ đổi tên cột mặc định khi đang giữ tên canonical mặc định và tên canonical
+                        // chưa từng xuất hiện thực sự trong log (vd: "level" -> "lv").
+                        if self.columns[idx].name == canonical
+                            && !self.seen_keys.contains(canonical)
+                        {
                             self.known_keys.remove(canonical);
                             self.columns[idx].name = key.clone();
                             self.known_keys.insert(key.clone());
@@ -400,8 +414,8 @@ impl ColumnState {
                                     Self::sanitize_width(cfg.width, self.columns[idx].width);
                                 self.layout_version = self.layout_version.wrapping_add(1);
                             }
-                            continue;
                         }
+                        continue;
                     }
                 }
 
@@ -651,17 +665,17 @@ mod tests {
     }
 
     #[test]
-    fn test_sync_discovered_keys_multiple_aliases_no_loss() {
+    fn test_sync_discovered_keys_deduplicates_semantic_aliases() {
         let mut state = ColumnState::default();
 
-        // Log 1 có đồng thời cả "level" và "lvl"
+        // Log 1 có đồng thời cả "level" và "lv" -> chỉ giữ 1 cột Level duy nhất ("level")
         let mut fields1 = HashMap::new();
         fields1.insert("level".to_string(), serde_json::json!("INFO"));
-        fields1.insert("lvl".to_string(), serde_json::json!(30));
+        fields1.insert("lv".to_string(), serde_json::json!("info"));
         fields1.insert("message".to_string(), serde_json::json!("hi"));
         let log1 = LogEvent::new("2026-08-20T10:00:00Z", LogColor::Green, "hi", fields1);
 
-        // Log 2 xuất hiện thêm "severity" và "msg"
+        // Log 2 xuất hiện thêm "severity" và "msg" -> không tạo cột trùng
         let mut fields2 = HashMap::new();
         fields2.insert("severity".to_string(), serde_json::json!("WARN"));
         fields2.insert("msg".to_string(), serde_json::json!("warn msg"));
@@ -676,21 +690,17 @@ mod tests {
         state.sync_discovered_keys(&[log2]);
 
         let names: Vec<&str> = state.columns.iter().map(|c| c.name.as_str()).collect();
-        assert!(names.contains(&"level"));
-        assert!(names.contains(&"lvl"));
-        assert!(names.contains(&"severity"));
-        assert!(names.contains(&"message"));
-        assert!(names.contains(&"msg"));
+        assert_eq!(names, ["timestamp", "level", "message"]);
 
-        // Reverse order: alias "lvl" arrives first, then canonical "level" arrives later -> neither is lost
+        // Chiều ngược lại: "lv" tới trước -> đổi tên "level" thành "lv"; khi "level" tới sau không tạo cột trùng
         let mut reverse_state = ColumnState::default();
         let mut f_alias = HashMap::new();
-        f_alias.insert("lvl".to_string(), serde_json::json!(30));
+        f_alias.insert("lv".to_string(), serde_json::json!("INFO"));
         let log_alias = LogEvent::new("2026-08-20T10:00:00Z", LogColor::Green, "hi", f_alias);
 
         let mut f_canon = HashMap::new();
-        f_canon.insert("level".to_string(), serde_json::json!("INFO"));
-        let log_canon = LogEvent::new("2026-08-20T10:00:01Z", LogColor::Green, "hi2", f_canon);
+        f_canon.insert("level".to_string(), serde_json::json!("WARN"));
+        let log_canon = LogEvent::new("2026-08-20T10:00:01Z", LogColor::Yellow, "hi2", f_canon);
 
         reverse_state.sync_discovered_keys(&[log_alias]);
         reverse_state.sync_discovered_keys(&[log_canon]);
@@ -700,8 +710,47 @@ mod tests {
             .iter()
             .map(|c| c.name.as_str())
             .collect();
-        assert!(rev_names.contains(&"lvl"));
-        assert!(rev_names.contains(&"level"));
+        assert_eq!(rev_names, ["timestamp", "lv", "message"]);
+
+        // reset_to_defaults đưa về "level" và không để lại cột "lv" ẩn dư thừa
+        reverse_state.reset_to_defaults();
+        let reset_names: Vec<&str> = reverse_state
+            .columns
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect();
+        assert_eq!(reset_names, ["timestamp", "level", "message"]);
+    }
+
+    #[test]
+    fn test_saved_alias_does_not_create_duplicate_column_when_canonical_seen_first() {
+        let mut s1 = ColumnState::default();
+        let mut f1 = HashMap::new();
+        f1.insert("lv".to_string(), serde_json::json!("INFO"));
+        s1.sync_discovered_keys(&[LogEvent::new("t1", LogColor::Green, "m", f1)]);
+        s1.set_column_width("lv", 84.0);
+        let saved = s1.to_saved_columns();
+
+        // Mở lại với saved_layout có "lv" (visible: true), nhưng log đầu lại dùng "level", log sau dùng "lv"
+        let mut s2 = ColumnState::default();
+        s2.restore_from_saved(&saved);
+        s2.sync_discovered_keys(&[
+            LogEvent::new(
+                "t2",
+                LogColor::Green,
+                "m1",
+                HashMap::from([("level".to_string(), serde_json::json!("INFO"))]),
+            ),
+            LogEvent::new(
+                "t3",
+                LogColor::Green,
+                "m2",
+                HashMap::from([("lv".to_string(), serde_json::json!("WARN"))]),
+            ),
+        ]);
+
+        let names: Vec<&str> = s2.columns.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["timestamp", "level", "message"]);
     }
 
     #[test]
