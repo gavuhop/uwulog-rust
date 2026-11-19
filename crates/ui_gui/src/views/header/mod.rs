@@ -31,6 +31,8 @@ pub struct HeaderContext<'a> {
     pub active_index: usize,
     pub project_search_query: &'a mut String,
     pub project_shortcut: &'a str,
+    pub source_switcher_state: &'a mut devcontainer::SwitcherContainersState,
+    pub rt: &'a tokio::runtime::Handle,
 }
 
 pub fn render_header(
@@ -293,6 +295,8 @@ pub fn render_header(
             session,
             cx.container_sessions,
             cx.overlay_stack,
+            cx.source_switcher_state,
+            cx.rt,
             dispatch,
             rect,
         );
@@ -456,6 +460,7 @@ mod tests {
         let mut stack = OverlayStack::new();
         let store = WorkspaceStore::default();
         let mut q = String::new();
+        let mut switcher_state = devcontainer::SwitcherContainersState::default();
 
         let raw_input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
@@ -474,6 +479,8 @@ mod tests {
                 active_index: 0,
                 project_search_query: &mut q,
                 project_shortcut: "",
+                source_switcher_state: &mut switcher_state,
+                rt: rt.handle(),
             };
             let mut dispatch = |_| {};
             render_header(ui, &mut session, &mut cx, &mut dispatch);

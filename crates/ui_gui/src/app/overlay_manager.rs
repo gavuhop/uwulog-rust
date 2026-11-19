@@ -1,7 +1,30 @@
 use crate::overlay::{OverlayLayer, OverlayStack, RemoteModalPlacement};
 use crate::session::GuiSession;
 use crate::state::ActiveTab;
+use crate::views::header::devcontainer::{LocalDevContainerProbeCache, SwitcherContainersState};
+use crate::views::remote_servers::{
+    DevContainerConnectSession, RemoteModalState, SshInteractiveSession,
+};
 use uwu_core_workspace::SourceConfig;
+
+/// Trạng thái điều hướng & phiên bất đồng bộ của modal Remote Servers.
+#[derive(Default)]
+pub struct RemoteServersOverlayState {
+    pub modal: RemoteModalState,
+    pub ssh_session: Option<SshInteractiveSession>,
+    pub devcontainer_session: Option<DevContainerConnectSession>,
+}
+
+impl RemoteServersOverlayState {
+    /// Đặt lại toàn bộ lịch sử điều hướng và hủy mọi phiên kết nối nền đang chạy.
+    pub fn reset(&mut self) {
+        self.modal.reset();
+        if let Some(sess) = self.ssh_session.take() {
+            sess.cancel();
+        }
+        self.devcontainer_session = None;
+    }
+}
 
 /// Zed-style Sub-Manager chịu trách nhiệm quản lý Navigation Stack của Modals, Popovers và Floating Palettes.
 pub struct OverlayManager {
@@ -10,6 +33,9 @@ pub struct OverlayManager {
     pub project_search_query: String,
     pub remote_placement: RemoteModalPlacement,
     pub keymap_modal_state: Option<KeymapModalState>,
+    pub remote_servers: RemoteServersOverlayState,
+    pub source_switcher_state: SwitcherContainersState,
+    pub devcontainer_probe_cache: LocalDevContainerProbeCache,
 }
 
 /// Trạng thái nháp tương tác khi mở Modal quản lý Key Map
@@ -67,6 +93,9 @@ impl OverlayManager {
             project_search_query: String::new(),
             remote_placement: RemoteModalPlacement::TopCenter,
             keymap_modal_state: None,
+            remote_servers: RemoteServersOverlayState::default(),
+            source_switcher_state: SwitcherContainersState::default(),
+            devcontainer_probe_cache: LocalDevContainerProbeCache::default(),
         }
     }
 
@@ -82,10 +111,14 @@ impl OverlayManager {
         self.stack.push(layer);
     }
 
-    /// Đóng một layer cụ thể khỏi ngăn xếp
-    #[inline]
+    /// Đóng một layer cụ thể khỏi ngăn xếp và dọn dẹp trạng thái phiên đi kèm
     pub fn close(&mut self, layer: OverlayLayer) {
         self.stack.close(layer);
+        match layer {
+            OverlayLayer::RemoteServersModal => self.remote_servers.reset(),
+            OverlayLayer::SourceSwitcher => self.source_switcher_state.reset(),
+            _ => {}
+        }
     }
 
     /// Đóng toàn bộ hệ thống menu chính và submenu liên quan
@@ -121,8 +154,12 @@ impl OverlayManager {
                 OverlayLayer::ColumnsModal => {
                     active_session.view.shared.columns.close_modal();
                 }
-                OverlayLayer::RemoteServersModal => {}
-                OverlayLayer::SourceSwitcher => {}
+                OverlayLayer::RemoteServersModal => {
+                    self.remote_servers.reset();
+                }
+                OverlayLayer::SourceSwitcher => {
+                    self.source_switcher_state.reset();
+                }
             }
             true
         } else if active_session.view.search.autocomplete.is_open {

@@ -181,20 +181,20 @@ async fn test_app_action_remote_servers_modal() {
 
 #[tokio::test]
 async fn test_remote_servers_modal_escape_back_navigation() {
+    use crate::app::overlay_manager::RemoteServersOverlayState;
     use crate::views::remote_servers::render_remote_servers_modal;
     use crate::views::remote_servers::types::{
         FolderPickerState, RemoteModalState, RemoteServerKind, RemoteSubView, ServerOptionsState,
     };
 
+    let rt_handle = tokio::runtime::Handle::current();
     let ctx = egui::Context::default();
-    let state_id = egui::Id::new("remote_servers_modal_state");
     let mut store = uwu_core_workspace::WorkspaceStore::default();
     let keymap = crate::keymap::KeymapManager::new();
 
     // 1. Khởi tạo state đang ở WslPicker (đã navigate từ List)
-    let mut state = RemoteModalState::default();
-    state.navigate(RemoteSubView::WslPicker);
-    ctx.data_mut(|d| d.insert_temp(state_id, state));
+    let mut overlay_state = RemoteServersOverlayState::default();
+    overlay_state.modal.navigate(RemoteSubView::WslPicker);
 
     // 2. Mô phỏng phím Escape khi đang ở WslPicker
     let mut esc_input = egui::RawInput::default();
@@ -212,6 +212,8 @@ async fn test_remote_servers_modal_escape_back_navigation() {
             ui.ctx(),
             true,
             RemoteModalPlacement::TopCenter,
+            &mut overlay_state,
+            &rt_handle,
             &keymap,
             &mut store,
             None,
@@ -226,18 +228,18 @@ async fn test_remote_servers_modal_escape_back_navigation() {
 
     // Modal KHÔNG được đóng, mà phải quay về List!
     assert!(!closed_dispatched);
-    let state_after: RemoteModalState = ctx.data(|d| d.get_temp(state_id)).unwrap();
-    assert_eq!(state_after.subview, RemoteSubView::List);
-    assert!(state_after.history.is_empty());
+    assert_eq!(overlay_state.modal.subview, RemoteSubView::List);
+    assert!(overlay_state.modal.history.is_empty());
 
     // 3. Khởi tạo state đang ở FolderPicker (đã navigate từ List)
-    let mut state = RemoteModalState::default();
-    state.navigate(RemoteSubView::FolderPicker(FolderPickerState::new(
-        RemoteServerKind::Wsl("Ubuntu".to_string()),
-        "/home",
-        vec![],
-    )));
-    ctx.data_mut(|d| d.insert_temp(state_id, state));
+    overlay_state.modal = RemoteModalState::default();
+    overlay_state
+        .modal
+        .navigate(RemoteSubView::FolderPicker(FolderPickerState::new(
+            RemoteServerKind::Wsl("Ubuntu".to_string()),
+            "/home",
+            vec![],
+        )));
 
     let mut esc_input = egui::RawInput::default();
     esc_input.events.push(egui::Event::Key {
@@ -254,6 +256,8 @@ async fn test_remote_servers_modal_escape_back_navigation() {
             ui.ctx(),
             true,
             RemoteModalPlacement::TopCenter,
+            &mut overlay_state,
+            &rt_handle,
             &keymap,
             &mut store,
             None,
@@ -268,17 +272,17 @@ async fn test_remote_servers_modal_escape_back_navigation() {
 
     // Modal KHÔNG được đóng, mà phải quay về List!
     assert!(!closed_dispatched);
-    let state_after: RemoteModalState = ctx.data(|d| d.get_temp(state_id)).unwrap();
-    assert_eq!(state_after.subview, RemoteSubView::List);
+    assert_eq!(overlay_state.modal.subview, RemoteSubView::List);
 
     // 4. Khởi tạo state đang ở ServerOptions (đã navigate từ List)
-    let mut state = RemoteModalState::default();
-    state.navigate(RemoteSubView::ServerOptions(ServerOptionsState {
-        server: RemoteServerKind::Wsl("Ubuntu".to_string()),
-        selected_index: 0,
-        copied_flash_time: None,
-    }));
-    ctx.data_mut(|d| d.insert_temp(state_id, state));
+    overlay_state.modal = RemoteModalState::default();
+    overlay_state
+        .modal
+        .navigate(RemoteSubView::ServerOptions(ServerOptionsState {
+            server: RemoteServerKind::Wsl("Ubuntu".to_string()),
+            selected_index: 0,
+            copied_flash_time: None,
+        }));
 
     let mut esc_input = egui::RawInput::default();
     esc_input.events.push(egui::Event::Key {
@@ -295,6 +299,8 @@ async fn test_remote_servers_modal_escape_back_navigation() {
             ui.ctx(),
             true,
             RemoteModalPlacement::TopCenter,
+            &mut overlay_state,
+            &rt_handle,
             &keymap,
             &mut store,
             None,
@@ -309,8 +315,7 @@ async fn test_remote_servers_modal_escape_back_navigation() {
 
     // Modal KHÔNG được đóng, mà phải quay về List!
     assert!(!closed_dispatched);
-    let state_after: RemoteModalState = ctx.data(|d| d.get_temp(state_id)).unwrap();
-    assert_eq!(state_after.subview, RemoteSubView::List);
+    assert_eq!(overlay_state.modal.subview, RemoteSubView::List);
 
     // 5. Khi đang ở List (history rỗng), nhấn Escape -> phải dispatch CloseRemoteServersModal!
     let mut esc_input = egui::RawInput::default();
@@ -328,6 +333,8 @@ async fn test_remote_servers_modal_escape_back_navigation() {
             ui.ctx(),
             true,
             RemoteModalPlacement::TopCenter,
+            &mut overlay_state,
+            &rt_handle,
             &keymap,
             &mut store,
             None,

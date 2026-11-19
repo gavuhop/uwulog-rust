@@ -9,7 +9,6 @@ use eframe::egui::{self, CornerRadius, Order, Rect, Stroke};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::mpsc::Receiver;
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use uwu_core_workspace::{
     DockerConnectionOptions, RemoteConnectionOptions, SourceType, Workspace, WorkspaceLocation,
@@ -27,36 +26,25 @@ pub struct ActiveContainerSessionInfo {
     pub is_active: bool,
 }
 
-type AsyncRx<T> = Arc<Mutex<Option<Receiver<T>>>>;
-
-fn try_recv_async<T>(rx_arc: &AsyncRx<T>) -> Option<T> {
-    rx_arc
-        .lock()
-        .ok()
-        .and_then(|guard| guard.as_ref().and_then(|rx| rx.try_recv().ok()))
-}
-
-#[derive(Clone)]
 struct LocalProbeEntry {
     checked_at: Instant,
     in_flight: bool,
     result: Option<OpenedDevContainer>,
-    rx: Option<AsyncRx<Option<OpenedDevContainer>>>,
+    rx: Option<Receiver<Option<OpenedDevContainer>>>,
 }
 
-#[derive(Clone, Default)]
-struct LocalDevContainerProbeCache {
+/// Cache thăm dò nền xem thư mục local có Dev Container đang chạy hay không (sở hữu bởi `OverlayManager`).
+#[derive(Default)]
+pub struct LocalDevContainerProbeCache {
     entries: HashMap<String, LocalProbeEntry>,
     dismissed_paths: HashSet<String>,
 }
 
-/// Đánh dấu đã ẩn toast gợi ý Dev Container cho đường dẫn local tương ứng.
-pub fn dismiss_devcontainer_suggest(ctx: &egui::Context, dir_key: &str) {
-    let cache_id = egui::Id::new("local_devcontainer_probe_cache");
-    let mut cache: LocalDevContainerProbeCache =
-        ctx.data(|d| d.get_temp(cache_id)).unwrap_or_default();
-    cache.dismissed_paths.insert(dir_key.to_string());
-    ctx.data_mut(|d| d.insert_temp(cache_id, cache));
+impl LocalDevContainerProbeCache {
+    /// Đánh dấu đã ẩn toast gợi ý Dev Container cho đường dẫn local tương ứng.
+    pub fn dismiss(&mut self, dir_key: &str) {
+        self.dismissed_paths.insert(dir_key.to_string());
+    }
 }
 
 /// Thăm dò nền và trả về toast gợi ý "Open in Dev Container" (nếu dự án local hiện tại có
@@ -64,6 +52,8 @@ pub fn dismiss_devcontainer_suggest(ctx: &egui::Context, dir_key: &str) {
 pub fn poll_devcontainer_suggest_toast(
     ctx: &egui::Context,
     session: &GuiSession,
+    cache: &mut LocalDevContainerProbeCache,
+    rt: &tokio::runtime::Handle,
 ) -> Option<ToastItem> {
     let WorkspaceLocation::Local { ref working_dir } = session.session.location else {
         return None;
@@ -76,10 +66,6 @@ pub fn poll_devcontainer_suggest_toast(
     // Kiểm tra nhanh syscall stat: chỉ probe Docker khi thư mục thực sự có `.devcontainer`
     let local_path = Path::new(dir_trimmed);
     find_devcontainer_config(local_path)?;
-
-    let cache_id = egui::Id::new("local_devcontainer_probe_cache");
-    let mut cache: LocalDevContainerProbeCache =
-        ctx.data(|d| d.get_temp(cache_id)).unwrap_or_default();
 
     let key = dir_trimmed.to_string();
     if cache.dismissed_paths.contains(&key) {
@@ -95,7 +81,7 @@ pub fn poll_devcontainer_suggest_toast(
     };
 
     if let Some(entry) = cache.entries.get_mut(&key) {
-        if let Some(res) = entry.rx.as_ref().and_then(try_recv_async) {
+        if let Some(res) = entry.rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
             entry.result = res;
             entry.in_flight = false;
             entry.checked_at = now;
@@ -112,30 +98,21 @@ pub fn poll_devcontainer_suggest_toast(
                 checked_at: now,
                 in_flight: true,
                 result: prev_result,
-                rx: Some(Arc::new(Mutex::new(Some(rx)))),
+                rx: Some(rx),
             },
         );
 
         let path_owned = local_path.to_path_buf();
         let ctx_clone = ctx.clone();
-        std::thread::spawn(move || {
-            let res = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .ok()
-                .and_then(|rt| {
-                    rt.block_on(
-                        DockerTransport::detect_running_devcontainer_for_local_folder(&path_owned),
-                    )
-                });
+        rt.spawn(async move {
+            let res =
+                DockerTransport::detect_running_devcontainer_for_local_folder(&path_owned).await;
             let _ = tx.send(res);
             ctx_clone.request_repaint();
         });
     }
 
-    let detected = cache.entries.get(&key).and_then(|e| e.result.clone());
-    ctx.data_mut(|d| d.insert_temp(cache_id, cache));
-    let opened = detected?;
+    let opened = cache.entries.get(&key).and_then(|e| e.result.clone())?;
 
     let mut opts = DockerConnectionOptions::new(&opened.info.name, &opened.workspace_folder)
         .with_container_id(&opened.info.id)
@@ -221,12 +198,22 @@ pub fn render_docker_source_switcher_pill(
     Some(resp.rect)
 }
 
-#[derive(Clone, Default)]
-struct SwitcherContainersState {
+/// Trạng thái quét container cho popup Source Switcher (sở hữu bởi `OverlayManager`).
+#[derive(Default)]
+pub struct SwitcherContainersState {
     in_flight: bool,
     loaded: Option<Vec<DockerContainerInfo>>,
     error: Option<String>,
-    rx: Option<AsyncRx<Result<Vec<DockerContainerInfo>, String>>>,
+    rx: Option<Receiver<Result<Vec<DockerContainerInfo>, String>>>,
+}
+
+impl SwitcherContainersState {
+    pub fn reset(&mut self) {
+        self.in_flight = false;
+        self.loaded = None;
+        self.error = None;
+        self.rx = None;
+    }
 }
 
 /// Lọc các container đang chạy thuộc cùng nhóm dự án/compose với session Docker hiện tại (chống trùng lặp và không lẫn dự án khác)
@@ -277,17 +264,19 @@ fn filter_project_candidate_containers<'a>(
 
 /// Render popup chuyển đổi container theo cơ chế `This Window`:
 /// mỗi container mở là một session riêng biệt chạy song song, switch qua lại không mất log.
+#[allow(clippy::too_many_arguments)]
 pub fn render_source_switcher_popup(
     ctx: &egui::Context,
     session: &GuiSession,
     active_containers: &[ActiveContainerSessionInfo],
     overlay_stack: &OverlayStack,
+    scan_state: &mut SwitcherContainersState,
+    rt: &tokio::runtime::Handle,
     dispatch: &mut impl FnMut(AppAction),
     trigger_rect: Rect,
 ) {
-    let state_id = egui::Id::new("docker_source_switcher_state");
     if !overlay_stack.is_open(OverlayLayer::SourceSwitcher) {
-        ctx.data_mut(|d| d.remove_temp::<SwitcherContainersState>(state_id));
+        scan_state.reset();
         return;
     }
 
@@ -297,10 +286,7 @@ pub fn render_source_switcher_popup(
         return;
     };
 
-    let mut scan_state: SwitcherContainersState =
-        ctx.data(|d| d.get_temp(state_id)).unwrap_or_default();
-
-    if let Some(res) = scan_state.rx.as_ref().and_then(try_recv_async) {
+    if let Some(res) = scan_state.rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
         scan_state.in_flight = false;
         scan_state.rx = None;
         match res {
@@ -317,17 +303,15 @@ pub fn render_source_switcher_popup(
     if scan_state.loaded.is_none() && scan_state.error.is_none() && !scan_state.in_flight {
         let (tx, rx) = std::sync::mpsc::channel();
         scan_state.in_flight = true;
-        scan_state.rx = Some(Arc::new(Mutex::new(Some(rx))));
+        scan_state.rx = Some(rx);
         let ctx_clone = ctx.clone();
-        std::thread::spawn(move || {
+        rt.spawn_blocking(move || {
             let res =
                 DockerTransport::list_running_containers_sync().map_err(|e| format!("{:#}", e));
             let _ = tx.send(res);
             ctx_clone.request_repaint();
         });
     }
-
-    ctx.data_mut(|d| d.insert_temp(state_id, scan_state.clone()));
 
     let theme = ctx.app_theme();
     let popup_id = egui::Id::new("docker_source_switcher_popup");
@@ -580,18 +564,12 @@ mod tests {
         let trigger_rect = Rect::from_min_size(egui::pos2(120.0, 10.0), egui::vec2(80.0, 24.0));
 
         // Pre-seed loaded state so test doesn't depend on host Docker daemon
-        let state_id = egui::Id::new("docker_source_switcher_state");
-        ctx.data_mut(|d| {
-            d.insert_temp(
-                state_id,
-                SwitcherContainersState {
-                    in_flight: false,
-                    loaded: Some(Vec::new()),
-                    error: None,
-                    rx: None,
-                },
-            );
-        });
+        let mut scan_state = SwitcherContainersState {
+            in_flight: false,
+            loaded: Some(Vec::new()),
+            error: None,
+            rx: None,
+        };
 
         let raw_input = egui::RawInput {
             screen_rect: Some(Rect::from_min_size(
@@ -610,6 +588,8 @@ mod tests {
                     &session,
                     &active_containers,
                     &stack,
+                    &mut scan_state,
+                    rt.handle(),
                     &mut dispatch,
                     trigger_rect,
                 );

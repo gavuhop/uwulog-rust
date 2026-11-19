@@ -160,6 +160,8 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
         active_index,
         project_search_query: &mut app.overlays.project_search_query,
         project_shortcut,
+        source_switcher_state: &mut app.overlays.source_switcher_state,
+        rt: &app.rt,
     };
 
     let platform = header::WindowControlsPlatform::current();
@@ -191,6 +193,8 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
             ctx,
             is_remote_open,
             app.overlays.remote_placement,
+            &mut app.overlays.remote_servers,
+            &app.rt,
             &app.keymap,
             &mut app.workspaces.store,
             None,
@@ -357,6 +361,8 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
         ctx,
         is_remote_open,
         app.overlays.remote_placement,
+        &mut app.overlays.remote_servers,
+        &app.rt,
         &app.keymap,
         &mut app.workspaces.store,
         Some(&active_session.session.location),
@@ -371,8 +377,12 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
     if let Some(toast) = toasts::build_buffer_overflow_toast(active_session) {
         toast_items.push(toast);
     }
-    if let Some(toast) = header::devcontainer::poll_devcontainer_suggest_toast(ctx, active_session)
-    {
+    if let Some(toast) = header::devcontainer::poll_devcontainer_suggest_toast(
+        ctx,
+        active_session,
+        &mut app.overlays.devcontainer_probe_cache,
+        &app.rt,
+    ) {
         toast_items.push(toast);
     }
     for dismissed in toasts::render_toast_stack(ctx, &toast_items, &mut dispatch) {
@@ -382,7 +392,7 @@ pub fn render_ui(ui: &mut egui::Ui, app: &mut UwuGuiApp) {
                 active_session.view.buffer_overflow_dismissed = true;
             }
             toasts::ToastDismiss::DevContainerSuggest(dir_key) => {
-                header::devcontainer::dismiss_devcontainer_suggest(ctx, &dir_key);
+                app.overlays.devcontainer_probe_cache.dismiss(&dir_key);
             }
         }
     }

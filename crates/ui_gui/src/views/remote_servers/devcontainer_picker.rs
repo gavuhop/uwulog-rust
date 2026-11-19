@@ -4,7 +4,6 @@ use crate::theme::ActiveTheme;
 use eframe::egui;
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
-use std::sync::{Arc, Mutex};
 use uwu_core_workspace::{DockerConnection, Workspace, WorkspaceStore};
 use uwu_driver_transport::{DockerContainerInfo, DockerTransport};
 
@@ -13,40 +12,26 @@ use super::types::{
     DevContainerPickerStage, DevContainerPickerState, RemoteNavAction, RemoteServerKind,
 };
 
-type AsyncResultRx<T> = Arc<Mutex<Option<Receiver<Result<T, String>>>>>;
-
 struct ContainerOpenSuccess {
     connection: DockerConnection,
     workspace_folder: String,
 }
 
-#[derive(Clone, Default)]
-struct DevContainerConnectSession {
-    receiver: AsyncResultRx<ContainerOpenSuccess>,
+/// Phiên kết nối Dev Container bất đồng bộ, được sở hữu bởi `OverlayManager`.
+pub struct DevContainerConnectSession {
+    receiver: Receiver<Result<ContainerOpenSuccess, String>>,
 }
 
-fn start_open_devcontainer_folder(ctx: &egui::Context, probe_id: egui::Id, local_folder: PathBuf) {
+fn start_open_devcontainer_folder(
+    ctx: &egui::Context,
+    rt: &tokio::runtime::Handle,
+    local_folder: PathBuf,
+) -> DevContainerConnectSession {
     let (tx, rx) = std::sync::mpsc::channel();
-    let session = DevContainerConnectSession {
-        receiver: Arc::new(Mutex::new(Some(rx))),
-    };
-    ctx.data_mut(|d| d.insert_temp(probe_id, session));
-
     let ctx_clone = ctx.clone();
-    std::thread::spawn(move || {
-        let rt = match tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-        {
-            Ok(rt) => rt,
-            Err(e) => {
-                let _ = tx.send(Err(format!("Failed to create async runtime: {}", e)));
-                ctx_clone.request_repaint();
-                return;
-            }
-        };
 
-        let result = rt.block_on(async move {
+    rt.spawn(async move {
+        let result: anyhow::Result<ContainerOpenSuccess> = async move {
             let opened = DockerTransport::open_devcontainer_folder(&local_folder).await?;
             let mut conn = build_connection_from_info(&opened.info);
             if let Some(ref user) = opened.remote_user {
@@ -57,11 +42,14 @@ fn start_open_devcontainer_folder(ctx: &egui::Context, probe_id: egui::Id, local
                 connection: conn,
                 workspace_folder: opened.workspace_folder,
             })
-        });
+        }
+        .await;
 
-        let _ = tx.send(result.map_err(|e: anyhow::Error| format!("{:#}", e)));
+        let _ = tx.send(result.map_err(|e| format!("{:#}", e)));
         ctx_clone.request_repaint();
     });
+
+    DevContainerConnectSession { receiver: rx }
 }
 
 fn build_connection_from_info(info: &DockerContainerInfo) -> DockerConnection {
@@ -85,11 +73,12 @@ fn build_connection_from_info(info: &DockerContainerInfo) -> DockerConnection {
 pub fn render_devcontainer_picker_subview(
     ui: &mut egui::Ui,
     dc_state: &mut DevContainerPickerState,
+    probe_session: &mut Option<DevContainerConnectSession>,
+    rt: &tokio::runtime::Handle,
     keymap: &KeymapManager,
     store: &mut WorkspaceStore,
 ) -> (RemoteNavAction, Option<Workspace>) {
     let theme = ui.app_theme();
-    let probe_session_id = egui::Id::new("devcontainer_probe_session");
 
     let action = keymap.consume_input(ui, KeyContext::RemoteServers);
     let key_escape = action == Some(KeyAction::Back);
@@ -119,8 +108,7 @@ pub fn render_devcontainer_picker_subview(
     });
 
     if key_escape || !matches!(nav_action, RemoteNavAction::None) {
-        ui.ctx()
-            .data_mut(|d| d.remove_temp::<DevContainerConnectSession>(probe_session_id));
+        *probe_session = None;
         return (RemoteNavAction::Back, None);
     }
 
@@ -138,28 +126,16 @@ pub fn render_devcontainer_picker_subview(
                 .unwrap_or(local_folder.as_str())
                 .to_string();
 
-            let has_probe = ui
-                .ctx()
-                .data(|d| d.get_temp::<DevContainerConnectSession>(probe_session_id))
-                .is_some();
-            if !has_probe {
-                start_open_devcontainer_folder(ui.ctx(), probe_session_id, folder_path);
+            if probe_session.is_none() {
+                *probe_session = Some(start_open_devcontainer_folder(ui.ctx(), rt, folder_path));
             }
 
-            let probe_result = ui
-                .ctx()
-                .data(|d| d.get_temp::<DevContainerConnectSession>(probe_session_id))
-                .and_then(|session| {
-                    session
-                        .receiver
-                        .lock()
-                        .ok()
-                        .and_then(|guard| guard.as_ref().and_then(|rx| rx.try_recv().ok()))
-                });
+            let probe_result = probe_session
+                .as_ref()
+                .and_then(|session| session.receiver.try_recv().ok());
 
             if let Some(res) = probe_result {
-                ui.ctx()
-                    .data_mut(|d| d.remove_temp::<DevContainerConnectSession>(probe_session_id));
+                *probe_session = None;
                 match res {
                     Ok(success) => {
                         store.upsert_docker_connection(success.connection.clone());

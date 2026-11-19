@@ -7,28 +7,32 @@ pub mod ssh_picker;
 pub mod types;
 pub mod wsl_picker;
 
-pub use devcontainer_picker::render_devcontainer_picker_subview;
+pub use devcontainer_picker::{render_devcontainer_picker_subview, DevContainerConnectSession};
 pub use folder_picker::render_folder_picker_subview;
 pub use helpers::*;
 pub use server_list::{
     collect_server_list_items, render_remote_list_subview, ServerListAction, ServerListItem,
 };
 pub use server_options::render_server_options_subview;
-pub use ssh_picker::render_ssh_picker_subview;
+pub use ssh_picker::{render_ssh_picker_subview, SshInteractiveSession};
 pub use types::*;
 pub use wsl_picker::render_wsl_picker_subview;
 
 use crate::actions::AppAction;
+use crate::app::overlay_manager::RemoteServersOverlayState;
 use crate::keymap::KeymapManager;
 use crate::overlay::RemoteModalPlacement;
 use eframe::egui;
 use uwu_core_workspace::{Workspace, WorkspaceLocation, WorkspaceStore};
 
 /// Render modal chọn Remote Projects theo thiết kế chuẩn của Zed
+#[allow(clippy::too_many_arguments)]
 pub fn render_remote_servers_modal(
     ctx: &egui::Context,
     is_open: bool,
     placement: RemoteModalPlacement,
+    overlay_state: &mut RemoteServersOverlayState,
+    rt: &tokio::runtime::Handle,
     keymap: &KeymapManager,
     store: &mut WorkspaceStore,
     active_location: Option<&WorkspaceLocation>,
@@ -38,8 +42,9 @@ pub fn render_remote_servers_modal(
         return;
     }
 
-    let state_id = egui::Id::new("remote_servers_modal_state");
-    let mut state: RemoteModalState = ctx.data(|d| d.get_temp(state_id)).unwrap_or_default();
+    let state = &mut overlay_state.modal;
+    let ssh_session = &mut overlay_state.ssh_session;
+    let devcontainer_session = &mut overlay_state.devcontainer_session;
 
     let mut selected_workspace: Option<Workspace> = None;
     let mut nav_action = RemoteNavAction::None;
@@ -66,10 +71,18 @@ pub fn render_remote_servers_modal(
                 nav_action = render_wsl_picker_subview(ui, keymap, store);
             }
             RemoteSubView::SshPicker(ssh_state) => {
-                nav_action = render_ssh_picker_subview(ui, ssh_state, keymap, store);
+                nav_action =
+                    render_ssh_picker_subview(ui, ssh_state, ssh_session, rt, keymap, store);
             }
             RemoteSubView::DevContainerPicker(dc_state) => {
-                let (action, ws) = render_devcontainer_picker_subview(ui, dc_state, keymap, store);
+                let (action, ws) = render_devcontainer_picker_subview(
+                    ui,
+                    dc_state,
+                    devcontainer_session,
+                    rt,
+                    keymap,
+                    store,
+                );
                 nav_action = action;
                 selected_workspace = ws;
             }
@@ -83,26 +96,18 @@ pub fn render_remote_servers_modal(
             }
         });
 
-    let close_modal =
-        |ctx: &egui::Context, state: &mut RemoteModalState, dispatch: &mut dyn FnMut(AppAction)| {
-            state.reset();
-            ctx.data_mut(|d| d.insert_temp(state_id, state.clone()));
-            dispatch(AppAction::CloseRemoteServersModal);
-        };
-
     match nav_action {
         RemoteNavAction::Navigate(next) => {
-            state.navigate(*next);
-            ctx.data_mut(|d| d.insert_temp(state_id, state));
+            overlay_state.modal.navigate(*next);
             return;
         }
         RemoteNavAction::Back => {
-            if !state.back() {
+            if !overlay_state.modal.back() {
                 // Không còn màn hình nào trong history để back -> Đóng modal
-                close_modal(ctx, &mut state, dispatch);
+                overlay_state.reset();
+                dispatch(AppAction::CloseRemoteServersModal);
                 return;
             }
-            ctx.data_mut(|d| d.insert_temp(state_id, state));
             return;
         }
         RemoteNavAction::None => {}
@@ -110,17 +115,16 @@ pub fn render_remote_servers_modal(
 
     // Xử lý mở workspace đã chọn
     if let Some(ws) = selected_workspace {
-        close_modal(ctx, &mut state, dispatch);
+        overlay_state.reset();
+        dispatch(AppAction::CloseRemoteServersModal);
         dispatch(AppAction::OpenWorkspace(ws));
         return;
     }
 
     if closed {
-        close_modal(ctx, &mut state, dispatch);
-        return;
+        overlay_state.reset();
+        dispatch(AppAction::CloseRemoteServersModal);
     }
-
-    ctx.data_mut(|d| d.insert_temp(state_id, state));
 }
 
 // ============================================================================
@@ -961,17 +965,19 @@ mod tests {
 
     #[test]
     fn test_connect_devcontainer_errors_when_no_local_project_or_no_config() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
         let ctx = egui::Context::default();
         let mut store = WorkspaceStore::default();
         let keymap = KeymapManager::new();
-        let state_id = egui::Id::new("remote_servers_modal_state");
 
         // 1. No active local project -> selecting index 1 ("Connect Dev Container") goes to Error
-        let mut state = RemoteModalState {
-            selected_index: 1,
+        let mut overlay_state = RemoteServersOverlayState {
+            modal: RemoteModalState {
+                selected_index: 1,
+                ..Default::default()
+            },
             ..Default::default()
         };
-        ctx.data_mut(|d| d.insert_temp(state_id, state));
 
         let mut enter_input = egui::RawInput::default();
         enter_input.events.push(egui::Event::Key {
@@ -986,6 +992,8 @@ mod tests {
                 ui.ctx(),
                 true,
                 RemoteModalPlacement::TopCenter,
+                &mut overlay_state,
+                rt.handle(),
                 &keymap,
                 &mut store,
                 None,
@@ -994,9 +1002,8 @@ mod tests {
         });
         out.textures_delta.clear();
 
-        let state_after: RemoteModalState = ctx.data(|d| d.get_temp(state_id)).unwrap();
         assert!(matches!(
-            state_after.subview,
+            overlay_state.modal.subview,
             RemoteSubView::DevContainerPicker(DevContainerPickerState {
                 stage: DevContainerPickerStage::Error(_),
             })
@@ -1004,11 +1011,13 @@ mod tests {
 
         // 2. Local folder without .devcontainer -> transitions to Connecting and probes
         let loc = WorkspaceLocation::local("/tmp/non_existent_project_without_dc");
-        state = RemoteModalState {
-            selected_index: 1,
+        overlay_state = RemoteServersOverlayState {
+            modal: RemoteModalState {
+                selected_index: 1,
+                ..Default::default()
+            },
             ..Default::default()
         };
-        ctx.data_mut(|d| d.insert_temp(state_id, state));
 
         let mut enter_input2 = egui::RawInput::default();
         enter_input2.events.push(egui::Event::Key {
@@ -1023,6 +1032,8 @@ mod tests {
                 ui.ctx(),
                 true,
                 RemoteModalPlacement::TopCenter,
+                &mut overlay_state,
+                rt.handle(),
                 &keymap,
                 &mut store,
                 Some(&loc),
@@ -1031,9 +1042,8 @@ mod tests {
         });
         out2.textures_delta.clear();
 
-        let state_local: RemoteModalState = ctx.data(|d| d.get_temp(state_id)).unwrap();
         assert!(matches!(
-            state_local.subview,
+            overlay_state.modal.subview,
             RemoteSubView::DevContainerPicker(DevContainerPickerState {
                 stage: DevContainerPickerStage::Connecting { .. },
             })
