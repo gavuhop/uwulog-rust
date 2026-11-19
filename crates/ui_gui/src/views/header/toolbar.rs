@@ -1,5 +1,5 @@
 use super::counter::render_log_counter;
-use crate::actions::AppAction;
+use crate::actions::{AppAction, OverlayAction, SessionAction};
 use crate::components::ui::IconName;
 use crate::session::GuiSession;
 use crate::state::ActiveTab;
@@ -28,7 +28,7 @@ pub fn render_toolbar(
         .show(ui)
         .clicked()
     {
-        dispatch(AppAction::OpenColumnsModal);
+        dispatch(OverlayAction::OpenColumns.into());
     }
 
     ui.add_space(2.0);
@@ -41,7 +41,7 @@ pub fn render_toolbar(
         .show(ui)
         .clicked()
     {
-        dispatch(AppAction::OpenLaunchModal);
+        dispatch(OverlayAction::OpenLaunch.into());
     }
 
     ui.add_space(2.0);
@@ -56,7 +56,7 @@ pub fn render_toolbar(
             .show(ui)
             .clicked()
         {
-            dispatch(AppAction::StopSource);
+            dispatch(SessionAction::StopSource.into());
         }
     } else if crate::components::ui::IconButton::new(IconName::Restart)
         .size(24.0)
@@ -66,7 +66,7 @@ pub fn render_toolbar(
         .show(ui)
         .clicked()
     {
-        dispatch(AppAction::RestartSource);
+        dispatch(SessionAction::RestartSource.into());
     }
 
     ui.add_space(4.0);
@@ -121,7 +121,7 @@ pub fn render_toolbar(
         .show(ui)
         .clicked()
     {
-        dispatch(AppAction::ToggleLatch);
+        dispatch(SessionAction::ToggleLatch.into());
     }
 
     ui.add_space(8.0);
@@ -165,7 +165,7 @@ pub fn render_environment_status(
                 .clicked()
             {
                 // Tái nạp môi trường cho session hiện tại
-                dispatch(AppAction::StartSource);
+                dispatch(SessionAction::StartSource.into());
             }
         }
     }

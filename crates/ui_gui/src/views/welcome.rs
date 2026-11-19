@@ -1,4 +1,4 @@
-use crate::actions::AppAction;
+use crate::actions::{AppAction, OverlayAction, WorkspaceAction};
 use crate::components::ui::IconName;
 use crate::theme::ActiveTheme;
 use crate::views::modals::project_picker::{
@@ -189,11 +189,11 @@ pub fn render_welcome_view(
         });
 
     if let Some(ws) = project_to_open {
-        dispatch(AppAction::OpenWorkspace(ws));
+        dispatch(WorkspaceAction::Open(Box::new(ws)).into());
     }
 
     if let Some(id) = project_to_delete {
-        dispatch(AppAction::DeleteWorkspace(id));
+        dispatch(WorkspaceAction::Delete(id).into());
     }
 
     if open_local_clicked {
@@ -205,11 +205,11 @@ pub fn render_welcome_view(
                 WorkspaceLocation::local(path_str),
                 SourceType::Process,
             );
-            dispatch(AppAction::OpenWorkspace(ws));
+            dispatch(WorkspaceAction::Open(Box::new(ws)).into());
         }
     }
 
     if open_remote_clicked {
-        dispatch(AppAction::OpenRemoteServersModal);
+        dispatch(OverlayAction::OpenRemoteServers.into());
     }
 }

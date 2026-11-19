@@ -1,7 +1,7 @@
 pub mod fields;
 pub mod text_box;
 
-use crate::actions::{ActionContext, AppAction};
+use crate::actions::{ActionContext, AppAction, SessionAction};
 use crate::components::render_card;
 use crate::components::ui::{AppButton, ButtonVariant, TabButton};
 use crate::session::GuiSession;
@@ -44,7 +44,7 @@ pub fn render_detail(
                 .label("Close")
                 .tooltip("Close inspector (Esc)");
             if close_btn.show(ui).clicked() {
-                action_to_dispatch = Some(AppAction::SelectLog(None));
+                action_to_dispatch = Some(SessionAction::SelectLog(None).into());
             }
 
             // 2. View Context in Unfiltered Stream / Back to Main (Alt+V)
@@ -55,14 +55,14 @@ pub fn render_detail(
                         .label("Back to main")
                         .tooltip("Switch back to main filtered log view (Alt+V)");
                     if back_btn.show(ui).clicked() {
-                        action_to_dispatch = Some(AppAction::ViewRawContext);
+                        action_to_dispatch = Some(SessionAction::ViewRawContext.into());
                     }
                 } else {
                     let locate_btn = AppButton::new()
                         .label("View context")
                         .tooltip("View surrounding logs in full unfiltered stream (Alt+V)");
                     if locate_btn.show(ui).clicked() {
-                        action_to_dispatch = Some(AppAction::ViewRawContext);
+                        action_to_dispatch = Some(SessionAction::ViewRawContext.into());
                     }
                 }
             }
@@ -85,7 +85,7 @@ pub fn render_detail(
                 hl_btn = hl_btn.variant(ButtonVariant::Default);
             }
             if hl_btn.show(ui).clicked() {
-                action_to_dispatch = Some(AppAction::ToggleRowHighlight(event_id));
+                action_to_dispatch = Some(SessionAction::ToggleRowHighlight(event_id).into());
             }
         });
     });

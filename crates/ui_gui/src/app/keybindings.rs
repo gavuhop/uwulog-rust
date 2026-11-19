@@ -1,4 +1,5 @@
 use super::{AppAction, OverlayLayer, UwuGuiApp};
+use crate::actions::{OverlayAction, SessionAction};
 use crate::keymap::KeyActionExt;
 use eframe::egui;
 
@@ -87,43 +88,46 @@ impl UwuGuiApp {
                 }
                 crate::keymap::KeyAction::SelectNext => {
                     if active_context == crate::keymap::KeyContext::Autocomplete {
-                        dispatch(AppAction::AutocompleteNext);
+                        dispatch(SessionAction::AutocompleteNext.into());
                     } else {
-                        dispatch(AppAction::NavigateDown);
+                        dispatch(SessionAction::NavigateDown.into());
                     }
                 }
                 crate::keymap::KeyAction::SelectPrev => {
                     if active_context == crate::keymap::KeyContext::Autocomplete {
-                        dispatch(AppAction::AutocompletePrev);
+                        dispatch(SessionAction::AutocompletePrev.into());
                     } else {
-                        dispatch(AppAction::NavigateUp);
+                        dispatch(SessionAction::NavigateUp.into());
                     }
                 }
                 crate::keymap::KeyAction::ConfirmSelection => {
                     if active_context == crate::keymap::KeyContext::Modal {
                         match self.overlays.stack.top() {
                             Some(OverlayLayer::LaunchModal) => {
-                                dispatch(AppAction::ApplyLaunchModal);
+                                dispatch(OverlayAction::ApplyLaunch.into());
                             }
                             Some(OverlayLayer::ColumnsModal) => {
-                                dispatch(AppAction::ApplyColumnsModal);
+                                dispatch(OverlayAction::ApplyColumns.into());
                             }
                             Some(OverlayLayer::AboutModal) => {
-                                dispatch(AppAction::CloseAboutModal);
+                                dispatch(OverlayAction::CloseAbout.into());
                             }
                             Some(OverlayLayer::KeymapModal) => {
                                 if let Some(state) = &self.overlays.keymap_modal_state {
                                     if state.customizer.is_none() {
-                                        dispatch(AppAction::ApplyKeymapModal(Box::new(
-                                            state.draft.clone(),
-                                        )));
+                                        dispatch(
+                                            OverlayAction::ApplyKeymap(Box::new(
+                                                state.draft.clone(),
+                                            ))
+                                            .into(),
+                                        );
                                     }
                                 }
                             }
                             _ => {}
                         }
                     } else if active_context == crate::keymap::KeyContext::Autocomplete {
-                        dispatch(AppAction::AutocompleteConfirm);
+                        dispatch(SessionAction::AutocompleteConfirm.into());
                     }
                 }
                 _ => {

@@ -183,9 +183,9 @@ async fn test_switch_tab_preserves_picked_row_and_inspector() {
     .with_id(202);
 
     // 1. Ở Main (Filtered), pick dòng event_main
-    app.dispatch_action(crate::actions::AppAction::SelectLog(Some(
-        event_main.clone(),
-    )));
+    app.dispatch_action(
+        crate::actions::SessionAction::SelectLog(Some(Box::new(event_main.clone()))).into(),
+    );
     assert_eq!(
         app.active_session()
             .view
@@ -208,7 +208,7 @@ async fn test_switch_tab_preserves_picked_row_and_inspector() {
     );
 
     // 2. Chuyển sang Raw (Unfiltered)
-    app.dispatch_action(crate::actions::AppAction::SwitchTab(ActiveTab::Unfiltered));
+    app.dispatch_action(crate::actions::SessionAction::SwitchTab(ActiveTab::Unfiltered).into());
     assert_eq!(app.active_session().view.active_tab, ActiveTab::Unfiltered);
     // Tab Raw chưa pick dòng nào -> inspector chưa có dòng nào
     assert!(app
@@ -220,9 +220,9 @@ async fn test_switch_tab_preserves_picked_row_and_inspector() {
         .is_none());
 
     // 3. Ở Raw, pick dòng event_raw
-    app.dispatch_action(crate::actions::AppAction::SelectLog(Some(
-        event_raw.clone(),
-    )));
+    app.dispatch_action(
+        crate::actions::SessionAction::SelectLog(Some(Box::new(event_raw.clone()))).into(),
+    );
     assert_eq!(
         app.active_session()
             .view
@@ -246,7 +246,7 @@ async fn test_switch_tab_preserves_picked_row_and_inspector() {
     );
 
     // 4. Chuyển ngược về Main (Filtered)
-    app.dispatch_action(crate::actions::AppAction::SwitchTab(ActiveTab::Filtered));
+    app.dispatch_action(crate::actions::SessionAction::SwitchTab(ActiveTab::Filtered).into());
     assert_eq!(app.active_session().view.active_tab, ActiveTab::Filtered);
     // Inspector tự động khôi phục đúng dòng đang pick của tab Main (event_main)!
     assert_eq!(
@@ -261,7 +261,7 @@ async fn test_switch_tab_preserves_picked_row_and_inspector() {
     );
 
     // 5. Chuyển lại sang Raw (Unfiltered)
-    app.dispatch_action(crate::actions::AppAction::SwitchTab(ActiveTab::Unfiltered));
+    app.dispatch_action(crate::actions::SessionAction::SwitchTab(ActiveTab::Unfiltered).into());
     assert_eq!(app.active_session().view.active_tab, ActiveTab::Unfiltered);
     // Inspector tự động khôi phục đúng dòng đang pick của tab Raw (event_raw)!
     assert_eq!(
@@ -278,7 +278,7 @@ async fn test_switch_tab_preserves_picked_row_and_inspector() {
 
 #[tokio::test]
 async fn test_view_in_raw_log_references_exact_spilled_disk_row() {
-    use crate::actions::AppAction;
+    use crate::actions::{SessionAction, WorkspaceAction};
     use uwu_core_workspace::{SourceConfig, SourceType, Workspace, WorkspaceLocation};
 
     let mut app = create_test_app();
@@ -287,7 +287,7 @@ async fn test_view_in_raw_log_references_exact_spilled_disk_row() {
         WorkspaceLocation::local("/tmp"),
         SourceType::Process,
     );
-    app.dispatch_action(AppAction::OpenWorkspace(ws));
+    app.dispatch_action(WorkspaceAction::Open(Box::new(ws)).into());
 
     // Khởi tạo WorkspaceSession với capacity = 10 để ép 30/40 dòng phải spill thực sự ra file Arrow IPC trên ổ cứng
     {
@@ -340,8 +340,8 @@ async fn test_view_in_raw_log_references_exact_spilled_disk_row() {
         .cloned()
         .expect("filtered logs must include spilled row log_seq_05 from disk");
 
-    app.dispatch_action(AppAction::SelectLog(Some(target_event.clone())));
-    app.dispatch_action(AppAction::ViewRawContext);
+    app.dispatch_action(SessionAction::SelectLog(Some(Box::new(target_event.clone()))).into());
+    app.dispatch_action(SessionAction::ViewRawContext.into());
 
     let session = app.active_session();
     assert_eq!(session.view.active_tab, ActiveTab::Unfiltered);

@@ -1,4 +1,4 @@
-use crate::actions::AppAction;
+use crate::actions::{AppAction, OverlayAction, WorkspaceAction};
 use crate::components::ui::{AppButton, ButtonVariant, IconName};
 use crate::overlay::{OverlayLayer, OverlayStack};
 use crate::session::GuiSession;
@@ -145,7 +145,7 @@ pub fn poll_devcontainer_suggest_toast(
         action: Some(ToastAction {
             label: "Open in Dev Container".to_string(),
             variant: ButtonVariant::Success,
-            action: AppAction::OpenWorkspace(ws),
+            action: WorkspaceAction::Open(Box::new(ws)).into(),
         }),
         dismiss: ToastDismiss::DevContainerSuggest(key),
     })
@@ -192,7 +192,7 @@ pub fn render_docker_source_switcher_pill(
         .show(ui);
 
     if resp.clicked() {
-        dispatch(AppAction::ToggleSourceSwitcher);
+        dispatch(OverlayAction::ToggleSourceSwitcher.into());
     }
 
     Some(resp.rect)
@@ -319,14 +319,14 @@ pub fn render_source_switcher_popup(
     let last_rect: Option<Rect> = ctx.data(|d| d.get_temp(modal_rect_id));
 
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-        dispatch(AppAction::CloseSourceSwitcher);
+        dispatch(OverlayAction::CloseSourceSwitcher.into());
         return;
     }
 
     if ctx.input(|i| i.pointer.any_pressed() || i.pointer.any_click()) {
         if let Some(pos) = ctx.input(|i| i.pointer.interact_pos()) {
             if !trigger_rect.contains(pos) && last_rect.is_some_and(|r| !r.contains(pos)) {
-                dispatch(AppAction::CloseSourceSwitcher);
+                dispatch(OverlayAction::CloseSourceSwitcher.into());
                 return;
             }
         }
@@ -474,8 +474,8 @@ pub fn render_source_switcher_popup(
                                 },
                             );
                             if action == ProjectRowAction::Select {
-                                dispatch(AppAction::SwitchSession(c.session_index));
-                                dispatch(AppAction::CloseSourceSwitcher);
+                                dispatch(WorkspaceAction::SwitchSession(c.session_index).into());
+                                dispatch(OverlayAction::CloseSourceSwitcher.into());
                             }
                         }
 
@@ -519,7 +519,7 @@ pub fn render_source_switcher_popup(
                                     WorkspaceLocation::remote(opts),
                                     SourceType::Process,
                                 );
-                                dispatch(AppAction::OpenContainerLogSession(ws));
+                                dispatch(WorkspaceAction::OpenContainerLog(Box::new(ws)).into());
                             }
                         }
                     });

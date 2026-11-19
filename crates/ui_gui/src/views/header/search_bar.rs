@@ -1,4 +1,4 @@
-use crate::actions::AppAction;
+use crate::actions::{AppAction, SessionAction};
 use crate::session::GuiSession;
 use crate::state::generate_suggestions;
 use eframe::egui::{self, Id};
@@ -102,7 +102,7 @@ pub fn render_search_bar(
     };
     if let Some(resp) = &clear_resp {
         if resp.clicked() {
-            dispatch(AppAction::ClearQuery);
+            dispatch(SessionAction::ClearQuery.into());
         }
     }
 

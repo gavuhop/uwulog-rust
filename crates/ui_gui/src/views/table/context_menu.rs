@@ -1,4 +1,4 @@
-use crate::actions::{copy_and_close, render_filter_actions_menu, ActionContext, AppAction};
+use crate::actions::{copy_and_close, render_filter_actions_menu, ActionContext, SessionAction};
 use eframe::egui;
 
 /// Parameters for rendering the right-click context menu of a table cell
@@ -40,7 +40,7 @@ pub fn render_cell_context_menu(
             "View in unfiltered stream (Alt+V)"
         };
         if ui.button(label).clicked() {
-            *render_ctx.action = Some(AppAction::ViewRawContext);
+            *render_ctx.action = Some(SessionAction::ViewRawContext.into());
             ui.close();
         }
     }
@@ -51,12 +51,12 @@ pub fn render_cell_context_menu(
         "Highlight row"
     };
     if ui.button(highlight_label).clicked() {
-        *render_ctx.action = Some(AppAction::ToggleRowHighlight(menu_ctx.event_id));
+        *render_ctx.action = Some(SessionAction::ToggleRowHighlight(menu_ctx.event_id).into());
         ui.close();
     }
 
     if render_ctx.has_any_highlights && ui.button("Unhighlight all").clicked() {
-        *render_ctx.action = Some(AppAction::ClearAllHighlights);
+        *render_ctx.action = Some(SessionAction::ClearAllHighlights.into());
         ui.close();
     }
 

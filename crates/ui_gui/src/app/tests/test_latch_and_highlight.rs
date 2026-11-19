@@ -1,5 +1,5 @@
 use super::test_helpers::create_test_app;
-use crate::actions::AppAction;
+use crate::actions::SessionAction;
 use crate::state::ActiveTab;
 use std::time::Duration;
 use uwu_core_schema::{RawLogEntry, RawPayload};
@@ -117,10 +117,10 @@ async fn test_repeated_unlatch_idempotency_preserves_pause_state() {
 async fn test_app_action_highlights() {
     let mut app = create_test_app();
 
-    app.dispatch_action(AppAction::ToggleRowHighlight(100));
+    app.dispatch_action(SessionAction::ToggleRowHighlight(100).into());
     assert!(app.active_session().is_row_highlighted(&100));
 
-    app.dispatch_action(AppAction::ToggleTermHighlight("error".to_string()));
+    app.dispatch_action(SessionAction::ToggleTermHighlight("error".to_string()).into());
     assert!(app
         .active_session()
         .view
@@ -129,7 +129,7 @@ async fn test_app_action_highlights() {
         .highlighted_terms
         .contains("error"));
 
-    app.dispatch_action(AppAction::ClearAllHighlights);
+    app.dispatch_action(SessionAction::ClearAllHighlights.into());
     assert!(!app.active_session().is_row_highlighted(&100));
     assert!(app
         .active_session()
@@ -146,14 +146,14 @@ async fn test_app_action_latch_and_unfiltered() {
 
     // Latch toggle
     assert!(app.active_session().view.main_tab().stream.is_auto_scroll);
-    app.dispatch_action(AppAction::ToggleLatch);
+    app.dispatch_action(SessionAction::ToggleLatch.into());
     assert!(!app.active_session().view.main_tab().stream.is_auto_scroll);
-    app.dispatch_action(AppAction::ToggleLatch);
+    app.dispatch_action(SessionAction::ToggleLatch.into());
     assert!(app.active_session().view.main_tab().stream.is_auto_scroll);
 
     // Open & close unfiltered stream (yêu cầu có filter trước khi mở Unfiltered)
     app.active_session_mut().view.search.query = "level:error".to_string();
-    app.dispatch_action(AppAction::OpenUnfilteredStream(Some(42)));
+    app.dispatch_action(SessionAction::OpenUnfilteredStream(Some(42)).into());
     assert!(app.active_session().view.has_raw_tab());
     assert_eq!(app.active_session().view.active_tab, ActiveTab::Unfiltered);
 
@@ -166,7 +166,7 @@ async fn test_app_action_latch_and_unfiltered() {
             .stream
             .is_auto_scroll
     );
-    app.dispatch_action(AppAction::ToggleLatch);
+    app.dispatch_action(SessionAction::ToggleLatch.into());
     assert!(
         app.active_session()
             .view
@@ -176,15 +176,15 @@ async fn test_app_action_latch_and_unfiltered() {
             .is_auto_scroll
     );
 
-    app.dispatch_action(AppAction::RefreshUnfilteredSnapshot);
+    app.dispatch_action(SessionAction::RefreshUnfilteredSnapshot.into());
 
-    app.dispatch_action(AppAction::FocusInMainAndClearFilter);
+    app.dispatch_action(SessionAction::FocusInMainAndClearFilter.into());
     assert!(!app.active_session().view.has_raw_tab());
     assert_eq!(app.active_session().view.active_tab, ActiveTab::Filtered);
 
     app.active_session_mut().view.search.query = "level:error".to_string();
-    app.dispatch_action(AppAction::OpenUnfilteredStream(None));
+    app.dispatch_action(SessionAction::OpenUnfilteredStream(None).into());
     assert!(app.active_session().view.has_raw_tab());
-    app.dispatch_action(AppAction::CloseUnfilteredStream);
+    app.dispatch_action(SessionAction::CloseUnfilteredStream.into());
     assert!(!app.active_session().view.has_raw_tab());
 }

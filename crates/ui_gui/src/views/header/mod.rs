@@ -13,7 +13,7 @@ pub use window_controls::{
     TITLEBAR_HEIGHT,
 };
 
-use crate::actions::AppAction;
+use crate::actions::{AppAction, OverlayAction, SessionAction};
 use crate::overlay::{OverlayLayer, OverlayStack};
 use crate::session::GuiSession;
 use crate::state::ActiveTab;
@@ -82,7 +82,7 @@ pub fn render_header(
             menu_btn_rect = Some(menu_resp.rect);
 
             if menu_resp.clicked() {
-                dispatch(AppAction::ToggleMainMenu);
+                dispatch(OverlayAction::ToggleMainMenu.into());
             }
 
             let is_docker_session = matches!(
@@ -126,7 +126,7 @@ pub fn render_header(
                     });
 
                     if remote_resp.clicked() {
-                        dispatch(AppAction::ToggleRemoteServersModal);
+                        dispatch(OverlayAction::ToggleRemoteServers.into());
                     }
                     has_breadcrumb_item = true;
                 }
@@ -183,7 +183,7 @@ pub fn render_header(
                 has_breadcrumb_item = true;
 
                 if proj_resp.clicked() {
-                    dispatch(AppAction::ToggleProjectPicker);
+                    dispatch(OverlayAction::ToggleProjectPicker.into());
                 }
             }
 
@@ -229,7 +229,7 @@ pub fn render_header(
                 .on_hover_text(filtered_tooltip)
                 .clicked()
             {
-                dispatch(AppAction::SwitchTab(ActiveTab::Filtered));
+                dispatch(SessionAction::SwitchTab(ActiveTab::Filtered).into());
             }
 
             // Tab 2: Raw Stream (Chỉ xuất hiện khi người dùng đang có bộ lọc)
@@ -241,7 +241,7 @@ pub fn render_header(
                     .on_hover_text("Switch to Raw Stream view (Alt+2, Ctrl+Tab)")
                     .clicked()
                 {
-                    dispatch(AppAction::SwitchTab(ActiveTab::Unfiltered));
+                    dispatch(SessionAction::SwitchTab(ActiveTab::Unfiltered).into());
                 }
             }
 
@@ -348,7 +348,7 @@ pub fn render_empty_header(
             menu_btn_rect = Some(menu_resp.rect);
 
             if menu_resp.clicked() {
-                dispatch(AppAction::ToggleMainMenu);
+                dispatch(OverlayAction::ToggleMainMenu.into());
             }
 
             // 2. Project Button (No Project Open)
@@ -377,7 +377,7 @@ pub fn render_empty_header(
             proj_btn_rect = Some(proj_resp.rect);
 
             if proj_resp.clicked() {
-                dispatch(AppAction::ToggleProjectPicker);
+                dispatch(OverlayAction::ToggleProjectPicker.into());
             }
 
             // 3. Phía bên phải: Window Controls

@@ -1,4 +1,4 @@
-use crate::actions::AppAction;
+use crate::actions::SessionAction;
 use crate::state::{ActiveTab, GuiViewState, ScrollCommand, RAW_STREAM_LIMIT};
 use eframe::egui;
 use std::time::{Duration, Instant};
@@ -623,49 +623,49 @@ impl GuiSession {
     }
 
     /// Xử lý các hành động tác động trực tiếp lên View State & Engine của Session
-    pub fn handle_action(&mut self, action: &AppAction) -> bool {
+    pub fn handle_action(&mut self, action: &SessionAction) -> bool {
         match action {
-            AppAction::SelectLog(log) => {
-                self.set_selected_log(log.clone());
+            SessionAction::SelectLog(log) => {
+                self.set_selected_log(log.as_deref().cloned());
                 true
             }
-            AppAction::NavigateUp => {
+            SessionAction::NavigateUp => {
                 self.navigate_row(true);
                 true
             }
-            AppAction::NavigateDown => {
+            SessionAction::NavigateDown => {
                 self.navigate_row(false);
                 true
             }
-            AppAction::ScrollTableLeft => {
+            SessionAction::ScrollTableLeft => {
                 self.scroll_horizontal(-120.0);
                 true
             }
-            AppAction::ScrollTableRight => {
+            SessionAction::ScrollTableRight => {
                 self.scroll_horizontal(120.0);
                 true
             }
-            AppAction::ScrollTableLeftMost => {
+            SessionAction::ScrollTableLeftMost => {
                 self.scroll_horizontal(-999_999.0);
                 true
             }
-            AppAction::PageUp => {
+            SessionAction::PageUp => {
                 self.navigate_page(true);
                 true
             }
-            AppAction::PageDown => {
+            SessionAction::PageDown => {
                 self.navigate_page(false);
                 true
             }
-            AppAction::ScrollToTop => {
+            SessionAction::ScrollToTop => {
                 self.scroll_to_top();
                 true
             }
-            AppAction::ScrollToBottom => {
+            SessionAction::ScrollToBottom => {
                 self.scroll_to_bottom();
                 true
             }
-            AppAction::SwitchTab(tab) => {
+            SessionAction::SwitchTab(tab) => {
                 if *tab == ActiveTab::Unfiltered {
                     if self.view.search.query.trim().is_empty() {
                         return false;
@@ -677,7 +677,7 @@ impl GuiSession {
                 self.switch_tab(*tab);
                 true
             }
-            AppAction::ToggleStreamView => {
+            SessionAction::ToggleStreamView => {
                 if self.view.search.query.trim().is_empty() {
                     return false;
                 }
@@ -691,61 +691,61 @@ impl GuiSession {
                 self.switch_tab(next);
                 true
             }
-            AppAction::ApplyFilterTerm(term) => {
+            SessionAction::ApplyFilterTerm(term) => {
                 self.apply_filter_term(term);
                 true
             }
-            AppAction::ExcludeFilterTerm(term) => {
+            SessionAction::ExcludeFilterTerm(term) => {
                 self.exclude_filter_term(term);
                 true
             }
-            AppAction::ClearQuery => {
+            SessionAction::ClearQuery => {
                 self.view.search.clear();
                 if self.view.active_tab == ActiveTab::Unfiltered {
                     self.close_unfiltered_stream();
                 }
                 true
             }
-            AppAction::ToggleRowHighlight(id) => {
+            SessionAction::ToggleRowHighlight(id) => {
                 self.toggle_row_highlight(*id);
                 true
             }
-            AppAction::ToggleTermHighlight(term) => {
+            SessionAction::ToggleTermHighlight(term) => {
                 self.toggle_term_highlight(term);
                 true
             }
-            AppAction::ClearAllHighlights => {
+            SessionAction::ClearAllHighlights => {
                 self.clear_all_highlights();
                 true
             }
-            AppAction::DismissFieldWarnings => {
+            SessionAction::DismissFieldWarnings => {
                 self.view.warnings.dismiss_current();
                 true
             }
-            AppAction::ToggleLatch => {
+            SessionAction::ToggleLatch => {
                 self.toggle_active_latch();
                 true
             }
-            AppAction::Unlatch => {
+            SessionAction::Unlatch => {
                 self.unlatch_active();
                 true
             }
-            AppAction::Latch => {
+            SessionAction::Latch => {
                 self.latch_active();
                 true
             }
-            AppAction::RefreshUnfilteredSnapshot => {
+            SessionAction::RefreshUnfilteredSnapshot => {
                 self.refresh_unfiltered_snapshot();
                 true
             }
-            AppAction::OpenUnfilteredStream(id) => {
+            SessionAction::OpenUnfilteredStream(id) => {
                 if self.view.search.query.trim().is_empty() {
                     return false;
                 }
                 self.open_unfiltered_stream(*id);
                 true
             }
-            AppAction::ViewRawContext => {
+            SessionAction::ViewRawContext => {
                 if self.view.active_tab == ActiveTab::Unfiltered {
                     self.switch_tab(ActiveTab::Filtered);
                     return true;
@@ -763,19 +763,19 @@ impl GuiSession {
                 self.open_unfiltered_stream(target_id);
                 true
             }
-            AppAction::CloseUnfilteredStream => {
+            SessionAction::CloseUnfilteredStream => {
                 self.close_unfiltered_stream();
                 true
             }
-            AppAction::FocusInMainAndClearFilter => {
+            SessionAction::FocusInMainAndClearFilter => {
                 self.focus_in_main_and_clear_filter();
                 true
             }
-            AppAction::FocusSearch => {
+            SessionAction::FocusSearch => {
                 self.view.search.focus_requested = true;
                 false
             }
-            AppAction::ToggleSearchHistory => {
+            SessionAction::ToggleSearchHistory => {
                 let opened = self.view.search.history.toggle_popup();
                 if opened {
                     self.view.search.autocomplete.is_open = false;
@@ -783,13 +783,13 @@ impl GuiSession {
                 }
                 true
             }
-            AppAction::CommitSearch => {
+            SessionAction::CommitSearch => {
                 let q = self.view.search.query.clone();
                 self.view.search.history.record(&q);
                 self.view.search.history.mark_recorded();
                 true
             }
-            AppAction::AutocompleteNext
+            SessionAction::AutocompleteNext
                 if self.view.search.autocomplete.is_open
                     && !self.view.search.autocomplete.suggestions.is_empty() =>
             {
@@ -798,7 +798,7 @@ impl GuiSession {
                         % self.view.search.autocomplete.suggestions.len();
                 true
             }
-            AppAction::AutocompletePrev
+            SessionAction::AutocompletePrev
                 if self.view.search.autocomplete.is_open
                     && !self.view.search.autocomplete.suggestions.is_empty() =>
             {
@@ -810,7 +810,7 @@ impl GuiSession {
                 }
                 true
             }
-            AppAction::AutocompleteConfirm if self.view.search.autocomplete.is_open => {
+            SessionAction::AutocompleteConfirm if self.view.search.autocomplete.is_open => {
                 if let Some(item) = self
                     .view
                     .search
