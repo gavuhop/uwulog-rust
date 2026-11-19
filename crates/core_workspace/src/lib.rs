@@ -160,6 +160,19 @@ pub fn sanitize_project_name(name: &str, location: &WorkspaceLocation) -> String
     }
 }
 
+/// Trạng thái hiển thị đã lưu cho từng tab container phụ (`docker logs -f`) mà không làm trùng `recent_workspaces`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct ContainerViewPrefs {
+    #[serde(default)]
+    pub last_query: String,
+    #[serde(default)]
+    pub filter_history: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub columns: Vec<SavedColumnConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inspector_width_ratio: Option<f32>,
+}
+
 /// Cấu hình bố cục cột đã lưu cho từng Workspace trong `workspaces.json`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SavedColumnConfig {
@@ -185,6 +198,8 @@ pub struct Workspace {
     pub env_vars: HashMap<String, String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub columns: Vec<SavedColumnConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inspector_width_ratio: Option<f32>,
 }
 
 impl Workspace {
@@ -206,6 +221,7 @@ impl Workspace {
             last_opened: Utc::now(),
             env_vars: HashMap::new(),
             columns: Vec::new(),
+            inspector_width_ratio: None,
         }
     }
 
@@ -287,11 +303,51 @@ pub struct WorkspaceStore {
     pub docker_connections: Vec<DockerConnection>,
     #[serde(default)]
     pub open_workspace_ids: Vec<Uuid>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub container_view_prefs: HashMap<String, ContainerViewPrefs>,
     #[serde(skip)]
     storage_path: Option<PathBuf>,
 }
 
 impl WorkspaceStore {
+    /// Tạo khóa định danh ổn định cho từng tab container trong project Docker.
+    pub fn container_prefs_key(location: &WorkspaceLocation) -> Option<String> {
+        match location {
+            WorkspaceLocation::Remote(RemoteConnectionOptions::Docker(d))
+                if !d.container_name.trim().is_empty() =>
+            {
+                let scope = d
+                    .compose_project
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_ascii_lowercase)
+                    .unwrap_or_else(|| normalize_workdir(&d.working_dir));
+                Some(format!(
+                    "{scope}::{}",
+                    d.container_name.trim().to_ascii_lowercase()
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    pub fn upsert_container_view_prefs(
+        &mut self,
+        location: &WorkspaceLocation,
+        prefs: ContainerViewPrefs,
+    ) {
+        if let Some(key) = Self::container_prefs_key(location) {
+            self.container_view_prefs.insert(key, prefs);
+        }
+    }
+
+    pub fn get_container_view_prefs(
+        &self,
+        location: &WorkspaceLocation,
+    ) -> Option<&ContainerViewPrefs> {
+        Self::container_prefs_key(location).and_then(|key| self.container_view_prefs.get(&key))
+    }
     /// Lấy đường dẫn lưu file cấu hình workspaces.json mặc định
     pub fn get_storage_path() -> PathBuf {
         #[cfg(target_os = "windows")]

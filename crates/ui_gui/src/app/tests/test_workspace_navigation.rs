@@ -907,6 +907,27 @@ async fn test_devcontainer_tab_switching_and_reopen_preserves_state() {
     assert!(!app.active_session().view.search.needs_search);
     assert_eq!(app.active_session().view.viewport.cached_logs.len(), 1);
 
+    // Đóng tab `db`, reload store từ đĩa (mô phỏng tắt app mở lại) và mở lại `db`:
+    // không tạo duplicate trong `recent_workspaces`, đồng thời khôi phục toàn bộ view state của `db`.
+    app.dispatch_action(AppAction::CloseSession(db_idx));
+    let docker_recent_count = app
+        .workspaces
+        .store
+        .recent_workspaces
+        .iter()
+        .filter(|w| w.name == "psittacus")
+        .count();
+    assert_eq!(docker_recent_count, 1);
+
+    app.workspaces.store = WorkspaceStore::load_from_path(&storage_path);
+    app.dispatch_action(AppAction::OpenContainerLogSession(make_db_ws()));
+    assert!(
+        (app.active_session().view.columns.columns[0].width - 185.0).abs() < 0.1,
+        "reopened db tab should restore saved timestamp width"
+    );
+    assert_eq!(app.active_session().view.search.query, "db_slow");
+    assert!((app.active_session().view.inspector.width_ratio - 0.28).abs() < 0.01);
+
     app.dispatch_action(AppAction::CloseSession(db_idx));
     app.dispatch_action(AppAction::CloseSession(app_idx));
     let _ = std::fs::remove_file(&storage_path);

@@ -1,7 +1,7 @@
 use crate::session::GuiSession;
 use std::time::Instant;
 use tokio::runtime::Handle;
-use uwu_core_workspace::{Workspace, WorkspaceStore};
+use uwu_core_workspace::{ContainerViewPrefs, Workspace, WorkspaceStore};
 
 /// Zed-style Sub-Manager chịu trách nhiệm quản lý Workspace sessions, state persistence và data fetching.
 pub struct WorkspaceManager {
@@ -96,6 +96,8 @@ impl WorkspaceManager {
             }
             if let Some(prev) = self.sessions.get_mut(self.active_index) {
                 prev.view.columns.clear_header_drag();
+                let _ = prev.view.columns.take_dirty_for_save();
+                Self::persist_session_into_store(&mut self.store, prev);
             }
             self.active_index = index;
             if !self.sessions[index].session.is_following_container_logs() {
@@ -206,7 +208,16 @@ impl WorkspaceManager {
             return false;
         }
 
+        let saved_prefs = self.store.get_container_view_prefs(&ws.location).cloned();
+        if let Some(prev) = self.sessions.get_mut(self.active_index) {
+            prev.view.columns.clear_header_drag();
+            let _ = prev.view.columns.take_dirty_for_save();
+            Self::persist_session_into_store(&mut self.store, prev);
+        }
         self.push_new_session(ws, rt);
+        if let Some(prefs) = saved_prefs {
+            self.active_session_mut().apply_container_view_prefs(&prefs);
+        }
         self.auto_start_container_log_if_needed(rt);
         true
     }
@@ -219,17 +230,9 @@ impl WorkspaceManager {
 
         let mut removed = self.sessions.remove(index);
         removed.session.stop_source();
-        let is_transient_container_tab = removed.session.is_following_container_logs()
-            && !self
-                .store
-                .recent_workspaces
-                .iter()
-                .any(|w| w.id == removed.session.id);
-
-        if !is_transient_container_tab {
-            self.store
-                .add_or_update(Self::gui_session_to_workspace(&removed));
-        }
+        removed.view.columns.clear_header_drag();
+        let _ = removed.view.columns.take_dirty_for_save();
+        Self::persist_session_into_store(&mut self.store, &mut removed);
 
         if self.sessions.is_empty() {
             self.active_index = 0;
@@ -281,7 +284,40 @@ impl WorkspaceManager {
         ws.last_query = gui_session.view.search.query.clone();
         ws.filter_history = gui_session.view.search.history.entries.clone();
         ws.columns = gui_session.view.columns.to_saved_columns();
+        ws.inspector_width_ratio = Some(gui_session.view.inspector.width_ratio);
         ws
+    }
+
+    fn gui_session_to_container_prefs(gui_session: &GuiSession) -> ContainerViewPrefs {
+        ContainerViewPrefs {
+            last_query: gui_session.view.search.query.clone(),
+            filter_history: gui_session.view.search.history.entries.clone(),
+            columns: gui_session.view.columns.to_saved_columns(),
+            inspector_width_ratio: Some(gui_session.view.inspector.width_ratio),
+        }
+    }
+
+    fn persist_session_into_store(store: &mut WorkspaceStore, gui_session: &mut GuiSession) {
+        if gui_session.session.name.trim().is_empty() {
+            gui_session.session.name = "Workspace".to_string();
+        }
+        gui_session.session.sync_location();
+
+        if gui_session.session.is_following_container_logs() {
+            store.upsert_container_view_prefs(
+                &gui_session.session.location,
+                Self::gui_session_to_container_prefs(gui_session),
+            );
+            if store
+                .recent_workspaces
+                .iter()
+                .any(|w| w.id == gui_session.session.id)
+            {
+                store.add_or_update(Self::gui_session_to_workspace(gui_session));
+            }
+        } else {
+            store.add_or_update(Self::gui_session_to_workspace(gui_session));
+        }
     }
 
     pub fn save_current_workspace(&mut self) {
@@ -293,16 +329,9 @@ impl WorkspaceManager {
         }
         let active_idx = self.active_index;
         let gui_session = &mut self.sessions[active_idx];
-        if gui_session.session.name.trim().is_empty() {
-            gui_session.session.name = "Workspace".to_string();
-        }
-
-        gui_session.session.sync_location();
-
+        Self::persist_session_into_store(&mut self.store, gui_session);
         if !gui_session.session.is_following_container_logs() {
-            let ws = Self::gui_session_to_workspace(gui_session);
-            self.store.add_or_update(ws);
-            self.store.active_workspace_id = Some(self.sessions[active_idx].session.id);
+            self.store.active_workspace_id = Some(gui_session.session.id);
         }
         self.store.open_workspace_ids = self
             .sessions
@@ -322,14 +351,7 @@ impl WorkspaceManager {
             return;
         }
         for s in &mut self.sessions {
-            if s.session.is_following_container_logs() {
-                continue;
-            }
-            if s.session.name.trim().is_empty() {
-                s.session.name = "Workspace".to_string();
-            }
-            s.session.sync_location();
-            self.store.add_or_update(Self::gui_session_to_workspace(s));
+            Self::persist_session_into_store(&mut self.store, s);
         }
         self.store.open_workspace_ids = self
             .sessions

@@ -3,7 +3,7 @@ use crate::state::{ActiveTab, GuiViewState, ScrollCommand, RAW_STREAM_LIMIT};
 use eframe::egui;
 use std::time::{Duration, Instant};
 use uwu_core_schema::LogEvent;
-use uwu_core_workspace::{Workspace, WorkspaceSession};
+use uwu_core_workspace::{ContainerViewPrefs, Workspace, WorkspaceSession};
 
 /// Trích xuất nhẹ (Copy) trạng thái stream hiển thị cho bảng log
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,14 +43,42 @@ impl GuiSession {
         gui_session
     }
 
-    /// Khôi phục trạng thái giao diện (query, lịch sử tìm kiếm, bố cục cột) từ `Workspace`.
+    /// Khôi phục trạng thái giao diện (query, lịch sử tìm kiếm, bố cục cột, inspector) từ `Workspace`.
     pub fn apply_workspace_view(&mut self, ws: &Workspace) {
-        self.view.search.query = ws.last_query.clone();
-        self.view.search.history.entries = ws.filter_history.clone();
-        if self.view.search.history.entries.is_empty() && !ws.last_query.trim().is_empty() {
-            self.view.search.history.record(&ws.last_query);
+        self.apply_view_fields(
+            &ws.last_query,
+            &ws.filter_history,
+            &ws.columns,
+            ws.inspector_width_ratio,
+        );
+    }
+
+    /// Khôi phục trạng thái giao diện đã lưu cho tab container phụ.
+    pub fn apply_container_view_prefs(&mut self, prefs: &ContainerViewPrefs) {
+        self.apply_view_fields(
+            &prefs.last_query,
+            &prefs.filter_history,
+            &prefs.columns,
+            prefs.inspector_width_ratio,
+        );
+    }
+
+    fn apply_view_fields(
+        &mut self,
+        last_query: &str,
+        filter_history: &[String],
+        columns: &[uwu_core_workspace::SavedColumnConfig],
+        inspector_width_ratio: Option<f32>,
+    ) {
+        self.view.search.query = last_query.to_string();
+        self.view.search.history.entries = filter_history.to_vec();
+        if self.view.search.history.entries.is_empty() && !last_query.trim().is_empty() {
+            self.view.search.history.record(last_query);
         }
-        self.view.columns.restore_from_saved(&ws.columns);
+        self.view.columns.restore_from_saved(columns);
+        if let Some(ratio) = inspector_width_ratio.filter(|r| (0.15..=0.85).contains(r)) {
+            self.view.inspector.width_ratio = ratio;
+        }
     }
 
     /// Xử lý cập nhật định kỳ cho từng session (incremental search, debounced history, latch scroll sync, unfiltered sync)

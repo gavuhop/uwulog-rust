@@ -222,6 +222,12 @@ impl ColumnState {
         std::mem::take(&mut self.columns_dirty_for_save)
     }
 
+    /// Xóa hẹn lưu chờ và tiêu thụ cờ dirty ngay lập tức (dùng khi chuyển tab hoặc đóng session).
+    pub fn take_dirty_for_save(&mut self) -> bool {
+        self.pending_save_frames = None;
+        std::mem::take(&mut self.columns_dirty_for_save)
+    }
+
     /// Xuất các cột đã tuỳ chỉnh để lưu vào `workspaces.json` (bỏ cột custom ẩn độ rộng mặc định).
     pub fn to_saved_columns(&self) -> Vec<SavedColumnConfig> {
         let mut saved = Vec::new();
