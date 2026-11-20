@@ -4,7 +4,7 @@
     "SessionStart": [
       {
         "type": "command",
-        "command": "./scripts/hooks/session_start.sh",
+        "command": "python3 ./scripts/hooks/session_start.py",
         "timeout": 10
       }
     ]
@@ -21,6 +21,31 @@
             "timeout": 10
           }
         ]
+      }
+    ]
+  },
+  "uwu-write-guard": {
+    "enabled": true,
+    "PreToolUse": [
+      {
+        "matcher": "write_file",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ./scripts/hooks/pre_write_guard.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  },
+  "uwu-stop-arch-gate": {
+    "enabled": true,
+    "Stop": [
+      {
+        "type": "command",
+        "command": "python3 ./scripts/hooks/stop_arch_gate.py",
+        "timeout": 20
       }
     ]
   }

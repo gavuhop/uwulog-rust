@@ -1464,6 +1464,145 @@ def cmd_keymap(args: argparse.Namespace, repo_root: Path) -> int:
     return 0
 
 
+def collect_changed_files(repo_root: Path, base_ref: Optional[str] = None) -> List[str]:
+    import subprocess
+
+    changed: set[str] = set()
+    try:
+        if base_ref:
+            res = subprocess.run(
+                ["git", "diff", "--name-only", base_ref],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+            if res.returncode == 0:
+                for line in res.stdout.splitlines():
+                    p = line.strip().replace("\\", "/")
+                    if p:
+                        changed.add(p)
+        else:
+            st = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+            if st.returncode == 0:
+                for raw_line in st.stdout.splitlines():
+                    if len(raw_line) < 4:
+                        continue
+                    path_part = raw_line[3:].strip()
+                    if " -> " in path_part:
+                        path_part = path_part.split(" -> ", 1)[1].strip()
+                    path_part = path_part.strip('"').replace("\\", "/")
+                    if path_part:
+                        changed.add(path_part)
+    except Exception:
+        pass
+    return sorted(changed)
+
+
+def compute_affected_crates(
+    repo_root: Path,
+    changed_files: Optional[Sequence[str]] = None,
+    include_downstream: bool = False,
+) -> Dict[str, object]:
+    crates = discover_crates(repo_root)
+    dir_to_crate = {c.rel_dir.rstrip("/"): c for c in crates}
+    name_to_crate = {c.name: c for c in crates}
+
+    files = list(changed_files) if changed_files is not None else collect_changed_files(repo_root)
+    direct: set[str] = set()
+    test_all = False
+
+    for raw in files:
+        norm = raw.replace("\\", "/").lstrip("./")
+        if norm in ("Cargo.toml", "Cargo.lock"):
+            test_all = True
+            continue
+        if norm.startswith("assets/icons/"):
+            if "uwu-icons" in name_to_crate:
+                direct.add("uwu-icons")
+            continue
+        for rel_dir, cinfo in dir_to_crate.items():
+            if norm == rel_dir or norm.startswith(rel_dir + "/"):
+                direct.add(cinfo.name)
+                break
+
+    downstream: set[str] = set()
+    if include_downstream and not test_all and direct:
+        rev_deps: Dict[str, List[str]] = {}
+        for c in crates:
+            for dep in c.internal_deps:
+                rev_deps.setdefault(dep, []).append(c.name)
+
+        queue = list(direct)
+        seen = set(direct)
+        while queue:
+            cur = queue.pop(0)
+            for nxt in rev_deps.get(cur, []):
+                if nxt not in seen:
+                    seen.add(nxt)
+                    downstream.add(nxt)
+                    queue.append(nxt)
+
+    def _sort_key(cname: str) -> Tuple[int, str]:
+        ci = name_to_crate.get(cname)
+        return (ci.tier if ci else 99, cname)
+
+    direct_sorted = sorted(direct, key=_sort_key)
+    downstream_sorted = sorted(downstream, key=_sort_key)
+    all_affected = (
+        sorted(name_to_crate.keys(), key=_sort_key)
+        if test_all
+        else sorted(direct | downstream, key=_sort_key)
+    )
+
+    return {
+        "changed_files": files,
+        "test_all": test_all,
+        "include_downstream": include_downstream,
+        "direct_crates": direct_sorted,
+        "downstream_crates": downstream_sorted,
+        "affected_crates": all_affected,
+    }
+
+
+def cmd_affected(args: argparse.Namespace, repo_root: Path) -> int:
+    changed = collect_changed_files(repo_root, base_ref=getattr(args, "base", None))
+    info = compute_affected_crates(
+        repo_root,
+        changed_files=changed,
+        include_downstream=bool(getattr(args, "downstream", False)),
+    )
+    if getattr(args, "json", False):
+        print(json.dumps(info, indent=2, ensure_ascii=False))
+        return 0
+
+    if info["test_all"]:
+        print("Affected crates: ALL (root Cargo.toml/Cargo.lock changed)")
+        return 0
+
+    affected = info["affected_crates"]
+    if not affected:
+        print("Affected crates: (none)")
+        return 0
+
+    direct = info["direct_crates"]
+    downstream = info["downstream_crates"]
+    out = [f"Affected crates ({len(affected)}): {', '.join(affected)}"]  # type: ignore[arg-type]
+    out.append(f"  Direct: {', '.join(direct) if direct else '(none)'}")  # type: ignore[arg-type]
+    if info["include_downstream"]:
+        out.append(f"  Downstream: {', '.join(downstream) if downstream else '(none)'}")  # type: ignore[arg-type]
+    print("\n".join(out))
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # CLI Entrypoint
 # ---------------------------------------------------------------------------
@@ -1507,6 +1646,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_km.add_argument("-c", "--context", default=None, help="Optional KeyContext filter")
     p_km.add_argument("--json", action="store_true")
 
+    p_aff = sub.add_parser("affected", help="Detect workspace crates affected by git changes")
+    p_aff.add_argument("--downstream", action="store_true", help="Include downstream crates via reverse 5-Tier DAG")
+    p_aff.add_argument("--base", default=None, help="Optional git base ref (defaults to working tree status)")
+    p_aff.add_argument("--json", action="store_true")
+
     return p
 
 
@@ -1527,6 +1671,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return cmd_fields(args, repo_root)
     if args.command == "keymap":
         return cmd_keymap(args, repo_root)
+    if args.command == "affected":
+        return cmd_affected(args, repo_root)
     return 1
 
 

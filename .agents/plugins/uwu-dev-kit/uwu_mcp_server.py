@@ -148,9 +148,23 @@ def tool_keymap_lookup(args: Dict[str, Any]) -> str:
     )
 
 
+def _truncate_head_tail(text: str, head: int = 40, tail: int = 80) -> str:
+    lines = text.splitlines()
+    if len(lines) <= head + tail:
+        return text
+    omitted = len(lines) - (head + tail)
+    return "\n".join(
+        [
+            *lines[:head],
+            f"... ({omitted} middle line(s) omitted; showing first {head} + last {tail} lines) ...",
+            *lines[-tail:],
+        ]
+    )
+
+
 def tool_run_harness(args: Dict[str, Any]) -> str:
     action = str(args.get("action") or "").strip()
-    allowed = {"check-arch", "fmt", "clippy", "test-tier"}
+    allowed = {"check-arch", "fmt", "clippy", "test-tier", "test-changed", "self-test"}
     if action not in allowed:
         raise ValueError(f"Unsupported harness action '{action}'. Allowed: {sorted(allowed)}")
 
@@ -160,19 +174,20 @@ def tool_run_harness(args: Dict[str, Any]) -> str:
         if tier not in {"0", "1", "2", "3", "4", "all"}:
             raise ValueError("Invalid 'tier'; expected 0, 1, 2, 3, 4, or all")
         cmd.append(tier)
+    elif action == "test-changed":
+        if args.get("downstream"):
+            cmd.append("--downstream")
 
     res = subprocess.run(
         cmd,
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
-        timeout=180,
+        timeout=300,
         check=False,
     )
     combined = (res.stdout + ("\n" + res.stderr if res.stderr else "")).strip()
-    lines = combined.splitlines()
-    if len(lines) > 120:
-        combined = "\n".join(["... (truncated leading compiler output) ...", *lines[-120:]])
+    combined = _truncate_head_tail(combined, head=40, tail=80)
 
     return json.dumps(
         {
@@ -278,18 +293,23 @@ TOOLS: List[Dict[str, Any]] = [
     },
     {
         "name": "uwu_run_harness",
-        "description": "Execute scoped workspace checks via .agents/scripts/harness.sh (check-arch, fmt, clippy, test-tier) with concise output.",
+        "description": "Execute scoped workspace checks via .agents/scripts/harness.sh (check-arch, fmt, clippy, test-tier, test-changed, self-test) with head+tail concise output.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["check-arch", "fmt", "clippy", "test-tier"],
+                    "enum": ["check-arch", "fmt", "clippy", "test-tier", "test-changed", "self-test"],
                 },
                 "tier": {
                     "type": "string",
                     "enum": ["0", "1", "2", "3", "4", "all"],
                     "description": "Used when action='test-tier'",
+                },
+                "downstream": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Used when action='test-changed' to also test downstream DAG crates",
                 },
             },
             "required": ["action"],

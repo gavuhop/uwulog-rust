@@ -18,12 +18,15 @@ Tài liệu hướng dẫn vận hành trọn bộ hệ sinh thái AI Agent bên
 ├── rules/
 │   └── GEMINI.md                        # Rulebook duy nhất tự nạp vào mọi prompt (không rải file ra root/crates)
 ├── scripts/
-│   ├── ast_index.py                     # Bộ trích xuất Tree / AST Skeleton / Symbol / Hotspots / Fields / Keymap
+│   ├── ast_index.py                     # Bộ trích xuất Tree / AST Skeleton / Symbol / Hotspots / Fields / Keymap / Affected
 │   ├── verify_arch_and_conv.py          # Kiểm chứng 5-Tier DAG, Expr/Icon parity, SSOT & Diff-Aware Conventions
+│   ├── test_harness.py                  # Bộ unittest stdlib tự kiểm chứng hooks, AST, verify & MCP (< 1s)
 │   ├── harness.sh                       # CLI Harness thống nhất (Linux/macOS/WSL/Git Bash)
 │   └── hooks/
-│       ├── session_start.sh             # Bơm git branch & dirty count khi bắt đầu phiên
-│       └── pre_command_guard.py         # Chặn lệnh shell phá hủy
+│       ├── session_start.py             # Bơm git branch & dirty count khi bắt đầu phiên (cross-platform)
+│       ├── pre_command_guard.py         # Chặn lệnh shell phá hủy
+│       ├── pre_write_guard.py           # Chặn ghi file plan.md vào git repo (bắt dùng Artifact Plan)
+│       └── stop_arch_gate.py            # Tự chạy check-arch trước khi dừng nếu có file Rust/Cargo/SVG thay đổi
 ├── skills/                              # 7 Skills chuyên biệt (Progressive Disclosure)
 │   ├── uwu-benchmark/
 │   ├── uwu-dag-architecture/
@@ -75,8 +78,13 @@ Thay vì đọc toàn bộ các file `.rs` lớn (tốn hàng nghìn token), Age
 
 - **MCP Tools** ([uwu_mcp_server.py](../plugins/uwu-dev-kit/uwu_mcp_server.py)): `uwu_tree_map`, `uwu_ast_skeleton`, `uwu_find_symbol`, `uwu_ast_hotspots`, `uwu_inspect_dag_and_conv`, `uwu_standard_fields_info`, `uwu_keymap_lookup`, `uwu_run_harness`.
 - **Hooks** ([hooks.json](../hooks.json)):
-  - `uwu-session-context` (`SessionStart`, `enabled: true`): Tự động báo nhánh Git, số file thay đổi và nhắc dùng Harness/MCP.
+  - `uwu-session-context` (`SessionStart`, `enabled: true`): `session_start.py` (Python thuần cross-platform) báo nhánh Git, số file thay đổi và nhắc dùng Harness/MCP.
   - `uwu-command-guard` (`PreToolUse` on `run_command`, `enabled: true`): Chặn `git reset --hard`, `git clean -fd`, `git push --force`, `rm -rf` vào thư mục gốc/quan trọng, `cargo publish`.
+  - `uwu-write-guard` (`PreToolUse` on `write_file`, `enabled: true`): Chặn ghi file plan (`plan.md`, `implementation_plan.md`, `*_plan.md`) vào trong git repo; đảm bảo plan chỉ lưu ở Artifact Plan.
+  - `uwu-stop-arch-gate` (`Stop`, `enabled: true`): Khi có thay đổi ở `crates/**/*.rs`, `Cargo.toml`, hoặc `assets/icons/*.svg`, tự chạy `verify_arch_and_conv.py` trước khi dừng turn; nếu lỗi DAG/parity/convention thì yêu cầu agent tự sửa trước khi kết thúc.
+- **Targeted Testing & Self-Test**:
+  - `./.agents/scripts/harness.sh affected [--downstream] [--json]` và `test-changed [--downstream]`: Tự suy ra các crate bị chạm từ `git status` để chạy test mục tiêu.
+  - `./.agents/scripts/harness.sh self-test`: Chạy bộ `unittest` (`test_harness.py`) kiểm chứng toàn bộ hooks, `ast_index.py`, `verify_arch_and_conv.py` và `uwu_mcp_server.py`.
 
 ---
 

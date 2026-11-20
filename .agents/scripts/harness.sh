@@ -21,6 +21,7 @@ Token-Optimized Exploration (AST & Tree):
   ast-hotspots [target] [--top N] [--json]        Longest fns, locks, par_iter, unsafe sites
   fields [filter] [--json]                        SSOT StandardField & Arrow '__' system columns
   keymap [query] [-c context] [--json]            KeyAction, KeyContext & default keybindings
+  affected [--downstream] [--base REF] [--json]   Detect crates affected by current git changes
 
 Architecture, Convention & Quality Gates:
   check-arch [--dag-only|--conv-only|--strict|--json]
@@ -28,6 +29,8 @@ Architecture, Convention & Quality Gates:
   fmt                                             Check Rust formatting (cargo fmt --all --check)
   clippy                                          Run workspace clippy with -D warnings
   test-tier <0|1|2|3|4|all>                       Run tests for a specific DAG tier or all
+  test-changed [--downstream] [--base REF]        Run targeted tests for git-modified crates only
+  self-test                                       Run Python stdlib self-tests for .agents/ harness
   bench-quick                                     Run quick performance profiler
   verify                                          Full gate: check-arch + fmt + clippy + tests
 EOF
@@ -70,6 +73,62 @@ run_test_tier() {
     esac
 }
 
+run_test_changed() {
+    local affected_json
+    affected_json="$(python3 "$SCRIPT_DIR/ast_index.py" affected --json "$@")"
+
+    local test_all
+    test_all="$(python3 -c 'import json, sys; d = json.loads(sys.stdin.read()); print("1" if d.get("test_all") else "0")' <<< "$affected_json")"
+    if [[ "$test_all" == "1" ]]; then
+        echo "[harness] Root Cargo.toml/Cargo.lock changed — running full workspace tests..."
+        run_test_tier "all"
+        return 0
+    fi
+
+    local crates_str
+    crates_str="$(python3 -c 'import json, sys; d = json.loads(sys.stdin.read()); print(" ".join(d.get("affected_crates", [])))' <<< "$affected_json")"
+    if [[ -z "$crates_str" ]]; then
+        echo "[harness] No Rust crates affected by current git changes."
+        return 0
+    fi
+
+    echo "[harness] Testing affected crates: $crates_str"
+    local std_crates=()
+    local run_icons=0
+    local run_workspace=0
+    local run_bench=0
+
+    for c in $crates_str; do
+        case "$c" in
+            uwu-icons)
+                run_icons=1
+                ;;
+            uwu-core-workspace)
+                run_workspace=1
+                ;;
+            uwu-benchmarks)
+                run_bench=1
+                ;;
+            *)
+                std_crates+=("-p" "$c")
+                ;;
+        esac
+    done
+
+    if [[ ${#std_crates[@]} -gt 0 ]]; then
+        cargo test "${std_crates[@]}"
+    fi
+    if [[ "$run_icons" == "1" ]]; then
+        cargo test -p uwu-icons --all-features
+    fi
+    if [[ "$run_workspace" == "1" ]]; then
+        cargo test -p uwu-core-workspace --features uwu-icons/egui
+    fi
+    if [[ "$run_bench" == "1" ]]; then
+        cargo check -p uwu-benchmarks --benches --bins
+    fi
+}
+
 CMD="${1:-help}"
 if [[ $# -gt 0 ]]; then
     shift
@@ -94,6 +153,9 @@ case "$CMD" in
     keymap)
         python3 "$SCRIPT_DIR/ast_index.py" keymap "$@"
         ;;
+    affected)
+        python3 "$SCRIPT_DIR/ast_index.py" affected "$@"
+        ;;
     check-arch|check-dag)
         python3 "$SCRIPT_DIR/verify_arch_and_conv.py" "$@"
         ;;
@@ -107,6 +169,13 @@ case "$CMD" in
         ;;
     test-tier)
         run_test_tier "${1:-all}"
+        ;;
+    test-changed)
+        run_test_changed "$@"
+        ;;
+    self-test)
+        echo "[harness] Running .agents/ harness self-test suite..."
+        python3 -m unittest discover -s "$SCRIPT_DIR" -p "test_*.py" -v
         ;;
     bench-quick)
         bash "$REPO_ROOT/.agents/skills/uwu-benchmark/scripts/run_bench.sh" -m quick "$@"
