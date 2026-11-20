@@ -63,14 +63,18 @@ ALLOWED_COLUMN_BY_NAME_FNS = {
 }
 
 
-def run_cargo_metadata(repo_root: Path) -> dict:
-    res = subprocess.run(
-        ["cargo", "metadata", "--format-version", "1", "--no-deps"],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+def run_cargo_metadata(repo_root: Path, timeout: int = 12) -> dict:
+    try:
+        res = subprocess.run(
+            ["cargo", "metadata", "--format-version", "1", "--no-deps"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"cargo metadata timed out after {timeout}s") from exc
     if res.returncode != 0:
         raise RuntimeError(f"cargo metadata failed: {res.stderr.strip()}")
     return json.loads(res.stdout)

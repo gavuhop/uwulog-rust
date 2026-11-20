@@ -1468,40 +1468,57 @@ def collect_changed_files(repo_root: Path, base_ref: Optional[str] = None) -> Li
     import subprocess
 
     changed: set[str] = set()
+    if base_ref:
+        res = subprocess.run(
+            ["git", "-c", "core.quotepath=false", "diff", "--name-only", base_ref],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        if res.returncode != 0:
+            err = res.stderr.strip() or f"exit code {res.returncode}"
+            raise RuntimeError(f"git diff --name-only {base_ref} failed: {err}")
+        for line in res.stdout.splitlines():
+            p = line.strip().replace("\\", "/")
+            if p:
+                changed.add(p)
+
+        untracked = subprocess.run(
+            ["git", "-c", "core.quotepath=false", "ls-files", "--others", "--exclude-standard"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        if untracked.returncode == 0:
+            for line in untracked.stdout.splitlines():
+                p = line.strip().replace("\\", "/")
+                if p:
+                    changed.add(p)
+        return sorted(changed)
+
     try:
-        if base_ref:
-            res = subprocess.run(
-                ["git", "diff", "--name-only", base_ref],
-                cwd=repo_root,
-                capture_output=True,
-                text=True,
-                timeout=10,
-                check=False,
-            )
-            if res.returncode == 0:
-                for line in res.stdout.splitlines():
-                    p = line.strip().replace("\\", "/")
-                    if p:
-                        changed.add(p)
-        else:
-            st = subprocess.run(
-                ["git", "status", "--porcelain"],
-                cwd=repo_root,
-                capture_output=True,
-                text=True,
-                timeout=10,
-                check=False,
-            )
-            if st.returncode == 0:
-                for raw_line in st.stdout.splitlines():
-                    if len(raw_line) < 4:
-                        continue
-                    path_part = raw_line[3:].strip()
-                    if " -> " in path_part:
-                        path_part = path_part.split(" -> ", 1)[1].strip()
-                    path_part = path_part.strip('"').replace("\\", "/")
-                    if path_part:
-                        changed.add(path_part)
+        st = subprocess.run(
+            ["git", "-c", "core.quotepath=false", "status", "--porcelain", "-uall"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        if st.returncode == 0:
+            for raw_line in st.stdout.splitlines():
+                if len(raw_line) < 4:
+                    continue
+                path_part = raw_line[3:].strip()
+                if " -> " in path_part:
+                    path_part = path_part.split(" -> ", 1)[1].strip()
+                path_part = path_part.strip('"').replace("\\", "/")
+                if path_part:
+                    changed.add(path_part)
     except Exception:
         pass
     return sorted(changed)
@@ -1574,7 +1591,11 @@ def compute_affected_crates(
 
 
 def cmd_affected(args: argparse.Namespace, repo_root: Path) -> int:
-    changed = collect_changed_files(repo_root, base_ref=getattr(args, "base", None))
+    try:
+        changed = collect_changed_files(repo_root, base_ref=getattr(args, "base", None))
+    except RuntimeError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
     info = compute_affected_crates(
         repo_root,
         changed_files=changed,

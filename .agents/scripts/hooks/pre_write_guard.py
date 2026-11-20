@@ -13,6 +13,12 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+SCRIPTS_DIR = Path(__file__).resolve().parent.parent
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+import ast_index
+
 PLAN_FILENAME_RE = re.compile(
     r"^(?:plan|implementation_plan|feature_plan|.*_plan|.*-plan)\.md$",
     re.IGNORECASE,
@@ -35,15 +41,16 @@ def check_write_payload(payload: Dict[str, Any]) -> Optional[str]:
         return None
 
     cwd_raw = payload.get("cwd") or (payload.get("workspacePaths") or [None])[0]
-    repo_root = (
+    cwd_path = (
         Path(str(cwd_raw)).resolve()
         if cwd_raw
         else Path(__file__).resolve().parents[3].resolve()
     )
+    repo_root = ast_index.find_repo_root(cwd_path)
 
     target = Path(str(raw_path))
     if not target.is_absolute():
-        target = repo_root / target
+        target = cwd_path / target
     target = target.resolve()
 
     artifact_dir_raw = payload.get("artifactDirectoryPath")

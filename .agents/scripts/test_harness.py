@@ -17,6 +17,7 @@ import json
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
 HOOKS_DIR = SCRIPTS_DIR / "hooks"
@@ -95,6 +96,20 @@ class TestPreWriteGuard(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertIsNone(pre_write_guard.check_write_payload(payload))
 
+    def test_blocks_plan_when_cwd_is_subdirectory(self) -> None:
+        sub_cwd = str(REPO_ROOT / "crates" / "ui_gui")
+        payload_abs = {
+            "cwd": sub_cwd,
+            "toolCall": {"name": "write_file", "args": {"Path": str(REPO_ROOT / "plan.md")}},
+        }
+        self.assertIsNotNone(pre_write_guard.check_write_payload(payload_abs))
+
+        payload_rel = {
+            "cwd": sub_cwd,
+            "toolCall": {"name": "write_file", "args": {"Path": "../../plan.md"}},
+        }
+        self.assertIsNotNone(pre_write_guard.check_write_payload(payload_rel))
+
 
 class TestStopArchGate(unittest.TestCase):
     def test_skips_when_continuation_active(self) -> None:
@@ -138,6 +153,54 @@ class TestStopArchGate(unittest.TestCase):
             check_fn=lambda _: [],
         )
         self.assertEqual(res, {})
+
+    def test_skips_when_not_fully_idle(self) -> None:
+        res = stop_arch_gate.evaluate_stop(
+            {
+                "continuationActive": False,
+                "fullyIdle": False,
+                "terminationReason": "NO_TOOL_CALL",
+                "cwd": str(REPO_ROOT),
+            },
+            dirty_fn=lambda _: ["crates/core_util/src/lib.rs"],
+            check_fn=lambda _: ["should not run"],
+        )
+        self.assertEqual(res, {})
+
+    def test_run_arch_check_captures_dag_runtime_error_and_continues(self) -> None:
+        with (
+            mock.patch.object(
+                verify_arch_and_conv, "check_dag", side_effect=RuntimeError("cargo metadata failed: bad toml")
+            ),
+            mock.patch.object(
+                verify_arch_and_conv,
+                "check_invariants_and_conventions",
+                return_value=(["conv error"], []),
+            ),
+        ):
+            errs = stop_arch_gate.run_arch_check(REPO_ROOT)
+        self.assertEqual(len(errs), 2)
+        self.assertIn("cargo metadata failed", errs[0])
+        self.assertEqual(errs[1], "conv error")
+
+    def test_resolves_repo_root_from_subdirectory_cwd(self) -> None:
+        seen_roots: list[Path] = []
+
+        def fake_dirty(root: Path) -> list[str]:
+            seen_roots.append(root)
+            return []
+
+        stop_arch_gate.evaluate_stop(
+            {
+                "continuationActive": False,
+                "fullyIdle": True,
+                "terminationReason": "NO_TOOL_CALL",
+                "cwd": str(REPO_ROOT / "crates" / "ui_gui"),
+            },
+            dirty_fn=fake_dirty,
+            check_fn=lambda _: [],
+        )
+        self.assertEqual(seen_roots, [REPO_ROOT.resolve()])
 
 
 class TestSessionStartHook(unittest.TestCase):
@@ -222,6 +285,16 @@ mod tests {
             self.assertEqual(rc, 0)
             parsed = json.loads(buf.getvalue())
             self.assertIsInstance(parsed, dict)
+
+    def test_cmd_affected_fails_on_invalid_base_ref(self) -> None:
+        err_buf = io.StringIO()
+        with contextlib.redirect_stderr(err_buf):
+            rc = ast_index.cmd_affected(
+                argparse.Namespace(base="nonexistent-ref-xyz-9999", downstream=False, json=True),
+                REPO_ROOT,
+            )
+        self.assertEqual(rc, 1)
+        self.assertIn("git diff --name-only", err_buf.getvalue())
 
 
 class TestVerifyArchAndMcp(unittest.TestCase):

@@ -18,6 +18,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parent.parent
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+import ast_index
 import verify_arch_and_conv
 
 
@@ -35,7 +36,18 @@ def _is_arch_relevant_path(rel_path: str) -> bool:
 def get_relevant_dirty_files(repo_root: Path) -> List[str]:
     try:
         res = subprocess.run(
-            ["git", "status", "--porcelain", "--", "crates/", "Cargo.toml", "assets/icons/"],
+            [
+                "git",
+                "-c",
+                "core.quotepath=false",
+                "status",
+                "--porcelain",
+                "-uall",
+                "--",
+                "crates/",
+                "Cargo.toml",
+                "assets/icons/",
+            ],
             cwd=repo_root,
             capture_output=True,
             text=True,
@@ -61,7 +73,12 @@ def get_relevant_dirty_files(repo_root: Path) -> List[str]:
 
 
 def run_arch_check(repo_root: Path) -> List[str]:
-    dag_errors, _ = verify_arch_and_conv.check_dag(repo_root)
+    dag_errors: List[str] = []
+    try:
+        dag_errors, _ = verify_arch_and_conv.check_dag(repo_root)
+    except Exception as exc:
+        dag_errors.append(str(exc))
+
     conv_errors, _ = verify_arch_and_conv.check_invariants_and_conventions(repo_root)
     return dag_errors + conv_errors
 
@@ -75,13 +92,17 @@ def evaluate_stop(
     if payload.get("continuationActive"):
         return {}
 
+    # Do not interrupt while subagents or background tasks are still running
+    if payload.get("fullyIdle") is False:
+        return {}
+
     termination_reason = str(payload.get("terminationReason") or "")
     if termination_reason and termination_reason != "NO_TOOL_CALL":
         return {}
 
     cwd_raw = payload.get("cwd") or (payload.get("workspacePaths") or [None])[0]
     repo_root = (
-        Path(str(cwd_raw)).resolve()
+        ast_index.find_repo_root(Path(str(cwd_raw)))
         if cwd_raw
         else Path(__file__).resolve().parents[3].resolve()
     )
