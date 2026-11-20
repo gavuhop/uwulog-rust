@@ -24,9 +24,10 @@ Tài liệu hướng dẫn vận hành trọn bộ hệ sinh thái AI Agent bên
 │   └── hooks/
 │       ├── session_start.sh             # Bơm git branch & dirty count khi bắt đầu phiên
 │       └── pre_command_guard.py         # Chặn lệnh shell phá hủy
-├── skills/                              # 6 Skills chuyên biệt (Progressive Disclosure)
+├── skills/                              # 7 Skills chuyên biệt (Progressive Disclosure)
 │   ├── uwu-benchmark/
 │   ├── uwu-dag-architecture/
+│   ├── uwu-feature-discovery/           # Hỏi đáp làm rõ yêu cầu, Deep-Dive & chốt Artifact Plan trước khi code
 │   ├── uwu-filter-arrow-dev/
 │   ├── uwu-gui-component-dev/
 │   ├── uwu-release-packaging/
@@ -82,5 +83,5 @@ Thay vì đọc toàn bộ các file `.rs` lớn (tốn hàng nghìn token), Age
 ## 5. Multi-Agent Workflows (`.agents/workflows/`)
 
 Dùng với công cụ `run_workflow(ScriptPath=".agents/workflows/<script>.py", Args={...})`:
-1. [feature_delivery_pipeline.py](../workflows/feature_delivery_pipeline.py): Pipeline 4 pha (`Architect & Locator` $\rightarrow$ `Core & Engine` $\rightarrow$ `Presentation` $\rightarrow$ `QA Gatekeeper`).
+1. [feature_delivery_pipeline.py](../workflows/feature_delivery_pipeline.py): Pipeline 4 pha (`Architect & AST Blueprint` $\rightarrow$ `Core & Engine` $\rightarrow$ `Presentation` $\rightarrow$ `QA Gatekeeper`). **Yêu cầu tiên quyết**: hoàn tất pha hỏi đáp làm rõ theo [uwu-feature-discovery](../skills/uwu-feature-discovery/SKILL.md) và được developer duyệt **Artifact Plan** trước khi truyền `Args={"approved_spec": "..."}`.
 2. [bug_investigation_flow.py](../workflows/bug_investigation_flow.py): Truy vết call-path bằng `ast-symbol`, tạo test tái hiện lỗi và sửa.

@@ -13,7 +13,7 @@ Chào mừng đến với trung tâm tài liệu kỹ thuật của **`uwulog-ru
 | [ARROW_ENGINE_AND_QUERY_DSL.md](ARROW_ENGINE_AND_QUERY_DSL.md) | Core Engine / Filter Developer | Cấu trúc `ArrowStorage`, `ActiveRecordBatchBuilder`, `DynamicColumnBuilder` (`Int64 -> Float64 -> String`), `BatchColumns`, `QueryCompiler`, và đặc tả cú pháp Filter DSL (`Expr`). |
 | [GUI_AND_KEYMAP_GUIDE.md](GUI_AND_KEYMAP_GUIDE.md) | Frontend / `egui` Developer | Kiến trúc `UwuGuiApp`, `WorkspaceManager`, `OverlayManager`, `GuiSession`, `theme::tokens`, Vector SVG Icons (`crates/icons`), Zed-style 4-layer Keymap (`crates/core_keymap`), và Headless GUI tests. |
 | [REMOTE_AGENT_PROTOCOL.md](REMOTE_AGENT_PROTOCOL.md) | Transport / Daemon Developer | Đặc tả `core_protocol` (`AGENT_READY_MARKER`, 4-byte BE Framing, `ClientEnvelope`/`ServerEnvelope`), `uwu-agent`, `SshTransport` & `WslTransport`. |
-| [AGENT_WORKFLOWS_AND_HARNESS.md](AGENT_WORKFLOWS_AND_HARNESS.md) | AI Agent & Maintainer | Sổ tay vận hành hệ sinh thái trong `.agents/`: Rules ([GEMINI.md](../rules/GEMINI.md)), AST Token-Optimizer ([ast_index.py](../scripts/ast_index.py)), Harness CLI, 6 Skills, 8 MCP Tools (`uwu-dev-mcp`), Hooks, và Multi-Agent `run_workflow`. |
+| [AGENT_WORKFLOWS_AND_HARNESS.md](AGENT_WORKFLOWS_AND_HARNESS.md) | AI Agent & Maintainer | Sổ tay vận hành hệ sinh thái trong `.agents/`: Rules ([GEMINI.md](../rules/GEMINI.md)), AST Token-Optimizer ([ast_index.py](../scripts/ast_index.py)), Harness CLI, 7 Skills (gồm `uwu-feature-discovery`), 8 MCP Tools (`uwu-dev-mcp`), Hooks, và Multi-Agent `run_workflow`. |
 
 ---
 
